@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบใบแจ้งหนี้</title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 0;
+        }
+        header {
+            background-color: #6558d3;
+            color: white;
+            padding: 10px 0;
+            text-align: center;
+        }
+        #profile {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            margin: 20px;
+            max-width: 400px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        #profile img {
+            border-radius: 50%;
+            width: 100px;
+            height: 100px;
+            object-fit: cover;
+        }
+        #profile p {
+            margin: 5px 0;
+            font-size: 16px;
+            color: #333;
+        }
+        .invoice-cards-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 10px;
+        }
+        .invoiceCard {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            padding: 15px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>ข้อมูลสมาชิก</h1>
+    </header>
+
+    <!-- Profile Section -->
+    <div id="profile" style="display: none;">
+        <img id="profileImage" src="" alt="Profile Image">
+        <p id="displayName"></p>
+        <p id="name1"></p>
+        <p id="room"></p>
+        <p id="phone"></p>
+    </div>
+
+    <!-- Section to display invoice information -->
+    <div id="invoiceInfo" style="display: none;">
+        <h3>ข้อมูลใบแจ้งหนี้</h3>
+        <div id="invoiceCardsContainer" class="invoice-cards-container"></div>
+    </div>
+
+    <!-- SweetAlert2 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script>
+        async function initLiff() {
+            Swal.fire({
+                title: 'กำลังโหลด...',
+                text: 'กรุณารอสักครู่',
+                allowOutsideClick: false,
+                didOpen: () => {
+                    Swal.showLoading();
+                }
+            });
+
+            await liff.init({ liffId: "2000143615-D9GLpGqy" });
+            if (liff.isLoggedIn()) {
+                const profile = await liff.getProfile();
+                const userId = profile.userId;
+
+                fetch('https://script.google.com/macros/s/AKfycbxJPZzU2epM28NpDuvqJqLGbmHBo-Ga5UlEwtLoB94_fx5sZ7ht2HhM70p8LXPmzzb0eA/exec?action=getTenantInfo&userId=' + userId)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('profileImage').src = data.profileImageUrl;
+                        document.getElementById('displayName').textContent = "ชื่อ : " + data.name0;
+                        document.getElementById('name1').textContent = "บ้านเลขที่ : " + data.name1;
+                        document.getElementById('room').textContent = "ซอย : " + data.room;
+
+                        let phoneNumber = data.phone;
+                        phoneNumber = phoneNumber.toString().padStart(10, '0');
+                        document.getElementById('phone').textContent = "เบอร์โทร : " + phoneNumber;
+                        document.getElementById('profile').style.display = 'block';
+
+                        fetchInvoiceData(data.name1);
+                        Swal.close();
+                    } else {
+                        Swal.close();
+                        window.location.href = 'index.html';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    Swal.close();
+                    window.location.href = 'index.html';
+                });
+            } else {
+                liff.login();
+                Swal.close();
+            }
+        }
+
+        function getStatusText(status) {
+            let color = '';
+            if (status === 'ล่วงหน้า') color = 'orange';
+            else if (status === 'จ่ายแล้ว') color = 'green';
+            else if (status === 'ยังไม่จ่าย') color = 'red';
+            else if (status === 'ไม่เก็บ') color = 'Purple';
+            else if (status === 'ติดต่อแอดมิน') color = 'blue';
+            else if (status === 'รอข้อมูล' || status === 'Nodata') color = 'Fuchsia';
+            return `<span style="color: ${color};">${status}</span>`;
+        }
+
+        function fetchInvoiceData(name1) {
+            fetch('https://script.google.com/macros/s/AKfycbxJPZzU2epM28NpDuvqJqLGbmHBo-Ga5UlEwtLoB94_fx5sZ7ht2HhM70p8LXPmzzb0eA/exec?action=getInvoiceData&name1=' + name1)
+            .then(response => response.json())
+            .then(invoiceData => {
+                if (invoiceData.success) {
+                    const cardsContainer = document.getElementById('invoiceCardsContainer');
+                    cardsContainer.innerHTML = '';
+
+                    invoiceData.invoices.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+                    invoiceData.invoices.forEach(invoice => {
+                        const card = document.createElement('div');
+                        card.className = 'invoiceCard';
+
+                        let statusText = '';
+                        if (invoice.status === 'รอการชำระ') statusText = `สถานะ : <span style="color: orange;">${invoice.status}</span>`;
+                        else if (invoice.status === 'เริ่มจ่าย สิงหาคม 67') statusText = `สถานะ : <span style="color: green;">${invoice.status}</span>`;
+                        else if (invoice.status === 'ค้างชำระ') statusText = `สถานะ : <span style="color: red;">${invoice.status}</span>`;
+                        else if (invoice.status === 'รอตรวจสอบ') statusText = `สถานะ : <span style="color: Purple;">${invoice.status}</span>`;
+                        else if (invoice.status === 'ติดต่อแอดมิน') statusText = `สถานะ : <span style="color: blue;">${invoice.status}</span>`;
+                        else statusText = `สถานะ : ${invoice.status}`;
+
+                        card.innerHTML = `
+                            <h4>🧾 ${invoice.no} / ${invoice.year}</h4>
+                            <p>🧖 ชื่อ-สกุล : ${invoice.name0}</p>
+                            <p>🏡 บ้านเลขที่ : ${invoice.name1}</p>
+                            <p>🏡 ซอย : ${invoice.room}</p>
+                            <p>📆 ปี : ${invoice.year}</p>
+                            <p>🗓 มกราคม : ${getStatusText(invoice.month1)}</p>
+                            <p>🗓 กุมภาพันธ์ : ${getStatusText(invoice.month2)}</p>
+                            <p>🗓 มีนาคม : ${getStatusText(invoice.month3)}</p>
+                            <p>🗓 เมษายน : ${getStatusText(invoice.month4)}</p>
+                            <p>🗓 พฤษภาคม : ${getStatusText(invoice.month5)}</p>
+                            <p>🗓 มิถุนายน : ${getStatusText(invoice.month6)}</p>
+                            <p>🗓 กรกฎาคม : ${getStatusText(invoice.month7)}</p>
+                            <p>🗓 สิงหาคม : ${getStatusText(invoice.month8)}</p>
+                            <p>🗓 กันยายน : ${getStatusText(invoice.month9)}</p>
+                            <p>🗓 ตุลาคม : ${getStatusText(invoice.month10)}</p>
+                            <p>🗓 พฤศจิกายน : ${getStatusText(invoice.month11)}</p>
+                            <p>🗓 ธันวาคม : ${getStatusText(invoice.month12)}</p>
+                            <h5>${statusText}</h5>
+                        `;
+
+                        cardsContainer.appendChild(card);
+                    });
+                    document.getElementById('invoiceInfo').style.display = 'block';
+                } else {
+                    console.log("No invoice data available");
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching invoice data:', error);
+            });
+        }
+
+        initLiff();
+    </script>
+</body>
+</html>
