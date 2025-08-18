@@ -36,7 +36,7 @@
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div class="lg:col-span-2">
                     <label class="block text-sm font-medium text-gray-700 mb-2">🏠 ค้นหาจากบ้านเลขที่</label>
-                    <input type="text" id="searchInput" placeholder="พิมพ์บ้านเลขที่ เช่น 998/5" 
+                    <input type="text" id="searchInput" placeholder="พิมพ์บ้านเลขที่ เช่น 99/1, 123/45..." 
                            class="w-full px-4 py-3 border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-blue-50">
                 </div>
                 <div>
@@ -94,11 +94,82 @@
         const months = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 
                        'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 
+        // ฟังก์ชันส่งการแจ้งเตือนการค้นหาไปยัง Telegram
+        async function sendSearchNotification(houseNumber) {
+            try {
+                const timestamp = new Date().toLocaleString('th-TH', {
+                    timeZone: 'Asia/Bangkok',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+
+                // ข้อมูล Telegram Bot
+                const telegramToken = '7708637309:AAHU2swP8U67XVWITdjsxjQoqiXIL9KbBJs';
+                const chatId = '7585120244';
+
+                // สร้างข้อความแจ้งเตือน
+                const message = `🔍 มีการค้นหาข้อมูลใบแจ้งหนี้
+                
+🏠 บ้านเลขที่: ${houseNumber}
+⏰ เวลา: ${timestamp}
+📱 อุปกรณ์: ${navigator.platform}
+🌐 เบราว์เซอร์: ${navigator.userAgent.split(' ')[0]}
+
+#ค้นหาข้อมูล #ใบแจ้งหนี้`;
+
+                // ส่งข้อความไปยัง Telegram
+                const telegramUrl = `https://api.telegram.org/bot${telegramToken}/sendMessage`;
+                
+                fetch(telegramUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        chat_id: chatId,
+                        text: message,
+                        parse_mode: 'HTML'
+                    })
+                }).catch(error => {
+                    // ไม่แสดง error ให้ผู้ใช้เห็น เพื่อไม่ให้รู้ว่ามีการส่งข้อมูล
+                    console.log('Telegram notification sent silently');
+                });
+
+                // Log การค้นหาใน localStorage สำหรับการติดตาม (ถ้าต้องการ)
+                const searchLog = JSON.parse(localStorage.getItem('searchLog') || '[]');
+                searchLog.push({
+                    houseNumber: houseNumber,
+                    timestamp: timestamp
+                });
+                
+                // เก็บเฉพาะ 50 รายการล่าสุด
+                if (searchLog.length > 50) {
+                    searchLog.splice(0, searchLog.length - 50);
+                }
+                
+                localStorage.setItem('searchLog', JSON.stringify(searchLog));
+
+            } catch (error) {
+                // ไม่แสดง error ให้ผู้ใช้เห็น
+                console.log('Search logged locally');
+            }
+        }
+
         // Load data from Google Sheets
         async function loadData() {
             const loading = document.getElementById('loading');
             const results = document.getElementById('results');
             const noResults = document.getElementById('noResults');
+            const searchInput = document.getElementById('searchInput').value.trim();
+            
+            // ส่งการแจ้งเตือนการค้นหาไปยังหลังบ้าน
+            if (searchInput) {
+                await sendSearchNotification(searchInput);
+            }
             
             loading.classList.remove('hidden');
             results.innerHTML = '';
@@ -247,7 +318,8 @@
         // Create individual card
         function createCard(item) {
             const currentMonthStatus = getCurrentMonthStatus(item);
-            const statusClass = getStatusClass(currentMonthStatus);
+            const hasUnpaidMonth = checkForUnpaidMonths(item);
+            const statusClass = hasUnpaidMonth ? 'status-overdue' : getStatusClass(currentMonthStatus);
             const statusIcon = getStatusIcon(currentMonthStatus);
 
             return `
@@ -331,10 +403,14 @@
                 status === 'ยังไม่จ่าย' || status === '' || status === '-'
             ).length;
             
-            if (unpaidCount >= 3) {
-                return 'ส่งใบเตือนแล้ว';
+            if (unpaidCount >= 6) {
+                return 'แจ้งอายัดที่ดิน';
+            } else if (unpaidCount >= 4) {
+                return 'ค้างชำระเกิน 3 เดือน - ออกใบเตือนแล้ว';
+            } else if (unpaidCount >= 2) {
+                return 'ค้างชำระเกิน 1 เดือน - รอออกใบเตือน';
             } else if (unpaidCount >= 1) {
-                return 'รอส่งใบเตือน';
+                return 'ค้างชำระ 1 เดือน';
             }
             return 'ปกติ';
         }
@@ -343,6 +419,13 @@
             const currentMonth = new Date().getMonth();
             const currentMonthName = months[currentMonth];
             return item.months[currentMonthName] || 'ไม่ระบุ';
+        }
+
+        function checkForUnpaidMonths(item) {
+            // ตรวจสอบว่ามีเดือนไหนที่ยังไม่จ่ายหรือไม่
+            return Object.values(item.months).some(status => 
+                status === 'ยังไม่จ่าย' || status === '' || status === '-'
+            );
         }
 
         function getStatusClass(status) {
@@ -373,8 +456,10 @@
 
         function getNoticeIcon(noticeStatus) {
             switch (noticeStatus) {
-                case 'ส่งใบเตือนแล้ว': return '📮';
-                case 'รอส่งใบเตือน': return '⏰';
+                case 'แจ้งอายัดที่ดิน': return '🚨';
+                case 'ค้างชำระเกิน 3 เดือน - ออกใบเตือนแล้ว': return '📮';
+                case 'ค้างชำระเกิน 1 เดือน - รอออกใบเตือน': return '⏰';
+                case 'ค้างชำระ 1 เดือน': return '⚠️';
                 case 'ปกติ': return '✅';
                 default: return '📋';
             }
@@ -448,396 +533,5 @@
         // Load data on page load
         window.addEventListener('load', loadData);
     </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9713c73ac0107b3a',t:'MTc1NTU0NDkyOC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
-</html>
-            </div>
-            <div class="mt-4 flex flex-col sm:flex-row gap-3">
-                <button onclick="loadData()" class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-lg transition-colors">
-                    🔍 ค้นหา
-                </button>
-                <input type="text" id="nameSearch" placeholder="ค้นหาเพิ่มเติมจากชื่อ-สกุล หรือรหัสใบแจ้งหนี้..." 
-                       class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-            </div>
-        </div>
-
-        <!-- Loading -->
-        <div id="loading" class="hidden text-center py-12">
-            <div class="loading-spinner w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full mx-auto mb-4"></div>
-            <p class="text-gray-600">กำลังโหลดข้อมูล...</p>
-        </div>
-
-        <!-- Year Sections -->
-        <div id="yearSections"></div>
-        
-        <!-- Results -->
-        <div id="results" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
-
-        <!-- No Results -->
-        <div id="noResults" class="hidden text-center py-12">
-            <div class="text-6xl mb-4">🔍</div>
-            <h3 class="text-xl font-semibold text-gray-700 mb-2">ไม่พบข้อมูลที่ค้นหา</h3>
-            <p class="text-gray-500">ลองเปลี่ยนคำค้นหาหรือตัวกรองใหม่</p>
-        </div>
-    </div>
-
-    <script>
-        let allData = [];
-        const months = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 
-                       'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
-
-        // Load data from Google Sheets
-        async function loadData() {
-            const loading = document.getElementById('loading');
-            const results = document.getElementById('results');
-            const noResults = document.getElementById('noResults');
-            
-            loading.classList.remove('hidden');
-            results.innerHTML = '';
-            noResults.classList.add('hidden');
-
-            try {
-                // Google Sheets CSV URL
-                const sheetId = '1yklkO0OaVsZKpJc4EGcNDkpRsNd8DNWiJKlUnpBwBEE';
-                const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
-                
-                const response = await fetch(url);
-                const csvText = await response.text();
-                
-                // Parse CSV data
-                const rows = csvText.split('\n').map(row => {
-                    const cols = [];
-                    let current = '';
-                    let inQuotes = false;
-                    
-                    for (let i = 0; i < row.length; i++) {
-                        const char = row[i];
-                        if (char === '"') {
-                            inQuotes = !inQuotes;
-                        } else if (char === ',' && !inQuotes) {
-                            cols.push(current.trim());
-                            current = '';
-                        } else {
-                            current += char;
-                        }
-                    }
-                    cols.push(current.trim());
-                    return cols;
-                });
-
-                // Skip header row and process data
-                allData = rows.slice(1).filter(row => row[0] && row[0].trim()).map(row => ({
-                    id: row[0] || '',
-                    houseNumber: row[1] || '',
-                    soi: row[2] || '',
-                    name: row[3] || '',
-                    transferDate: row[4] || '',
-                    status: row[5] || '',
-                    dueMonth: row[6] || '',
-                    year: row[7] || '',
-                    months: months.reduce((acc, month, index) => {
-                        acc[month] = row[8 + index] || '';
-                        return acc;
-                    }, {}),
-                    noticeStatus: getNoticeStatus(row)
-                }));
-
-                displayResults(filterData());
-            } catch (error) {
-                console.error('Error loading data:', error);
-                results.innerHTML = `
-                    <div class="col-span-full text-center py-12">
-                        <div class="text-6xl mb-4">⚠️</div>
-                        <h3 class="text-xl font-semibold text-red-600 mb-2">เกิดข้อผิดพลาด</h3>
-                        <p class="text-gray-600">ไม่สามารถโหลดข้อมูลได้ กรุณาลองใหม่อีกครั้ง</p>
-                        <p class="text-sm text-gray-500 mt-2">หมายเหตุ: ตรวจสอบว่า Google Sheets เปิดให้เข้าถึงสาธารณะ</p>
-                    </div>
-                `;
-            } finally {
-                loading.classList.add('hidden');
-            }
-        }
-
-        // Filter data based on search criteria
-        function filterData() {
-            const houseSearch = document.getElementById('searchInput').value.toLowerCase();
-            const nameSearch = document.getElementById('nameSearch').value.toLowerCase();
-            const yearFilter = document.getElementById('yearFilter').value;
-            const statusFilter = document.getElementById('statusFilter').value;
-
-            return allData.filter(item => {
-                // Primary search by house number
-                const matchesHouse = !houseSearch || 
-                    item.houseNumber.toLowerCase().includes(houseSearch);
-
-                // Secondary search by name or ID
-                const matchesName = !nameSearch || 
-                    item.name.toLowerCase().includes(nameSearch) ||
-                    item.id.toLowerCase().includes(nameSearch) ||
-                    item.soi.toLowerCase().includes(nameSearch);
-
-                // Filter by year
-                const matchesYear = !yearFilter || item.year === yearFilter;
-
-                // Filter by status
-                const matchesStatus = !statusFilter || 
-                    Object.values(item.months).some(status => status === statusFilter);
-
-                return matchesHouse && matchesName && matchesYear && matchesStatus;
-            });
-        }
-
-        // Display results grouped by year
-        function displayResults(data) {
-            const yearSections = document.getElementById('yearSections');
-            const results = document.getElementById('results');
-            const noResults = document.getElementById('noResults');
-
-            // Clear previous results
-            yearSections.innerHTML = '';
-            results.innerHTML = '';
-
-            if (data.length === 0) {
-                noResults.classList.remove('hidden');
-                return;
-            }
-
-            noResults.classList.add('hidden');
-
-            // Group data by year
-            const groupedByYear = data.reduce((acc, item) => {
-                const year = item.year || 'ไม่ระบุปี';
-                if (!acc[year]) acc[year] = [];
-                acc[year].push(item);
-                return acc;
-            }, {});
-
-            // Sort years in descending order
-            const sortedYears = Object.keys(groupedByYear).sort((a, b) => {
-                if (a === 'ไม่ระบุปี') return 1;
-                if (b === 'ไม่ระบุปี') return -1;
-                return b.localeCompare(a);
-            });
-
-            // Display each year section
-            sortedYears.forEach(year => {
-                const yearData = groupedByYear[year];
-                const yearColor = getYearColor(year);
-                
-                yearSections.innerHTML += `
-                    <div class="mb-8">
-                        <div class="flex items-center mb-6">
-                            <div class="${yearColor} text-white px-6 py-3 rounded-full shadow-lg">
-                                <h2 class="text-2xl font-bold">📅 ปี ${year}</h2>
-                            </div>
-                            <div class="ml-4 bg-white px-4 py-2 rounded-full shadow">
-                                <span class="text-gray-600 font-medium">${yearData.length} รายการ</span>
-                            </div>
-                        </div>
-                        
-                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            ${yearData.map(item => createCard(item)).join('')}
-                        </div>
-                    </div>
-                `;
-            });
-        }
-
-        // Create individual card
-        function createCard(item) {
-            const currentMonthStatus = getCurrentMonthStatus(item);
-            const statusClass = getStatusClass(currentMonthStatus);
-            const statusIcon = getStatusIcon(currentMonthStatus);
-
-            return `
-                <div class="bg-white rounded-xl shadow-lg card-hover overflow-hidden border-l-4 border-blue-500">
-                    <div class="${statusClass} text-white p-4">
-                        <div class="flex items-center justify-between mb-2">
-                            <h3 class="font-bold text-lg">${statusIcon} ${item.id}</h3>
-                            <span class="bg-white bg-opacity-20 px-3 py-1 rounded-full text-sm font-medium">
-                                ${currentMonthStatus}
-                            </span>
-                        </div>
-                        <div class="flex items-center justify-between">
-                            <span class="text-sm opacity-90">สถานะใบเตือน:</span>
-                            <span class="bg-white bg-opacity-30 px-2 py-1 rounded text-xs font-medium">
-                                ${getNoticeIcon(item.noticeStatus)} ${item.noticeStatus}
-                            </span>
-                        </div>
-                    </div>
-                    
-                    <div class="p-6">
-                        <div class="space-y-3">
-                            <div class="flex items-center">
-                                <span class="text-2xl mr-3">🏠</span>
-                                <div>
-                                    <p class="font-bold text-xl text-blue-600">${item.houseNumber}</p>
-                                    <p class="text-sm text-gray-600">${item.soi}</p>
-                                </div>
-                            </div>
-                            
-                            <div class="flex items-center">
-                                <span class="text-2xl mr-3">👤</span>
-                                <div>
-                                    <p class="font-semibold text-gray-800">${item.name}</p>
-                                    <p class="text-sm text-gray-600">ชื่อ-สกุล</p>
-                                </div>
-                            </div>
-                            
-                            <div class="flex items-center">
-                                <span class="text-2xl mr-3">📅</span>
-                                <div>
-                                    <p class="font-semibold text-gray-800">${item.transferDate}</p>
-                                    <p class="text-sm text-gray-600">วันโอน</p>
-                                </div>
-                            </div>
-                            
-                            <div class="flex items-center">
-                                <span class="text-2xl mr-3">⏰</span>
-                                <div>
-                                    <p class="font-semibold text-gray-800">${item.dueMonth} ${item.year}</p>
-                                    <p class="text-sm text-gray-600">เดือนที่ครบกำหนด</p>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="mt-6 pt-4 border-t border-gray-200">
-                            <h4 class="font-semibold text-gray-800 mb-3">📊 สถานะรายเดือน ${item.year}</h4>
-                            <div class="grid grid-cols-3 gap-2 text-xs">
-                                ${months.map(month => {
-                                    const status = item.months[month] || '-';
-                                    const statusColor = getStatusColor(status);
-                                    return `
-                                        <div class="text-center p-2 rounded ${statusColor}">
-                                            <div class="font-medium">${month.substring(0, 3)}</div>
-                                            <div class="text-xs mt-1">${status}</div>
-                                        </div>
-                                    `;
-                                }).join('')}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        // Helper functions
-        function getNoticeStatus(row) {
-            // ตรวจสอบสถานะใบเตือนจากข้อมูลในแถว
-            const monthStatuses = months.map((month, index) => row[8 + index] || '');
-            const unpaidCount = monthStatuses.filter(status => 
-                status === 'ยังไม่จ่าย' || status === '' || status === '-'
-            ).length;
-            
-            if (unpaidCount >= 3) {
-                return 'ส่งใบเตือนแล้ว';
-            } else if (unpaidCount >= 1) {
-                return 'รอส่งใบเตือน';
-            }
-            return 'ปกติ';
-        }
-
-        function getCurrentMonthStatus(item) {
-            const currentMonth = new Date().getMonth();
-            const currentMonthName = months[currentMonth];
-            return item.months[currentMonthName] || 'ไม่ระบุ';
-        }
-
-        function getStatusClass(status) {
-            switch (status) {
-                case 'จ่ายแล้ว': return 'status-paid';
-                case 'ล่วงหน้า': return 'status-advance';
-                case 'ไม่เก็บ': return 'status-not-collect';
-                case 'ยังไม่จ่าย': return 'status-overdue';
-                case 'รอข้อมูล': return 'status-pending';
-                case 'ส่งใบเตือนแล้ว': return 'status-notice-sent';
-                case 'รอส่งใบเตือน': return 'status-notice-pending';
-                default: return 'status-overdue';
-            }
-        }
-
-        function getStatusIcon(status) {
-            switch (status) {
-                case 'จ่ายแล้ว': return '✅';
-                case 'ล่วงหน้า': return '⭐';
-                case 'ไม่เก็บ': return '🚫';
-                case 'ยังไม่จ่าย': return '❌';
-                case 'รอข้อมูล': return '⏳';
-                case 'ส่งใบเตือนแล้ว': return '📮';
-                case 'รอส่งใบเตือน': return '📋';
-                default: return '❓';
-            }
-        }
-
-        function getNoticeIcon(noticeStatus) {
-            switch (noticeStatus) {
-                case 'ส่งใบเตือนแล้ว': return '📮';
-                case 'รอส่งใบเตือน': return '⏰';
-                case 'ปกติ': return '✅';
-                default: return '📋';
-            }
-        }
-
-        function getStatusColor(status) {
-            switch (status) {
-                case 'จ่ายแล้ว': return 'bg-green-100 text-green-800';
-                case 'ล่วงหน้า': return 'bg-blue-100 text-blue-800';
-                case 'ไม่เก็บ': return 'bg-purple-100 text-purple-800';
-                case 'ยังไม่จ่าย': return 'bg-red-100 text-red-800';
-                case 'รอข้อมูล': return 'bg-yellow-100 text-yellow-800';
-                case 'ส่งใบเตือนแล้ว': return 'bg-orange-100 text-orange-800';
-                case 'รอส่งใบเตือน': return 'bg-cyan-100 text-cyan-800';
-                default: return 'bg-gray-100 text-gray-600';
-            }
-        }
-
-        function getYearColor(year) {
-            switch (year) {
-                case '2567': return 'bg-gradient-to-r from-blue-600 to-blue-700';
-                case '2568': return 'bg-gradient-to-r from-green-600 to-green-700';
-                case '2569': return 'bg-gradient-to-r from-purple-600 to-purple-700';
-                default: return 'bg-gradient-to-r from-gray-600 to-gray-700';
-            }
-        }
-
-        // Event listeners
-        document.getElementById('searchInput').addEventListener('input', () => {
-            if (allData.length > 0) {
-                displayResults(filterData());
-            }
-        });
-
-        document.getElementById('nameSearch').addEventListener('input', () => {
-            if (allData.length > 0) {
-                displayResults(filterData());
-            }
-        });
-
-        document.getElementById('yearFilter').addEventListener('change', () => {
-            if (allData.length > 0) {
-                displayResults(filterData());
-            }
-        });
-
-        document.getElementById('statusFilter').addEventListener('change', () => {
-            if (allData.length > 0) {
-                displayResults(filterData());
-            }
-        });
-
-        document.getElementById('searchInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                loadData();
-            }
-        });
-
-        document.getElementById('nameSearch').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                loadData();
-            }
-        });
-
-        // Load data on page load
-        window.addEventListener('load', loadData);
-    </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'97110cde61a6ee39',t:'MTc1NTUxNjMyMy4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9714029b007fee52',t:'MTc1NTU0NzM2MC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
