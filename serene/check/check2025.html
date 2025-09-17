@@ -1415,6 +1415,56 @@
             }
         });
 
+        // Summary page data preloading
+        let summaryDataPreloaded = false;
+        let summaryPreloadPromise = null;
+
+        function preloadSummaryData() {
+            if (summaryDataPreloaded || summaryPreloadPromise) {
+                return summaryPreloadPromise || Promise.resolve();
+            }
+
+            console.log('เริ่มโหลดข้อมูลสรุปหลังบ้าน...');
+            
+            summaryPreloadPromise = new Promise((resolve) => {
+                // สร้าง iframe ซ่อนไว้เพื่อโหลดข้อมูลล่วงหน้า
+                const preloadIframe = document.createElement('iframe');
+                preloadIframe.src = 'https://serene-2025.github.io/serene/check/check.html';
+                preloadIframe.style.display = 'none';
+                preloadIframe.style.position = 'absolute';
+                preloadIframe.style.left = '-9999px';
+                preloadIframe.style.width = '1px';
+                preloadIframe.style.height = '1px';
+                
+                preloadIframe.onload = () => {
+                    console.log('โหลดข้อมูลสรุปหลังบ้านเสร็จสิ้น');
+                    summaryDataPreloaded = true;
+                    
+                    // เก็บ iframe ไว้ในหน้าเพื่อใช้ cache
+                    document.body.appendChild(preloadIframe);
+                    
+                    // ตั้งเวลาลบ preload iframe หลังจาก 30 วินาที
+                    setTimeout(() => {
+                        if (preloadIframe.parentNode) {
+                            preloadIframe.parentNode.removeChild(preloadIframe);
+                        }
+                    }, 30000);
+                    
+                    resolve();
+                };
+                
+                preloadIframe.onerror = () => {
+                    console.log('ไม่สามารถโหลดข้อมูลสรุปหลังบ้านได้');
+                    resolve(); // ยังคงให้ resolve เพื่อไม่ให้ระบบค้าง
+                };
+                
+                // เพิ่ม iframe ลงใน DOM เพื่อเริ่มโหลด
+                document.body.appendChild(preloadIframe);
+            });
+
+            return summaryPreloadPromise;
+        }
+
         // Auto-load data when page loads
         document.addEventListener('DOMContentLoaded', function() {
             console.log('เริ่มโหลดข้อมูลอัตโนมัติ...');
@@ -1445,11 +1495,27 @@
                     }
                     
                     console.log('โหลดข้อมูลอัตโนมัติเสร็จสิ้น');
+                    
+                    // เริ่มโหลดข้อมูลสรุปหลังบ้านหลังจากโหลดข้อมูลหลักเสร็จ
+                    setTimeout(() => {
+                        // แสดงสถานะการโหลดหลังบ้าน
+                        searchResult.innerHTML = `<i class="fas fa-check-circle mr-2 text-green-500"></i>โหลดข้อมูลสำเร็จ! แสดงข้อมูลทั้งหมด ${allData.length} รายการ (เรียงตามปีล่าสุด) <span class="text-blue-500 text-sm ml-2"><i class="fas fa-sync-alt fa-spin mr-1"></i>กำลังเตรียมข้อมูลสรุป...</span>`;
+                        
+                        preloadSummaryData().then(() => {
+                            // อัพเดทสถานะเมื่อโหลดเสร็จ
+                            searchResult.innerHTML = `<i class="fas fa-check-circle mr-2 text-green-500"></i>โหลดข้อมูลสำเร็จ! แสดงข้อมูลทั้งหมด ${allData.length} รายการ (เรียงตามปีล่าสุด) <span class="text-green-500 text-sm ml-2"><i class="fas fa-check mr-1"></i>ข้อมูลสรุปพร้อมใช้งาน</span>`;
+                        });
+                    }, 2000); // รอ 2 วินาทีเพื่อให้ระบบเสถียร
                 })
                 .catch(error => {
                     loading.classList.add('hidden');
                     searchResult.innerHTML = '<i class="fas fa-times-circle mr-2 text-red-500"></i>เกิดข้อผิดพลาดในการโหลดข้อมูล กรุณาลองใหม่อีกครั้ง';
                     console.error('เกิดข้อผิดพลาดในการโหลดข้อมูลอัตโนมัติ:', error);
+                    
+                    // ยังคงพยายามโหลดข้อมูลสรุปแม้ข้อมูลหลักโหลดไม่ได้
+                    setTimeout(() => {
+                        preloadSummaryData();
+                    }, 5000);
                 });
         });
 
@@ -2095,13 +2161,29 @@
             document.getElementById('userPageContent').classList.add('hidden');
             document.getElementById('summaryPage').classList.remove('hidden');
             
-            // Show loading overlay initially
-            document.getElementById('iframeLoading').classList.remove('hidden');
+            const loadingOverlay = document.getElementById('iframeLoading');
+            const iframe = document.getElementById('summaryIframe');
             
-            // Hide loading overlay after iframe loads
-            setTimeout(() => {
-                document.getElementById('iframeLoading').classList.add('hidden');
-            }, 3000);
+            // ตรวจสอบว่าข้อมูลถูกโหลดล่วงหน้าแล้วหรือไม่
+            if (summaryDataPreloaded) {
+                console.log('ใช้ข้อมูลสรุปที่โหลดไว้แล้ว - แสดงทันที');
+                loadingOverlay.classList.add('hidden');
+            } else {
+                console.log('ข้อมูลสรุปยังไม่พร้อม - แสดง loading');
+                loadingOverlay.classList.remove('hidden');
+                
+                // รอให้ข้อมูลโหลดเสร็จ หรือ timeout หลัง 5 วินาที
+                Promise.race([
+                    summaryPreloadPromise || preloadSummaryData(),
+                    new Promise(resolve => setTimeout(resolve, 5000))
+                ]).then(() => {
+                    loadingOverlay.classList.add('hidden');
+                    console.log('แสดงหน้าสรุปข้อมูล');
+                });
+            }
+            
+            // รีเฟรช iframe เพื่อให้แน่ใจว่าข้อมูลล่าสุด
+            iframe.src = iframe.src;
             
             // Update navigation active state
             updateNavActiveState('summary');
@@ -2151,5 +2233,5 @@
             menu.classList.toggle('hidden');
         }
     </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'980c072246c37b56',t:'MTc1ODE0ODAxNC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'980c1216576a7b4a',t:'MTc1ODE0ODQ2My4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
