@@ -491,6 +491,9 @@
                     <button onclick="window.open('https://serene-2025.github.io/serene/check/check.html', '_blank')" class="p-2 rounded-lg hover:bg-white/20 transition-all duration-300 hover:scale-110" title="เปิดในหน้าต่างใหม่">
                         <i class="fas fa-external-link-alt text-lg"></i>
                     </button>
+                    <button onclick="clearAllCache()" class="p-2 rounded-lg hover:bg-white/20 transition-all duration-300 hover:scale-110" title="ล้าง Cache">
+                        <i class="fas fa-trash-alt text-lg"></i>
+                    </button>
                     <button onclick="showUserPage()" class="p-2 rounded-lg hover:bg-white/20 transition-all duration-300 hover:scale-110" title="ปิด">
                         <i class="fas fa-times text-lg"></i>
                     </button>
@@ -761,16 +764,158 @@
         const TELEGRAM_TOKEN = '8285069899:AAF-L27XDknWC98-FMRvSod5ikV2tGO8Jgo';
         const TELEGRAM_CHAT_ID = '7585120244';
         
+        // Local Storage Configuration
+        const STORAGE_KEYS = {
+            MAIN_DATA: 'maintenanceFeeData',
+            PAYMENT_DATA: 'paymentHistoryData',
+            MAIN_TIMESTAMP: 'mainDataTimestamp',
+            PAYMENT_TIMESTAMP: 'paymentDataTimestamp',
+            SUMMARY_CACHE: 'summaryPageCache'
+        };
+        
+        const CACHE_DURATION = {
+            MAIN_DATA: 30 * 60 * 1000,      // 30 นาที
+            PAYMENT_DATA: 10 * 60 * 1000,   // 10 นาที (อัพเดทบ่อยกว่า)
+            SUMMARY_CACHE: 15 * 60 * 1000   // 15 นาที
+        };
+        
         const monthNames = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 
                            'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
         
         let allData = [];
         let paymentData = [];
+        let isLoadingFromCache = false;
 
-        async function loadPaymentData() {
+        // Local Storage Functions
+        function saveToLocalStorage(key, data, timestampKey = null) {
             try {
+                localStorage.setItem(key, JSON.stringify(data));
+                if (timestampKey) {
+                    localStorage.setItem(timestampKey, Date.now().toString());
+                }
+                console.log(`บันทึกข้อมูลลง Local Storage: ${key}`);
+            } catch (error) {
+                console.error('เกิดข้อผิดพลาดในการบันทึก Local Storage:', error);
+                // ถ้า storage เต็ม ให้ลบข้อมูลเก่า
+                if (error.name === 'QuotaExceededError') {
+                    clearOldCache();
+                    try {
+                        localStorage.setItem(key, JSON.stringify(data));
+                        if (timestampKey) {
+                            localStorage.setItem(timestampKey, Date.now().toString());
+                        }
+                    } catch (retryError) {
+                        console.error('ไม่สามารถบันทึกข้อมูลได้แม้หลังจากลบ cache:', retryError);
+                    }
+                }
+            }
+        }
+
+        function loadFromLocalStorage(key, timestampKey = null, maxAge = null) {
+            try {
+                const data = localStorage.getItem(key);
+                if (!data) return null;
+
+                // ตรวจสอบอายุของข้อมูล
+                if (timestampKey && maxAge) {
+                    const timestamp = localStorage.getItem(timestampKey);
+                    if (!timestamp) return null;
+                    
+                    const age = Date.now() - parseInt(timestamp);
+                    if (age > maxAge) {
+                        console.log(`ข้อมูล ${key} หมดอายุแล้ว (${Math.round(age/1000/60)} นาที)`);
+                        localStorage.removeItem(key);
+                        localStorage.removeItem(timestampKey);
+                        return null;
+                    }
+                }
+
+                const parsedData = JSON.parse(data);
+                console.log(`โหลดข้อมูลจาก Local Storage: ${key} (${parsedData.length} รายการ)`);
+                return parsedData;
+            } catch (error) {
+                console.error('เกิดข้อผิดพลาดในการโหลด Local Storage:', error);
+                // ลบข้อมูลที่เสียหาย
+                localStorage.removeItem(key);
+                if (timestampKey) localStorage.removeItem(timestampKey);
+                return null;
+            }
+        }
+
+        function clearOldCache() {
+            console.log('ลบ cache เก่าเพื่อเพิ่มพื้นที่...');
+            const keysToCheck = [
+                { key: STORAGE_KEYS.MAIN_DATA, timestamp: STORAGE_KEYS.MAIN_TIMESTAMP, maxAge: CACHE_DURATION.MAIN_DATA },
+                { key: STORAGE_KEYS.PAYMENT_DATA, timestamp: STORAGE_KEYS.PAYMENT_TIMESTAMP, maxAge: CACHE_DURATION.PAYMENT_DATA },
+                { key: STORAGE_KEYS.SUMMARY_CACHE, timestamp: null, maxAge: CACHE_DURATION.SUMMARY_CACHE }
+            ];
+
+            keysToCheck.forEach(({ key, timestamp, maxAge }) => {
+                if (timestamp) {
+                    const timestampValue = localStorage.getItem(timestamp);
+                    if (timestampValue) {
+                        const age = Date.now() - parseInt(timestampValue);
+                        if (age > maxAge) {
+                            localStorage.removeItem(key);
+                            localStorage.removeItem(timestamp);
+                            console.log(`ลบ cache หมดอายุ: ${key}`);
+                        }
+                    }
+                } else {
+                    // สำหรับข้อมูลที่ไม่มี timestamp ให้ลบทิ้ง
+                    localStorage.removeItem(key);
+                    console.log(`ลบ cache: ${key}`);
+                }
+            });
+        }
+
+        function getStorageInfo() {
+            let totalSize = 0;
+            let itemCount = 0;
+            
+            for (let key in localStorage) {
+                if (localStorage.hasOwnProperty(key)) {
+                    totalSize += localStorage[key].length;
+                    itemCount++;
+                }
+            }
+            
+            return {
+                totalSize: totalSize,
+                itemCount: itemCount,
+                totalSizeKB: Math.round(totalSize / 1024),
+                totalSizeMB: Math.round(totalSize / 1024 / 1024 * 100) / 100
+            };
+        }
+
+        async function loadPaymentData(forceRefresh = false) {
+            try {
+                // ลองโหลดจาก Local Storage ก่อน (ถ้าไม่ได้บังคับรีเฟรช)
+                if (!forceRefresh) {
+                    const cachedData = loadFromLocalStorage(
+                        STORAGE_KEYS.PAYMENT_DATA, 
+                        STORAGE_KEYS.PAYMENT_TIMESTAMP, 
+                        CACHE_DURATION.PAYMENT_DATA
+                    );
+                    
+                    if (cachedData && cachedData.length > 0) {
+                        paymentData = cachedData;
+                        isLoadingFromCache = true;
+                        console.log('ใช้ข้อมูลการจ่ายจาก Local Storage:', paymentData.length, 'รายการ');
+                        
+                        // โหลดข้อมูลใหม่หลังบ้านเพื่ออัพเดท cache
+                        setTimeout(() => {
+                            loadPaymentData(true).then(() => {
+                                console.log('อัพเดทข้อมูลการจ่ายหลังบ้านเสร็จสิ้น');
+                            });
+                        }, 2000);
+                        
+                        return Promise.resolve();
+                    }
+                }
+
                 const csvUrl = `https://docs.google.com/spreadsheets/d/${PAYMENT_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(PAYMENT_SHEET_NAME)}`;
-                console.log('กำลังโหลดข้อมูลการจ่ายค่าส่วนกลาง...');
+                console.log('กำลังโหลดข้อมูลการจ่ายค่าส่วนกลางจาก Google Sheets...');
                 
                 // เพิ่ม timeout และ retry logic
                 const controller = new AbortController();
@@ -794,7 +939,7 @@
                 const rows = parseCSV(csvText);
                 
                 if (rows && rows.length > 1) {
-                    paymentData = rows.slice(1).filter(row => {
+                    const newPaymentData = rows.slice(1).filter(row => {
                         // คอลัมน์ E (index 4): บ้านเลขที่
                         // คอลัมน์ F (index 5): เดือน  
                         // คอลัมน์ G (index 6): ปี
@@ -808,6 +953,15 @@
                                houseNo.trim() !== '' && month.trim() !== '' && 
                                year.trim() !== '' && status.trim() !== '';
                     });
+                    
+                    paymentData = newPaymentData;
+                    
+                    // บันทึกลง Local Storage
+                    saveToLocalStorage(
+                        STORAGE_KEYS.PAYMENT_DATA, 
+                        paymentData, 
+                        STORAGE_KEYS.PAYMENT_TIMESTAMP
+                    );
                     
                     console.log('โหลดข้อมูลการจ่ายสำเร็จ:', paymentData.length, 'รายการ');
                     return Promise.resolve();
@@ -823,15 +977,51 @@
                 } else {
                     console.error('เกิดข้อผิดพลาดในการโหลดข้อมูลการจ่าย:', error);
                 }
+                
+                // ถ้าโหลดจาก Google Sheets ไม่ได้ ลองใช้ข้อมูลเก่าจาก cache
+                if (!forceRefresh) {
+                    const cachedData = loadFromLocalStorage(STORAGE_KEYS.PAYMENT_DATA);
+                    if (cachedData && cachedData.length > 0) {
+                        paymentData = cachedData;
+                        console.log('ใช้ข้อมูลการจ่ายเก่าจาก cache:', paymentData.length, 'รายการ');
+                        return Promise.resolve();
+                    }
+                }
+                
                 paymentData = [];
                 return Promise.resolve();
             }
         }
 
-        async function loadData() {
+        async function loadData(forceRefresh = false) {
             try {
+                // ลองโหลดจาก Local Storage ก่อน (ถ้าไม่ได้บังคับรีเฟรช)
+                if (!forceRefresh) {
+                    const cachedData = loadFromLocalStorage(
+                        STORAGE_KEYS.MAIN_DATA, 
+                        STORAGE_KEYS.MAIN_TIMESTAMP, 
+                        CACHE_DURATION.MAIN_DATA
+                    );
+                    
+                    if (cachedData && cachedData.length > 0) {
+                        allData = cachedData;
+                        isLoadingFromCache = true;
+                        console.log('ใช้ข้อมูลหลักจาก Local Storage:', allData.length, 'รายการ');
+                        hideApiKeyWarning();
+                        
+                        // โหลดข้อมูลใหม่หลังบ้านเพื่ออัพเดท cache
+                        setTimeout(() => {
+                            loadData(true).then(() => {
+                                console.log('อัพเดทข้อมูลหลักหลังบ้านเสร็จสิ้น');
+                            });
+                        }, 3000);
+                        
+                        return Promise.resolve();
+                    }
+                }
+
                 const csvUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(SHEET_NAME)}`;
-                console.log('กำลังโหลดข้อมูลจาก Google Sheets...');
+                console.log('กำลังโหลดข้อมูลหลักจาก Google Sheets...');
                 
                 // เพิ่ม timeout และ retry logic
                 const controller = new AbortController();
@@ -856,7 +1046,7 @@
                 
                 if (rows && rows.length > 1) {
                     // กรองข้อมูลและเอาเฉพาะคอลัมน์ A-T (20 คอลัมน์แรก)
-                    allData = rows.slice(1).filter(row => {
+                    const newAllData = rows.slice(1).filter(row => {
                         const [invNo, houseNo, soi, name] = row;
                         return invNo && houseNo && soi && name && 
                                invNo !== 'undefined' && houseNo !== 'undefined' && 
@@ -865,7 +1055,16 @@
                                soi.trim() !== '' && name.trim() !== '';
                     }).map(row => row.slice(0, 20)); // เอาเฉพาะคอลัมน์ A-T
                     
-                    console.log('โหลดข้อมูลสำเร็จ:', allData.length, 'รายการ');
+                    allData = newAllData;
+                    
+                    // บันทึกลง Local Storage
+                    saveToLocalStorage(
+                        STORAGE_KEYS.MAIN_DATA, 
+                        allData, 
+                        STORAGE_KEYS.MAIN_TIMESTAMP
+                    );
+                    
+                    console.log('โหลดข้อมูลหลักสำเร็จ:', allData.length, 'รายการ');
                     hideApiKeyWarning();
                     return Promise.resolve();
                 } else {
@@ -875,11 +1074,22 @@
             } catch (error) {
                 if (error.name === 'AbortError') {
                     console.error('การโหลดข้อมูลหลักหมดเวลา (timeout)');
-                    showApiKeyWarning();
                 } else {
-                    console.error('เกิดข้อผิดพลาดในการโหลดข้อมูล:', error);
-                    showApiKeyWarning();
+                    console.error('เกิดข้อผิดพลาดในการโหลดข้อมูลหลัก:', error);
                 }
+                
+                // ถ้าโหลดจาก Google Sheets ไม่ได้ ลองใช้ข้อมูลเก่าจาก cache
+                if (!forceRefresh) {
+                    const cachedData = loadFromLocalStorage(STORAGE_KEYS.MAIN_DATA);
+                    if (cachedData && cachedData.length > 0) {
+                        allData = cachedData;
+                        console.log('ใช้ข้อมูลหลักเก่าจาก cache:', allData.length, 'รายการ');
+                        hideApiKeyWarning();
+                        return Promise.resolve();
+                    }
+                }
+                
+                showApiKeyWarning();
                 allData = [];
                 return Promise.resolve();
             }
@@ -1427,6 +1637,15 @@
             console.log('เริ่มโหลดข้อมูลสรุปหลังบ้าน...');
             
             summaryPreloadPromise = new Promise((resolve) => {
+                // ตรวจสอบ cache ก่อน
+                const cachedSummary = loadFromLocalStorage(STORAGE_KEYS.SUMMARY_CACHE);
+                if (cachedSummary) {
+                    console.log('พบข้อมูลสรุปใน Local Storage');
+                    summaryDataPreloaded = true;
+                    resolve();
+                    return;
+                }
+
                 // สร้าง iframe ซ่อนไว้เพื่อโหลดข้อมูลล่วงหน้า
                 const preloadIframe = document.createElement('iframe');
                 preloadIframe.src = 'https://serene-2025.github.io/serene/check/check.html';
@@ -1439,6 +1658,13 @@
                 preloadIframe.onload = () => {
                     console.log('โหลดข้อมูลสรุปหลังบ้านเสร็จสิ้น');
                     summaryDataPreloaded = true;
+                    
+                    // บันทึก cache สำหรับหน้าสรุป
+                    saveToLocalStorage(STORAGE_KEYS.SUMMARY_CACHE, {
+                        loaded: true,
+                        timestamp: Date.now(),
+                        url: preloadIframe.src
+                    });
                     
                     // เก็บ iframe ไว้ในหน้าเพื่อใช้ cache
                     document.body.appendChild(preloadIframe);
@@ -1489,7 +1715,13 @@
                     if (allData.length > 0) {
                         // แสดงข้อมูลทั้งหมดอัตโนมัติ
                         showAllDataSilent();
-                        searchResult.innerHTML = `<i class="fas fa-check-circle mr-2 text-green-500"></i>โหลดข้อมูลสำเร็จ! แสดงข้อมูลทั้งหมด ${allData.length} รายการ (เรียงตามปีล่าสุด)`;
+                        
+                        // แสดงสถานะการโหลดพร้อมข้อมูล cache
+                        const cacheStatus = isLoadingFromCache ? 
+                            '<span class="text-blue-500 text-sm ml-2"><i class="fas fa-bolt mr-1"></i>โหลดจาก Cache</span>' : 
+                            '<span class="text-green-500 text-sm ml-2"><i class="fas fa-cloud-download-alt mr-1"></i>โหลดจาก Google Sheets</span>';
+                        
+                        searchResult.innerHTML = `<i class="fas fa-check-circle mr-2 text-green-500"></i>โหลดข้อมูลสำเร็จ! แสดงข้อมูลทั้งหมด ${allData.length} รายการ (เรียงตามปีล่าสุด)${cacheStatus}`;
                     } else {
                         searchResult.innerHTML = '<i class="fas fa-exclamation-triangle mr-2 text-yellow-500"></i>โหลดข้อมูลเสร็จสิ้น แต่ไม่พบข้อมูลในระบบ';
                     }
@@ -2227,11 +2459,62 @@
             }
         }
 
+        // Cache Management Functions
+        function clearAllCache() {
+            try {
+                // ลบข้อมูล cache ทั้งหมด
+                Object.values(STORAGE_KEYS).forEach(key => {
+                    localStorage.removeItem(key);
+                });
+                
+                // รีเซ็ตตัวแปร
+                allData = [];
+                paymentData = [];
+                summaryDataPreloaded = false;
+                summaryPreloadPromise = null;
+                isLoadingFromCache = false;
+                
+                console.log('ล้าง Cache ทั้งหมดเสร็จสิ้น');
+                
+                // แสดงข้อความแจ้งเตือน
+                const searchResult = document.getElementById('searchResult');
+                const searchInfo = document.getElementById('searchInfo');
+                
+                searchResult.innerHTML = '<i class="fas fa-trash-alt mr-2 text-red-500"></i>ล้าง Cache เสร็จสิ้น กำลังโหลดข้อมูลใหม่...';
+                searchInfo.classList.remove('hidden');
+                
+                // โหลดข้อมูลใหม่
+                setTimeout(() => {
+                    location.reload();
+                }, 1500);
+                
+            } catch (error) {
+                console.error('เกิดข้อผิดพลาดในการล้าง Cache:', error);
+                alert('เกิดข้อผิดพลาดในการล้าง Cache กรุณาลองใหม่อีกครั้ง');
+            }
+        }
+
+        function showCacheInfo() {
+            const storageInfo = getStorageInfo();
+            const cacheInfo = {
+                mainData: loadFromLocalStorage(STORAGE_KEYS.MAIN_DATA) ? 'มีข้อมูล' : 'ไม่มีข้อมูล',
+                paymentData: loadFromLocalStorage(STORAGE_KEYS.PAYMENT_DATA) ? 'มีข้อมูล' : 'ไม่มีข้อมูล',
+                summaryCache: loadFromLocalStorage(STORAGE_KEYS.SUMMARY_CACHE) ? 'มีข้อมูล' : 'ไม่มีข้อมูล',
+                mainTimestamp: localStorage.getItem(STORAGE_KEYS.MAIN_TIMESTAMP),
+                paymentTimestamp: localStorage.getItem(STORAGE_KEYS.PAYMENT_TIMESTAMP)
+            };
+            
+            console.log('ข้อมูล Cache:', cacheInfo);
+            console.log('ข้อมูล Storage:', storageInfo);
+            
+            return { cacheInfo, storageInfo };
+        }
+
         // Navigation Functions
         function toggleMobileMenu() {
             const menu = document.getElementById('mobileMenu');
             menu.classList.toggle('hidden');
         }
     </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'980c1216576a7b4a',t:'MTc1ODE0ODQ2My4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'980c2a5024477b62',t:'MTc1ODE0OTQ1NS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
