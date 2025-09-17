@@ -1305,7 +1305,9 @@
                         status: row[8] || 'รอตรวจสอบ', // Status from Google Sheets (column 9), default if empty
                         // Legacy support
                         firstName: (row[1] || '').split(' ')[0] || '',
-                        lastName: (row[1] || '').split(' ').slice(1).join(' ') || ''
+                        lastName: (row[1] || '').split(' ').slice(1).join(' ') || '',
+                        // Add original row index for sorting (higher index = newer)
+                        originalIndex: i
                     };
                     
                     // Only add if we have essential data
@@ -1314,7 +1316,15 @@
                     }
                 }
                 
-                console.log('Parsed CSV data:', data.length, 'records');
+                // Sort data by row index from Google Sheets (highest to lowest)
+                // Higher row index = newer entry (added later to the sheet)
+                data.sort((a, b) => {
+                    // Primary sort: by original index (row number in Google Sheets)
+                    // Higher index = newer entry, so sort descending
+                    return b.originalIndex - a.originalIndex;
+                });
+                
+                console.log('Parsed and sorted CSV data:', data.length, 'records (newest first)');
                 return data;
                 
             } catch (error) {
@@ -1470,14 +1480,21 @@
             
             // Update mobile cards
             mobileCardView.innerHTML = paginatedData.map((vehicle, index) => `
-                <div class="gradient-card rounded-xl shadow-lg p-5 hover-lift table-row-enter border border-white border-opacity-20" style="animation-delay: ${index * 0.05}s">
+                <div class="${getCardBackgroundColor(vehicle)} rounded-xl shadow-lg p-5 hover-lift table-row-enter border-2 ${getCardBorderColor(vehicle)}" style="animation-delay: ${index * 0.05}s">
+                    <!-- Status Section at Top -->
+                    <div class="flex justify-center mb-4">
+                        <span class="px-4 py-2 rounded-full text-sm font-bold ${getStatusColor(vehicle)} shadow-lg">
+                            ${getStatusIcon(vehicle)} ${getStatusText(vehicle)}
+                        </span>
+                    </div>
+                    
                     <!-- Header Section with Vehicle Icon and License Plate -->
-                    <div class="flex items-center justify-between mb-4 pb-3 border-b border-gray-200">
+                    <div class="flex items-center justify-center mb-4 pb-3 border-b border-gray-200">
                         <div class="flex items-center">
                             <div class="p-3 bg-gradient-to-br ${getVehicleGradient(vehicle.vehicleType)} rounded-xl shadow-lg mr-4">
                                 <span class="text-3xl">${getVehicleIcon(vehicle.vehicleType)}</span>
                             </div>
-                            <div>
+                            <div class="text-center">
                                 <div class="font-mono text-xl font-bold text-gray-800 mb-1">
                                     ${highlightSearchTerm(vehicle.licensePlate, searchTerm)}
                                 </div>
@@ -1485,11 +1502,6 @@
                                     ${vehicle.vehicleType}
                                 </div>
                             </div>
-                        </div>
-                        <div>
-                            <span class="px-3 py-2 rounded-full text-xs font-bold ${getStatusColor(vehicle)} shadow-sm">
-                                ${getStatusIcon(vehicle)} ${getStatusText(vehicle)}
-                            </span>
                         </div>
                     </div>
                     
@@ -1739,6 +1751,70 @@
             }
         }
         
+        // Get card background color based on status
+        function getCardBackgroundColor(vehicle) {
+            // Use status from Google Sheets if available
+            if (vehicle.status && vehicle.status.trim() !== '') {
+                const status = vehicle.status.toLowerCase().trim();
+                
+                if (status.includes('สมบูรณ์') || status.includes('complete') || status.includes('approved') || status.includes('อนุมัติ')) {
+                    return 'bg-gradient-to-br from-green-50 to-green-100';
+                } else if (status.includes('รอ') || status.includes('pending') || status.includes('ไม่มีภาพ') || status.includes('no image')) {
+                    return 'bg-gradient-to-br from-yellow-50 to-yellow-100';
+                } else if (status.includes('ไม่อนุมัติ') || status.includes('rejected') || status.includes('ไม่สมบูรณ์') || status.includes('incomplete')) {
+                    return 'bg-gradient-to-br from-red-50 to-red-100';
+                } else if (status.includes('ตรวจสอบ') || status.includes('review') || status.includes('checking')) {
+                    return 'bg-gradient-to-br from-blue-50 to-blue-100';
+                } else {
+                    return 'bg-gradient-to-br from-gray-50 to-gray-100';
+                }
+            }
+            
+            // Fallback to automatic status
+            const hasImage = vehicle.imageUrl && vehicle.imageUrl.trim() !== '';
+            const hasComplete = vehicle.fullName && vehicle.houseNumber && vehicle.licensePlate && vehicle.phoneNumber;
+            
+            if (hasComplete && hasImage) {
+                return 'bg-gradient-to-br from-green-50 to-green-100';
+            } else if (hasComplete) {
+                return 'bg-gradient-to-br from-yellow-50 to-yellow-100';
+            } else {
+                return 'bg-gradient-to-br from-red-50 to-red-100';
+            }
+        }
+        
+        // Get card border color based on status
+        function getCardBorderColor(vehicle) {
+            // Use status from Google Sheets if available
+            if (vehicle.status && vehicle.status.trim() !== '') {
+                const status = vehicle.status.toLowerCase().trim();
+                
+                if (status.includes('สมบูรณ์') || status.includes('complete') || status.includes('approved') || status.includes('อนุมัติ')) {
+                    return 'border-green-200 shadow-green-100';
+                } else if (status.includes('รอ') || status.includes('pending') || status.includes('ไม่มีภาพ') || status.includes('no image')) {
+                    return 'border-yellow-200 shadow-yellow-100';
+                } else if (status.includes('ไม่อนุมัติ') || status.includes('rejected') || status.includes('ไม่สมบูรณ์') || status.includes('incomplete')) {
+                    return 'border-red-200 shadow-red-100';
+                } else if (status.includes('ตรวจสอบ') || status.includes('review') || status.includes('checking')) {
+                    return 'border-blue-200 shadow-blue-100';
+                } else {
+                    return 'border-gray-200 shadow-gray-100';
+                }
+            }
+            
+            // Fallback to automatic status
+            const hasImage = vehicle.imageUrl && vehicle.imageUrl.trim() !== '';
+            const hasComplete = vehicle.fullName && vehicle.houseNumber && vehicle.licensePlate && vehicle.phoneNumber;
+            
+            if (hasComplete && hasImage) {
+                return 'border-green-200 shadow-green-100';
+            } else if (hasComplete) {
+                return 'border-yellow-200 shadow-yellow-100';
+            } else {
+                return 'border-red-200 shadow-red-100';
+            }
+        }
+        
         // Refresh data button
         document.getElementById('refreshData').addEventListener('click', loadDashboardData);
         
@@ -1882,5 +1958,5 @@
             });
         });
     </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9803696dd31e7b54',t:'MTc1ODA1NzY2OS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'98084be397b4ee56',t:'MTc1ODEwODg4Ny4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
