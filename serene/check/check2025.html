@@ -285,6 +285,12 @@
             color: white; 
             box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4);
         }
+        .status-waiting { 
+            background: linear-gradient(135deg, #eab308, #ca8a04); 
+            color: white; 
+            box-shadow: 0 4px 15px rgba(234, 179, 8, 0.4);
+            animation: pulse 2s infinite;
+        }
         .status-contact-admin { 
             background: linear-gradient(135deg, #ef4444, #dc2626); 
             color: white; 
@@ -463,6 +469,7 @@
                 <div class="text-sm text-white/70 max-w-3xl mx-auto space-y-2 bounce-in">
                     <p class="flex items-center justify-center"><i class="fas fa-info-circle mr-2 text-blue-300"></i> 1. ข้อมูลสถานะรายเดือน ยังไม่อัพเดทเรียลไทม์</p>
                     <p class="flex items-center justify-center"><i class="fas fa-sync-alt mr-2 text-green-300"></i> 2. ข้อมูลประวัติการแจ้งชำระ อัพเดทเรียลไทม์</p>
+                    <p id="lastUpdateInfo" class="flex items-center justify-center text-xs"><i class="fas fa-clock mr-2 text-yellow-300"></i> <span id="lastUpdateText">กำลังตรวจสอบวันที่อัพเดทล่าสุด...</span></p>
                 </div>
             </div>
         </div>
@@ -888,6 +895,61 @@
             };
         }
 
+        function getLatestUpdateDate() {
+            if (!paymentData || paymentData.length === 0) {
+                return null;
+            }
+            
+            // หาวันที่ตรวจสอบล่าสุดจากคอลัมน์ O (index 14): วันที่ตรวจสอบ
+            const checkDates = paymentData
+                .map(row => row[14]) // คอลัมน์ O: วันที่ตรวจสอบ
+                .filter(date => date && date.trim() !== '' && date !== 'undefined')
+                .map(dateStr => {
+                    // แปลงวันที่เป็น Date object
+                    try {
+                        // รองรับรูปแบบวันที่ต่างๆ
+                        const date = new Date(dateStr);
+                        return isNaN(date.getTime()) ? null : date;
+                    } catch (error) {
+                        return null;
+                    }
+                })
+                .filter(date => date !== null);
+            
+            if (checkDates.length === 0) {
+                return null;
+            }
+            
+            // หาวันที่ล่าสุด
+            const latestDate = new Date(Math.max(...checkDates));
+            return latestDate;
+        }
+
+        function updateLastUpdateDisplay() {
+            const lastUpdateText = document.getElementById('lastUpdateText');
+            if (!lastUpdateText) return;
+            
+            const latestDate = getLatestUpdateDate();
+            
+            if (latestDate) {
+                const formattedDate = latestDate.toLocaleDateString('th-TH', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                    weekday: 'long'
+                });
+                
+                const formattedTime = latestDate.toLocaleTimeString('th-TH', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                
+                lastUpdateText.innerHTML = `อัพเดทล่าสุด: ${formattedDate} เวลา ${formattedTime} น.`;
+            } else {
+                lastUpdateText.innerHTML = 'ไม่พบข้อมูลวันที่อัพเดท';
+            }
+        }
+
         async function loadPaymentData(forceRefresh = false) {
             try {
                 // ลองโหลดจาก Local Storage ก่อน (ถ้าไม่ได้บังคับรีเฟรช)
@@ -902,6 +964,9 @@
                         paymentData = cachedData;
                         isLoadingFromCache = true;
                         console.log('ใช้ข้อมูลการจ่ายจาก Local Storage:', paymentData.length, 'รายการ');
+                        
+                        // อัพเดทการแสดงวันที่อัพเดทล่าสุด
+                        updateLastUpdateDisplay();
                         
                         // โหลดข้อมูลใหม่หลังบ้านเพื่ออัพเดท cache (ไม่รอผลลัพธ์)
                         setTimeout(() => {
@@ -968,10 +1033,14 @@
                         STORAGE_KEYS.PAYMENT_TIMESTAMP
                     );
                     
+                    // อัพเดทการแสดงวันที่อัพเดทล่าสุด
+                    updateLastUpdateDisplay();
+                    
                     console.log('โหลดข้อมูลการจ่ายสำเร็จ:', paymentData.length, 'รายการ');
                 } else {
                     console.log('ไม่พบข้อมูลการจ่ายใน Google Sheets');
                     paymentData = [];
+                    updateLastUpdateDisplay();
                 }
                 
             } catch (error) {
@@ -983,11 +1052,13 @@
                     if (cachedData && cachedData.length > 0) {
                         paymentData = cachedData;
                         console.log('ใช้ข้อมูลการจ่ายเก่าจาก cache:', paymentData.length, 'รายการ');
+                        updateLastUpdateDisplay();
                         return;
                     }
                 }
                 
                 paymentData = [];
+                updateLastUpdateDisplay();
             }
         }
 
@@ -1129,20 +1200,44 @@
             if (statusLower.includes('ยังไม่จ่าย')) return 'status-unpaid';
             if (statusLower.includes('ล่วงหน้า')) return 'status-advance';
             if (statusLower.includes('ไม่เก็บ')) return 'status-exempt';
-            if (statusLower.includes('รอข้อมูล') || statusLower.includes('รอตรวจสอบ')) return 'status-pending';
+            if (statusLower.includes('รอตรวจสอบ')) return 'status-waiting';
+            if (statusLower.includes('รอข้อมูล')) return 'status-pending';
             if (statusLower.includes('ให้ติดต่อแอดมิน')) return 'status-contact-admin';
             return 'bg-gray-200 text-gray-800';
         }
 
         function calculateOverdueStatus(monthlyStatuses) {
             let overdueCount = 0;
+            let waitingCount = 0;
             const currentMonth = new Date().getMonth();
             
             for (let i = 0; i <= currentMonth; i++) {
                 const status = monthlyStatuses[i]?.toLowerCase() || '';
-                if (status.includes('ยังไม่จ่าย') || status.includes('รอข้อมูล') || status.includes('รอตรวจสอบ')) {
+                if (status.includes('ยังไม่จ่าย') || status.includes('รอข้อมูล')) {
                     overdueCount++;
+                } else if (status.includes('รอตรวจสอบ')) {
+                    waitingCount++;
                 }
+            }
+
+            // ถ้ามีรายการรอตรวจสอบ ให้แสดงสถานะพิเศษ
+            if (waitingCount > 0 && overdueCount === 0) {
+                return { 
+                    text: `รอตรวจสอบ ${waitingCount} เดือน`, 
+                    icon: 'fas fa-clock', 
+                    color: 'text-white',
+                    headerBg: 'from-yellow-500 to-yellow-600'
+                };
+            }
+            
+            // ถ้ามีทั้งรอตรวจสอบและค้างชำระ
+            if (waitingCount > 0 && overdueCount > 0) {
+                return { 
+                    text: `ค้างชำระ ${overdueCount} เดือน + รอตรวจสอบ ${waitingCount} เดือน`, 
+                    icon: 'fas fa-exclamation-triangle', 
+                    color: 'text-white',
+                    headerBg: 'from-orange-500 to-red-500'
+                };
             }
 
             if (overdueCount === 0) return { 
@@ -1194,19 +1289,22 @@
             let totalPaid = 0;
             let totalUnpaid = 0;
             let totalAdvance = 0;
+            let totalWaiting = 0;
 
             monthlyStatuses.forEach(status => {
                 const statusLower = status.toLowerCase();
                 if (statusLower.includes('จ่ายแล้ว')) {
                     totalPaid += 300;
-                } else if (statusLower.includes('ยังไม่จ่าย') || statusLower.includes('รอข้อมูล') || statusLower.includes('รอตรวจสอบ')) {
+                } else if (statusLower.includes('รอตรวจสอบ')) {
+                    totalWaiting += 300;
+                } else if (statusLower.includes('ยังไม่จ่าย') || statusLower.includes('รอข้อมูล')) {
                     totalUnpaid += 300;
                 } else if (statusLower.includes('ล่วงหน้า')) {
                     totalAdvance += 300;
                 }
             });
 
-            return { totalPaid, totalUnpaid, totalAdvance };
+            return { totalPaid, totalUnpaid, totalAdvance, totalWaiting };
         }
 
         async function sendTelegramNotification(houseNo, searchResults) {
@@ -1316,19 +1414,35 @@
             // อัพเดทสถานะตามข้อมูลการจ่าย
             payments.forEach(payment => {
                 const paymentMonth = payment[5];   // คอลัมน์ F: เดือน
+                const paymentYear = payment[6];    // คอลัมน์ G: ปี
                 const paymentStatus = payment[13]; // คอลัมน์ N: สถานะการตรวจสอบ
                 const monthIndex = parseInt(paymentMonth) - 1; // แปลงเดือนเป็น index (0-11)
                 
-                if (monthIndex >= 0 && monthIndex < 12 && paymentStatus) {
-                    const statusLower = paymentStatus.toLowerCase().trim();
+                // ตรวจสอบว่าเดือนและปีตรงกัน และ index ถูกต้อง
+                if (monthIndex >= 0 && monthIndex < 12 && 
+                    paymentYear.trim() === year.trim() && paymentStatus) {
                     
-                    // อัพเดทสถานะตามเงื่อนไข
-                    if (statusLower.includes('รอตรวจสอบ')) {
-                        updatedStatuses[monthIndex] = 'รอตรวจสอบ';
+                    const statusLower = paymentStatus.toLowerCase().trim();
+                    const currentStatus = updatedStatuses[monthIndex]?.toLowerCase() || '';
+                    
+                    // อัพเดทสถานะตามเงื่อนไข (ลำดับความสำคัญ)
+                    if (statusLower.includes('ให้ติดต่อแอดมิน')) {
+                        updatedStatuses[monthIndex] = 'ให้ติดต่อแอดมิน';
                     } else if (statusLower.includes('ตรวจสอบแล้ว')) {
                         updatedStatuses[monthIndex] = 'จ่ายแล้ว';
-                    } else if (statusLower.includes('ให้ติดต่อแอดมิน')) {
-                        updatedStatuses[monthIndex] = 'ให้ติดต่อแอดมิน';
+                    } else if (statusLower.includes('รอตรวจสอบ')) {
+                        // เงื่อนไขพิเศษ: อัพเดทสถานะเป็น "รอตรวจสอบ" เฉพาะเมื่อ:
+                        // 1. สถานะเดิมเป็น "ยังไม่จ่าย" หรือ "รอข้อมูล" หรือ
+                        // 2. ยังไม่มีสถานะ หรือ
+                        // 3. สถานะเดิมเป็น "รอตรวจสอบ" อยู่แล้ว
+                        if (currentStatus.includes('ยังไม่จ่าย') || 
+                            currentStatus.includes('รอข้อมูล') || 
+                            currentStatus.includes('รอตรวจสอบ') ||
+                            currentStatus === '' || 
+                            !updatedStatuses[monthIndex]) {
+                            updatedStatuses[monthIndex] = 'รอตรวจสอบ';
+                        }
+                        // หมายเหตุ: ไม่อัพเดทถ้าสถานะเดิมเป็น "จ่ายแล้ว", "ล่วงหน้า", "ไม่เก็บ" เป็นต้น
                     }
                 }
             });
@@ -1486,26 +1600,46 @@
                                 <i class="fas fa-chart-pie mr-2 text-purple-600"></i>
                                 สรุปการเงิน (300 บาท/เดือน)
                             </h5>
-                            <div class="grid grid-cols-3 gap-4">
+                            <div class="grid ${amounts.totalWaiting > 0 ? 'grid-cols-2' : 'grid-cols-3'} gap-3">
                                 <div class="text-center">
-                                    <div class="text-2xl font-bold text-green-600 mb-1">
+                                    <div class="text-xl font-bold text-green-600 mb-1">
                                         ${amounts.totalPaid.toLocaleString()}
                                     </div>
                                     <div class="text-xs text-gray-500">จ่ายแล้ว</div>
                                 </div>
+                                ${amounts.totalWaiting > 0 ? `
+                                    <div class="text-center">
+                                        <div class="text-xl font-bold text-yellow-600 mb-1 pulse-animation">
+                                            ${amounts.totalWaiting.toLocaleString()}
+                                        </div>
+                                        <div class="text-xs text-gray-500">รอตรวจสอบ</div>
+                                    </div>
+                                ` : ''}
                                 <div class="text-center">
-                                    <div class="text-2xl font-bold text-red-600 mb-1">
+                                    <div class="text-xl font-bold text-red-600 mb-1">
                                         ${amounts.totalUnpaid.toLocaleString()}
                                     </div>
                                     <div class="text-xs text-gray-500">ค้างชำระ</div>
                                 </div>
-                                <div class="text-center">
-                                    <div class="text-2xl font-bold text-blue-600 mb-1">
-                                        ${amounts.totalAdvance.toLocaleString()}
+                                ${amounts.totalWaiting === 0 ? `
+                                    <div class="text-center">
+                                        <div class="text-xl font-bold text-blue-600 mb-1">
+                                            ${amounts.totalAdvance.toLocaleString()}
+                                        </div>
+                                        <div class="text-xs text-gray-500">ล่วงหน้า</div>
                                     </div>
-                                    <div class="text-xs text-gray-500">ล่วงหน้า</div>
-                                </div>
+                                ` : ''}
                             </div>
+                            ${amounts.totalAdvance > 0 && amounts.totalWaiting > 0 ? `
+                                <div class="mt-3 pt-3 border-t border-gray-200">
+                                    <div class="text-center">
+                                        <div class="text-lg font-bold text-blue-600 mb-1">
+                                            ${amounts.totalAdvance.toLocaleString()}
+                                        </div>
+                                        <div class="text-xs text-gray-500">ล่วงหน้า</div>
+                                    </div>
+                                </div>
+                            ` : ''}
                         </div>
                     </div>
                 </div>
@@ -2626,5 +2760,5 @@
             menu.classList.toggle('hidden');
         }
     </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'980c8d8bc0feee56',t:'MTc1ODE1MzUyMC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'980cb328d1f2ee35',t:'MTc1ODE1NTA2MS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
