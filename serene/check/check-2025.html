@@ -920,18 +920,160 @@
             img.src = imageUrl;
         }
 
-        function showPdf(pdfUrl, title) {
-            // Convert PDF to image using PDF.js or similar service
-            // For now, we'll try to display it as an image assuming it's converted
-            const imageUrl = pdfUrl.replace('.pdf', '.jpg').replace('.PDF', '.jpg');
-            showImage(imageUrl, title);
+        async function showPdf(pdfUrl, title) {
+            const modal = document.getElementById('imageModal');
+            const modalTitle = document.getElementById('imageModalTitle');
+            const imageLoading = document.getElementById('imageLoading');
+            const modalImage = document.getElementById('modalImage');
+            const imageError = document.getElementById('imageError');
+
+            // Show modal and loading
+            modal.classList.remove('hidden');
+            modalTitle.textContent = title + ' (แปลงจาก PDF)';
+            imageLoading.classList.remove('hidden');
+            modalImage.classList.add('hidden');
+            imageError.classList.add('hidden');
+
+            try {
+                // Try multiple PDF to image conversion services
+                const conversionServices = [
+                    // Google Drive PDF viewer (works for public PDFs)
+                    `https://drive.google.com/viewerng/viewer?embedded=true&url=${encodeURIComponent(pdfUrl)}`,
+                    // PDF.js viewer
+                    `https://mozilla.github.io/pdf.js/web/viewer.html?file=${encodeURIComponent(pdfUrl)}`,
+                    // Alternative: Try to load as image directly (in case it's already converted)
+                    pdfUrl.replace('.pdf', '.jpg').replace('.PDF', '.jpg'),
+                    pdfUrl.replace('.pdf', '.png').replace('.PDF', '.png')
+                ];
+
+                let loaded = false;
+                
+                // Try each service
+                for (let i = 0; i < conversionServices.length && !loaded; i++) {
+                    try {
+                        const serviceUrl = conversionServices[i];
+                        
+                        if (i < 2) {
+                            // For PDF viewers, create an iframe
+                            const iframe = document.createElement('iframe');
+                            iframe.src = serviceUrl;
+                            iframe.style.width = '100%';
+                            iframe.style.height = '600px';
+                            iframe.style.border = 'none';
+                            iframe.style.borderRadius = '8px';
+                            
+                            // Replace image with iframe
+                            imageLoading.classList.add('hidden');
+                            modalImage.style.display = 'none';
+                            
+                            // Clear previous content and add iframe
+                            const imageContainer = modalImage.parentElement;
+                            const existingIframe = imageContainer.querySelector('iframe');
+                            if (existingIframe) {
+                                existingIframe.remove();
+                            }
+                            
+                            imageContainer.appendChild(iframe);
+                            loaded = true;
+                            break;
+                        } else {
+                            // For image URLs, try to load as image
+                            await new Promise((resolve, reject) => {
+                                const img = new Image();
+                                img.onload = () => {
+                                    imageLoading.classList.add('hidden');
+                                    modalImage.src = serviceUrl;
+                                    modalImage.style.display = 'block';
+                                    modalImage.classList.remove('hidden');
+                                    
+                                    // Remove any existing iframe
+                                    const existingIframe = modalImage.parentElement.querySelector('iframe');
+                                    if (existingIframe) {
+                                        existingIframe.remove();
+                                    }
+                                    
+                                    loaded = true;
+                                    resolve();
+                                };
+                                img.onerror = reject;
+                                img.src = serviceUrl;
+                            });
+                            
+                            if (loaded) break;
+                        }
+                    } catch (error) {
+                        console.log(`Service ${i + 1} failed:`, error);
+                        continue;
+                    }
+                }
+
+                if (!loaded) {
+                    throw new Error('ไม่สามารถแปลง PDF เป็นรูปภาพได้');
+                }
+
+            } catch (error) {
+                console.error('Error converting PDF:', error);
+                imageLoading.classList.add('hidden');
+                
+                // Show error with option to open PDF directly
+                const imageContainer = modalImage.parentElement;
+                const existingIframe = imageContainer.querySelector('iframe');
+                if (existingIframe) {
+                    existingIframe.remove();
+                }
+                
+                imageError.innerHTML = `
+                    <div class="text-center py-8">
+                        <div class="text-4xl mb-4">📄</div>
+                        <p class="text-red-600 mb-4">ไม่สามารถแปลง PDF เป็นรูปภาพได้</p>
+                        <div class="space-y-2">
+                            <button onclick="window.open('${pdfUrl}', '_blank')" 
+                                    class="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-colors">
+                                🔗 เปิด PDF ในแท็บใหม่
+                            </button>
+                            <br>
+                            <button onclick="downloadPdf('${pdfUrl}')" 
+                                    class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+                                💾 ดาวน์โหลด PDF
+                            </button>
+                        </div>
+                    </div>
+                `;
+                imageError.classList.remove('hidden');
+            }
+        }
+
+        function downloadPdf(pdfUrl) {
+            try {
+                const link = document.createElement('a');
+                link.href = pdfUrl;
+                link.download = 'document.pdf';
+                link.target = '_blank';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            } catch (error) {
+                console.error('Download failed:', error);
+                // Fallback: open in new tab
+                window.open(pdfUrl, '_blank');
+            }
         }
 
         function closeImageModal() {
             const modal = document.getElementById('imageModal');
             const modalImage = document.getElementById('modalImage');
+            const imageContainer = modalImage.parentElement;
+            
+            // Clean up
             modal.classList.add('hidden');
             modalImage.src = '';
+            modalImage.style.display = 'block';
+            
+            // Remove any existing iframe
+            const existingIframe = imageContainer.querySelector('iframe');
+            if (existingIframe) {
+                existingIframe.remove();
+            }
         }
 
         // Close modal when clicking outside
@@ -955,5 +1097,5 @@
             }
         });
     </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'981e621aa7e77b5e',t:'MTc1ODM0MDQ4NC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'981e70f4d7f57b50',t:'MTc1ODM0MTA5Mi4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
