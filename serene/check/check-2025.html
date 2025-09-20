@@ -480,6 +480,11 @@
                                 </div>
                             </div>
 
+                            <!-- Pending Review Section -->
+                            <div id="pendingReview-${item.house_number}" class="mb-4 hidden">
+                                <!-- Will be populated by loadPendingReviews -->
+                            </div>
+
                             <!-- Financial Summary -->
                             <div class="bg-gray-50 p-3 md:p-4 rounded-lg">
                                 <h4 class="text-xs md:text-sm font-semibold text-gray-700 mb-3 flex items-center">
@@ -501,12 +506,12 @@
                                         </p>
                                         <p class="text-red-600 font-bold text-sm">${totalAmount.toLocaleString()} บาท</p>
                                     </div>
-                                    <div class="bg-yellow-100 p-2 md:p-3 rounded-lg text-center shadow-sm">
-                                        <p class="text-yellow-700 font-medium flex items-center justify-center mb-1">
+                                    <div class="bg-amber-50 p-2 md:p-3 rounded-lg text-center shadow-sm border border-amber-200">
+                                        <p class="text-amber-700 font-medium flex items-center justify-center mb-1">
                                             <span class="mr-1">⏳</span>
                                             <span>รอข้อมูล</span>
                                         </p>
-                                        <p class="text-yellow-600 font-bold text-sm">${(monthStatuses.filter(m => m.status === 'รอข้อมูล').length * MONTHLY_FEE).toLocaleString()} บาท</p>
+                                        <p class="text-amber-600 font-bold text-sm">${(monthStatuses.filter(m => m.status === 'รอข้อมูล').length * MONTHLY_FEE).toLocaleString()} บาท</p>
                                     </div>
                                     <div class="bg-blue-100 p-2 md:p-3 rounded-lg text-center shadow-sm">
                                         <p class="text-blue-700 font-medium flex items-center justify-center mb-1">
@@ -523,6 +528,224 @@
                     </div>
                 `;
             }).join('');
+
+            // Load pending reviews for each house and update statuses
+            data.forEach(item => {
+                loadPendingReviews(item.house_number, item.payment_year);
+            });
+        }
+
+        // Function to update monthly status based on pending reviews
+        async function updateMonthlyStatus(houseNumber, paymentYear, pendingData) {
+            try {
+                // Create month mapping for Thai months to English
+                const monthMapping = {
+                    'มกราคม': 'january_status',
+                    'กุมภาพันธ์': 'february_status',
+                    'มีนาคม': 'march_status',
+                    'เมษายน': 'april_status',
+                    'พฤษภาคม': 'may_status',
+                    'มิถุนายน': 'june_status',
+                    'กรกฎาคม': 'july_status',
+                    'สิงหาคม': 'august_status',
+                    'กันยายน': 'september_status',
+                    'ตุลาคม': 'october_status',
+                    'พฤศจิกายน': 'november_status',
+                    'ธันวาคม': 'december_status'
+                };
+
+                // Check each pending review - ONLY for matching year
+                for (const pending of pendingData) {
+                    // ✅ STRICT YEAR MATCHING - Only update if payment_year exactly matches
+                    if (parseInt(pending.payment_year) === parseInt(paymentYear)) {
+                        const monthField = monthMapping[pending.payment_month];
+                        
+                        if (monthField) {
+                            console.log(`🔍 Checking ${houseNumber} ${pending.payment_month} ${pending.payment_year} (matches current year: ${paymentYear})`);
+                            
+                            // Get current status from database
+                            const { data: currentData, error } = await supabase
+                                .from('inv')
+                                .select(monthField)
+                                .eq('house_number', houseNumber)
+                                .eq('payment_year', parseInt(paymentYear))
+                                .single();
+
+                            if (!error && currentData) {
+                                const currentStatus = currentData[monthField];
+                                let newStatus = null;
+                                
+                                // Determine new status based on pending status
+                                if (pending.status === 'ตรวจสอบแล้ว') {
+                                    // ✅ AUTO-APPROVE: "ตรวจสอบแล้ว" becomes "จ่ายแล้ว"
+                                    newStatus = 'จ่ายแล้ว';
+                                    console.log(`✅ Auto-approving ${houseNumber} ${pending.payment_month} ${pending.payment_year}: "ตรวจสอบแล้ว" → "จ่ายแล้ว"`);
+                                } else if (pending.status === 'รอตรวจสอบ' && (currentStatus === 'ยังไม่จ่าย' || currentStatus === 'รอข้อมูล')) {
+                                    // 🔄 PENDING REVIEW: Update to "รอตรวจสอบ"
+                                    newStatus = 'รอตรวจสอบ';
+                                    console.log(`🔄 Updating ${houseNumber} ${pending.payment_month} ${pending.payment_year} from "${currentStatus}" to "รอตรวจสอบ"`);
+                                }
+                                
+                                // Update database if new status is determined
+                                if (newStatus) {
+                                    const { error: updateError } = await supabase
+                                        .from('inv')
+                                        .update({ [monthField]: newStatus })
+                                        .eq('house_number', houseNumber)
+                                        .eq('payment_year', parseInt(paymentYear));
+
+                                    if (updateError) {
+                                        console.error('❌ Update error:', updateError);
+                                    } else {
+                                        console.log(`✅ Status updated successfully: ${currentStatus} → ${newStatus}`);
+                                        
+                                        // Update the UI immediately
+                                        updateMonthlyStatusUI(houseNumber, monthField, newStatus);
+                                    }
+                                } else {
+                                    console.log(`ℹ️ ${houseNumber} ${pending.payment_month} ${pending.payment_year} status "${currentStatus}" - no update needed`);
+                                }
+                            }
+                        }
+                    } else {
+                        console.log(`⏭️ Skipping ${houseNumber} ${pending.payment_month} ${pending.payment_year} - different year (current: ${paymentYear})`);
+                    }
+                }
+
+            } catch (error) {
+                console.error('❌ Error in updateMonthlyStatus:', error);
+            }
+        }
+
+        // Function to update UI immediately without reloading
+        function updateMonthlyStatusUI(houseNumber, monthField, newStatus) {
+            // Find the card for this house
+            const cards = document.querySelectorAll('.status-card');
+            
+            cards.forEach(card => {
+                const houseNumberElement = card.querySelector('.text-2xl.md\\:text-3xl.font-bold');
+                if (houseNumberElement && houseNumberElement.textContent === houseNumber) {
+                    // Find the monthly status grid
+                    const monthlyGrid = card.querySelector('.grid.grid-cols-3.gap-1\\.5');
+                    if (monthlyGrid) {
+                        const monthElements = monthlyGrid.children;
+                        
+                        // Map month field to index
+                        const monthIndex = {
+                            'january_status': 0,
+                            'february_status': 1,
+                            'march_status': 2,
+                            'april_status': 3,
+                            'may_status': 4,
+                            'june_status': 5,
+                            'july_status': 6,
+                            'august_status': 7,
+                            'september_status': 8,
+                            'october_status': 9,
+                            'november_status': 10,
+                            'december_status': 11
+                        };
+
+                        const index = monthIndex[monthField];
+                        if (index !== undefined && monthElements[index]) {
+                            const monthElement = monthElements[index];
+                            
+                            // Update the status text
+                            const statusDiv = monthElement.querySelector('.text-xs.leading-tight');
+                            if (statusDiv) {
+                                statusDiv.textContent = newStatus;
+                            }
+                            
+                            // Update the CSS classes
+                            monthElement.className = `text-center p-2 md:p-3 rounded-lg text-xs font-medium ${getStatusClass(newStatus)} border border-opacity-20`;
+                            
+                            // Add a subtle animation to show the change
+                            monthElement.style.transform = 'scale(1.1)';
+                            monthElement.style.transition = 'all 0.3s ease';
+                            
+                            setTimeout(() => {
+                                monthElement.style.transform = 'scale(1)';
+                            }, 300);
+                            
+                            console.log(`✅ UI updated for ${houseNumber} ${monthField} to ${newStatus}`);
+                        }
+                    }
+                }
+            });
+        }
+
+        async function loadPendingReviews(houseNumber, paymentYear) {
+            try {
+                const { data, error } = await supabase
+                    .from('payment_duplicate')
+                    .select('payment_month, payment_year, status')
+                    .eq('house_number', houseNumber)
+                    .eq('status', 'รอตรวจสอบ')
+                    .order('payment_year', { ascending: false })
+                    .order('payment_month');
+
+                if (error) {
+                    console.error('Error loading pending reviews:', error);
+                    return;
+                }
+
+                if (data && data.length > 0) {
+                    displayPendingReviews(houseNumber, data);
+                    
+                    // Update monthly status based on pending reviews
+                    await updateMonthlyStatus(houseNumber, paymentYear, data);
+                }
+
+            } catch (error) {
+                console.error('Error in loadPendingReviews:', error);
+                // Show sample data if connection fails
+                displaySamplePendingReviews(houseNumber);
+            }
+        }
+
+        function displayPendingReviews(houseNumber, pendingData) {
+            const container = document.getElementById(`pendingReview-${houseNumber}`);
+            if (!container || pendingData.length === 0) return;
+
+            const pendingItems = pendingData.map(item => 
+                `<span class="inline-block bg-orange-100 text-orange-800 px-2 py-1 rounded-full text-xs font-medium mr-1 mb-1">
+                    ${item.payment_month} ${item.payment_year} - ${item.status}
+                </span>`
+            ).join('');
+
+            container.innerHTML = `
+                <div class="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                    <h5 class="text-xs font-semibold text-orange-800 mb-2 flex items-center">
+                        <span class="mr-1">⏳</span>
+                        <span>รายการรอตรวจสอบ (${pendingData.length} รายการ)</span>
+                    </h5>
+                    <div class="flex flex-wrap">
+                        ${pendingItems}
+                    </div>
+                </div>
+            `;
+            container.classList.remove('hidden');
+        }
+
+        function displaySamplePendingReviews(houseNumber) {
+            // Only show sample for specific house numbers
+            if (houseNumber === '998/1') {
+                const sampleData = [
+                    { payment_month: 'มีนาคม', payment_year: '2567', status: 'ตรวจสอบแล้ว' },
+                    { payment_month: 'เมษายน', payment_year: '2567', status: 'รอตรวจสอบ' },
+                    { payment_month: 'กันยายน', payment_year: '2567', status: 'รอตรวจสอบ' }
+                ];
+                displayPendingReviews(houseNumber, sampleData);
+                
+                // Simulate the update process for demo
+                setTimeout(() => {
+                    // มีนาคม: ตรวจสอบแล้ว → จ่ายแล้ว (auto-approve)
+                    updateMonthlyStatusUI(houseNumber, 'march_status', 'จ่ายแล้ว');
+                    // เมษายน และ กันยายน: รอตรวจสอบ
+                    updateMonthlyStatusUI(houseNumber, 'april_status', 'รอตรวจสอบ');
+                    updateMonthlyStatusUI(houseNumber, 'september_status', 'รอตรวจสอบ');
+                }, 1000);
+            }
         }
 
         function getMonthStatuses(item) {
@@ -539,13 +762,13 @@
                 case 'ยังไม่จ่าย':
                     return 'bg-gradient-to-r from-red-400 to-red-600 text-white shadow-lg';
                 case 'รอข้อมูล':
-                    return 'bg-gradient-to-r from-yellow-400 to-yellow-600 text-white shadow-lg';
+                    return 'bg-gradient-to-r from-amber-100 to-orange-100 text-amber-800 shadow-lg border border-amber-200';
+                case 'รอตรวจสอบ':
+                    return 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white shadow-lg animate-pulse';
                 case 'ล่วงหน้า':
                     return 'bg-gradient-to-r from-blue-400 to-blue-600 text-white shadow-lg';
                 case 'ไม่เก็บ':
                     return 'bg-gradient-to-r from-purple-400 to-purple-600 text-white shadow-lg';
-                case 'รอตรวจสอบ':
-                    return 'bg-gradient-to-r from-orange-400 to-orange-600 text-white shadow-lg';
                 case 'ตรวจสอบแล้ว':
                     return 'bg-gradient-to-r from-teal-400 to-teal-600 text-white shadow-lg';
                 case 'ให้ติดต่อแอดมิน':
@@ -611,7 +834,7 @@
                     june_status: 'ล่วงหน้า',
                     july_status: 'ไม่เก็บ',
                     august_status: 'ไม่เก็บ',
-                    september_status: 'ไม่เก็บ',
+                    september_status: 'ยังไม่จ่าย',
                     october_status: 'ไม่เก็บ',
                     november_status: 'ไม่เก็บ',
                     december_status: 'ไม่เก็บ'
@@ -720,7 +943,7 @@
                     payment_year: '2567',
                     status: 'จ่ายแล้ว',
                     photo_url: 'https://via.placeholder.com/400x600/4CAF50/white?text=สลิปการโอนเงิน',
-                    pdf_url: 'https://via.placeholder.com/400x600/F44336/white?text=เอกสาร+PDF'
+                    pdf_url: 'https://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/view'
                 },
                 {
                     date_notified: '2024-02-15T14:20:00',
@@ -730,7 +953,7 @@
                     payment_year: '2567',
                     status: 'จ่ายแล้ว',
                     photo_url: 'https://via.placeholder.com/400x600/2196F3/white?text=สลิปการโอนเงิน+2',
-                    pdf_url: ''
+                    pdf_url: 'https://docs.google.com/document/d/1fvgo1kRGgUHzxu8dxvSkvDR0H_wjP1K2T4COK5ikkk4/edit'
                 },
                 {
                     date_notified: '2024-01-15T09:15:00',
@@ -740,7 +963,17 @@
                     payment_year: '2567',
                     status: 'รอตรวจสอบ',
                     photo_url: '',
-                    pdf_url: 'https://via.placeholder.com/400x600/FF9800/white?text=เอกสาร+PDF+2'
+                    pdf_url: 'https://drive.google.com/open?id=1mGcoCF6RHZ8V_65TZy0CqSuuBiPiRtjK'
+                },
+                {
+                    date_notified: '2023-12-15T16:45:00',
+                    full_name: 'นายสมชาย ใจดี',
+                    house_number: houseNumber,
+                    payment_month: 'ธันวาคม',
+                    payment_year: '2566',
+                    status: 'จ่ายแล้ว',
+                    photo_url: 'https://via.placeholder.com/400x600/9C27B0/white?text=สลิปการโอนเงิน+3',
+                    pdf_url: 'https://via.placeholder.com/400x600/FF5722/white?text=เอกสาร+PDF+ปกติ'
                 }
             ];
             
@@ -869,7 +1102,7 @@
                 case 'ยังไม่จ่าย':
                     return 'bg-red-100 text-red-800';
                 case 'รอข้อมูล':
-                    return 'bg-yellow-100 text-yellow-800';
+                    return 'bg-amber-50 text-amber-700 border border-amber-200';
                 case 'ล่วงหน้า':
                     return 'bg-blue-100 text-blue-800';
                 case 'ไม่เก็บ':
@@ -929,113 +1162,158 @@
 
             // Show modal and loading
             modal.classList.remove('hidden');
-            modalTitle.textContent = title + ' (แปลงจาก PDF)';
+            modalTitle.textContent = title;
             imageLoading.classList.remove('hidden');
             modalImage.classList.add('hidden');
             imageError.classList.add('hidden');
 
-            try {
-                // Try multiple PDF to image conversion services
-                const conversionServices = [
-                    // Google Drive PDF viewer (works for public PDFs)
-                    `https://drive.google.com/viewerng/viewer?embedded=true&url=${encodeURIComponent(pdfUrl)}`,
-                    // PDF.js viewer
-                    `https://mozilla.github.io/pdf.js/web/viewer.html?file=${encodeURIComponent(pdfUrl)}`,
-                    // Alternative: Try to load as image directly (in case it's already converted)
-                    pdfUrl.replace('.pdf', '.jpg').replace('.PDF', '.jpg'),
-                    pdfUrl.replace('.pdf', '.png').replace('.PDF', '.png')
-                ];
+            // Clean up any existing iframe
+            const imageContainer = modalImage.parentElement;
+            const existingIframe = imageContainer.querySelector('iframe');
+            if (existingIframe) {
+                existingIframe.remove();
+            }
 
-                let loaded = false;
-                
-                // Try each service
-                for (let i = 0; i < conversionServices.length && !loaded; i++) {
+            try {
+                let imageLoaded = false;
+
+                // Step 1: Try to convert Google Drive PDF to image
+                const convertedImageUrl = convertGoogleDrivePdfToImage(pdfUrl);
+                if (convertedImageUrl && convertedImageUrl !== pdfUrl) {
+                    console.log('Trying Google Drive image conversion:', convertedImageUrl);
                     try {
-                        const serviceUrl = conversionServices[i];
+                        await new Promise((resolve, reject) => {
+                            const img = new Image();
+                            img.onload = () => {
+                                imageLoading.classList.add('hidden');
+                                modalImage.src = convertedImageUrl;
+                                modalImage.style.display = 'block';
+                                modalImage.classList.remove('hidden');
+                                imageLoaded = true;
+                                console.log('✅ Google Drive PDF converted to image successfully');
+                                resolve();
+                            };
+                            img.onerror = reject;
+                            setTimeout(() => reject(new Error('Google Drive image timeout')), 4000);
+                            img.src = convertedImageUrl;
+                        });
                         
-                        if (i < 2) {
-                            // For PDF viewers, create an iframe
-                            const iframe = document.createElement('iframe');
-                            iframe.src = serviceUrl;
-                            iframe.style.width = '100%';
-                            iframe.style.height = '600px';
-                            iframe.style.border = 'none';
-                            iframe.style.borderRadius = '8px';
-                            
-                            // Replace image with iframe
-                            imageLoading.classList.add('hidden');
-                            modalImage.style.display = 'none';
-                            
-                            // Clear previous content and add iframe
-                            const imageContainer = modalImage.parentElement;
-                            const existingIframe = imageContainer.querySelector('iframe');
-                            if (existingIframe) {
-                                existingIframe.remove();
-                            }
-                            
-                            imageContainer.appendChild(iframe);
-                            loaded = true;
-                            break;
-                        } else {
-                            // For image URLs, try to load as image
+                        if (imageLoaded) return;
+                    } catch (error) {
+                        console.log('❌ Google Drive image conversion failed:', error.message);
+                    }
+                }
+
+                // Step 2: Try converted image formats (.jpg, .png, etc.)
+                if (!imageLoaded) {
+                    const imageFormats = [
+                        pdfUrl.replace(/\.pdf$/i, '.jpg'),
+                        pdfUrl.replace(/\.pdf$/i, '.jpeg'),
+                        pdfUrl.replace(/\.pdf$/i, '.png'),
+                        pdfUrl.replace(/\.pdf$/i, '.webp')
+                    ];
+
+                    for (const imageUrl of imageFormats) {
+                        if (imageUrl === pdfUrl) continue;
+                        
+                        try {
                             await new Promise((resolve, reject) => {
                                 const img = new Image();
                                 img.onload = () => {
                                     imageLoading.classList.add('hidden');
-                                    modalImage.src = serviceUrl;
+                                    modalImage.src = imageUrl;
                                     modalImage.style.display = 'block';
                                     modalImage.classList.remove('hidden');
-                                    
-                                    // Remove any existing iframe
-                                    const existingIframe = modalImage.parentElement.querySelector('iframe');
-                                    if (existingIframe) {
-                                        existingIframe.remove();
-                                    }
-                                    
-                                    loaded = true;
+                                    imageLoaded = true;
+                                    console.log('✅ PDF loaded as converted image:', imageUrl);
                                     resolve();
                                 };
                                 img.onerror = reject;
-                                img.src = serviceUrl;
+                                setTimeout(() => reject(new Error('Image load timeout')), 3000);
+                                img.src = imageUrl;
                             });
                             
-                            if (loaded) break;
+                            if (imageLoaded) return;
+                        } catch (error) {
+                            console.log('❌ Image format failed:', imageUrl);
+                            continue;
                         }
-                    } catch (error) {
-                        console.log(`Service ${i + 1} failed:`, error);
-                        continue;
                     }
                 }
 
-                if (!loaded) {
-                    throw new Error('ไม่สามารถแปลง PDF เป็นรูปภาพได้');
+                // Step 3: Try PDF viewers as fallback
+                if (!imageLoaded) {
+                    console.log('🔄 Trying PDF viewers...');
+                    
+                    const iframe = document.createElement('iframe');
+                    iframe.style.width = '100%';
+                    iframe.style.height = '70vh';
+                    iframe.style.border = 'none';
+                    iframe.style.borderRadius = '8px';
+                    iframe.style.backgroundColor = '#f5f5f5';
+                    
+                    // Try Google Drive viewer first
+                    const googleViewerUrl = `https://docs.google.com/gview?url=${encodeURIComponent(pdfUrl)}&embedded=true`;
+                    
+                    iframe.onload = () => {
+                        imageLoading.classList.add('hidden');
+                        console.log('✅ PDF loaded in Google viewer');
+                    };
+                    
+                    iframe.onerror = () => {
+                        console.log('❌ Google viewer failed, trying Mozilla PDF.js');
+                        iframe.src = `https://mozilla.github.io/pdf.js/web/viewer.html?file=${encodeURIComponent(pdfUrl)}`;
+                    };
+                    
+                    iframe.src = googleViewerUrl;
+                    imageContainer.appendChild(iframe);
+                    
+                    setTimeout(() => {
+                        imageLoading.classList.add('hidden');
+                    }, 2000);
+                    
+                    return;
                 }
 
             } catch (error) {
-                console.error('Error converting PDF:', error);
+                console.error('❌ All PDF viewing methods failed:', error);
                 imageLoading.classList.add('hidden');
                 
-                // Show error with option to open PDF directly
-                const imageContainer = modalImage.parentElement;
-                const existingIframe = imageContainer.querySelector('iframe');
-                if (existingIframe) {
-                    existingIframe.remove();
-                }
-                
+                // Show comprehensive error with multiple options
                 imageError.innerHTML = `
-                    <div class="text-center py-8">
-                        <div class="text-4xl mb-4">📄</div>
-                        <p class="text-red-600 mb-4">ไม่สามารถแปลง PDF เป็นรูปภาพได้</p>
-                        <div class="space-y-2">
-                            <button onclick="window.open('${pdfUrl}', '_blank')" 
-                                    class="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-colors">
-                                🔗 เปิด PDF ในแท็บใหม่
+                    <div class="text-center py-8 space-y-4">
+                        <div class="text-6xl mb-4">📄</div>
+                        <h3 class="text-lg font-semibold text-gray-700">ไม่สามารถแสดง PDF ได้</h3>
+                        <p class="text-gray-500 text-sm">ลองใช้ตัวเลือกด้านล่างเพื่อดู PDF</p>
+                        
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-md mx-auto">
+                            <button onclick="window.open('${pdfUrl}', '_blank', 'noopener,noreferrer')" 
+                                    class="bg-red-500 text-white px-4 py-3 rounded-lg hover:bg-red-600 transition-colors flex items-center justify-center space-x-2">
+                                <span>🔗</span>
+                                <span>เปิดในแท็บใหม่</span>
                             </button>
-                            <br>
+                            
                             <button onclick="downloadPdf('${pdfUrl}')" 
-                                    class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors">
-                                💾 ดาวน์โหลด PDF
+                                    class="bg-blue-500 text-white px-4 py-3 rounded-lg hover:bg-blue-600 transition-colors flex items-center justify-center space-x-2">
+                                <span>💾</span>
+                                <span>ดาวน์โหลด</span>
                             </button>
+                            
+                            <button onclick="copyPdfUrl('${pdfUrl}')" 
+                                    class="bg-green-500 text-white px-4 py-3 rounded-lg hover:bg-green-600 transition-colors flex items-center justify-center space-x-2">
+                                <span>📋</span>
+                                <span>คัดลอกลิงก์</span>
+                            </button>
+                            
+                            <button onclick="tryGoogleDrive('${pdfUrl}')" 
+                                    class="bg-purple-500 text-white px-4 py-3 rounded-lg hover:bg-purple-600 transition-colors flex items-center justify-center space-x-2">
+                                <span>📱</span>
+                                <span>Google Drive</span>
+                            </button>
+                        </div>
+                        
+                        <div class="text-xs text-gray-400 mt-4">
+                            <p>💡 หากไฟล์อยู่ใน Google Drive ให้แชร์เป็น "ทุกคนที่มีลิงก์สามารถดูได้"</p>
                         </div>
                     </div>
                 `;
@@ -1055,8 +1333,101 @@
             } catch (error) {
                 console.error('Download failed:', error);
                 // Fallback: open in new tab
-                window.open(pdfUrl, '_blank');
+                window.open(pdfUrl, '_blank', 'noopener,noreferrer');
             }
+        }
+
+        function copyPdfUrl(pdfUrl) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(pdfUrl).then(() => {
+                    // Show success message
+                    const button = event.target;
+                    const originalText = button.innerHTML;
+                    button.innerHTML = '<span>✅</span><span>คัดลอกแล้ว!</span>';
+                    button.classList.remove('bg-green-500', 'hover:bg-green-600');
+                    button.classList.add('bg-green-600');
+                    
+                    setTimeout(() => {
+                        button.innerHTML = originalText;
+                        button.classList.remove('bg-green-600');
+                        button.classList.add('bg-green-500', 'hover:bg-green-600');
+                    }, 2000);
+                }).catch(() => {
+                    // Fallback for older browsers
+                    fallbackCopyText(pdfUrl);
+                });
+            } else {
+                fallbackCopyText(pdfUrl);
+            }
+        }
+
+        function fallbackCopyText(text) {
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                document.execCommand('copy');
+                alert('คัดลอกลิงก์แล้ว!');
+            } catch (err) {
+                console.error('Fallback copy failed:', err);
+                alert('ไม่สามารถคัดลอกได้ กรุณาคัดลอกด้วยตนเอง:\n' + text);
+            }
+            
+            document.body.removeChild(textArea);
+        }
+
+        function convertGoogleDrivePdfToImage(url) {
+            try {
+                // Pattern 1: https://drive.google.com/file/d/FILE_ID/view
+                let match = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+                if (match) {
+                    const fileId = match[1];
+                    console.log('🔄 Converting Google Drive PDF to image, File ID:', fileId);
+                    // Convert to direct image URL
+                    return `https://drive.google.com/thumbnail?id=${fileId}&sz=w2000-h2000`;
+                }
+
+                // Pattern 2: https://docs.google.com/document/d/FILE_ID/
+                match = url.match(/docs\.google\.com\/document\/d\/([a-zA-Z0-9_-]+)/);
+                if (match) {
+                    const fileId = match[1];
+                    console.log('🔄 Converting Google Docs to image, File ID:', fileId);
+                    return `https://drive.google.com/thumbnail?id=${fileId}&sz=w2000-h2000`;
+                }
+
+                // Pattern 3: https://drive.google.com/open?id=FILE_ID
+                match = url.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+                if (match) {
+                    const fileId = match[1];
+                    console.log('🔄 Converting Google Drive open link to image, File ID:', fileId);
+                    return `https://drive.google.com/thumbnail?id=${fileId}&sz=w2000-h2000`;
+                }
+
+                // Pattern 4: Already a thumbnail URL
+                if (url.includes('drive.google.com/thumbnail')) {
+                    console.log('✅ Already a Google Drive thumbnail URL');
+                    return url;
+                }
+
+                console.log('❌ Not a recognized Google Drive URL pattern');
+                return null;
+
+            } catch (error) {
+                console.error('❌ Error converting Google Drive URL:', error);
+                return null;
+            }
+        }
+
+        function tryGoogleDrive(pdfUrl) {
+            // Open Google Drive viewer in new tab
+            const googleViewerUrl = `https://docs.google.com/gview?url=${encodeURIComponent(pdfUrl)}`;
+            window.open(googleViewerUrl, '_blank', 'noopener,noreferrer');
         }
 
         function closeImageModal() {
@@ -1097,5 +1468,5 @@
             }
         });
     </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'981e70f4d7f57b50',t:'MTc1ODM0MTA5Mi4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'981eab3b34e27b44',t:'MTc1ODM0MzQ4MC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
