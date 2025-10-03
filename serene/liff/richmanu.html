@@ -86,10 +86,27 @@
       display: none; justify-content: center; align-items: center; 
       z-index: 9999; flex-direction: column; gap: 1rem; 
     }
+
+    .img-container {
+      position: relative;
+      width: 100%;
+      border-radius: 0.75rem;
+      overflow: hidden;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .img-container img {
+      width: 100%;
+      height: auto;
+      object-fit: contain;
+      display: block;
+      user-select: none;          
+    }
   </style>
 </head>
 <body class="min-h-screen">
 
+  <!-- Loading Overlay -->
   <div id="loading-overlay">
     <img src="https://developers.line.biz/media/line-mini-app/LINE_spinner_light.svg" alt="Loading..." class="w-16 h-16">
     <p id="loading-text" class="text-lg text-white">กำลังโหลด...</p>
@@ -107,9 +124,140 @@
       <button id="cancel-default-btn" class="btn-danger font-bold py-3 px-8 rounded-xl">ยกเลิก Rich Menu เริ่มต้น</button>
     </div>
 
+    <!-- Rich Menu Cards -->
     <main id="richmenu-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-      <!-- Rich Menu Cards -->
     </main>
   </div>
+
+  <!-- SCRIPT -->
+  <script type="module">
+    const LIFF_ID = "2000143615-RQWZXWKA";
+    const SUPABASE_URL = "https://kiumelolsilduqnvrekf.supabase.co";
+    const SUPABASE_KEY = "YOUR_KEY_HERE";
+
+    const { createClient } = supabase;
+    const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const loadingText = document.getElementById('loading-text');
+    const richMenuGrid = document.getElementById('richmenu-grid');
+    const cancelDefaultBtn = document.getElementById('cancel-default-btn');
+
+    let richMenuDataCache = new Map();
+
+    const showLoading = (text = 'กำลังโหลด...') => {
+      loadingText.textContent = text;
+      loadingOverlay.style.display = 'flex';
+    };
+    const hideLoading = () => {
+      loadingOverlay.style.display = 'none';
+    };
+    const showToast = (icon, title) => {
+      Swal.fire({
+        icon: icon, title: title, toast: true, position: 'top-end',
+        showConfirmButton: false, timer: 3000, timerProgressBar: true,
+        customClass: { popup: '!bg-black/70 !text-white' }
+      });
+    };
+
+    async function invokeFunction(payload) {
+      const { data, error } = await supabaseClient.functions.invoke('manage-rich-menu', { body: payload });
+      if (error) throw error;
+      return data;
+    }
+
+    function renderRichMenuCard(menu) {
+      const card = document.createElement('div');
+      card.id = `menu-${menu.richMenuId}`;
+      card.className = "card-modern p-4 flex flex-col gap-4";
+
+      const aspectRatio = menu.size && menu.size.width && menu.size.height ? 
+                          `${menu.size.width} / ${menu.size.height}` : "2500 / 843";
+
+      card.innerHTML = `
+        <div class="img-container">
+          <img src="data:image/png;base64,${menu.imageBase64 || ''}" alt="${menu.name}" style="aspect-ratio:${aspectRatio};"/>
+        </div>
+        <div>
+          <h3 class="font-bold text-lg text-cyan-300 truncate">${menu.name}</h3>
+          <p class="text-xs text-gray-300 font-mono break-all">${menu.richMenuId}</p>
+        </div>
+        <div class="mt-auto grid grid-cols-2 gap-2 text-sm">
+          <button class="link-user-btn btn-primary p-2 rounded-lg">เซ็ต Users</button>
+          <button class="unlink-user-btn btn-primary p-2 rounded-lg">ยกเลิก Users</button>
+          <button class="set-default-btn btn-primary p-2 rounded-lg col-span-2">Set ทั้งหมด</button>
+          <button class="delete-menu-btn btn-danger p-2 rounded-lg col-span-2">ลบ Menu</button>
+        </div>
+      `;
+
+      // Events
+      card.querySelector('.link-user-btn').addEventListener('click', () => handleLinkUser(menu.richMenuId));
+      card.querySelector('.unlink-user-btn').addEventListener('click', () => handleUnlinkUser(menu.richMenuId));
+      card.querySelector('.set-default-btn').addEventListener('click', () => handleSetDefault(menu.richMenuId));
+      card.querySelector('.delete-menu-btn').addEventListener('click', () => handleDeleteMenu(menu.richMenuId, menu.name));
+
+      return card;
+    }
+
+    async function loadRichMenus() {
+      showLoading('กำลังโหลดข้อมูล Rich Menu API...');
+      richMenuGrid.innerHTML = '';
+      richMenuDataCache.clear();
+
+      try {
+        const { richmenus } = await invokeFunction({ action: 'getList' });
+        if (!richmenus || richmenus.length === 0) {
+          richMenuGrid.innerHTML = '<p class="text-center col-span-full">ไม่พบ Rich Menu</p>';
+          hideLoading();
+          return;
+        }
+
+        richmenus.forEach(menu => {
+          richMenuGrid.appendChild(renderRichMenuCard(menu));
+          richMenuDataCache.set(menu.richMenuId, menu);
+        });
+
+      } catch (err) {
+        console.error(err);
+        showToast('error', `โหลดข้อมูลไม่สำเร็จ: ${err.message}`);
+      } finally {
+        hideLoading();
+      }
+    }
+
+    async function handleLinkUser(richMenuId) {
+      showToast("info", "ฟังก์ชันลิงก์ Users ทำงาน");
+    }
+    async function handleUnlinkUser(richMenuId) {
+      showToast("info", "ฟังก์ชันยกเลิก Users ทำงาน");
+    }
+    async function handleSetDefault(richMenuId) {
+      showToast("info", "ฟังก์ชัน Set Default ทำงาน");
+    }
+    async function handleDeleteMenu(richMenuId, menuName) {
+      showToast("info", "ฟังก์ชันลบเมนูทำงาน");
+    }
+
+    cancelDefaultBtn.addEventListener('click', () => {
+      showToast("warning", "กดยกเลิก Rich Menu เริ่มต้น");
+    });
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      showLoading('กำลังเริ่มต้น LIFF...');
+      try {
+        await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
+        if (!liff.isLoggedIn()) {
+          liff.login({ redirectUri: window.location.href });
+          return;
+        }
+        await loadRichMenus();
+      } catch (err) {
+        console.error('Critical Error:', err);
+        showToast('error', 'เกิดข้อผิดพลาด ไม่สามารถโหลดแอปได้');
+        richMenuGrid.innerHTML = `<p class="text-center col-span-full text-red-400 p-8">เกิดข้อผิดพลาดในการเชื่อมต่อ LIFF หรือโหลดข้อมูล</p>`;
+        hideLoading();
+      }
+    });
+  </script>
 </body>
 </html>
