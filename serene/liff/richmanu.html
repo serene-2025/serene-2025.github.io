@@ -3,211 +3,651 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>แอปเลือกรายการ</title>
-    <!-- โหลด Tailwind CSS -->
+    <title>Rich Menu API-LINE OA</title>
+    <meta name="description" content="Rich Menu API Admin for LIFF" />
+    <meta name="author" content="9one" />
+    <meta property="og:title" content="Rich Menu API Admin-9one" />
+    <meta property="og:description" content="Rich Menu API for LIFF" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://lh3.googleusercontent.com/d/1diz2KXxiOna6_ltL_GKxvfT3JkJCZtvG" />
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
+    <!-- นำ SweetAlert2 CDN ออกแล้ว (แต่ต้องจำลองพฤติกรรมในโค้ด) -->
+
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@400;600;700&display=swap" rel="stylesheet">
+    
     <style>
-        /* ตั้งค่าฟอนต์หลัก */
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f7f9fb;
-        }
-        /* ซ่อนแถบเลื่อนบนเบราว์เซอร์สำหรับความสวยงาม */
-        .hide-scrollbar::-webkit-scrollbar {
-            display: none;
-        }
-        .hide-scrollbar {
-            -ms-overflow-style: none;  /* IE and Edge */
-            scrollbar-width: none;  /* Firefox */
-        }
+        /* กำหนดฟอนต์ Prompt ทั่วทั้งแอปพลิเคชัน */
+        body { font-family: 'Prompt', sans-serif; background: linear-gradient(135deg, #1e3c72, #2a5298, #6a11cb, #2575fc); background-size: 300% 300%; animation: gradientMove 15s ease infinite; color: #F0F0F0; }
+        @keyframes gradientMove { 0% {background-position:0% 50%;} 50% {background-position:100% 50%;} 100% {background-position:0% 50%;} }
+        .btn-primary { background: linear-gradient(135deg,#00c6ff,#0072ff); transition:0.3s; box-shadow:0 4px 15px rgba(0,114,255,0.4); border-radius: 0.5rem;}
+        .btn-primary:hover { transform:translateY(-2px) scale(1.03); box-shadow:0 6px 20px rgba(0,114,255,0.6);}
+        .btn-danger { background: linear-gradient(135deg,#ff416c,#ff4b2b); transition:0.3s; box-shadow:0 4px 15px rgba(255,75,43,0.4); border-radius: 0.5rem;}
+        .btn-danger:hover { transform:translateY(-2px) scale(1.03); box-shadow:0 6px 20px rgba(255,75,43,0.6);}
+        .card-modern { background: rgba(255,255,255,0.1); backdrop-filter: blur(12px); border-radius:1rem; border:1px solid rgba(255,255,255,0.2); box-shadow:0 8px 20px rgba(0,0,0,0.3); transition:0.3s;}
+        .card-modern:hover { transform:translateY(-6px) scale(1.02); box-shadow:0 12px 30px rgba(0,0,0,0.4); border-color: rgba(255,255,255,0.4);}
+        
+        /* Modal Transition Styles */
+        .modal-enter-active, .modal-leave-active { transition: opacity 0.3s ease; }
+        .modal-enter-from, .modal-leave-to { opacity: 0; }
+        .modal-content-card { transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        .modal-enter-from .modal-content-card, .modal-leave-to .modal-content-card { transform: scale(0.95); }
+
+        /* Loading Overlay (Keep original styles) */
+        #loading-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background-color: rgba(0,0,0,0.6); backdrop-filter: blur(6px); display:none; justify-content:center; align-items:center; z-index:9999; flex-direction:column; gap:1rem; }
     </style>
 </head>
-<body class="p-4 md:p-8">
+<body class="gradient-bg min-h-screen">
 
-    <div class="max-w-xl mx-auto bg-white shadow-2xl rounded-xl p-6 md:p-8">
-        <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">รายการผลไม้และการเลือก</h1>
+    <!-- 1. LOADING OVERLAY -->
+    <div id="loading-overlay">
+        <img src="https://developers.line.biz/media/line-mini-app/LINE_spinner_light.svg" alt="Loading..." class="w-16 h-16">
+        <p id="loading-text" class="text-lg text-[#989fce]">กำลังโหลด...</p>
+    </div>
 
-        <!-- ส่วนค้นหาและปุ่มเลือกทั้งหมด -->
-        <div class="space-y-4 mb-6">
-            <input type="text" id="search-input" onkeyup="handleSearch()" placeholder="🔍 ค้นหารายการ..." 
-                   class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150">
+    <!-- 2. TOAST NOTIFICATION CONTAINER -->
+    <div id="toast-container" class="fixed top-4 right-4 z-[10000] space-y-2 pointer-events-none">
+        <!-- Toasts will be appended here -->
+    </div>
+
+    <!-- 3. GENERIC CONFIRMATION MODAL (สำหรับ SetDefault, CancelDefault, DeleteMenu) -->
+    <div id="confirmationModal" class="hidden fixed inset-0 z-[9000] flex items-center justify-center p-4 modal-leave-to" aria-modal="true" role="dialog">
+        <!-- Backdrop -->
+        <div class="absolute inset-0 bg-gray-900 opacity-70" onclick="hideConfirmationModal(false)"></div>
+        <!-- Modal Card -->
+        <div id="confirm-card" class="bg-[#2a5298] rounded-2xl shadow-2xl max-w-sm w-full p-6 sm:p-8 z-10 modal-content-card transition-all">
+            <div class="flex flex-col items-center text-center">
+                <div id="confirm-icon-placeholder"></div>
+                <h3 id="confirm-title" class="text-2xl font-bold text-white mt-3"></h3>
+                <p id="confirm-text" class="text-gray-300 mt-2"></p>
+            </div>
+            <div class="flex justify-end pt-6 space-x-3">
+                <button id="confirm-cancel-btn" class="px-4 py-2 bg-gray-600 text-white font-medium rounded-xl hover:bg-gray-500 transition duration-150">ยกเลิก</button>
+                <button id="confirm-ok-btn" class="px-4 py-2 text-white font-medium rounded-xl transition duration-150"></button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 4. USER SEARCH MODAL (สำหรับ Link/Unlink Users) -->
+    <div id="userSearchModal" class="hidden fixed inset-0 z-[9100] flex items-center justify-center p-4 modal-leave-to" aria-modal="true" role="dialog">
+        <!-- Backdrop -->
+        <div class="absolute inset-0 bg-gray-900 opacity-70" onclick="hideUserSearchModal(null)"></div>
+        <!-- Modal Card -->
+        <div id="search-card" class="bg-[#2a5298] rounded-2xl shadow-2xl max-w-xl w-full p-6 z-10 modal-content-card transition-all">
+            <h3 id="search-modal-title" class="text-2xl font-bold text-white mb-4 text-center"></h3>
             
-            <button id="select-all-button" onclick="selectAllFiltered()" 
-                    class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg 
-                           hover:bg-blue-700 transition duration-200 shadow-md 
-                           disabled:bg-gray-400 disabled:cursor-not-allowed hidden">
-                ✅ เลือกทั้งหมดที่ค้นหา
-            </button>
-        </div>
-
-        <!-- รายการผลลัพธ์ -->
-        <div id="item-list" class="space-y-2 max-h-80 overflow-y-auto hide-scrollbar border-t pt-4 border-gray-200">
-            <!-- รายการจะถูกสร้างด้วย JavaScript ที่นี่ -->
-        </div>
-        
-        <!-- สรุปสถานะการเลือก -->
-        <div class="mt-6 pt-4 border-t border-gray-200">
-            <p class="text-lg font-medium text-gray-700">
-                รายการที่ถูกเลือก: <span id="selected-count" class="text-blue-600 font-bold">0</span> รายการ
-            </p>
+            <!-- Search UI Content -->
+            <div class="p-2 text-left">
+                <div class="space-y-2 sm:space-y-0 sm:flex sm:gap-2 sm:items-center">
+                    <input 
+                        id="modal-user-search" 
+                        class="flex-1 min-w-0 px-3 py-2 rounded-lg border border-[#5d536b] bg-[#1c1c28] text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                        placeholder="userId หรือชื่อ..">
+                    <button id="modal-user-search-btn" class="btn-primary py-2 px-5 rounded-lg font-semibold">ค้นหา</button>
+                    <button id="modal-user-all-btn" class="btn-primary py-2 px-5 rounded-lg font-semibold">ทั้งหมด</button>
+                </div>
+                <div id="modal-user-select-all-container" class="mt-2 hidden">
+                    <button id="modal-user-select-all-btn" class="btn-primary w-full py-2 px-5 rounded-lg font-semibold">เลือกทั้งหมดที่ค้นหา</button>
+                </div>
+                <div id="modal-user-results" class="mt-4 max-h-60 overflow-y-auto border border-gray-600 rounded-lg bg-black/10">
+                    <p class="text-center text-gray-400 p-4">พิมพ์เพื่อค้นหาผู้ใช้ หรือกด "ทั้งหมด"</p>
+                </div>
+            </div>
+            
+            <!-- Footer Buttons -->
+            <div class="flex justify-end pt-4 mt-4 space-x-3">
+                <button id="search-cancel-btn" class="px-4 py-2 bg-gray-600 text-white font-medium rounded-xl hover:bg-gray-500 transition duration-150">ยกเลิก</button>
+                <button id="search-ok-btn" class="btn-primary py-2 px-5 rounded-xl font-semibold" disabled>ยืนยัน (0)</button>
+            </div>
         </div>
     </div>
 
-    <script>
-        // ข้อมูลรายการทั้งหมด
-        const allItems = [
-            { id: 1, name: "แอปเปิ้ล (Apple)", category: "Fruit" },
-            { id: 2, name: "กล้วย (Banana)", category: "Fruit" },
-            { id: 3, name: "ส้ม (Orange)", category: "Fruit" },
-            { id: 4, name: "มะม่วง (Mango)", category: "Fruit" },
-            { id: 5, name: "สับปะรด (Pineapple)", category: "Fruit" },
-            { id: 6, name: "องุ่น (Grape)", category: "Fruit" },
-            { id: 7, name: "สตรอว์เบอร์รี (Strawberry)", category: "Berry" },
-            { id: 8, name: "บลูเบอร์รี (Blueberry)", category: "Berry" },
-            { id: 9, name: "มะพร้าว (Coconut)", category: "Nut" },
-            { id: 10, name: "แตงโม (Watermelon)", category: "Melon" }
-        ];
 
-        // สถานะแอปพลิเคชัน
-        let filteredItems = allItems;
-        const selectedItems = new Set(); // ใช้ Set เพื่อเก็บ ID ของรายการที่ถูกเลือก
+    <!-- MAIN CONTENT -->
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-8 fade-in">
+            <h1 class="text-4xl md:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#989fce] to-[#347fc4]">
+                Rich Menu API
+            </h1>
+            <p class="text-lg text-gray-300">จัดการ Rich Menu API ของ LINE OA</p>
+        </header>
+
+        <div class="mb-8 flex justify-center gap-4 fade-in" style="animation-delay: 0.2s;">
+            <button id="cancel-default-btn" class="btn-danger font-bold py-2 px-6 rounded-lg">ยกเลิก Rich Menu เริ่มต้น</button>
+        </div>
+
+        <main id="richmenu-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        </main>
+    </div>
+    
+    <script type="module">
+        const LIFF_ID = "2000143615-RQWZXWKA";
+        const SUPABASE_URL = "https://kiumelolsilduqnvrekf.supabase.co";
+        const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJQ14gU";
+
+        const { createClient } = supabase;
+        const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingText = document.getElementById('loading-text');
+        const richMenuGrid = document.getElementById('richmenu-grid');
+        const cancelDefaultBtn = document.getElementById('cancel-default-btn');
         
-        const itemListDiv = document.getElementById('item-list');
-        const searchInput = document.getElementById('search-input');
-        const selectAllButton = document.getElementById('select-all-button');
-        const selectedCountSpan = document.getElementById('selected-count');
+        let richMenuDataCache = new Map();
+
+        // ---------------------------------------------------
+        // New Modal Functions (Replacing Swal.fire)
+        // ---------------------------------------------------
 
         /**
-         * @function renderList
-         * วาดรายการผลไม้ที่ถูกกรองไปยัง DOM
+         * @description โชว์ Toast Notification
+         * @param {('success'|'error'|'info')} icon ประเภทของ Toast
+         * @param {string} title ข้อความหลัก
          */
-        function renderList() {
-            itemListDiv.innerHTML = ''; // ล้างรายการเก่า
+        const showToast = (icon, title) => {
+            const container = document.getElementById('toast-container');
+            const color = icon === 'success' ? 'bg-green-600' : icon === 'error' ? 'bg-red-600' : 'bg-blue-600';
+            const iconSvg = icon === 'success' ? 
+                `<svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>` :
+                icon === 'error' ?
+                `<svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>` :
+                `<svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`;
 
-            if (filteredItems.length === 0) {
-                // แสดงข้อความเมื่อไม่พบรายการ
-                itemListDiv.innerHTML = `
-                    <p class="text-center text-gray-500 py-4">ไม่พบรายการ</p>
-                `;
-            } else {
-                // สร้างและเพิ่มรายการใหม่
-                filteredItems.forEach(item => {
-                    const isChecked = selectedItems.has(item.id);
-                    
-                    const itemDiv = document.createElement('div');
-                    itemDiv.className = `flex items-center justify-between p-3 rounded-lg cursor-pointer transition duration-100 ${isChecked ? 'bg-blue-50 border border-blue-200' : 'bg-white hover:bg-gray-50'}`;
-                    itemDiv.setAttribute('data-id', item.id);
-                    itemDiv.onclick = () => toggleItemSelection(item.id);
-
-                    itemDiv.innerHTML = `
-                        <label for="item-${item.id}" class="flex-1 cursor-pointer">
-                            <span class="text-gray-800 font-medium">${item.name}</span> 
-                            <span class="text-sm text-gray-500">(${item.category})</span>
-                        </label>
-                        <input type="checkbox" id="item-${item.id}" ${isChecked ? 'checked' : ''} 
-                               class="w-5 h-5 text-blue-600 bg-gray-100 border-gray-300 rounded 
-                                      focus:ring-blue-500"
-                               onclick="event.stopPropagation(); toggleItemSelection(${item.id});">
-                    `;
-                    itemListDiv.appendChild(itemDiv);
-                });
-            }
+            const toast = document.createElement('div');
+            toast.className = `p-4 flex items-center rounded-xl shadow-lg text-white ${color} transition-all duration-300 ease-out transform translate-x-full opacity-0`;
+            toast.innerHTML = iconSvg + `<span class="font-medium">${title}</span>`;
             
-            updateStatus();
-        }
-
-        /**
-         * @function handleSearch
-         * กรองรายการตามข้อความค้นหาและวาดรายการใหม่
-         */
-        function handleSearch() {
-            const query = searchInput.value.toLowerCase().trim();
+            container.appendChild(toast);
             
-            if (query === '') {
-                filteredItems = allItems;
-            } else {
-                filteredItems = allItems.filter(item => 
-                    item.name.toLowerCase().includes(query) || 
-                    item.category.toLowerCase().includes(query)
-                );
-            }
-            
-            renderList();
-            updateSelectAllButton();
-        }
+            // Show animation
+            setTimeout(() => {
+                toast.classList.remove('translate-x-full', 'opacity-0');
+                toast.classList.add('translate-x-0', 'opacity-100');
+            }, 10);
 
-        /**
-         * @function toggleItemSelection
-         * สลับสถานะการเลือกของรายการ
-         * @param {number} id - ID ของรายการ
-         */
-        function toggleItemSelection(id) {
-            if (selectedItems.has(id)) {
-                selectedItems.delete(id);
-            } else {
-                selectedItems.add(id);
-            }
-            // เรียก renderList อีกครั้งเพื่อให้ UI อัปเดตสถานะ checkbox และสีพื้นหลัง
-            renderList();
-        }
-
-        /**
-         * @function selectAllFiltered
-         * เลือกรายการทั้งหมดที่กำลังแสดงอยู่ในผลการค้นหา
-         */
-        function selectAllFiltered() {
-            // ตรวจสอบว่าทุกรายการที่ถูกกรองถูกเลือกอยู่แล้วหรือไม่
-            const allCurrentlySelected = filteredItems.every(item => selectedItems.has(item.id));
-
-            if (allCurrentlySelected) {
-                // ถ้าถูกเลือกทั้งหมดแล้ว ให้ยกเลิกการเลือกทั้งหมด
-                filteredItems.forEach(item => selectedItems.delete(item.id));
-            } else {
-                // ถ้ายังไม่ถูกเลือกทั้งหมด ให้เลือกทั้งหมด
-                filteredItems.forEach(item => selectedItems.add(item.id));
-            }
-            
-            renderList(); // วาดรายการใหม่
-        }
-
-        /**
-         * @function updateSelectAllButton
-         * จัดการการแสดงผลของปุ่ม "เลือกทั้งหมดที่ค้นหา"
-         */
-        function updateSelectAllButton() {
-            const hasResults = filteredItems.length > 0;
-            
-            // แสดงปุ่มเมื่อมีผลการค้นหา
-            if (hasResults) {
-                selectAllButton.classList.remove('hidden');
+            // Hide after 3 seconds
+            setTimeout(() => {
+                toast.classList.remove('translate-x-0', 'opacity-100');
+                toast.classList.add('translate-x-full', 'opacity-0');
                 
-                // ตรวจสอบสถานะเพื่อเปลี่ยนข้อความปุ่ม
-                const allCurrentlySelected = filteredItems.every(item => selectedItems.has(item.id));
-                if (allCurrentlySelected) {
-                    selectAllButton.textContent = '❌ ยกเลิกการเลือกทั้งหมดที่ค้นหา';
-                } else {
-                    selectAllButton.textContent = '✅ เลือกทั้งหมดที่ค้นหา';
+                // Remove from DOM after transition
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        };
+
+
+        let resolveConfirmation = null;
+        const confirmationModal = document.getElementById('confirmationModal');
+        const confirmCard = document.getElementById('confirm-card');
+
+        const iconMap = {
+            'warning': { color: 'text-yellow-400', svg: `<svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.398 16c-.77 1.333.192 3 1.732 3z"></path></svg>` },
+            'error': { color: 'text-red-400', svg: `<svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>` }
+        };
+
+        const showConfirmationModal = (title, text, type, confirmText = 'ยืนยัน', confirmClass = 'btn-primary') => {
+            return new Promise((resolve) => {
+                resolveConfirmation = resolve;
+                
+                // Setup content
+                document.getElementById('confirm-title').textContent = title;
+                document.getElementById('confirm-text').textContent = text;
+                
+                const okBtn = document.getElementById('confirm-ok-btn');
+                okBtn.textContent = confirmText;
+                // Clean old classes and add new confirm class
+                okBtn.className = okBtn.className.replace(/btn-primary|btn-danger/g, '');
+                okBtn.classList.add('px-4', 'py-2', 'text-white', 'font-medium', 'rounded-xl', 'transition', 'duration-150', confirmClass);
+
+                // Setup icon
+                const iconPlaceholder = document.getElementById('confirm-icon-placeholder');
+                const { color, svg } = iconMap[type] || iconMap.warning;
+                iconPlaceholder.innerHTML = `<div class="${color}">${svg}</div>`;
+
+                // Show modal with animation
+                confirmationModal.style.display = 'flex';
+                setTimeout(() => {
+                    confirmationModal.classList.add('modal-enter-active');
+                    confirmationModal.classList.remove('modal-leave-to');
+                }, 10);
+                
+                // Event Listeners
+                const handleConfirm = () => { hideConfirmationModal(true); };
+                const handleCancel = () => { hideConfirmationModal(false); };
+
+                okBtn.onclick = handleConfirm;
+                document.getElementById('confirm-cancel-btn').onclick = handleCancel;
+                document.addEventListener('keydown', handleEscapeKey);
+            });
+        };
+
+        const hideConfirmationModal = (isConfirmed) => {
+            confirmationModal.classList.add('modal-leave-to');
+            confirmationModal.classList.remove('modal-enter-active');
+            
+            setTimeout(() => {
+                confirmationModal.style.display = 'none';
+                if (resolveConfirmation) {
+                    resolveConfirmation({ isConfirmed: isConfirmed });
+                    resolveConfirmation = null;
+                }
+            }, 300);
+            document.removeEventListener('keydown', handleEscapeKey);
+        };
+
+        // Escape Key handler for generic modal
+        function handleEscapeKey(event) {
+            if (event.key === 'Escape' || event.keyCode === 27) {
+                if (confirmationModal.style.display === 'flex') {
+                    hideConfirmationModal(false);
+                } else if (userSearchModal.style.display === 'flex') {
+                    hideUserSearchModal(null); // Changed to null as it's a search modal
+                }
+            }
+        }
+        
+        // --- User Search Modal Implementation (Refactored from Swal.fire) ---
+        
+        let resolveUserSearch = null;
+        let selectedUsers = new Set();
+        let currentDisplayedUserIds = [];
+        const userSearchModal = document.getElementById('userSearchModal');
+        const searchInput = document.getElementById('modal-user-search');
+        const searchBtn = document.getElementById('modal-user-search-btn');
+        const allBtn = document.getElementById('modal-user-all-btn');
+        const resultsContainer = document.getElementById('modal-user-results');
+        const selectAllContainer = document.getElementById('modal-user-select-all-container');
+        const selectAllBtn = document.getElementById('modal-user-select-all-btn');
+        const confirmBtn = document.getElementById('search-ok-btn');
+        const cancelBtn = document.getElementById('search-cancel-btn');
+
+
+        const updateSelectedCount = () => {
+            const count = selectedUsers.size;
+            confirmBtn.textContent = `ยืนยัน (${count})`;
+            confirmBtn.disabled = count === 0;
+        };
+
+        const performSearch = async () => {
+            const searchTerm = searchInput.value.trim();
+            if (searchTerm.length < 2) {
+                resultsContainer.innerHTML = '<p class="text-center text-gray-400 p-4">กรุณาพิมพ์อย่างน้อย 2 ตัวอักษร</p>';
+                selectAllContainer.classList.add('hidden');
+                return;
+            }
+            resultsContainer.innerHTML = '<p class="text-center text-gray-400 p-4">กำลังค้นหา...</p>';
+            selectAllContainer.classList.add('hidden');
+            try {
+                const { users } = await invokeFunction({ action: 'getUsersWithRichMenu', searchTerm });
+                renderUsers(users);
+            } catch (err) {
+                console.error("Search error:", err);
+                resultsContainer.innerHTML = `<p class="text-center text-red-400 p-4">เกิดข้อผิดพลาดในการค้นหา</p>`;
+            }
+        };
+
+        const performAllSearch = async () => {
+            resultsContainer.innerHTML = '<p class="text-center text-gray-400 p-4">กำลังโหลดผู้ใช้ทั้งหมด...</p>';
+            selectAllContainer.classList.add('hidden');
+            try {
+                const { users } = await invokeFunction({ action: 'getUsersWithRichMenu', allUsers: true });
+                renderUsers(users);
+            } catch (err) {
+                console.error("All search error:", err);
+                resultsContainer.innerHTML = `<p class="text-center text-red-400 p-4">เกิดข้อผิดพลาดในการโหลดผู้ใช้ทั้งหมด</p>`;
+            }
+        };
+
+        const renderUsers = (users) => {
+            // --- LOGIC FOR 'เลือกทั้งหมดที่ค้นหา' BUTTON ---
+            currentDisplayedUserIds = []; // 1. Reset displayed IDs
+            selectAllContainer.classList.add('hidden'); // 2. Hide button initially
+            // --- END LOGIC ---
+            
+            if (!users || users.length === 0) {
+                resultsContainer.innerHTML = '<p class="text-center text-gray-400 p-4">ไม่พบผู้ใช้</p>';
+                return;
+            }
+            resultsContainer.innerHTML = '';
+            users.forEach(user => {
+                currentDisplayedUserIds.push(user.userId); // 3. Store the ID of the user being rendered
+                const userEl = document.createElement('label');
+                userEl.className = 'flex items-start gap-3 p-2 rounded-lg hover:bg-[#7d6b91] cursor-pointer transition-colors m-1';
+
+                const linkedMenuInfo = richMenuDataCache.get(user.linkedRichMenuId);
+                let linkedMenuInfoHTML = `<p class="text-xs mt-1 text-gray-400">ใช้ Rich Menu เริ่มต้น</p>`;
+                if (linkedMenuInfo) {
+                    linkedMenuInfoHTML = `
+                        <div class="mt-1 p-1 bg-black/20 rounded-md">
+                            <p class="text-xs text-green-400 truncate mb-1" title="${linkedMenuInfo.name}">เมนู: ${linkedMenuInfo.name}</p>
+                            <img src="${linkedMenuInfo.imageBase64}" class="w-24 h-auto rounded-sm">
+                        </div>`;
                 }
 
-            } else {
-                // ซ่อนปุ่มเมื่อไม่มีผลการค้นหา
-                selectAllButton.classList.add('hidden');
+                userEl.innerHTML = `
+                    <input type="checkbox" class="form-checkbox h-5 w-5 mt-2 bg-transparent rounded border-[#989fce] text-[#347fc4] focus:ring-0" data-userid="${user.userId}">
+                    <img src="${user.pictureUrl || ''}" onerror="this.onerror=null;this.src='https://img.icons8.com/?size=80&id=492ILERveW8G&format=png'" alt="Profile" class="w-10 h-10 rounded-full object-cover flex-shrink-0 mt-1">
+                    <div class="overflow-hidden flex-grow">
+                        <p class="font-semibold truncate">${user.displayName}</p>
+                        <p class="text-xs text-gray-300 font-mono break-all truncate">${user.userId}</p>
+                        ${linkedMenuInfoHTML}
+                    </div>`;
+                const checkbox = userEl.querySelector('input[type="checkbox"]');
+                checkbox.checked = selectedUsers.has(user.userId);
+                checkbox.addEventListener('change', (e) => {
+                    if (e.target.checked) selectedUsers.add(user.userId);
+                    else selectedUsers.delete(user.userId);
+                    updateSelectedCount();
+                });
+                resultsContainer.appendChild(userEl);
+            });
+            
+            // 4. Show the select all button only if users were found
+            if (currentDisplayedUserIds.length > 0) { 
+                selectAllContainer.classList.remove('hidden');
+            }
+        };
+
+        const hideUserSearchModal = (returnValue) => {
+            userSearchModal.classList.add('modal-leave-to');
+            userSearchModal.classList.remove('modal-enter-active');
+            
+            setTimeout(() => {
+                userSearchModal.style.display = 'none';
+                if (resolveUserSearch) {
+                    resolveUserSearch(returnValue);
+                    resolveUserSearch = null;
+                }
+            }, 300);
+            
+            document.removeEventListener('keydown', handleEscapeKey);
+            // Remove temporary event listeners
+            searchBtn.onclick = null;
+            allBtn.onclick = null;
+            selectAllBtn.onclick = null;
+            confirmBtn.onclick = null;
+            cancelBtn.onclick = null;
+            searchInput.onkeydown = null;
+        };
+        
+        async function showUserSearchModal(title) {
+            return new Promise((resolve) => {
+                resolveUserSearch = (value) => {
+                    resolve(value);
+                };
+                
+                // Reset state
+                selectedUsers.clear();
+                currentDisplayedUserIds = [];
+                searchInput.value = '';
+                resultsContainer.innerHTML = '<p class="text-center text-gray-400 p-4">พิมพ์เพื่อค้นหาผู้ใช้ หรือกด "ทั้งหมด"</p>';
+                document.getElementById('search-modal-title').textContent = title;
+                selectAllContainer.classList.add('hidden');
+                updateSelectedCount();
+
+                // Show modal with animation
+                userSearchModal.style.display = 'flex';
+                setTimeout(() => {
+                    userSearchModal.classList.add('modal-enter-active');
+                    userSearchModal.classList.remove('modal-leave-to');
+                    searchInput.focus();
+                }, 10);
+                
+                // Attach event listeners
+                searchBtn.onclick = performSearch;
+                allBtn.onclick = performAllSearch;
+                searchInput.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); performSearch(); }};
+                
+                selectAllBtn.onclick = () => {
+                    // Logic for selecting all currently displayed users
+                    currentDisplayedUserIds.forEach(userId => selectedUsers.add(userId));
+                    const checkboxes = resultsContainer.querySelectorAll('input[type="checkbox"]');
+                    checkboxes.forEach(checkbox => checkbox.checked = true);
+                    updateSelectedCount();
+                    showToast('info', `เลือกผู้ใช้ทั้งหมด ${currentDisplayedUserIds.length} คนแล้ว`);
+                };
+
+                confirmBtn.onclick = () => {
+                    hideUserSearchModal(Array.from(selectedUsers));
+                };
+
+                cancelBtn.onclick = () => {
+                    hideUserSearchModal(null);
+                };
+                
+                document.addEventListener('keydown', handleEscapeKey);
+            });
+        }
+
+
+        // ---------------------------------------------------
+        // Original Application Logic
+        // ---------------------------------------------------
+
+        const showLoading = (text = 'กำลังโหลด...') => {
+            loadingText.textContent = text;
+            loadingOverlay.style.display = 'flex';
+        };
+        const hideLoading = () => {
+            loadingOverlay.style.display = 'none';
+        };
+
+        async function invokeFunction(payload) {
+            const { data, error } = await supabaseClient.functions.invoke('manage-rich-menu', { body: payload });
+            if (error) throw error;
+            return data;
+        }
+
+        function renderRichMenuCard(menu) {
+            const card = document.createElement('div');
+            card.id = `menu-${menu.richMenuId}`;
+            card.className =
+                'bg-[#5d536b]/50 border border-white/10 rounded-2xl p-4 flex flex-col gap-4 fade-in hover:border-white/20 transition-all';
+
+            
+            const aspectRatio =
+                menu.size && menu.size.width && menu.size.height
+                    ? `${menu.size.width} / ${menu.size.height}`
+                    : '2500 / 843';
+
+            card.innerHTML = `
+                <div class="img-container">
+                    <img src="data:image/png;base64,${menu.imageBase64 || ''}" 
+                                alt="${menu.name}" 
+                                class="w-full object-cover"
+                                style="aspect-ratio:${aspectRatio};" />
+                </div>
+                <div>
+                    <h3 class="font-bold text-lg text-[#989fce] truncate">${menu.name}</h3>
+                    <p class="text-xs text-gray-400 font-mono break-all">${menu.richMenuId}</p>
+                </div>
+                <div class="mt-auto grid grid-cols-2 gap-2 text-sm">
+                    <button class="link-user-btn btn-primary p-2 rounded-lg">เซ็ต Users</button>
+                    <button class="unlink-user-btn btn-primary p-2 rounded-lg">ยกเลิก Users</button>
+                    <button class="set-default-btn btn-primary p-2 rounded-lg col-span-2">Set ทั้งหมด</button>
+                    <button class="delete-menu-btn btn-danger p-2 rounded-lg col-span-2">ลบ Menu</button>
+                </div>`;
+
+            
+            card.querySelector('.link-user-btn').addEventListener('click', () =>
+                handleLinkUser(menu.richMenuId)
+            );
+            card.querySelector('.unlink-user-btn').addEventListener('click', () =>
+                handleUnlinkUser(menu.richMenuId)
+            );
+            card.querySelector('.set-default-btn').addEventListener('click', () =>
+                handleSetDefault(menu.richMenuId, menu.name) // Updated to pass menuName
+            );
+            card.querySelector('.delete-menu-btn').addEventListener('click', () =>
+                handleDeleteMenu(menu.richMenuId, menu.name)
+            );
+
+            return card;
+        }
+
+        async function loadRichMenus() {
+            showLoading('กำลังโหลดข้อมูล Rich Menu API...');
+            richMenuGrid.innerHTML = '';
+            richMenuDataCache.clear();
+
+            try {
+                const { richmenus } = await invokeFunction({ action: 'getList' });
+                if (!richmenus || richmenus.length === 0) {
+                    richMenuGrid.innerHTML = '<p class="text-center col-span-full">ไม่พบ Rich Menu</p>';
+                    hideLoading();
+                    return;
+                }
+
+                richmenus.forEach(menu => {
+                    richMenuGrid.appendChild(renderRichMenuCard(menu));
+                    richMenuDataCache.set(menu.richMenuId, menu);
+                });
+
+                const imageFetchPromises = richmenus.map(async (menu) => {
+                    try {
+                        const { imageBase64 } = await invokeFunction({ action: 'getRichMenuImage', richMenuId: menu.richMenuId });
+                        const cardElement = document.getElementById(`menu-${menu.richMenuId}`);
+                        if (cardElement && imageBase64) {
+                            // Update cache with image base64
+                            const cachedMenu = richMenuDataCache.get(menu.richMenuId);
+                            if (cachedMenu) cachedMenu.imageBase64 = imageBase64;
+                            
+                            const imgContainer = cardElement.querySelector('.img-container');
+                            imgContainer.classList.remove('animate-pulse');
+                            const aspectRatio = (menu.size && menu.size.width && menu.size.height) ? `${menu.size.width} / ${menu.size.height}` : '2500 / 843';
+                            imgContainer.innerHTML = `<img src="${imageBase64}" alt="${menu.name}" class="w-full object-cover" style="aspect-ratio: ${aspectRatio};">`;
+                        }
+                    } catch (imgErr) {
+                        console.error(`Failed to load image for ${menu.richMenuId}`, imgErr);
+                    }
+                });
+
+                await Promise.all(imageFetchPromises);
+
+            } catch (err) {
+                console.error(err);
+                showToast('error', `โหลดข้อมูลไม่สำเร็จ: ${err.message}`);
+            } finally {
+                hideLoading();
+            }
+        }
+        
+        async function handleLinkUser(richMenuId) {
+            const userIds = await showUserSearchModal('ค้นหา User ที่จะ Link Rich Menu');
+            if (userIds && userIds.length > 0) {
+                showLoading(`กำลังลิงก์ Rich Menu ให้ ${userIds.length} คน...`);
+                try {
+                    await invokeFunction({ action: 'bulkLink', userIds, richMenuId });
+                    showToast('success', 'ลิงก์ Rich Menu สำเร็จ');
+                } catch (err) {
+                    console.error(err);
+                    showToast('error', `ลิงก์ Rich Menu ไม่สำเร็จ: ${err.message}`);
+                } finally {
+                    hideLoading();
+                }
+            }
+        }
+        
+        async function handleUnlinkUser(richMenuId) {
+            // Note: The richMenuId argument here is technically unused in the current implementation of bulkUnlink, 
+            // but kept for consistency if the user search needs filtering based on linked menu later.
+            const userIds = await showUserSearchModal('ค้นหา User ที่จะยกเลิก Rich Menu');
+            if (userIds && userIds.length > 0) {
+                showLoading(`กำลังยกเลิก Rich Menu ของ ${userIds.length} คน...`);
+                try {
+                    const data = await invokeFunction({ action: 'bulkUnlink', userIds });
+                    showToast('success', data.message || 'ยกเลิกการลิงก์สำเร็จ');
+                } catch (err) {
+                    console.error(err);
+                    showToast('error', `ยกเลิกการลิงก์ไม่สำเร็จ: ${err.message}`);
+                } finally {
+                    hideLoading();
+                }
             }
         }
 
-        /**
-         * @function updateStatus
-         * อัปเดตจำนวนรายการที่ถูกเลือกและสถานะปุ่ม
-         */
-        function updateStatus() {
-            selectedCountSpan.textContent = selectedItems.size;
-            updateSelectAllButton();
+        async function handleSetDefault(richMenuId, menuName) {
+            const { isConfirmed } = await showConfirmationModal(
+                `ตั้ง Rich Menu "${menuName}" เป็น Rich Menu เริ่มต้น?`, 
+                'Rich Menu นี้จะแสดงให้ผู้ใช้ทุกคนที่ยังไม่มี Rich Menu เฉพาะของตัวเอง', 
+                'warning'
+            );
+            
+            if (isConfirmed) {
+                showLoading('กำลังตั้งค่า...');
+                try {
+                    await invokeFunction({ action: 'setDefault', richMenuId });
+                    showToast('success', 'ตั้งเป็น Rich Menu เริ่มต้นสำเร็จ');
+                } catch (err) {
+                    console.error(err);
+                    showToast('error', `ตั้งค่าไม่สำเร็จ: ${err.message}`);
+                } finally {
+                    hideLoading();
+                }
+            }
         }
+        
+        cancelDefaultBtn.addEventListener('click', async () => {
+            const { isConfirmed } = await showConfirmationModal(
+                'ยกเลิก Rich Menu เริ่มต้น?', 
+                'จะไม่มี Rich Menu เริ่มต้นสำหรับผู้ใช้ใหม่ทั้งหมด', 
+                'warning', 
+                'ยืนยัน', 
+                'btn-danger' // Use danger class for confirmation
+            );
+            
+            if (isConfirmed) {
+                showLoading('กำลังยกเลิก...');
+                try {
+                    await invokeFunction({ action: 'cancelDefault' });
+                    showToast('success', 'ยกเลิก Rich Menu เริ่มต้นสำเร็จ');
+                } catch (err) {
+                    console.error(err);
+                    showToast('error', `ยกเลิกไม่สำเร็จ: ${err.message}`);
+                } finally {
+                    hideLoading();
+                }
+            }
+        });
 
-        // เริ่มต้น: วาดรายการเริ่มต้นเมื่อหน้าเว็บโหลด
-        window.onload = function() {
-            handleSearch(); // แสดงรายการทั้งหมดในตอนเริ่มต้น
+        async function handleDeleteMenu(richMenuId, menuName) {
+            const { isConfirmed } = await showConfirmationModal(
+                `แน่ใจหรือไม่ที่จะลบ Rich Menu "${menuName}"?`, 
+                "การกระทำนี้ไม่สามารถย้อนกลับได้!", 
+                'error', 
+                'ลบ', 
+                'btn-danger'
+            );
+            
+            if (isConfirmed) {
+                showLoading('กำลังลบ...');
+                try {
+                    await invokeFunction({ action: 'deleteRichMenu', richMenuId });
+                    showToast('success', `ลบ Rich Menu "${menuName}" สำเร็จ`);
+                    // Remove card from UI after successful deletion
+                    const cardElement = document.getElementById(`menu-${richMenuId}`);
+                    if (cardElement) cardElement.remove();
+                } catch (err) {
+                    console.error(err);
+                    showToast('error', `ลบไม่สำเร็จ: ${err.message}`);
+                } finally {
+                    hideLoading();
+                }
+            }
+        }
+        
+        // Initializer
+        window.onload = async () => {
+             // Mock LIFF initialization and load data
+             // NOTE: In a real LIFF app, liff.init() would be here. We skip it for Canvas environment.
+             console.log("App ready. Starting data load.");
+             await loadRichMenus();
         };
+
+        // Note: The original code used Swal.fire, which is replaced by the custom modal functions (showConfirmationModal, showToast) here.
+        // I also ensured the handleSetDefault, cancelDefaultBtn.addEventListener, and handleDeleteMenu now use the custom modal.
     </script>
 </body>
 </html>
