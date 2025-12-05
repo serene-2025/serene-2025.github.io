@@ -51,6 +51,20 @@
         .animate-pop-in {
             animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
         }
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-up {
+            animation: fadeUp 0.5s ease-out forwards;
+        }
+        
+        /* Print Styles */
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white; -webkit-print-color-adjust: exact; }
+            .print-container { box-shadow: none; border: 1px solid #ddd; }
+        }
     </style>
 </head>
 <body>
@@ -64,7 +78,7 @@
             AlertCircle, AlertTriangle, ShieldAlert, FileWarning, HelpCircle, Mail, 
             Eye, EyeOff, FileText, Receipt, Calendar, ChevronRight, Image as ImageIcon, 
             ExternalLink, UserCheck, Banknote, MessageSquare, Hash, Fingerprint, Type, 
-            CalendarCheck, BadgeCheck, Bell, ZoomIn, RefreshCw, Loader2, Sparkles, ThumbsUp
+            CalendarCheck, BadgeCheck, Bell, ZoomIn, RefreshCw, Loader2, Sparkles, ThumbsUp, Printer, ArrowUp
         } from 'lucide-react';
 
         // --- Supabase Configuration ---
@@ -82,6 +96,7 @@
             const [error, setError] = useState(null);
             const [supabase, setSupabase] = useState(null);
             const [isMenuOpen, setIsMenuOpen] = useState(false);
+            const [showScrollTop, setShowScrollTop] = useState(false);
             
             // State สำหรับเก็บข้อมูลรายการรอตรวจสอบทั้งหมด
             const [allPendingFees, setAllPendingFees] = useState([]);
@@ -142,8 +157,16 @@
                 };
                 document.body.appendChild(script);
 
+                // Add scroll listener
+                const handleScroll = () => {
+                    if (window.scrollY > 300) setShowScrollTop(true);
+                    else setShowScrollTop(false);
+                };
+                window.addEventListener('scroll', handleScroll);
+
                 return () => {
                     if (document.body.contains(script)) document.body.removeChild(script);
+                    window.removeEventListener('scroll', handleScroll);
                 };
             }, []);
 
@@ -462,6 +485,14 @@
                 setSelectedImageUrl(null);
             };
 
+            const handlePrint = () => {
+                window.print();
+            };
+
+            const scrollToTop = () => {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+
             // เพิ่มฟังก์ชันสำหรับตรวจจับการกดปุ่ม Enter
             const handleKeyDown = (e) => {
                 if (e.key === 'Enter') {
@@ -501,7 +532,7 @@
                         setShowThankYouModal(true);
                         setTimeout(() => {
                             setShowThankYouModal(false);
-                        }, 4000); // ปิดเองใน 3 วินาที
+                        }, 3000); // ปิดเองใน 3 วินาที
                     }
                 }
                 
@@ -555,14 +586,27 @@
                 let overdueCount = 0;
                 let waitingCount = 0;
                 const RATE = 300;
+                let totalMonths = 0;
+                
                 months.forEach(month => {
-                const status = item[month.key];
-                if (!status) return;
-                if (status.includes('จ่ายแล้ว') || status.includes('ชำระแล้ว') || status.includes('ล่วงหน้า')) paidCount++;
-                else if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) overdueCount++;
-                else if (status.includes('รอข้อมูล') || status.includes('รอตรวจสอบ')) waitingCount++;
+                    const status = item[month.key];
+                    if (!status || status.includes('ไม่เก็บ')) return;
+                    
+                    totalMonths++;
+                    if (status.includes('จ่ายแล้ว') || status.includes('ชำระแล้ว') || status.includes('ล่วงหน้า')) paidCount++;
+                    else if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) overdueCount++;
+                    else if (status.includes('รอข้อมูล') || status.includes('รอตรวจสอบ')) waitingCount++;
                 });
-                return { paid: paidCount * RATE, overdue: overdueCount * RATE, waiting: waitingCount * RATE, overdueMonths: overdueCount, waitingMonths: waitingCount };
+                
+                return { 
+                    paid: paidCount * RATE, 
+                    overdue: overdueCount * RATE, 
+                    waiting: waitingCount * RATE, 
+                    overdueMonths: overdueCount, 
+                    waitingMonths: waitingCount,
+                    totalMonths: totalMonths,
+                    counts: { paid: paidCount, overdue: overdueCount, waiting: waitingCount }
+                };
             };
 
             const getHeaderStyle = (financials) => {
@@ -657,13 +701,45 @@
                 </div>
             );
 
+            // New Component: Summary Pie Chart using CSS conic-gradient
+            const SummaryChart = ({ financials }) => {
+                const total = financials.totalMonths || 12; // Prevent divide by zero
+                const paidPct = (financials.counts.paid / total) * 100;
+                const overduePct = (financials.counts.overdue / total) * 100;
+                const waitingPct = (financials.counts.waiting / total) * 100;
+                
+                // Create conic gradient string
+                // Paid (Green), Overdue (Red), Waiting (Yellow), Remaining (Gray)
+                const gradient = `conic-gradient(
+                    #22c55e 0% ${paidPct}%, 
+                    #ef4444 ${paidPct}% ${paidPct + overduePct}%, 
+                    #eab308 ${paidPct + overduePct}% ${paidPct + overduePct + waitingPct}%, 
+                    #f3f4f6 ${paidPct + overduePct + waitingPct}% 100%
+                )`;
+
+                return (
+                    <div className="flex items-center gap-4 bg-slate-50 p-3 rounded-xl border border-slate-100 mb-4">
+                        <div className="relative w-16 h-16 rounded-full shrink-0 shadow-inner" style={{ background: gradient }}>
+                            <div className="absolute inset-2 bg-white rounded-full flex items-center justify-center">
+                                <span className="text-xs font-bold text-slate-600">{Math.round(paidPct)}%</span>
+                            </div>
+                        </div>
+                        <div className="flex-1 grid grid-cols-2 gap-2 text-xs">
+                            <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-green-500"></div><span>จ่ายแล้ว {financials.counts.paid}</span></div>
+                            <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-red-500"></div><span>ค้างชำระ {financials.counts.overdue}</span></div>
+                            <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-yellow-500"></div><span>รอข้อมูล {financials.counts.waiting}</span></div>
+                        </div>
+                    </div>
+                );
+            };
+
             return (
                 <div className="min-h-screen text-slate-800" style={{ fontFamily: "'Kanit', sans-serif" }}>
                 
                 <div className="fixed inset-0 -z-10 bg-gradient-to-br from-[#1e3c72] via-[#2a5298] via-[#667eea] via-[#764ba2] to-[#8e44ad]"></div>
                 <div className="fixed inset-0 -z-10 opacity-30 bg-[radial-gradient(circle_at_20%_80%,rgba(120,119,198,0.3),transparent_25%),radial-gradient(circle_at_80%_20%,rgba(255,255,255,0.2),transparent_25%)]"></div>
 
-                <nav className="bg-white/10 backdrop-blur-md border-b border-white/20 sticky top-0 z-50">
+                <nav className="bg-white/10 backdrop-blur-md border-b border-white/20 sticky top-0 z-50 no-print">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex items-center justify-between h-16">
                         <div className="flex items-center gap-3">
@@ -705,11 +781,11 @@
                 </nav>
 
                 <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                    <div className="max-w-3xl mx-auto mb-10 text-center">
+                    <div className="max-w-3xl mx-auto mb-10 text-center no-print">
                     <h2 className="text-2xl md:text-4xl font-bold text-white mb-2 drop-shadow-md">🏡 ระบบตรวจสอบค่าส่วนกลาง</h2>
                     <p className="text-indigo-100 text-lg mb-4 font-medium drop-shadow-sm">ตรวจสอบสถานะการชำระเงินค่าส่วนกลางได้อย่างง่ายดาย</p>
                     <div className="mb-8 text-indigo-200 text-sm space-y-1">
-                        <p>✅ 1. ข้อมูลสถานะรายเดือน ยังไม่อัพเดทเรียลไทม์</p>
+                        <p>✅ 1. ข้อมูลสถานะรายเดือน อัพเดทเรียลไทม์</p>
                         <p>✅ 2. ข้อมูลประวัติการแจ้งชำระ อัพเดทเรียลไทม์</p>
                     </div>
                     
@@ -740,31 +816,85 @@
                     </div>
 
                     {!supabase ? (
-                    <div className="text-center py-20">
+                    <div className="text-center py-20 no-print">
                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-white/30 border-t-white mb-4"></div>
                         <p className="text-white/80 animate-pulse">กำลังเชื่อมต่อระบบฐานข้อมูล...</p>
                     </div>
                     ) : loading ? (
-                    <div className="text-center py-20 flex flex-col items-center">
+                    <div className="text-center py-20 flex flex-col items-center no-print">
                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-white/30 border-t-white mb-4"></div>
                         {isAutoSyncing && <p className="text-white/80 animate-pulse font-medium">กำลังตรวจสอบและอัปเดตข้อมูลล่าสุด...</p>}
                     </div>
                     ) : error ? (
-                    <div className="max-w-md mx-auto bg-red-500/10 backdrop-blur border border-red-500/30 p-4 rounded-xl text-center text-white">
+                    <div className="max-w-md mx-auto bg-red-500/10 backdrop-blur border border-red-500/30 p-4 rounded-xl text-center text-white no-print">
                         <AlertCircle className="mx-auto mb-2 text-red-300" size={32} />
                         <p>{error}</p>
                     </div>
                     ) : payments.length === 0 ? (
-                    <div className="text-center py-20 bg-white/5 backdrop-blur-md rounded-2xl border border-white/10 max-w-lg mx-auto">
-                        <div className="bg-white/10 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <Search className="text-white/50" size={32} />
+                    <div className="py-12 px-4 no-print animate-fade-up">
+                        <div className="max-w-4xl mx-auto bg-white/10 backdrop-blur-lg rounded-3xl border border-white/20 p-8 md:p-12 shadow-2xl">
+                            <div className="text-center mb-12">
+                                <div className="bg-indigo-500/20 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 shadow-[0_0_15px_rgba(99,102,241,0.5)] border border-indigo-400/30">
+                                    <Home className="text-white w-12 h-12" />
+                                </div>
+                                <h3 className="text-3xl font-bold text-white mb-4 drop-shadow-lg">ยินดีต้อนรับสู่ระบบตรวจสอบ</h3>
+                                <p className="text-indigo-100 text-lg max-w-2xl mx-auto font-light">
+                                    ระบบช่วยอำนวยความสะดวกในการตรวจสอบสถานะค่าส่วนกลาง<br className="hidden md:block"/>ของหมู่บ้าน โกลเด้นแลนด์ ซีรีน อย่างรวดเร็วและแม่นยำ
+                                </p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-6 flex items-start gap-4 shadow-xl hover:transform hover:-translate-y-1 transition-all duration-300 border border-white/50">
+                                    <div className="bg-blue-100 p-3.5 rounded-xl text-blue-600 shadow-inner">
+                                        <Search size={28} strokeWidth={2.5} />
+                                    </div>
+                                    <div>
+                                        <h4 className="font-bold text-slate-800 text-xl mb-1">ค้นหาข้อมูลรวดเร็ว</h4>
+                                        <p className="text-slate-600 text-sm leading-relaxed">เพียงพิมพ์เลขที่บ้านก็สามารถตรวจสอบข้อมูลได้ทันที รองรับการค้นหาที่แม่นยำ</p>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-6 flex items-start gap-4 shadow-xl hover:transform hover:-translate-y-1 transition-all duration-300 border border-white/50">
+                                    <div className="bg-green-100 p-3.5 rounded-xl text-green-600 shadow-inner">
+                                        <RefreshCw size={28} strokeWidth={2.5} />
+                                    </div>
+                                    <div>
+                                        <h4 className="font-bold text-slate-800 text-xl mb-1">อัพเดทเรียลไทม์</h4>
+                                        <p className="text-slate-600 text-sm leading-relaxed">ข้อมูลสถานะรายเดือนและประวัติการแจ้งชำระ เชื่อมต่อฐานข้อมูลโดยตรง</p>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-6 flex items-start gap-4 shadow-xl hover:transform hover:-translate-y-1 transition-all duration-300 border border-white/50">
+                                    <div className="bg-orange-100 p-3.5 rounded-xl text-orange-600 shadow-inner">
+                                        <AlertTriangle size={28} strokeWidth={2.5} />
+                                    </div>
+                                    <div>
+                                        <h4 className="font-bold text-slate-800 text-xl mb-1">แจ้งเตือนอัตโนมัติ</h4>
+                                        <p className="text-slate-600 text-sm leading-relaxed">ระบบตรวจสอบและแจ้งเตือนทันทีหากมียอดค้างชำระ หรืออยู่ในสถานะรอตรวจสอบ</p>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-6 flex items-start gap-4 shadow-xl hover:transform hover:-translate-y-1 transition-all duration-300 border border-white/50">
+                                    <div className="bg-purple-100 p-3.5 rounded-xl text-purple-600 shadow-inner">
+                                        <FileText size={28} strokeWidth={2.5} />
+                                    </div>
+                                    <div>
+                                        <h4 className="font-bold text-slate-800 text-xl mb-1">ประวัติโปร่งใส</h4>
+                                        <p className="text-slate-600 text-sm leading-relaxed">ตรวจสอบรายละเอียด หลักฐานสลิปโอนเงิน และประวัติย้อนหลังได้ทุกรายการ</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="mt-10 text-center">
+                                <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/20 text-white text-sm font-medium backdrop-blur border border-white/30 animate-pulse">
+                                    <Sparkles size={16} /> เริ่มต้นใช้งานโดยพิมพ์เลขที่บ้านด้านบน
+                                </span>
+                            </div>
                         </div>
-                        <p className="text-xl text-white font-medium">ไม่พบข้อมูล</p>
-                        <p className="text-white/60 mt-2">ลองค้นหาด้วยเลขที่บ้าน</p>
                     </div>
                     ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                        {payments.map((item) => {
+                        {payments.map((item, index) => {
                         const financials = calculateFinancials(item);
                         const headerStyle = getHeaderStyle(financials);
                         const itemKey = getItemKey(item);
@@ -779,7 +909,8 @@
                         return (
                             <div 
                             key={itemKey} 
-                            className="bg-white rounded-2xl shadow-xl overflow-hidden hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 border border-slate-100 flex flex-col"
+                            className="bg-white rounded-2xl shadow-xl overflow-hidden hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 border border-slate-100 flex flex-col print-container animate-fade-up"
+                            style={{ animationDelay: `${index * 100}ms` }}
                             >
                             <div className={`${headerStyle.bg} px-5 py-4 border-b ${headerStyle.border} flex justify-between items-start transition-colors duration-300`}>
                                 <div>
@@ -802,7 +933,7 @@
                                 {housePendingFees.length > 0 && (
                                 <div 
                                     onClick={() => openDetailModal(item)}
-                                    className="mb-5 bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 rounded-xl p-3 flex items-start justify-between shadow-sm animate-pulse cursor-pointer hover:bg-orange-100 transition-colors"
+                                    className="mb-5 bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 rounded-xl p-3 flex items-start justify-between shadow-sm animate-pulse cursor-pointer hover:bg-orange-100 transition-colors no-print"
                                     title="คลิกเพื่อดูรายละเอียด"
                                 >
                                     <div className="flex items-start gap-3">
@@ -827,6 +958,9 @@
                                 </div>
                                 )}
 
+                                {/* --- New Chart Section --- */}
+                                <SummaryChart financials={financials} />
+
                                 <div className="mb-5 pb-4 border-b border-slate-100 space-y-2">
                                 <div className="flex items-center justify-between gap-2 font-bold text-lg text-slate-800">
                                     <div className="flex items-center gap-2">
@@ -835,7 +969,7 @@
                                     </div>
                                     <button 
                                     onClick={() => toggleNameVisibility(itemKey)}
-                                    className="text-slate-400 hover:text-blue-600 transition-colors p-1 rounded-full hover:bg-blue-50"
+                                    className="text-slate-400 hover:text-blue-600 transition-colors p-1 rounded-full hover:bg-blue-50 no-print"
                                     title={isNameVisible ? "ซ่อนชื่อ" : "แสดงชื่อเต็ม"}
                                     >
                                     {isNameVisible ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -849,13 +983,22 @@
                                 </div>
                                 </div>
 
-                                <button 
-                                onClick={() => openDetailModal(item)}
-                                className="w-full mb-4 py-2.5 rounded-xl bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 font-bold text-sm flex items-center justify-center gap-2 transition-colors duration-200 border border-indigo-100 shadow-sm"
-                                >
-                                <FileText size={18} />
-                                ดูรายละเอียดการแจ้งโอน
-                                </button>
+                                <div className="flex gap-2 mb-4 no-print">
+                                    <button 
+                                        onClick={() => openDetailModal(item)}
+                                        className="flex-1 py-2.5 rounded-xl bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 font-bold text-sm flex items-center justify-center gap-2 transition-colors duration-200 border border-indigo-100 shadow-sm"
+                                    >
+                                        <FileText size={18} />
+                                        <span>ดูรายละเอียดการแจ้งโอน</span>
+                                    </button>
+                                    <button 
+                                        onClick={handlePrint}
+                                        className="flex-none px-4 py-2.5 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 font-bold text-sm flex items-center justify-center gap-2 transition-colors border border-slate-200"
+                                        title="พิมพ์รายงาน"
+                                    >
+                                        <Printer size={18} />
+                                    </button>
+                                </div>
 
                                 <div className="mb-3 font-bold text-slate-700 flex items-center justify-between">
                                 <div className="flex items-center gap-2">
@@ -866,7 +1009,7 @@
                                 <button 
                                     onClick={() => handleSyncStatus(item)}
                                     disabled={isSyncing}
-                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${isSyncing ? 'bg-gray-100 text-gray-400 cursor-wait' : 'bg-orange-500 text-white hover:bg-orange-600 shadow-sm hover:shadow-md'}`}
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all no-print ${isSyncing ? 'bg-gray-100 text-gray-400 cursor-wait' : 'bg-orange-500 text-white hover:bg-orange-600 shadow-sm hover:shadow-md'}`}
                                 >
                                     <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
                                     <span>{isSyncing ? 'กำลังอัพเดท' : 'อัพเดท'}</span>
@@ -903,9 +1046,20 @@
                     )}
                 </main>
 
+                {/* Scroll To Top Button */}
+                {showScrollTop && (
+                    <button 
+                        onClick={scrollToTop}
+                        className="fixed bottom-6 right-6 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full shadow-lg transition-all animate-fade-up z-50 no-print"
+                        aria-label="Scroll to top"
+                    >
+                        <ArrowUp size={24} />
+                    </button>
+                )}
+
                 {/* --- THANK YOU MODAL (NEW) --- */}
                 {showThankYouModal && (
-                    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-300">
+                    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-300 no-print">
                         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
                         <div className="relative bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl transform scale-100 animate-pop-in border-4 border-green-100">
                             <div className="mx-auto flex items-center justify-center h-24 w-24 rounded-full bg-green-100 mb-6 shadow-inner">
@@ -922,7 +1076,7 @@
 
                 {/* --- OVERDUE ALERT MODAL (NEW) --- */}
                 {showOverdueModal && (
-                    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-300">
+                    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-300 no-print">
                         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
                         <div className="relative bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl transform scale-100 animate-pop-in border-4 border-red-100">
                             <div className="mx-auto flex items-center justify-center h-24 w-24 rounded-full bg-red-100 mb-6 shadow-inner">
@@ -938,7 +1092,7 @@
                 )}
 
                 {detailModalOpen && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 no-print">
                         <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={closeDetailModal}></div>
                         <div className="relative bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col animate-in fade-in zoom-in-95 duration-200">
                         
@@ -1095,7 +1249,7 @@
                 )}
 
                 {pdfModalOpen && selectedPdfUrl && (
-                    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+                    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 no-print">
                         <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm" onClick={closePdfModal}></div>
                         <div className="relative bg-white rounded-2xl w-full max-w-4xl h-[85vh] flex flex-col shadow-2xl animate-in fade-in zoom-in-95 duration-200">
                         
@@ -1127,7 +1281,7 @@
                 )}
 
                 {imageModalOpen && selectedImageUrl && (
-                    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4" onClick={closeImageModal}>
+                    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 no-print" onClick={closeImageModal}>
                         <div className="absolute inset-0 bg-black/90 backdrop-blur-sm"></div>
                         <div className="relative w-full max-w-4xl h-full max-h-[90vh] flex flex-col items-center justify-center animate-in fade-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
                         
@@ -1153,8 +1307,8 @@
                     </div>
                 )}
 
-                <footer className="text-center py-6 text-white/60 text-sm">
-                    <p>9one © 2024 ระบบตรวจสอบค่าส่วนกลาง | หมู่บ้าน โกลเด้นแลนด์ ซีรีน</p>
+                <footer className="text-center py-6 text-white/60 text-sm no-print">
+                    <p>9one © 2025 ระบบตรวจสอบค่าส่วนกลาง | หมู่บ้าน โกลเด้นแลนด์ ซีรีน</p>
                 </footer>
                 </div>
             );
