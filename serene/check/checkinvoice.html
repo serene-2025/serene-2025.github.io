@@ -44,6 +44,13 @@
         ::-webkit-scrollbar-thumb:hover {
             background: #555; 
         }
+        @keyframes popIn {
+            0% { transform: scale(0.9); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-pop-in {
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
     </style>
 </head>
 <body>
@@ -57,7 +64,7 @@
             AlertCircle, AlertTriangle, ShieldAlert, FileWarning, HelpCircle, Mail, 
             Eye, EyeOff, FileText, Receipt, Calendar, ChevronRight, Image as ImageIcon, 
             ExternalLink, UserCheck, Banknote, MessageSquare, Hash, Fingerprint, Type, 
-            CalendarCheck, BadgeCheck, Bell, ZoomIn, RefreshCw, Loader2 
+            CalendarCheck, BadgeCheck, Bell, ZoomIn, RefreshCw, Loader2, Sparkles, ThumbsUp
         } from 'lucide-react';
 
         // --- Supabase Configuration ---
@@ -99,6 +106,9 @@
             // State สำหรับ Loading การ Sync
             const [syncingId, setSyncingId] = useState(null);
             const [isAutoSyncing, setIsAutoSyncing] = useState(false); 
+
+            // State สำหรับ Modal ขอบคุณ
+            const [showThankYouModal, setShowThankYouModal] = useState(false);
 
             // Mapping ชื่อเดือนภาษาไทย เป็น Column Database
             const monthMap = {
@@ -242,7 +252,8 @@
                         .from('common_fees')
                         .select('*')
                         .eq('house_number', item.house_numbe)
-                        .eq('year', item.year);
+                        .eq('year', item.year)
+                        .order('reported_at', { ascending: true }); // เรียงตามลำดับเวลาเพื่อให้สถานะล่าสุดถูกต้อง
 
                     if (feeError) throw feeError;
 
@@ -254,12 +265,17 @@
                             const monthCol = monthMap[fee.month];
                             if (monthCol) {
                                 const currentStatus = item[monthCol];
-                                if (fee.status.includes('รอ') || fee.status.includes('ตรวจสอบ') && !fee.status.includes('แล้ว')) {
+                                
+                                // Logic การเปลี่ยนสถานะ (ปรับปรุงให้ครอบคลุม แจ้งโอน/รอตรวจสอบ)
+                                const isPending = (fee.status.includes('รอ') || fee.status.includes('ตรวจสอบ') || fee.status.includes('แจ้งโอน')) && !fee.status.includes('แล้ว');
+                                const isPaid = fee.status.includes('ตรวจสอบแล้ว') || fee.status.includes('อนุมัติ') || fee.status.includes('ถูกต้อง');
+
+                                if (isPending) {
                                     if (currentStatus !== 'รอตรวจสอบ') {
                                         updates[monthCol] = 'รอตรวจสอบ';
                                         hasUpdates = true;
                                     }
-                                } else if (fee.status.includes('ตรวจสอบแล้ว') || fee.status.includes('อนุมัติ') || fee.status.includes('ถูกต้อง')) {
+                                } else if (isPaid) {
                                     if (currentStatus !== 'จ่ายแล้ว') {
                                         updates[monthCol] = 'จ่ายแล้ว';
                                         hasUpdates = true;
@@ -370,12 +386,17 @@
                 setSyncingId(itemKey);
                 
                 try {
-                    const updated = await syncHouseLogic(item);
-                    if (updated) {
-                        await fetchPayments(searchTerm, false); 
-                        await fetchAllPendingFees();
-                    }
+                    // 1. ทำการ Sync ข้อมูลลงฐานข้อมูล (ถ้ามี)
+                    await syncHouseLogic(item);
+                    
+                    // 2. โหลดข้อมูลใหม่ทั้งหมดเสมอ เพื่อให้ Alert Box แจ้งโอนใหม่ แสดงผลทันที
+                    await Promise.all([
+                        fetchPayments(searchTerm, false),
+                        fetchAllPendingFees()
+                    ]);
+
                 } catch (err) {
+                    console.error("Sync Error:", err);
                     alert('เกิดข้อผิดพลาดในการอัปเดตสถานะ');
                 } finally {
                     setSyncingId(null);
@@ -440,19 +461,38 @@
                 setSelectedImageUrl(null);
             };
 
-            useEffect(() => {
-                if (supabase) {
-                const delayDebounceFn = setTimeout(() => {
-                    fetchPayments(searchTerm, false);
-                    fetchAllPendingFees();
-                }, 500);
-                return () => clearTimeout(delayDebounceFn);
+            // เพิ่มฟังก์ชันสำหรับตรวจจับการกดปุ่ม Enter
+            const handleKeyDown = (e) => {
+                if (e.key === 'Enter') {
+                    handleSearchClick();
                 }
-            }, [searchTerm, supabase]);
+            };
 
             const handleSearchClick = async () => {
+                // เพิ่ม Loading state ก่อนเริ่มค้นหา
+                setLoading(true); 
+                
+                // เรียก fetchPayments (ส่ง true เพื่อเปิด autoSync ถ้าต้องการ หรือ false ถ้าไม่ต้องการ sync ทุกครั้งที่ค้นหา)
+                // ในที่นี้ใช้ true ตาม logic เดิมเพื่อให้ข้อมูลเป็นปัจจุบันที่สุดตอนกดค้นหา
                 const results = await fetchPayments(searchTerm, true); 
                 await fetchAllPendingFees();
+                
+                // Logic แสดงการ์ดขอบคุณ (หากไม่มีค้างชำระ)
+                if (results && results.length > 0) {
+                    // ตรวจสอบว่ามีรายการไหนค้างชำระหรือไม่
+                    const hasOverdue = results.some(item => {
+                        const fins = calculateFinancials(item);
+                        return fins.overdueMonths > 0;
+                    });
+
+                    // ถ้าไม่มีค้างชำระเลย ให้แสดงการ์ดขอบคุณ
+                    if (!hasOverdue) {
+                        setShowThankYouModal(true);
+                        setTimeout(() => {
+                            setShowThankYouModal(false);
+                        }, 4000); // ปิดเองใน 3 วินาที
+                    }
+                }
                 
                 if (searchTerm.trim()) {
                     sendTelegramNotification(searchTerm, results);
@@ -559,10 +599,10 @@
                 if (status.includes('รอ') || status.includes('ตรวจสอบ')) {
                 return { 
                     bg: 'bg-gradient-to-r from-amber-400 to-orange-500', 
-                    text: 'text-white',
-                    iconColor: 'text-amber-600',
-                    iconBg: 'bg-white',
-                    border: 'border-amber-500'
+                    text: 'text-white', 
+                    iconColor: 'text-amber-600', 
+                    iconBg: 'bg-white', 
+                    border: 'border-amber-500' 
                 };
                 }
 
@@ -638,6 +678,7 @@
                             className="w-full pl-10 pr-4 py-2 bg-white/90 rounded-lg text-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
+                            onKeyDown={handleKeyDown} 
                             />
                             <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
                         </div>
@@ -654,11 +695,11 @@
 
                 <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                     <div className="max-w-3xl mx-auto mb-10 text-center">
-                    <h2 className="text-2xl md:text-4xl font-bold text-white mb-2 drop-shadow-md">📋 ระบบตรวจสอบค่าส่วนกลาง</h2>
+                    <h2 className="text-2xl md:text-4xl font-bold text-white mb-2 drop-shadow-md">ระบบตรวจสอบค่าส่วนกลาง</h2>
                     <p className="text-indigo-100 text-lg mb-4 font-medium drop-shadow-sm">ตรวจสอบสถานะการชำระเงินค่าส่วนกลางได้อย่างง่ายดาย</p>
                     <div className="mb-8 text-indigo-200 text-sm space-y-1">
-                        <p>✅ 1. ข้อมูลสถานะรายเดือน อัพเดทเรียลไทม์</p>
-                        <p>✅ 2. ข้อมูลประวัติการแจ้งชำระ อัพเดทเรียลไทม์</p>
+                        <p>1. ข้อมูลสถานะรายเดือน ยังไม่อัพเดทเรียลไทม์</p>
+                        <p>2. ข้อมูลประวัติการแจ้งชำระ อัพเดทเรียลไทม์</p>
                     </div>
                     
                     <div className="flex flex-col sm:flex-row gap-3 items-stretch justify-center">
@@ -667,10 +708,11 @@
                             <div className="relative h-full">
                             <input
                                 type="text"
-                                placeholder="พิมพ์เลขที่บ้าน เช่น 998/1 "
+                                placeholder="พิมพ์เลขที่บ้าน (เช่น 998/1)..."
                                 className="w-full h-full pl-12 pr-4 py-4 bg-white/95 backdrop-blur rounded-xl text-lg text-slate-900 placeholder-slate-400 shadow-xl focus:outline-none focus:ring-2 focus:ring-white/50"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
+                                onKeyDown={handleKeyDown}
                             />
                             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={24} />
                             </div>
@@ -789,10 +831,10 @@
                                     </button>
                                 </div>
                                 <div className="grid grid-cols-1 gap-1.5 text-sm">
-                                    <div className="flex justify-between items-center"><span className="text-slate-500">🏠 บ้านเลขที่ :</span><span className="font-medium text-slate-700">{item.house_numbe}</span></div>
-                                    <div className="flex justify-between items-center"><span className="text-slate-500">📭 ซอย :</span><span className="font-medium text-slate-700">{item.soi || '-'}</span></div>
-                                    <div className="flex justify-between items-center"><span className="text-slate-500">📅 วันโอน :</span><span className="font-medium text-slate-700">{item.transfer_date || '-'}</span></div>
-                                    <div className="flex justify-between items-center"><span className="text-slate-500">📰 สถานะเริ่มต้น :</span><span className={`font-medium text-slate-700`}>{item.status || '-'}</span></div>
+                                    <div className="flex justify-between items-center"><span className="text-slate-500">บ้านเลขที่:</span><span className="font-medium text-slate-700">{item.house_numbe}</span></div>
+                                    <div className="flex justify-between items-center"><span className="text-slate-500">ซอย:</span><span className="font-medium text-slate-700">{item.soi || '-'}</span></div>
+                                    <div className="flex justify-between items-center"><span className="text-slate-500">วันโอน:</span><span className="font-medium text-slate-700">{item.transfer_date || '-'}</span></div>
+                                    <div className="flex justify-between items-center"><span className="text-slate-500">สถานะเริ่มต้น:</span><span className={`font-medium text-slate-700`}>{item.status || '-'}</span></div>
                                 </div>
                                 </div>
 
@@ -850,6 +892,23 @@
                     )}
                 </main>
 
+                {/* --- THANK YOU MODAL (NEW) --- */}
+                {showThankYouModal && (
+                    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-300">
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+                        <div className="relative bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl transform scale-100 animate-pop-in border-4 border-green-100">
+                            <div className="mx-auto flex items-center justify-center h-24 w-24 rounded-full bg-green-100 mb-6 shadow-inner">
+                                <ThumbsUp className="h-14 w-14 text-green-600" />
+                            </div>
+                            <h3 className="text-2xl font-extrabold text-gray-900 mb-2">👩‍💻 ขอบคุณค่ะ!</h3>
+                            <p className="text-gray-600 text-lg">ชำระค่าส่วนกลางครบถ้วนแล้ว</p>
+                            <p className="text-sm text-green-600 mt-4 font-bold flex items-center justify-center gap-1">
+                                <Home size={14}/> หมู่บ้าน โกลเด้นแลนด์ ซีรีน
+                            </p>
+                        </div>
+                    </div>
+                )}
+
                 {detailModalOpen && (
                     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                         <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={closeDetailModal}></div>
@@ -880,7 +939,7 @@
                                 <div className="flex flex-col items-center justify-center py-16 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl bg-white">
                                     <FileText size={48} className="mb-4 opacity-20" />
                                     <p className="text-lg font-medium">ไม่พบประวัติการแจ้งโอน</p>
-                                    <p className="text-sm">ยังไม่มีข้อมูลในระบบ ค่าส่วนกลาง</p>
+                                    <p className="text-sm">ยังไม่มีข้อมูลในระบบ common_fees</p>
                                 </div>
                             ) : (
                                 <div className="space-y-6">
@@ -1067,7 +1126,7 @@
                 )}
 
                 <footer className="text-center py-6 text-white/60 text-sm">
-                    <p>9one © 2025 ระบบตรวจสอบค่าส่วนกลาง | หมู่บ้าน โกลเด้นแลนด์ ซีรีน</p>
+                    <p>© 2025 ระบบตรวจสอบค่าส่วนกลาง | หมู่บ้าน โกลเด้นแลนด์ ซีรีน</p>
                 </footer>
                 </div>
             );
