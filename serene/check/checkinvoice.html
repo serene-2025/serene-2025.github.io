@@ -626,11 +626,51 @@
                 setLoading(true);
                 const results = await fetchPayments(searchTerm, true);
                 await fetchAllPendingFees();
+                
                 if (results && results.length > 0) {
-                    const hasIssue = results.some(item => months.some(m => { const s = item[m.key] || ''; return s.includes('ยังไม่จ่าย') || s.includes('ค้าง') || s.includes('รอข้อมูล'); }));
-                    if (hasIssue) { setShowOverdueModal(true); setTimeout(() => setShowOverdueModal(false), 3000); }
-                    else { setShowThankYouModal(true); setTimeout(() => setShowThankYouModal(false), 3000); }
+                    const now = new Date();
+                    const currentYear = now.getFullYear();
+                    const currentMonthIdx = now.getMonth(); // 0 = Jan, 1 = Feb, ...
+
+                    // ตรวจสอบว่ามีรายการไหนที่มีสถานะ "รอข้อมูล" หรือ "ยังไม่จ่าย" หรือไม่ (เช็คย้อนหลังถึงเดือนปัจจุบัน)
+                    const hasIssue = results.some(item => {
+                        const itemYear = parseInt(item.year);
+                        if (isNaN(itemYear)) return false;
+
+                        return months.some((m, idx) => {
+                            let shouldCheck = false;
+
+                            // ถ้าเป็นปีก่อนหน้า ตรวจสอบทุกเดือน
+                            if (itemYear < currentYear) {
+                                shouldCheck = true;
+                            } 
+                            // ถ้าเป็นปีปัจจุบัน ตรวจสอบถึงแค่เดือนปัจจุบัน
+                            else if (itemYear === currentYear) {
+                                if (idx <= currentMonthIdx) {
+                                    shouldCheck = true;
+                                }
+                            }
+                            // ปีอนาคต ไม่ต้องตรวจสอบ
+
+                            if (shouldCheck) {
+                                const status = item[m.key] || '';
+                                return status.includes('ยังไม่จ่าย') || 
+                                       status.includes('ค้าง') || 
+                                       status.includes('รอข้อมูล');
+                            }
+                            return false;
+                        });
+                    });
+
+                    if (hasIssue) { 
+                        setShowOverdueModal(true); 
+                        setTimeout(() => setShowOverdueModal(false), 3000); 
+                    } else { 
+                        setShowThankYouModal(true); 
+                        setTimeout(() => setShowThankYouModal(false), 3000); 
+                    }
                 }
+                
                 if (searchTerm.trim()) sendTelegramNotification(searchTerm, results);
             };
 
