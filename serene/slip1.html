@@ -226,7 +226,6 @@
                             <tr>
                                 <th class="py-2">เดือน</th>
                                 <th class="py-2">ปี</th>
-                                <th class="py-2">จำนวนเงิน</th>
                                 <th class="py-2">สถานะ</th>
                             </tr>
                         </thead>
@@ -276,7 +275,7 @@
     const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
     const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
     
-    // ** แก้ไข: เปลี่ยนชื่อตัวแปรเป็น supabaseClient เพื่อไม่ให้ชนกับชื่อ Library หลัก **
+    // ตัวแปรสำหรับเรียกใช้งาน Supabase Client
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     $(document).ready(function() {
@@ -321,11 +320,12 @@
         });
     }
 
-    // --- Function เช็คสถานะค้างจ่าย (Supabase) - แบบแสดงในกล่อง ---
+    // --- Function เช็คสถานะค้างจ่าย (Supabase) - ปรับปรุงตามโครงสร้าง CSV ---
     async function checkUnpaidStatus(houseNumber) {
       const container = document.getElementById('unpaidStatusContainer');
+      const tableBody = document.getElementById('unpaidStatusBody');
       
-      // ถ้าไม่มีบ้านเลขที่ หรือบ้านเลขที่สั้นเกินไป (ป้องกันการค้นหามั่ว)
+      // ถ้าไม่มีบ้านเลขที่ หรือบ้านเลขที่สั้นเกินไป
       if(!houseNumber || houseNumber.length < 2) {
           container.style.display = 'none';
           return;
@@ -334,12 +334,11 @@
       console.log("Checking status for:", houseNumber);
 
       try {
-        // ** แก้ไข: ใช้ supabaseClient ในการเรียกข้อมูล **
+        // Query Supabase: ค้นหาจาก house_numbe (ชื่อตาม CSV)
         const { data, error } = await supabaseClient
           .from('house_payments')
           .select('*')
-          .eq('house_no', houseNumber) 
-          .eq('status', 'ยังไม่จ่าย');
+          .eq('house_numbe', houseNumber); 
 
         if (error) {
           console.error("Supabase Error:", error);
@@ -347,29 +346,38 @@
           return;
         }
 
+        let totalUnpaidCount = 0;
+        tableBody.innerHTML = ''; // Clear old data
+
         if (data && data.length > 0) {
-          // พบรายการค้างจ่าย -> แสดง Box
-          const tableBody = document.getElementById('unpaidStatusBody');
-          tableBody.innerHTML = ''; // Clear old data
-          
-          document.getElementById('statusHouseNo').innerText = houseNumber;
-          document.getElementById('totalCountBadge').innerText = data.length + " รายการ";
+            // โครงสร้างข้อมูลเป็นรายปี ต้องวนลูปเช็คแต่ละเดือน
+            const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+            const thaiMonths = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 
-          data.forEach(item => {
-            const row = `
-              <tr>
-                <td class="align-middle">${item.month || '-'}</td>
-                <td class="align-middle">${item.year || '-'}</td>
-                <td class="align-middle text-danger fw-bold">${item.amount ? Number(item.amount).toLocaleString() : '-'}</td>
-                <td class="align-middle"><span class="badge bg-danger rounded-pill">${item.status}</span></td>
-              </tr>
-            `;
-            tableBody.innerHTML += row;
-          });
+            data.forEach(row => {
+                months.forEach((monthKey, index) => {
+                    const status = row[monthKey];
+                    // เช็คสถานะว่าค้างจ่ายหรือไม่ (อาจจะเป็น "ยังไม่จ่าย" หรือ "ค้างจ่าย" ตามข้อมูลจริง)
+                    if (status && (status === 'ยังไม่จ่าย' || status === 'ค้างจ่าย')) {
+                        totalUnpaidCount++;
+                        const rowHtml = `
+                          <tr>
+                            <td class="align-middle">${thaiMonths[index]}</td>
+                            <td class="align-middle">${row.year || '-'}</td>
+                            <td class="align-middle"><span class="badge bg-danger rounded-pill">${status}</span></td>
+                          </tr>
+                        `;
+                        tableBody.innerHTML += rowHtml;
+                    }
+                });
+            });
+        }
 
-          container.style.display = 'block';
+        if (totalUnpaidCount > 0) {
+            document.getElementById('statusHouseNo').innerText = houseNumber;
+            document.getElementById('totalCountBadge').innerText = totalUnpaidCount + " รายการ";
+            container.style.display = 'block';
         } else {
-            // ไม่พบยอดค้างจ่าย ให้ซ่อนกล่อง
             console.log("ไม่พบยอดค้างจ่ายสำหรับบ้านเลขที่ " + houseNumber);
             container.style.display = 'none';
         }
