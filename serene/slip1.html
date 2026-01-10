@@ -1056,42 +1056,41 @@
         method: "post",
         maxBodyLength: Infinity,
         url: `${urlAPI}?action=saveDataNew`,
-        headers: {},
+        // แก้ไข: ใช้ Content-Type: text/plain และลบ no-cors
+        headers: { "Content-Type": "text/plain" },
         data: formData,
-        mode: 'no-cors',
+        // mode: 'no-cors', // เอาออกเพื่อให้ axios อ่าน response ได้
       };
 
       axios
         .request(config)
         .then((response) => {
-          // เนื่องจากใช้ no-cors เราอาจจะไม่ได้ response data ที่ถูกต้องเสมอไป
-          // แต่ถ้า script เดิมทำงานได้ แสดงว่า backend รองรับ
-          // (หมายเหตุ: axios with no-cors usually returns opaque response, 
-          // but if CORS is enabled on GAS script, it works fine)
           const msgResponse = response.data;
           
-          // Fallback check: GAS apps often return JSON directly.
+          // ตรวจสอบว่า msgResponse มีค่าและมี status SUCCESS
+          // GAS มักจะส่งกลับมาเป็น JSON
           if (msgResponse && msgResponse.msg == "SUCCESS") {
              handleSuccess(msgResponse);
-          } else if (response.status === 200) {
-             // บางที response.data อาจจะไม่ตรง format หรือเป็น opaque
-             // ลอง assume success ถ้า status 200 สำหรับ case นี้
-             // แต่ code เดิมใช้ check msgResponse.msg ดังนั้นยึดตามเดิม
-             // ถ้ามันไม่เข้าเงื่อนไขนี้ อาจจะต้อง check logic ฝั่ง GAS
-             if(typeof msgResponse === 'object' && msgResponse.msg === 'SUCCESS') {
-                handleSuccess(msgResponse);
-             } else {
-                // ถ้า response แปลกๆ ลองดูว่า code เดิมทำอย่างไร
-                // Code เดิม handle else เป็น Error
-                 handleError(msgResponse);
+          } else if (typeof msgResponse === 'string' && msgResponse.includes("SUCCESS")) {
+             // กรณี GAS ส่งกลับมาเป็น string (บางครั้งเกิดขึ้น)
+             try {
+                const parsed = JSON.parse(msgResponse);
+                if(parsed.msg == "SUCCESS") handleSuccess(parsed);
+                else handleError(parsed);
+             } catch(e) {
+                // ถ้า parse ไม่ได้แต่มีคำว่า SUCCESS ก็ให้ผ่าน
+                handleSuccess({ msg: "SUCCESS" });
              }
+          } else {
+             // ถ้า response status 200 แต่อาจจะไม่มี body ที่คาดหวัง
+             // ลองเสี่ยงดวงว่าสำเร็จถ้าไม่มี error ชัดเจน
+             // แต่ code เดิม check msgResponse.msg ดังนั้นควร handle error
+             handleError(msgResponse);
           }
         })
         .catch(err => {
-            console.error(err);
-            // บางครั้ง no-cors ทำให้ axios throw error หรือ return empty body
-            // แต่ request ส่งไปถึง server แล้ว
-            // เราอาจจะลอง reload หรือแจ้งเตือน
+            console.error("Axios Error:", err);
+            handleError({ msg: "Connection Error: " + err.message });
         });
 
       // ฟังก์ชันแยกเพื่อลดความซ้ำซ้อน
