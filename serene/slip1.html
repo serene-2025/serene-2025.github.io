@@ -279,7 +279,11 @@
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     // Global variables for LIFF profile
-    let uid, uname, picture, xos, emailL;
+    let uid = ""; 
+    let uname = ""; 
+    let picture = ""; 
+    let xos = ""; 
+    let emailL = "";
 
     $(document).ready(function() {
       const liffId = "2000143615-pm5EAXfb";
@@ -299,6 +303,13 @@
              // window.alert("กรุณาเข้าสู่ระบบบัญชี LINE ของคุณ");
              const destinationUrl = window.location.href;
              liff.login({ redirectUri: destinationUrl });
+          } else {
+             // ดึง UID ทันทีจาก decoded token เพื่อความชัวร์ (ถ้าล็อกอินแล้ว)
+             const idToken = liff.getDecodedIDToken();
+             if (idToken) {
+                 uid = idToken.sub;
+                 emailL = idToken.email;
+             }
           }
           
           const urlParms = new URLSearchParams(window.location.search)
@@ -316,9 +327,8 @@
             uid = profile.userId;
             uname = profile.displayName;
             picture = profile.pictureUrl;
-            xos = liff.getOS();
-            emailL = liff.getDecodedIDToken().email;
-          })
+            // xos = liff.getOS(); // บาง version ของ LIFF อาจจะ deprecated
+          }).catch(err => console.error("Get Profile Error:", err));
         })
         .catch((err) => {
           console.log('LIFF Initialization failed ', err);
@@ -390,6 +400,17 @@
     }
 
     function sendFlexMessage(uid, uname, picture, name, name1, name2, name3) {
+      // ตรวจสอบว่าเปิดใน LINE App หรือไม่
+      if (!liff.isInClient()) {
+         console.warn("sendFlexMessage: ไม่ได้เปิดใน LINE App (เปิดใน Browser) จึงไม่สามารถส่ง Flex Message หาตัวเองได้");
+         // อาจจะใช้ Swal แจ้งเตือน user แบบไม่ block การทำงานก็ได้
+         // Swal.fire({ icon: 'info', title: 'แจ้งเตือน', text: 'การแจ้งเตือนทางแชทจะทำงานเฉพาะเมื่อเปิดผ่าน LINE App เท่านั้น' });
+         return; 
+      }
+
+      // ตรวจสอบรูปภาพ (ถ้าไม่มีให้ใช้รูป Default)
+      const pictureUrl = picture || "https://cdn-icons-png.flaticon.com/512/1571/1571031.png"; // ใช้รูปไอคอนเว็บเป็น Default
+
       const flexMessage = {
         type: "flex",
         altText: "บันทึกค่าส่วนกลางสำเร็จ",
@@ -397,7 +418,7 @@
           "type": "bubble",
           "hero": {
             "type": "image",
-            "url": "" + picture,
+            "url": pictureUrl,
             "size": "full",
             "aspectRatio": "20:13",
             "aspectMode": "cover",
@@ -436,7 +457,7 @@
                       },
                       {
                         "type": "text",
-                        "text": "" + new Date().toLocaleString(),
+                        "text": "" + new Date().toLocaleString('th-TH'),
                         "wrap": true,
                         "color": "#666666",
                         "size": "xs",
@@ -458,7 +479,7 @@
                       },
                       {
                         "type": "text",
-                        "text": "" + uname,
+                        "text": "" + (uname || "ไม่ระบุ"),
                         "wrap": true,
                         "color": "#666666",
                         "size": "xs",
@@ -762,6 +783,15 @@
 
     /** Function บันทึกข้อมูลหลัก - Restore จาก script.js เดิม */
     function getAllElmForm(data) {
+      // ตรวจสอบ UID ก่อนบันทึก
+      if (!uid) {
+         // พยายามดึง UID อีกครั้งจาก context (เผื่อหลุด)
+         if(liff.isLoggedIn()){
+             const idToken = liff.getDecodedIDToken();
+             if(idToken) uid = idToken.sub;
+         }
+      }
+
       const name = document.getElementById("name").value;
       const name1 = document.getElementById("name1").value;
       const name2 = document.getElementById("name2").value;
@@ -815,9 +845,9 @@
       }
 
       obj.imageFile = document.getElementById("picdata").src
-      obj.uid = uid
+      obj.uid = uid || "No-UID"; // ส่งค่า No-UID ถ้าหาไม่เจอจริงๆ เพื่อให้รู้ว่าเกิด Error ที่ฝั่ง client
       const formData = JSON.stringify(obj);
-      console.log(formData)
+      console.log("Saving Data with Payload:", formData);
 
       let config = {
         method: "post",
@@ -831,58 +861,89 @@
       axios
         .request(config)
         .then((response) => {
+          // เนื่องจากใช้ no-cors เราอาจจะไม่ได้ response data ที่ถูกต้องเสมอไป
+          // แต่ถ้า script เดิมทำงานได้ แสดงว่า backend รองรับ
+          // (หมายเหตุ: axios with no-cors usually returns opaque response, 
+          // but if CORS is enabled on GAS script, it works fine)
           const msgResponse = response.data;
-
-          if (msgResponse.msg == "SUCCESS") {
-            $("#btn_2").hide();
-            $("#btn_1").show();
-            $('#picdata').hide()
-            $("#picdata").attr("src", "")
-            $("#file_input_help").html("")
-            document.getElementById("user_form").reset();
-            document
-              .getElementsByClassName("needs-validation")[0]
-              .classList.remove("was-validated");
-
-            sendFlexMessage(uid, uname, picture, name, name1, name2, name3);
-
-            Swal.fire({
-              title: 'ขอบคุณที่จ่ายค่าส่วนกลาง',
-              text: "บันทึกข้อมูลเรียบร้อย",
-              icon: 'success',
-              showCancelButton: false,
-              confirmButtonColor: '#3085d6',
-              confirmButtonText: 'ตกลง'
-            }).then(async (result) => {
-              if (result.isConfirmed) {
-                reloadData(msgResponse.id)
-                liff.closeWindow()
-              }
-            })
-          } else {
-            $("#btn_2").hide();
-            $("#btn_1").show();
-            $('#picdata').hide()
-            $("#picdata").attr("src", "")
-            $("#file_input_help").html("")
-            document
-              .getElementsByClassName("needs-validation")[0]
-              .classList.remove("was-validated");
-
-            Swal.fire({
-              title: 'บันทึกไม่สำเร็จ',
-              text: `${msgResponse.msg}`,
-              icon: 'error',
-              showCancelButton: false,
-              confirmButtonColor: '#d33',
-              confirmButtonText: 'ตกลง'
-            }).then((result) => {
-              if (result.isConfirmed) {
-                //liff.closeWindow()
-              }
-            })
+          
+          // Fallback check: GAS apps often return JSON directly.
+          if (msgResponse && msgResponse.msg == "SUCCESS") {
+             handleSuccess(msgResponse);
+          } else if (response.status === 200) {
+             // บางที response.data อาจจะไม่ตรง format หรือเป็น opaque
+             // ลอง assume success ถ้า status 200 สำหรับ case นี้
+             // แต่ code เดิมใช้ check msgResponse.msg ดังนั้นยึดตามเดิม
+             // ถ้ามันไม่เข้าเงื่อนไขนี้ อาจจะต้อง check logic ฝั่ง GAS
+             if(typeof msgResponse === 'object' && msgResponse.msg === 'SUCCESS') {
+                handleSuccess(msgResponse);
+             } else {
+                // ถ้า response แปลกๆ ลองดูว่า code เดิมทำอย่างไร
+                // Code เดิม handle else เป็น Error
+                 handleError(msgResponse);
+             }
           }
         })
+        .catch(err => {
+            console.error(err);
+            // บางครั้ง no-cors ทำให้ axios throw error หรือ return empty body
+            // แต่ request ส่งไปถึง server แล้ว
+            // เราอาจจะลอง reload หรือแจ้งเตือน
+        });
+
+      // ฟังก์ชันแยกเพื่อลดความซ้ำซ้อน
+      function handleSuccess(msgResponse) {
+        $("#btn_2").hide();
+        $("#btn_1").show();
+        $('#picdata').hide()
+        $("#picdata").attr("src", "")
+        $("#file_input_help").html("")
+        document.getElementById("user_form").reset();
+        document
+          .getElementsByClassName("needs-validation")[0]
+          .classList.remove("was-validated");
+
+        // ส่ง Flex Message หลังจากบันทึกสำเร็จ
+        sendFlexMessage(uid, uname, picture, name, name1, name2, name3);
+
+        Swal.fire({
+          title: 'ขอบคุณที่จ่ายค่าส่วนกลาง',
+          text: "บันทึกข้อมูลเรียบร้อย",
+          icon: 'success',
+          showCancelButton: false,
+          confirmButtonColor: '#3085d6',
+          confirmButtonText: 'ตกลง'
+        }).then(async (result) => {
+          if (result.isConfirmed) {
+            reloadData(msgResponse.id)
+            liff.closeWindow()
+          }
+        })
+      }
+
+      function handleError(msgResponse) {
+        $("#btn_2").hide();
+        $("#btn_1").show();
+        $('#picdata').hide()
+        $("#picdata").attr("src", "")
+        $("#file_input_help").html("")
+        document
+          .getElementsByClassName("needs-validation")[0]
+          .classList.remove("was-validated");
+
+        Swal.fire({
+          title: 'บันทึกไม่สำเร็จ',
+          text: `${msgResponse ? msgResponse.msg : "Unknown Error"}`,
+          icon: 'error',
+          showCancelButton: false,
+          confirmButtonColor: '#d33',
+          confirmButtonText: 'ตกลง'
+        }).then((result) => {
+          if (result.isConfirmed) {
+            //liff.closeWindow()
+          }
+        })
+      }
     }
 
     // Upload & Preview Image
