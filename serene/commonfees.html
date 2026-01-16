@@ -63,7 +63,13 @@
     </button>
         <div class="collapse navbar-collapse" id="navbarNav">
           <ul class="navbar-nav ms-auto">
-           <li class="nav-item me-2"> 
+           <li class="nav-item me-2 d-flex align-items-center"> 
+               
+               <!-- ปุ่มสำหรับ Admin (Batch PDF) -->
+               <button class="btn btn-light text-primary me-2" id="btnBatchPDF" onclick="runSelectedPDFs()" style="display:none;">
+                   <i class="fa-solid fa-file-pdf"></i> สร้าง PDF ที่เลือก
+               </button>
+
                <button class="btn btn-warning me-md-2" id="btnlogin" onclick="formLogin()"><i class="fa-solid fa-right-to-bracket"></i> เข้าสู่ระบบ</button>
         <span class="logout text-white ms-2" style="display:none">
             <button class="btn btn-warning btn-sm-2" id="btnLogout" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i><i class="fa-regular fa-user ms-2"></i>&nbsp;<span id="msg-name"></span></button>
@@ -379,6 +385,9 @@
             $("#btnlogin").hide();
             $(".logout").show();
             $("#msg-name").html(admin);
+            
+            // แสดงปุ่ม Batch PDF ถ้าเป็น Admin
+            $("#btnBatchPDF").show();
         }
         
         // Date setup
@@ -415,8 +424,15 @@
     function showData(dataArray){
         var result = "<table class='table table-sm' style='font-size:4'>"+
                    "<thead class='bg-primary text-white'>"+
-                     "<tr>"+
-                      "<th align='center'>บ้านเลขที่</th>"+
+                     "<tr>";
+        
+        // --- เพิ่ม Checkbox Column ถ้าเป็น Admin ---
+        if(admin !== "") {
+             result += "<th class='text-center'><input type='checkbox' id='selectAll' onclick='toggleAll(this)'> เลือก</th>";
+        }
+        // ---------------------------------------
+
+        result +=     "<th align='center'>บ้านเลขที่</th>"+
                       "<th scope='col'>เดือน</th>"+
                       "<th scope='col'>สถานะ</th>"+
                       "<th scope='col'>ปี :</th>"+
@@ -432,6 +448,13 @@
            
         for (var i = 0; i < dataArray.length; i++){
             result += "<tr>";
+            
+            // --- เพิ่ม Checkbox Cell ถ้าเป็น Admin ---
+            if(admin !== "") {
+                 result += "<td class='text-center'><input type='checkbox' class='rowCheckbox' value='" + dataArray[i][0] + "'></td>";
+            }
+            // ---------------------------------------
+
             result += "<td>" +dataArray[i][4]+ "</td>"; //บ้านเลขที่
             result += "<td>" +dataArray[i][5]+ "</td>"; //เดือน
             
@@ -532,6 +555,82 @@
             });
             $.fn.DataTable.ext.pager.numbers_length = 4;
         });  
+    }
+
+    // --- ฟังก์ชันสำหรับ Checkbox ---
+    function toggleAll(source) {
+        checkboxes = document.getElementsByClassName('rowCheckbox');
+        for(var i=0, n=checkboxes.length;i<n;i++) {
+            checkboxes[i].checked = source.checked;
+        }
+    }
+
+    // --- ฟังก์ชัน Batch Run PDF ---
+    async function runSelectedPDFs() {
+        // หา checkbox ที่ถูกเลือก
+        let checkedBoxes = $('.rowCheckbox:checked');
+        let selectedIds = [];
+        
+        checkedBoxes.each(function() {
+            selectedIds.push($(this).val());
+        });
+
+        if (selectedIds.length === 0) {
+            Swal.fire({
+                icon: 'warning',
+                title: 'กรุณาเลือกรายการ',
+                text: 'ยังไม่ได้เลือกรายการที่จะสร้าง PDF'
+            });
+            return;
+        }
+
+        // ยืนยันการทำรายการ
+        let confirm = await Swal.fire({
+            title: 'ยืนยันการสร้าง PDF',
+            text: `ต้องการสร้าง PDF จำนวน ${selectedIds.length} รายการใช่หรือไม่?`,
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'ใช่, สร้างเลย',
+            cancelButtonText: 'ยกเลิก'
+        });
+
+        if (!confirm.isConfirmed) return;
+
+        // เริ่มวนลูปสร้างทีละรายการ
+        Swal.fire({
+            title: 'กำลังดำเนินการ...',
+            html: 'กำลังเตรียมข้อมูล',
+            allowOutsideClick: false,
+            didOpen: () => {
+                Swal.showLoading();
+            }
+        });
+
+        for (let i = 0; i < selectedIds.length; i++) {
+            let id = selectedIds[i];
+            
+            // อัปเดตข้อความบน Swal
+            Swal.getHtmlContainer().textContent = `กำลังสร้าง PDF รายการที่ ${i + 1} จาก ${selectedIds.length} (ID: ${id})`;
+            
+            try {
+                // เรียก API ไปที่ GAS (เพิ่ม action: runPDF)
+                await callApi('runPDF', { id: id });
+            } catch (error) {
+                console.error(`Error processing ID ${id}:`, error);
+                // อาจจะเก็บ error ไว้บอก user ทีหลัง แต่ให้ลูปทำงานต่อ
+            }
+        }
+
+        // เสร็จสิ้น
+        Swal.fire({
+            icon: 'success',
+            title: 'เสร็จสิ้น',
+            text: `ดำเนินการครบ ${selectedIds.length} รายการแล้ว`,
+            timer: 2000
+        });
+
+        // โหลดข้อมูลใหม่เพื่อแสดงผลลัพธ์ (เช่น ปุ่ม PDF ขึ้นมา)
+        getData(admin);
     }
 
     // 4. Form Submission & File Handling
@@ -720,6 +819,7 @@
                 $("#msg-name").html(admin);
                 $(".fablogin").hide();
                 $(".fablogout").show();
+                $("#btnBatchPDF").show(); // Show PDF button
             } else {
                 loadingEnd();      
                 const Toast = Swal.mixin({
@@ -754,6 +854,7 @@
                 $("#btnlogin").show();
                 $(".fablogin").show();
                 $(".fablogout").hide();
+                $("#btnBatchPDF").hide(); // Hide PDF button
                 admin = "";
                 getData();
                 localStorage.removeItem('userName');
