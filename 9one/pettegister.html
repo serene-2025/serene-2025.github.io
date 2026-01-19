@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ลงทะเบียนสัตว์เลี้ยง - โกลเด้นแลนด์ อินสไปร์</title>
+    <title>ระบบลงทะเบียนสัตว์เลี้ยง - หมู่บ้านจัดสรร (Online)</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Font Awesome -->
@@ -12,6 +12,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Supabase JS Client -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- LIFF SDK -->
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
     <script>
         // ==========================================
@@ -25,6 +27,11 @@
         // ==========================================
         const TELEGRAM_TOKEN = '8279169798:AAG-JnddhWhscK_Zr5vRCx9naaRDVMBZ9XQ';
         let TELEGRAM_CHAT_ID = '-1003502117297'; 
+
+        // ==========================================
+        // 🟢 ตั้งค่า LINE LIFF
+        // ==========================================
+        const LIFF_ID = '2008923148-q3n1xlu2'; // ⚠️ ใส่ LIFF ID ของคุณที่นี่
 
         // Initialize Client
         const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -174,7 +181,7 @@
                     </div>
                     <div>
                         <h1 class="text-lg font-bold leading-tight text-slate-800 dark:text-white">PetRegister <span class="text-primary text-xs bg-emerald-100 dark:bg-emerald-900/50 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-500/30">Online</span></h1>
-                        <p class="text-xs text-slate-500 dark:text-slate-400">โกลเด้นแลนด์ อินสไปร์</p>
+                        <p class="text-xs text-slate-500 dark:text-slate-400">ระบบฐานข้อมูลหมู่บ้าน</p>
                     </div>
                 </div>
 
@@ -244,6 +251,16 @@
         <!-- View: Register (Default Visible) -->
         <div id="view-register" class="fade-in">
             <div class="max-w-2xl mx-auto">
+                
+                <!-- LINE Profile Section (Displays if logged in via LINE) -->
+                <div id="lineProfileSection" class="hidden mb-6 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-4 rounded-2xl flex items-center gap-4">
+                    <img id="lineAvatar" src="" class="w-12 h-12 rounded-full border-2 border-white dark:border-slate-700 shadow-sm">
+                    <div>
+                        <p class="text-xs text-green-600 dark:text-green-400 font-bold uppercase">เข้าสู่ระบบด้วย LINE</p>
+                        <h3 id="lineName" class="text-slate-800 dark:text-white font-semibold">Username</h3>
+                    </div>
+                </div>
+
                 <div class="bg-white dark:bg-dark-card rounded-3xl shadow-xl shadow-slate-200/50 dark:shadow-black/20 p-6 md:p-8 border border-slate-100 dark:border-slate-700 relative overflow-hidden transition-colors duration-300">
                     <!-- Background Decor -->
                     <div class="hidden dark:block absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
@@ -279,13 +296,13 @@
                                     <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 ml-1">บ้านเลขที่</label>
                                     <input type="text" id="houseNo" required 
                                         class="w-full px-4 py-3 bg-white dark:bg-dark-input border border-slate-200 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-primary/50 dark:focus:border-primary transition-all outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500 shadow-sm text-slate-800 dark:text-white" 
-                                        placeholder="997/99">
+                                        placeholder="99/99">
                                 </div>
                                 <div class="col-span-2">
                                     <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5 ml-1">ซอย</label>
                                     <div class="relative">
                                         <select id="soi" class="w-full px-4 py-3 bg-white dark:bg-dark-input border border-slate-200 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-primary/50 dark:focus:border-primary transition-all outline-none appearance-none shadow-sm text-center text-slate-800 dark:text-white">
-                                            <option value="" class="text-slate-400">เลือก ซอย</option>
+                                            <option value="" class="text-slate-400">เลือก</option>
                                             <script>
                                                 for(let i=1; i<=20; i++) {
                                                     document.write(`<option value="${i}">ซอย ${i}</option>`);
@@ -458,11 +475,15 @@
         let isAdmin = false; 
         let editingPetId = null; 
         let existingImageUrl = null;
+        let lineProfile = null; // Store LINE Profile
 
         // Initialize
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             // Theme Initialization
             initTheme();
+
+            // Initialize LIFF
+            await initLiff();
 
             fetchPets();
             updateViewUI();
@@ -473,6 +494,38 @@
             // Show Welcome Modal
             showWelcomeModal();
         });
+
+        // ==========================================
+        // 🟢 LINE LIFF Logic
+        // ==========================================
+        async function initLiff() {
+            try {
+                await liff.init({ liffId: LIFF_ID });
+                if (liff.isLoggedIn()) {
+                    lineProfile = await liff.getProfile();
+                    updateLineProfileUI();
+                } else {
+                    // Optional: liff.login(); if you want to force login
+                    console.log('LIFF not logged in');
+                }
+            } catch (err) {
+                console.error('LIFF Init failed', err);
+            }
+        }
+
+        function updateLineProfileUI() {
+            if (lineProfile) {
+                document.getElementById('lineProfileSection').classList.remove('hidden');
+                document.getElementById('lineAvatar').src = lineProfile.pictureUrl;
+                document.getElementById('lineName').innerText = lineProfile.displayName;
+                
+                // Auto-fill owner name if empty
+                const ownerInput = document.getElementById('ownerName');
+                if(!ownerInput.value) {
+                    ownerInput.value = lineProfile.displayName;
+                }
+            }
+        }
 
         // ==========================================
         // 📊 Export to CSV
@@ -583,7 +636,7 @@
                 isAdmin = false;
                 showToast('ออกจากโหมด Admin แล้ว');
             } else {
-                const pass = prompt("กรุณาใส่รหัสผ่านผู้ดูแลระบบ");
+                const pass = prompt("กรุณาใส่รหัสผ่านผู้ดูแลระบบ (Demo: 1234)");
                 if (pass === '1234') {
                     isAdmin = true;
                     showToast('เข้าสู่โหมด Admin เรียบร้อย');
@@ -910,8 +963,29 @@
             e.preventDefault();
             setLoading(true);
 
+            // 1. If logged in via LINE, save user first
+            if (lineProfile) {
+                try {
+                    const { error: userError } = await supabaseClient
+                        .from('users')
+                        .upsert({
+                            id: lineProfile.userId,
+                            display_name: lineProfile.displayName,
+                            picture_url: lineProfile.pictureUrl,
+                            updated_at: new Date()
+                        });
+                    
+                    if (userError) {
+                        console.warn("Could not save LINE user to 'users' table. Make sure the table exists.", userError);
+                    }
+                } catch (err) {
+                    console.warn("User save failed", err);
+                }
+            }
+
             let finalImageUrl = existingImageUrl; 
 
+            // 2. Upload Image
             if (currentImageBase64) {
                 try {
                     const blob = dataURLtoBlob(currentImageBase64);
@@ -954,7 +1028,8 @@
                 phone: document.getElementById('phone').value,
                 pettype: document.getElementById('petType').value,
                 petname: document.getElementById('petName').value,
-                image: finalImageUrl
+                image: finalImageUrl,
+                line_user_id: lineProfile ? lineProfile.userId : null
             };
 
             let error;
