@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบขอดูกล้องวงจรปิด - Golden Land Serene</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Supabase JS Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <style>
+        body { font-family: 'Sarabun', sans-serif; }
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* Shake Animation */
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+            20%, 40%, 60%, 80% { transform: translateX(4px); }
+        }
+        .animate-shake {
+            animation: shake 0.6s cubic-bezier(.36,.07,.19,.97) both;
+            animation-delay: 0.2s;
+        }
+
+        /* Loading Overlay */
+        .loading-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255, 255, 255, 0.8);
+            display: flex; justify-content: center; align-items: center;
+            z-index: 1000;
+        }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-stone-50 text-stone-800 min-h-screen flex flex-col pb-10 overflow-hidden" id="main-body">
+
+    <!-- PDPA Warning Modal -->
+    <div id="pdpa-modal" class="fixed inset-0 flex items-center justify-center z-[999] bg-stone-900/90 backdrop-blur-md transition-opacity duration-500">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 relative overflow-hidden animate-shake border-t-4 border-amber-500">
+            <div class="absolute top-0 right-0 p-4 opacity-10">
+                <i class="fa-solid fa-shield-cat text-6xl"></i>
+            </div>
+            <div class="p-8">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center shrink-0">
+                        <i class="fa-solid fa-user-shield text-amber-600 text-xl"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-xl font-bold text-gray-800 leading-tight">นโยบายคุ้มครองข้อมูล<br>ส่วนบุคคล (PDPA)</h2>
+                    </div>
+                </div>
+                <div class="bg-stone-50 border border-stone-200 rounded-lg p-4 mb-6 text-sm text-stone-600 h-48 overflow-y-auto custom-scrollbar">
+                    <p class="font-bold text-stone-800 mb-2">เรียน ท่านลูกบ้านและผู้ใช้งาน</p>
+                    <p class="mb-2">นิติบุคคลหมู่บ้านจัดสรร โกลเด้นแลนด์ซีรีน ขอแจ้งให้ทราบถึงนโยบายการคุ้มครองข้อมูลส่วนบุคคล เพื่อความปลอดภัยและความเป็นส่วนตัวของท่าน ดังนี้:</p>
+                    <ul class="list-disc pl-5 space-y-1 mb-2">
+                        <li><strong>การเก็บรวบรวม:</strong> ระบบจะเก็บข้อมูล ชื่อ-สกุล, เบอร์โทรศัพท์ และรายละเอียดเหตุการณ์ ลงในฐานข้อมูลกลางเพื่อใช้ในการตรวจสอบ</li>
+                        <li><strong>ระยะเวลา:</strong> ข้อมูลจะถูกจัดเก็บเป็นระยะเวลา 30 วัน หรือจนกว่าการดำเนินการจะเสร็จสิ้น</li>
+                        <li><strong>การเปิดเผย:</strong> ข้อมูลภาพกล้องวงจรปิดจะไม่ถูกเผยแพร่ต่อสาธารณะ</li>
+                    </ul>
+                    <p class="text-xs text-stone-400 mt-2">* กรุณายอมรับข้อตกลงเพื่อเข้าใช้งานระบบ</p>
+                </div>
+                <button onclick="acceptPDPA()" class="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg hover:shadow-amber-500/30 transform active:scale-[0.98] transition-all flex items-center justify-center gap-2 group">
+                    <span>รับทราบและยอมรับเงื่อนไข</span>
+                    <i class="fa-solid fa-arrow-right group-hover:translate-x-1 transition-transform"></i>
+                </button>
+            </div>
+            <div class="bg-stone-100 p-3 text-center text-xs text-stone-400">
+                Golden Land Serene Data Privacy Policy
+            </div>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-amber-600 to-amber-500 text-white shadow-lg sticky top-0 z-50">
+        <div class="container mx-auto px-4 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="bg-white p-2.5 rounded-full text-amber-600 w-10 h-10 flex items-center justify-center shadow-sm">
+                    <i class="fa-solid fa-video text-lg"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg md:text-xl font-bold leading-tight">Golden Land Serene</h1>
+                    <p class="text-xs md:text-sm text-amber-100 opacity-90">ระบบแจ้งขอดูกล้องวงจรปิด</p>
+                </div>
+            </div>
+            <button onclick="toggleView()" id="nav-btn" class="bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-sm transition-all flex items-center gap-2 border border-white/10">
+                <i class="fa-solid fa-clock-rotate-left" id="nav-icon"></i>
+                <span class="hidden md:inline" id="nav-text">ประวัติการขอ</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="container mx-auto px-4 py-6 max-w-3xl flex-grow relative">
+        
+        <!-- Loading Spinner -->
+        <div id="loading-spinner" class="loading-overlay hidden">
+            <div class="flex flex-col items-center">
+                <i class="fa-solid fa-circle-notch fa-spin text-amber-600 text-4xl mb-3"></i>
+                <p class="text-stone-600 font-medium">กำลังดำเนินการ...</p>
+            </div>
+        </div>
+
+        <!-- Success Modal -->
+        <div id="success-modal" class="fixed inset-0 flex items-center justify-center z-50 bg-black/50 backdrop-blur-sm p-4 hidden transition-opacity duration-300 opacity-0">
+            <div class="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full text-center transform scale-100">
+                <div class="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
+                    <i class="fa-solid fa-circle-check text-green-600 text-3xl"></i>
+                </div>
+                <h3 class="text-xl font-bold text-gray-800 mb-2">บันทึกข้อมูลสำเร็จ</h3>
+                <p class="text-gray-600">ข้อมูลถูกบันทึกลงระบบแล้ว เจ้าหน้าที่จะดำเนินการตรวจสอบโดยเร็วที่สุด</p>
+            </div>
+        </div>
+
+        <!-- Admin Header Banner (ย้ายมาไว้ตรงนี้เพื่อให้เห็นตลอดเวลา) -->
+        <div id="admin-banner" class="hidden bg-stone-800 text-white p-3 rounded-lg mb-6 flex justify-between items-center shadow-md animate-in slide-in-from-top-2">
+            <div class="flex items-center gap-2">
+                <div class="bg-amber-500 p-1.5 rounded text-stone-900">
+                    <i class="fa-solid fa-user-shield text-sm"></i>
+                </div>
+                <span class="font-bold text-sm md:text-base">โหมดผู้ดูแลระบบ (Admin)</span>
+            </div>
+            <button onclick="logoutAdmin()" class="text-xs bg-stone-600 hover:bg-red-600 px-3 py-1.5 rounded transition-colors flex items-center gap-1">
+                <i class="fa-solid fa-right-from-bracket"></i> ออกจากระบบ
+            </button>
+        </div>
+
+        <!-- Form View -->
+        <div id="form-view" class="fade-in">
+            <div class="bg-white rounded-xl shadow-md overflow-hidden border border-stone-100">
+                <div class="p-6 border-b border-stone-100 bg-amber-50/50">
+                    <h2 class="text-lg font-bold text-amber-800 flex items-center gap-2">
+                        <i class="fa-solid fa-file-pen"></i>
+                        แบบฟอร์มคำร้องขอตรวจสอบภาพ
+                    </h2>
+                    <p class="text-sm text-stone-500 mt-1">กรุณากรอกข้อมูลให้ครบถ้วนเพื่อความรวดเร็วในการตรวจสอบ</p>
+                </div>
+
+                <form id="request-form" onsubmit="handleSubmit(event)" class="p-6 space-y-6">
+                    <!-- Form Fields -->
+                    <div class="space-y-4">
+                        <h3 class="text-sm font-semibold text-stone-400 uppercase tracking-wider mb-3">1. ข้อมูลผู้ร้องขอ</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="space-y-1">
+                                <label class="text-sm font-medium text-stone-700">ชื่อ-นามสกุล <span class="text-red-500">*</span></label>
+                                <div class="relative">
+                                    <i class="fa-solid fa-user absolute left-3 top-3 text-stone-400 text-sm"></i>
+                                    <input type="text" name="requester_name" required class="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" placeholder="ระบุชื่อเจ้าของบ้าน">
+                                </div>
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-sm font-medium text-stone-700">บ้านเลขที่/ซอย <span class="text-red-500">*</span></label>
+                                <div class="relative">
+                                    <i class="fa-solid fa-map-location-dot absolute left-3 top-3 text-stone-400 text-sm"></i>
+                                    <input type="text" name="house_number" required class="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" placeholder="เช่น 123/45 ซอย 8">
+                                </div>
+                            </div>
+                            <div class="space-y-1 md:col-span-2">
+                                <label class="text-sm font-medium text-stone-700">เบอร์โทรศัพท์ติดต่อ <span class="text-red-500">*</span></label>
+                                <div class="relative">
+                                    <i class="fa-solid fa-phone absolute left-3 top-3 text-stone-400 text-sm"></i>
+                                    <input type="tel" name="phone" required class="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none" placeholder="08x-xxx-xxxx">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-stone-100 my-4"></div>
+
+                    <div class="space-y-4">
+                        <h3 class="text-sm font-semibold text-stone-400 uppercase tracking-wider mb-3">2. รายละเอียดเหตุการณ์</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="space-y-1">
+                                <label class="text-sm font-medium text-stone-700">วันที่เกิดเหตุ <span class="text-red-500">*</span></label>
+                                <input type="date" name="incident_date" required class="w-full px-3 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none text-stone-600">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-sm font-medium text-stone-700">บริเวณที่ต้องการดู <span class="text-red-500">*</span></label>
+                                <div class="relative">
+                                    <select name="location" class="w-full px-3 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none bg-white appearance-none">
+                                        <option value="MainGate">หน้าป้อม รปภ.</option>
+                                        <option value="Fitness">ฟิตเนส</option>
+                                        <option value="Soi1">ซอย 1</option>
+                                        <option value="Soi2">ซอย 2</option>
+                                        <option value="Soi3">ซอย 3</option>
+                                        <option value="Soi4">ซอย 4</option>
+                                        <option value="Soi5">ซอย 5</option>
+                                        <option value="Soi6">ซอย 6</option>
+                                        <option value="Soi7">ซอย 7</option>
+                                        <option value="Soi8">ซอย 8</option>
+                                        <option value="Soi9">ซอย 9</option>
+                                        <option value="Soi10">ซอย 10</option>
+                                        <option value="Soi11">ซอย 11</option>
+                                        <option value="Soi12">ซอย 12</option>
+                                    </select>
+                                    <i class="fa-solid fa-chevron-down absolute right-3 top-3 text-stone-400 text-xs pointer-events-none"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="space-y-1">
+                                <label class="text-sm font-medium text-stone-700">ตั้งแต่เวลา <span class="text-red-500">*</span></label>
+                                <div class="relative">
+                                    <i class="fa-regular fa-clock absolute left-3 top-3 text-stone-400 text-sm"></i>
+                                    <input type="time" name="time_start" required class="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none text-stone-600">
+                                </div>
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-sm font-medium text-stone-700">ถึงเวลา <span class="text-red-500">*</span></label>
+                                <div class="relative">
+                                    <i class="fa-regular fa-clock absolute left-3 top-3 text-stone-400 text-sm"></i>
+                                    <input type="time" name="time_end" required class="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none text-stone-600">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-1">
+                            <label class="text-sm font-medium text-stone-700">เหตุผลในการขอ / รายละเอียดเพิ่มเติม <span class="text-red-500">*</span></label>
+                            <textarea name="reason" required rows="3" class="w-full px-3 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-all resize-none" placeholder="เช่น รถเฉี่ยวชน, ทรัพย์สินสูญหาย"></textarea>
+                        </div>
+
+                        <div class="flex items-center gap-3 p-3 bg-stone-50 rounded-lg border border-stone-200 hover:bg-stone-100 transition-colors">
+                            <input type="checkbox" id="policeReport" name="has_police_report" class="w-4 h-4 text-amber-600 rounded focus:ring-amber-500 border-gray-300 cursor-pointer">
+                            <label for="policeReport" class="text-sm text-stone-700 cursor-pointer select-none flex-1">
+                                มีบันทึกประจำวันจากสถานีตำรวจ <span class="text-stone-400 text-xs block md:inline">(ถ้ามีจะได้รับการพิจารณาเร็วขึ้น)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="bg-amber-50 p-4 rounded-lg border border-amber-100 text-sm text-amber-900">
+                        <div class="flex gap-2 items-start">
+                            <i class="fa-solid fa-circle-exclamation mt-1 shrink-0 text-amber-600"></i>
+                            <div>
+                                <span class="font-bold">ยืนยันข้อมูล:</span>
+                                <p class="mt-1 text-amber-800/80 leading-relaxed">
+                                    ข้าพเจ้ารับรองว่าข้อมูลข้างต้นเป็นความจริง และจะนำข้อมูลภาพไปใช้เพื่อวัตถุประสงค์ที่แจ้งไว้เท่านั้น
+                                </p>
+                            </div>
+                        </div>
+                        <div class="mt-3 flex items-center gap-3 pt-2 border-t border-amber-200/50">
+                            <input type="checkbox" id="consent" name="consent" required class="w-4 h-4 text-amber-600 rounded focus:ring-amber-500 border-gray-300 cursor-pointer">
+                            <label for="consent" class="font-bold cursor-pointer select-none text-amber-800">ข้าพเจ้ายอมรับเงื่อนไข</label>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:shadow-lg transform active:scale-[0.99] transition-all duration-200 flex items-center justify-center gap-2">
+                        <i class="fa-regular fa-paper-plane"></i>
+                        ส่งคำร้องขอดูกล้อง
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- List View -->
+        <div id="list-view" class="hidden fade-in">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold text-stone-800 flex items-center gap-2">
+                    <i class="fa-solid fa-clock-rotate-left text-amber-600"></i>
+                    ประวัติคำร้อง (ล่าสุด)
+                </h2>
+                <span id="request-count" class="text-sm text-stone-500 bg-white px-3 py-1 rounded-full shadow-sm border">กำลังโหลด...</span>
+            </div>
+            
+            <div id="requests-container" class="space-y-3"></div>
+            
+            <div id="empty-state" class="hidden text-center py-12 bg-white rounded-xl border border-dashed border-stone-300">
+                <div class="inline-block p-4 bg-stone-50 rounded-full mb-3 text-stone-300">
+                    <i class="fa-regular fa-folder-open text-3xl"></i>
+                </div>
+                <p class="text-stone-500">ไม่พบข้อมูลในระบบ</p>
+                <button onclick="toggleView()" class="mt-4 text-amber-600 font-semibold hover:underline">เขียนคำร้องใหม่</button>
+            </div>
+        </div>
+
+    </main>
+
+    <footer class="mt-auto py-6 text-center text-stone-400 text-sm">
+        <p>© 2024 นิติบุคคลหมู่บ้านจัดสรร โกลเด้นแลนด์ซีรีน</p>
+        <p class="mt-1 flex items-center justify-center gap-2 mb-2">
+            <i class="fa-solid fa-phone-volume"></i> ติดต่อฉุกเฉิน: 02-xxx-xxxx (ป้อม รปภ.)
+        </p>
+        <!-- Visible Admin Button -->
+        <button onclick="adminLogin()" class="text-xs text-stone-300 hover:text-amber-600 underline decoration-dotted transition-colors flex items-center justify-center gap-1 mx-auto">
+            <i class="fa-solid fa-user-shield"></i> เข้าสู่ระบบเจ้าหน้าที่
+        </button>
+    </footer>
+
+    <!-- JavaScript Logic -->
+    <script>
+        // --- SUPABASE CONFIGURATION ---
+        const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
+        
+        // Initialize Supabase Client
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // State
+        let currentView = 'form';
+        let requests = [];
+        let isAdmin = false; // Admin State
+
+        // Constants
+        const LOCATION_LABELS = {
+            'MainGate': 'หน้าป้อม รปภ.',
+            'Fitness': 'ฟิตเนส',
+            'Soi1': 'ซอย 1',
+            'Soi2': 'ซอย 2',
+            'Soi3': 'ซอย 3',
+            'Soi4': 'ซอย 4',
+            'Soi5': 'ซอย 5',
+            'Soi6': 'ซอย 6',
+            'Soi7': 'ซอย 7',
+            'Soi8': 'ซอย 8',
+            'Soi9': 'ซอย 9',
+            'Soi10': 'ซอย 10',
+            'Soi11': 'ซอย 11',
+            'Soi12': 'ซอย 12'
+        };
+
+        // DOM Elements
+        const mainBody = document.getElementById('main-body');
+        const pdpaModal = document.getElementById('pdpa-modal');
+        const formView = document.getElementById('form-view');
+        const listView = document.getElementById('list-view');
+        const navBtn = document.getElementById('nav-btn');
+        const navIcon = document.getElementById('nav-icon');
+        const navText = document.getElementById('nav-text');
+        const requestForm = document.getElementById('request-form');
+        const successModal = document.getElementById('success-modal');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const requestsContainer = document.getElementById('requests-container');
+        const emptyState = document.getElementById('empty-state');
+        const requestCount = document.getElementById('request-count');
+        const adminBanner = document.getElementById('admin-banner');
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            // Check session storage for admin persistence
+            if(sessionStorage.getItem('gls_admin') === 'true') {
+                isAdmin = true;
+                adminBanner.classList.remove('hidden');
+            }
+        });
+
+        function acceptPDPA() {
+            pdpaModal.classList.add('opacity-0');
+            mainBody.classList.remove('overflow-hidden');
+            setTimeout(() => { pdpaModal.classList.add('hidden'); }, 500);
+        }
+
+        // Admin Functions
+        function adminLogin() {
+            if(isAdmin) {
+                alert("คุณอยู่ในระบบผู้ดูแลแล้ว");
+                return;
+            }
+            const password = prompt("กรุณากรอกรหัสผ่านผู้ดูแลระบบ (Demo: admin):");
+            if(password === 'admin') {
+                isAdmin = true;
+                sessionStorage.setItem('gls_admin', 'true');
+                adminBanner.classList.remove('hidden');
+                alert("เข้าสู่ระบบผู้ดูแลเรียบร้อย");
+                if(currentView === 'list') loadRequests(); // Reload to see hidden items
+            } else if (password !== null) {
+                alert("รหัสผ่านไม่ถูกต้อง");
+            }
+        }
+
+        function logoutAdmin() {
+            isAdmin = false;
+            sessionStorage.removeItem('gls_admin');
+            adminBanner.classList.add('hidden');
+            alert("ออกจากระบบเรียบร้อย");
+            if(currentView === 'list') loadRequests(); // Reload to hide items
+        }
+
+        async function updateRequestStatus(id, newStatus) {
+            let confirmMsg = "";
+            if (newStatus === 'approved') confirmMsg = "ยืนยันการอนุมัติรายการนี้?";
+            else if (newStatus === 'rejected') confirmMsg = "ยืนยันการปฏิเสธรายการนี้?";
+            else if (newStatus === 'completed') confirmMsg = "ยืนยันการปิดงานรายการนี้? (รายการจะถูกซ่อนจากหน้าเว็บ)";
+            
+            if(!confirm(confirmMsg)) return;
+            
+            setLoading(true);
+            try {
+                const { error } = await supabaseClient
+                    .from('cctv_requests')
+                    .update({ status: newStatus })
+                    .eq('id', id);
+
+                if (error) throw error;
+                
+                // Refresh list
+                await loadRequests();
+            } catch (err) {
+                console.error('Error updating status:', err);
+                alert('เกิดข้อผิดพลาด: ' + err.message);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        async function loadRequests() {
+            setLoading(true);
+            try {
+                const { data, error } = await supabaseClient
+                    .from('cctv_requests')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+                requests = data || [];
+                renderRequests();
+            } catch (err) {
+                console.error('Error loading requests:', err);
+                alert('ไม่สามารถโหลดข้อมูลได้: ' + err.message);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        function toggleView() {
+            currentView = currentView === 'form' ? 'list' : 'form';
+            updateUI();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            
+            if (currentView === 'list') {
+                loadRequests(); // Reload data when switching to list view
+            }
+        }
+
+        function updateUI() {
+            if (currentView === 'form') {
+                formView.classList.remove('hidden');
+                listView.classList.add('hidden');
+                navIcon.className = 'fa-solid fa-clock-rotate-left';
+                navText.textContent = 'ประวัติการขอ';
+                navBtn.innerHTML = `<i class="fa-solid fa-clock-rotate-left"></i><span class="hidden md:inline ml-2">ประวัติการขอ</span>`;
+            } else {
+                formView.classList.add('hidden');
+                listView.classList.remove('hidden');
+                navIcon.className = 'fa-solid fa-file-pen';
+                navText.textContent = 'เขียนคำร้อง';
+                navBtn.innerHTML = `<i class="fa-solid fa-file-pen"></i><span class="hidden md:inline ml-2">เขียนคำร้อง</span>`;
+            }
+        }
+
+        function renderRequests() {
+            // Filter: If NOT admin, hide 'completed' tasks
+            const visibleRequests = requests.filter(req => isAdmin || req.status !== 'completed');
+
+            requestCount.textContent = `ทั้งหมด ${visibleRequests.length} รายการ`;
+
+            if (visibleRequests.length === 0) {
+                requestsContainer.innerHTML = '';
+                emptyState.classList.remove('hidden');
+                return;
+            }
+
+            emptyState.classList.add('hidden');
+            requestsContainer.innerHTML = visibleRequests.map(req => {
+                // Style Logic based on status
+                let containerClass = "bg-white border-stone-100"; // Default
+                let statusBadgeClass = "bg-yellow-100 text-yellow-800";
+                let statusText = "รอตรวจสอบ";
+
+                if (req.status === 'approved') {
+                    // Approve: Green Card (User can see)
+                    containerClass = "bg-green-50 border-green-200 ring-1 ring-green-100";
+                    statusBadgeClass = "bg-green-500 text-white";
+                    statusText = "อนุมัติแล้ว";
+                } else if (req.status === 'rejected') {
+                    // Reject: Red Badge
+                    containerClass = "bg-white border-red-100";
+                    statusBadgeClass = "bg-red-100 text-red-800";
+                    statusText = "ปฏิเสธ";
+                } else if (req.status === 'completed') {
+                    // Completed: Grey (Only Admin sees this due to filter above)
+                    containerClass = "bg-gray-100 border-gray-200 opacity-75";
+                    statusBadgeClass = "bg-gray-600 text-white";
+                    statusText = "เสร็จสิ้น";
+                }
+
+                const incidentDate = new Date(req.incident_date).toLocaleDateString('th-TH', {
+                    year: 'numeric', month: 'long', day: 'numeric'
+                });
+
+                // Admin Controls
+                let adminControls = '';
+                if (isAdmin) {
+                    adminControls = `
+                        <div class="mt-3 pt-3 border-t border-gray-200/50 flex gap-2 justify-end">
+                            <span class="text-xs text-stone-400 mr-auto flex items-center gap-1"><i class="fa-solid fa-user-gear"></i> Admin:</span>
+                            ${req.status !== 'approved' && req.status !== 'completed' ? 
+                                `<button onclick="updateRequestStatus(${req.id}, 'approved')" class="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded transition-colors shadow-sm"><i class="fa-solid fa-check"></i> อนุมัติ</button>` : ''}
+                            
+                            ${req.status !== 'rejected' && req.status !== 'completed' ? 
+                                `<button onclick="updateRequestStatus(${req.id}, 'rejected')" class="text-xs bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded transition-colors shadow-sm"><i class="fa-solid fa-xmark"></i> ปฏิเสธ</button>` : ''}
+                            
+                            ${req.status !== 'completed' ? 
+                                `<button onclick="updateRequestStatus(${req.id}, 'completed')" class="text-xs bg-stone-600 hover:bg-stone-700 text-white px-3 py-1.5 rounded transition-colors shadow-sm"><i class="fa-solid fa-box-archive"></i> จบงาน</button>` : ''}
+                        </div>
+                    `;
+                }
+
+                return `
+                    <div class="${containerClass} p-4 rounded-xl shadow-sm border hover:shadow-md transition-all relative overflow-hidden group">
+                        <div class="absolute top-0 right-0 px-3 py-1 text-xs font-bold rounded-bl-xl ${statusBadgeClass}">
+                            ${statusText}
+                        </div>
+                        <div class="flex flex-col md:flex-row md:items-center gap-4">
+                            <div class="flex-1">
+                                <div class="text-xs text-stone-400 mb-1 flex items-center gap-1">
+                                    <i class="fa-solid fa-hashtag text-[10px]"></i> ID: ${req.id}
+                                </div>
+                                <h3 class="font-bold text-stone-800 mb-2 text-lg">${req.reason}</h3>
+                                <div class="flex flex-wrap gap-y-2 gap-x-4 text-sm text-stone-600">
+                                    <span class="flex items-center gap-1.5 bg-white/50 px-2 py-1 rounded border border-black/5">
+                                        <i class="fa-solid fa-map-pin text-amber-500"></i> 
+                                        ${LOCATION_LABELS[req.location] || req.location}
+                                    </span>
+                                    <span class="flex items-center gap-1.5 bg-white/50 px-2 py-1 rounded border border-black/5">
+                                        <i class="fa-regular fa-calendar-check text-amber-500"></i> 
+                                        ${incidentDate} (${req.time_start.slice(0,5)} - ${req.time_end.slice(0,5)} น.)
+                                    </span>
+                                </div>
+                                <div class="mt-2 text-xs text-stone-400">
+                                    โดย: ${req.requester_name} (บ้านเลขที่ ${req.house_number})
+                                </div>
+                            </div>
+                        </div>
+                        ${adminControls}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function handleSubmit(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            const rawData = Object.fromEntries(formData.entries());
+            
+            const payload = {
+                requester_name: rawData.requester_name,
+                house_number: rawData.house_number,
+                phone: rawData.phone,
+                incident_date: rawData.incident_date,
+                time_start: rawData.time_start,
+                time_end: rawData.time_end,
+                location: rawData.location,
+                reason: rawData.reason,
+                has_police_report: formData.get('has_police_report') === 'on',
+                status: 'pending'
+            };
+
+            const consent = formData.get('consent') === 'on';
+
+            if (!consent) {
+                alert("กรุณายอมรับเงื่อนไขการขอใช้ข้อมูล");
+                return;
+            }
+
+            setLoading(true);
+
+            try {
+                const { data, error } = await supabaseClient
+                    .from('cctv_requests')
+                    .insert([payload]);
+
+                if (error) throw error;
+
+                successModal.classList.remove('hidden');
+                void successModal.offsetWidth; 
+                successModal.classList.remove('opacity-0');
+                requestForm.reset();
+
+                setTimeout(() => {
+                    successModal.classList.add('opacity-0');
+                    setTimeout(() => {
+                        successModal.classList.add('hidden');
+                        currentView = 'list';
+                        updateUI();
+                        loadRequests(); 
+                    }, 300);
+                }, 2000);
+
+            } catch (err) {
+                console.error('Error submitting request:', err);
+                alert('เกิดข้อผิดพลาดในการบันทึกข้อมูล: ' + err.message);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        function setLoading(isLoading) {
+            if (isLoading) {
+                loadingSpinner.classList.remove('hidden');
+            } else {
+                loadingSpinner.classList.add('hidden');
+            }
+        }
+    </script>
+</body>
+</html>
