@@ -16,6 +16,9 @@
 
     <!-- Supabase JS Library -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
+    <!-- LINE LIFF SDK -->
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
     <style>
         body { font-family: 'Sarabun', sans-serif; }
@@ -90,12 +93,14 @@
     <header class="bg-gradient-to-r from-amber-600 to-amber-500 text-white shadow-lg sticky top-0 z-50">
         <div class="container mx-auto px-4 py-4 flex items-center justify-between">
             <div class="flex items-center gap-3">
-                <div class="bg-white p-2.5 rounded-full text-amber-600 w-10 h-10 flex items-center justify-center shadow-sm">
+                <div class="bg-white p-2.5 rounded-full text-amber-600 w-10 h-10 flex items-center justify-center shadow-sm relative">
                     <i class="fa-solid fa-video text-lg"></i>
+                    <!-- LINE Indicator -->
+                    <div id="line-status-dot" class="hidden absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
                 </div>
                 <div>
                     <h1 class="text-lg md:text-xl font-bold leading-tight">Golden Land Serene</h1>
-                    <p class="text-xs md:text-sm text-amber-100 opacity-90">ระบบแจ้งขอดูกล้องวงจรปิด</p>
+                    <p id="user-greeting" class="text-xs md:text-sm text-amber-100 opacity-90">ระบบแจ้งขอดูกล้องวงจรปิด</p>
                 </div>
             </div>
             <button onclick="toggleView()" id="nav-btn" class="bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-sm transition-all flex items-center gap-2 border border-white/10">
@@ -127,7 +132,7 @@
             </div>
         </div>
 
-        <!-- Admin Header Banner (ย้ายมาไว้ตรงนี้เพื่อให้เห็นตลอดเวลา) -->
+        <!-- Admin Header Banner -->
         <div id="admin-banner" class="hidden bg-stone-800 text-white p-3 rounded-lg mb-6 flex justify-between items-center shadow-md animate-in slide-in-from-top-2">
             <div class="flex items-center gap-2">
                 <div class="bg-amber-500 p-1.5 rounded text-stone-900">
@@ -138,6 +143,18 @@
             <button onclick="logoutAdmin()" class="text-xs bg-stone-600 hover:bg-red-600 px-3 py-1.5 rounded transition-colors flex items-center gap-1">
                 <i class="fa-solid fa-right-from-bracket"></i> ออกจากระบบ
             </button>
+        </div>
+
+        <!-- LINE Profile Section (Visible if logged in via LINE) -->
+        <div id="line-profile-section" class="hidden bg-white p-4 rounded-xl shadow-sm border border-stone-100 mb-6 flex items-center gap-3 animate-in fade-in">
+            <img id="line-avatar" src="" alt="Profile" class="w-12 h-12 rounded-full border-2 border-green-500 object-cover">
+            <div>
+                <p class="text-xs text-stone-400">เข้าสู่ระบบโดย LINE</p>
+                <h3 id="line-name" class="font-bold text-stone-800 text-lg">Loading...</h3>
+            </div>
+            <div class="ml-auto">
+                <i class="fa-brands fa-line text-green-500 text-3xl"></i>
+            </div>
         </div>
 
         <!-- Form View -->
@@ -307,6 +324,10 @@
         const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
         
+        // --- LINE LIFF CONFIGURATION ---
+        // REPLACE WITH YOUR ACTUAL LIFF ID FROM LINE DEVELOPERS
+        const LIFF_ID = '2008949010-Z20GiyMp'; 
+
         // Initialize Supabase Client
         const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -314,6 +335,7 @@
         let currentView = 'form';
         let requests = [];
         let isAdmin = false; // Admin State
+        let lineProfile = null; // LINE User Profile
 
         // Constants
         const LOCATION_LABELS = {
@@ -348,6 +370,13 @@
         const emptyState = document.getElementById('empty-state');
         const requestCount = document.getElementById('request-count');
         const adminBanner = document.getElementById('admin-banner');
+        
+        // LINE DOM Elements
+        const lineProfileSection = document.getElementById('line-profile-section');
+        const lineAvatar = document.getElementById('line-avatar');
+        const lineName = document.getElementById('line-name');
+        const lineStatusDot = document.getElementById('line-status-dot');
+        const userGreeting = document.getElementById('user-greeting');
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -356,7 +385,52 @@
                 isAdmin = true;
                 adminBanner.classList.remove('hidden');
             }
+            
+            // Initialize LIFF
+            initializeLiff();
         });
+
+        // --- LINE LIFF FUNCTIONS ---
+        async function initializeLiff() {
+            try {
+                // If using actual LIFF ID
+                if (LIFF_ID && LIFF_ID !== 'YOUR_LIFF_ID') {
+                    await liff.init({ liffId: LIFF_ID });
+                    
+                    if (liff.isLoggedIn()) {
+                        getLineProfile();
+                    } else {
+                        // For Mini App, usually auto logged in. 
+                        // If standard web, might need login button: liff.login();
+                    }
+                } else {
+                    console.log('LIFF ID not configured yet.');
+                }
+            } catch (err) {
+                console.error('LIFF Init Error:', err);
+            }
+        }
+
+        async function getLineProfile() {
+            try {
+                const profile = await liff.getProfile();
+                lineProfile = profile;
+                
+                // Update UI
+                lineProfileSection.classList.remove('hidden');
+                lineAvatar.src = profile.pictureUrl || 'https://via.placeholder.com/150';
+                lineName.textContent = profile.displayName;
+                
+                lineStatusDot.classList.remove('hidden');
+                userGreeting.textContent = `สวัสดี, ${profile.displayName}`;
+
+                // Optional: Pre-fill form if name available
+                // document.querySelector('[name="requester_name"]').value = profile.displayName;
+
+            } catch (err) {
+                console.error('Error getting profile:', err);
+            }
+        }
 
         function acceptPDPA() {
             pdpaModal.classList.add('opacity-0');
@@ -504,6 +578,17 @@
 
                 // Admin Controls
                 let adminControls = '';
+                let lineInfo = '';
+                
+                // Show LINE info in card (visible to everyone or just admin? Usually just admin, but showing minimal info here)
+                if (req.line_display_name) {
+                     lineInfo = `
+                        <div class="mt-2 pt-2 border-t border-dashed border-gray-100 flex items-center gap-2 text-xs text-stone-500">
+                             <i class="fa-brands fa-line text-green-500"></i> ${req.line_display_name}
+                        </div>
+                     `;
+                }
+
                 if (isAdmin) {
                     adminControls = `
                         <div class="mt-3 pt-3 border-t border-gray-200/50 flex gap-2 justify-end">
@@ -544,6 +629,7 @@
                                 <div class="mt-2 text-xs text-stone-400">
                                     โดย: ${req.requester_name} (บ้านเลขที่ ${req.house_number})
                                 </div>
+                                ${lineInfo}
                             </div>
                         </div>
                         ${adminControls}
@@ -568,7 +654,11 @@
                 location: rawData.location,
                 reason: rawData.reason,
                 has_police_report: formData.get('has_police_report') === 'on',
-                status: 'pending'
+                status: 'pending',
+                // Attach LINE data if available
+                line_user_id: lineProfile ? lineProfile.userId : null,
+                line_display_name: lineProfile ? lineProfile.displayName : null,
+                line_picture_url: lineProfile ? lineProfile.pictureUrl : null
             };
 
             const consent = formData.get('consent') === 'on';
