@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smart Gate - ระบบจัดการรถ</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: Sarabun & Prompt -->
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600&family=Sarabun:wght@300;400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- Supabase JS Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- SweetAlert2 -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+    <!-- PapaParse (CSV Parser) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Sarabun', sans-serif;
+            background: #f8fafc;
+            background-image: radial-gradient(#e2e8f0 1px, transparent 1px);
+            background-size: 20px 20px;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .font-prompt {
+            font-family: 'Prompt', sans-serif;
+        }
+        .plate-box {
+            font-family: 'Sarabun', sans-serif;
+            font-weight: 700;
+            background: white;
+            border: 2px solid #000;
+            border-radius: 4px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+            position: relative;
+        }
+        .glass {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .slide-up {
+            animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        @keyframes slideUp {
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .click-scale:active {
+            transform: scale(0.95);
+        }
+    </style>
+</head>
+<body class="min-h-screen pb-28 text-slate-800">
+
+    <!-- Navbar (Glass Effect) -->
+    <nav class="glass sticky top-0 z-30 shadow-sm transition-all duration-300">
+        <div class="max-w-3xl mx-auto px-4 sm:px-6">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center gap-3">
+                    <div class="bg-gradient-to-tr from-blue-600 to-indigo-600 p-2 rounded-xl shadow-lg shadow-blue-500/30">
+                        <i data-lucide="shield-check" class="h-6 w-6 text-white"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-lg font-bold font-prompt text-slate-800 leading-tight tracking-tight">Smart Gate</h1>
+                        <p class="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Access Control</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <!-- Data Management Button -->
+                    <button onclick="openSettingsModal()" class="p-2 text-slate-500 hover:text-blue-600 hover:bg-slate-100 rounded-full transition-colors click-scale">
+                        <i data-lucide="settings" class="w-5 h-5"></i>
+                    </button>
+                    
+                    <div class="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-100 shadow-sm">
+                        <span class="relative flex h-2 w-2">
+                          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                        <span class="text-xs font-bold">Online</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        
+        <!-- Dashboard Card -->
+        <div class="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 text-white shadow-xl shadow-slate-300/50 relative overflow-hidden">
+            <div class="absolute top-0 right-0 -mr-8 -mt-8 w-32 h-32 rounded-full bg-white/5 blur-2xl"></div>
+            <div class="absolute bottom-0 left-0 -ml-8 -mb-8 w-24 h-24 rounded-full bg-white/5 blur-xl"></div>
+            
+            <div class="relative z-10 flex justify-between items-end">
+                <div>
+                    <p class="text-slate-300 text-sm font-medium mb-1">จำนวนรถในระบบ</p>
+                    <h2 class="text-3xl font-bold font-prompt" id="totalCount">0 <span class="text-lg font-normal text-slate-400">คัน</span></h2>
+                </div>
+                <div class="bg-white/10 backdrop-blur-sm p-2 rounded-lg border border-white/10">
+                    <i data-lucide="bar-chart-2" class="w-6 h-6 text-blue-300"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section Header -->
+        <div class="flex justify-between items-center sticky top-20 z-20 py-2 bg-[#f8fafc]/95 backdrop-blur-sm">
+            <h3 class="text-lg font-bold font-prompt text-slate-700 flex items-center gap-2">
+                <i data-lucide="list" class="w-5 h-5 text-blue-500"></i>
+                รายการล่าสุด
+            </h3>
+            <button onclick="fetchCars()" class="text-slate-400 hover:text-blue-600 transition-colors p-1 rounded-full hover:bg-blue-50 click-scale">
+                <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+            </button>
+        </div>
+
+        <!-- List Container -->
+        <div id="carList" class="space-y-3 min-h-[300px]">
+            <!-- Skeleton Loader -->
+            <div class="animate-pulse space-y-3">
+                <div class="h-24 bg-white rounded-xl shadow-sm"></div>
+                <div class="h-24 bg-white rounded-xl shadow-sm"></div>
+                <div class="h-24 bg-white rounded-xl shadow-sm"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Action Button (FAB) -->
+    <div class="fixed bottom-6 right-6 z-40">
+        <button onclick="openModal()" 
+            class="group relative flex items-center justify-center w-14 h-14 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-full shadow-lg shadow-blue-500/40 hover:shadow-blue-500/60 hover:-translate-y-1 transition-all duration-300 click-scale">
+            <i data-lucide="plus" class="w-7 h-7"></i>
+            <span class="absolute right-full mr-4 bg-slate-800 text-white text-xs px-2 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">เพิ่มรถใหม่</span>
+        </button>
+    </div>
+
+    <!-- Car Form Modal -->
+    <div id="carModal" class="fixed inset-0 z-50 hidden transition-opacity duration-300" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onclick="closeModal()"></div>
+        <div class="fixed inset-0 z-10 overflow-y-auto">
+            <div class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+                <div class="relative transform overflow-hidden rounded-2xl bg-white text-left shadow-2xl transition-all sm:my-8 sm:w-full sm:max-w-md w-full scale-100 opacity-100">
+                    <div class="bg-slate-50 px-5 py-4 flex justify-between items-center border-b border-slate-100">
+                        <div class="flex items-center gap-2">
+                            <div class="p-1.5 bg-blue-100 rounded-lg">
+                                <i data-lucide="file-plus" class="w-5 h-5 text-blue-600"></i>
+                            </div>
+                            <h3 class="text-lg font-bold text-slate-800 font-prompt" id="modalTitle">ลงทะเบียนรถ</h3>
+                        </div>
+                        <button type="button" onclick="closeModal()" class="text-slate-400 hover:text-slate-600 bg-white hover:bg-slate-100 p-1.5 rounded-full border border-transparent hover:border-slate-200 transition-all">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <div class="px-5 py-6 space-y-5">
+                        <form id="modalForm">
+                            <input type="hidden" id="editId">
+                            <div class="space-y-1.5">
+                                <label class="block text-sm font-semibold text-slate-700">เลขทะเบียนรถ</label>
+                                <div class="relative">
+                                    <input type="text" id="plateNumber" required
+                                        class="plate-box block w-full py-3 px-4 text-center text-2xl uppercase tracking-wider focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all placeholder-slate-300"
+                                        placeholder="กข 1234">
+                                </div>
+                                <p class="text-xs text-slate-400 text-center">ไม่ต้องใส่ขีด (-) หรือเว้นวรรค</p>
+                            </div>
+
+                            <!-- List Type Selection -->
+                            <div class="space-y-1.5">
+                                <label for="listTypeInput" class="block text-sm font-semibold text-slate-700">ประเภทรายการ</label>
+                                <div class="relative">
+                                    <select id="listTypeInput" class="block w-full rounded-xl border-slate-200 bg-slate-50 py-2.5 px-3 text-sm focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-200 transition-all appearance-none">
+                                        <option value="allowlist">✅ อนุญาต (Allowlist)</option>
+                                        <option value="blocklist">⛔ บัญชีดำ (Blocklist)</option>
+                                    </select>
+                                    <i data-lucide="chevron-down" class="absolute right-3 top-3 w-4 h-4 text-slate-400 pointer-events-none"></i>
+                                </div>
+                            </div>
+
+                            <div class="space-y-1.5">
+                                <label class="block text-sm font-semibold text-slate-700">บ้านเลขที่ / เจ้าของ</label>
+                                <div class="relative">
+                                    <i data-lucide="home" class="absolute left-3 top-2.5 w-5 h-5 text-slate-400"></i>
+                                    <input type="text" id="houseNumber" 
+                                        class="block w-full rounded-xl border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-200 transition-all"
+                                        placeholder="ระบุบ้านเลขที่ หรือ ชื่อเจ้าของ">
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4 pt-2">
+                                <div class="space-y-1.5">
+                                    <label class="block text-xs font-semibold text-slate-500 uppercase">วันเริ่มต้น</label>
+                                    <input type="date" id="startDateInput" required class="block w-full rounded-lg border-slate-200 py-2 px-3 text-sm text-slate-600 bg-white focus:ring-2 focus:ring-blue-200 focus:border-blue-500">
+                                </div>
+                                <div class="space-y-1.5">
+                                    <label class="block text-xs font-semibold text-slate-500 uppercase">วันสิ้นสุด</label>
+                                    <input type="date" id="endDateInput" required class="block w-full rounded-lg border-slate-200 py-2 px-3 text-sm text-slate-600 bg-white focus:ring-2 focus:ring-blue-200 focus:border-blue-500">
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="bg-slate-50 px-5 py-4 sm:flex sm:flex-row-reverse border-t border-slate-100 gap-2">
+                        <button type="button" onclick="saveData()" id="modalSaveBtn"
+                            class="inline-flex w-full justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-500/30 hover:bg-blue-700 hover:shadow-blue-500/50 sm:w-auto transition-all click-scale">
+                            บันทึกข้อมูล
+                        </button>
+                        <button type="button" onclick="closeModal()" 
+                            class="mt-3 inline-flex w-full justify-center rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-inset ring-slate-200 hover:bg-slate-50 sm:mt-0 sm:w-auto transition-all click-scale">
+                            ยกเลิก
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal (Import/Export/Clear) -->
+    <div id="settingsModal" class="fixed inset-0 z-50 hidden transition-opacity duration-300" aria-labelledby="settings-title" role="dialog" aria-modal="true">
+        <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onclick="closeSettingsModal()"></div>
+        <div class="fixed inset-0 z-10 overflow-y-auto">
+            <div class="flex min-h-full items-center justify-center p-4 text-center">
+                <div class="relative transform overflow-hidden rounded-2xl bg-white text-left shadow-2xl transition-all w-full max-w-sm">
+                    <div class="bg-slate-50 px-5 py-4 border-b border-slate-100">
+                        <h3 class="text-lg font-bold text-slate-800 font-prompt flex items-center gap-2">
+                            <i data-lucide="settings" class="w-5 h-5 text-slate-500"></i>
+                            จัดการข้อมูล
+                        </h3>
+                    </div>
+                    <div class="p-5 space-y-3">
+                        <!-- Import -->
+                        <button onclick="document.getElementById('csvInput').click()" class="w-full flex items-center justify-between p-4 bg-white border border-slate-200 rounded-xl hover:bg-blue-50 hover:border-blue-200 transition-all group click-scale">
+                            <div class="flex items-center gap-3">
+                                <div class="bg-blue-100 p-2 rounded-lg text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                                    <i data-lucide="upload" class="w-5 h-5"></i>
+                                </div>
+                                <div class="text-left">
+                                    <p class="font-bold text-slate-700">นำเข้าข้อมูล (Import)</p>
+                                    <p class="text-xs text-slate-400">จากไฟล์ CSV</p>
+                                </div>
+                            </div>
+                            <i data-lucide="chevron-right" class="w-4 h-4 text-slate-300"></i>
+                        </button>
+                        <input type="file" id="csvInput" accept=".csv" class="hidden" onchange="handleImport(this)">
+
+                        <!-- Export -->
+                        <button onclick="handleExport()" class="w-full flex items-center justify-between p-4 bg-white border border-slate-200 rounded-xl hover:bg-emerald-50 hover:border-emerald-200 transition-all group click-scale">
+                            <div class="flex items-center gap-3">
+                                <div class="bg-emerald-100 p-2 rounded-lg text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                                    <i data-lucide="download" class="w-5 h-5"></i>
+                                </div>
+                                <div class="text-left">
+                                    <p class="font-bold text-slate-700">ส่งออกข้อมูล (Export)</p>
+                                    <p class="text-xs text-slate-400">ดาวน์โหลดเป็น CSV</p>
+                                </div>
+                            </div>
+                            <i data-lucide="chevron-right" class="w-4 h-4 text-slate-300"></i>
+                        </button>
+
+                        <hr class="border-slate-100 my-2">
+
+                        <!-- Clear Data -->
+                        <button onclick="handleClearData()" class="w-full flex items-center justify-between p-4 bg-red-50 border border-red-100 rounded-xl hover:bg-red-100 hover:border-red-200 transition-all group click-scale">
+                            <div class="flex items-center gap-3">
+                                <div class="bg-red-200 p-2 rounded-lg text-red-600 group-hover:bg-red-600 group-hover:text-white transition-colors">
+                                    <i data-lucide="trash-2" class="w-5 h-5"></i>
+                                </div>
+                                <div class="text-left">
+                                    <p class="font-bold text-red-700">ล้างข้อมูลทั้งหมด</p>
+                                    <p class="text-xs text-red-400">ลบรถทุกคันในระบบ</p>
+                                </div>
+                            </div>
+                            <i data-lucide="alert-triangle" class="w-4 h-4 text-red-400"></i>
+                        </button>
+                    </div>
+                    <div class="bg-slate-50 px-5 py-3 text-center">
+                        <button onclick="closeSettingsModal()" class="text-sm font-medium text-slate-500 hover:text-slate-800">ปิดเมนู</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. CONFIGURATION ---
+        const supabaseUrl = 'https://kiumelolsilduqnvrekf.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
+        const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+        // --- DOM Elements ---
+        const carList = document.getElementById('carList');
+        const totalCountEl = document.getElementById('totalCount');
+        
+        // Modal
+        const carModal = document.getElementById('carModal');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalForm = document.getElementById('modalForm');
+        const modalSaveBtn = document.getElementById('modalSaveBtn');
+        const editIdInput = document.getElementById('editId');
+        const plateInput = document.getElementById('plateNumber');
+        const listTypeInput = document.getElementById('listTypeInput'); 
+        const houseInput = document.getElementById('houseNumber');
+        const startDateInput = document.getElementById('startDateInput');
+        const endDateInput = document.getElementById('endDateInput');
+
+        // Settings Modal
+        const settingsModal = document.getElementById('settingsModal');
+
+        // Initialize Icons
+        lucide.createIcons();
+
+        // --- Helpers ---
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: '2-digit' });
+        }
+
+        function parseDateToISO(dateStr) {
+            if (!dateStr) return null;
+            if (dateStr.includes('/')) {
+                const parts = dateStr.split('/');
+                if (parts.length === 3) {
+                    let [day, month, year] = parts;
+                    if (year.length === 2) year = '20' + year; 
+                    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+                }
+            }
+            return dateStr;
+        }
+
+        function setDefaultDates() {
+            const today = new Date();
+            const nextYear = new Date();
+            nextYear.setFullYear(nextYear.getFullYear() + 1);
+            startDateInput.value = today.toISOString().split('T')[0];
+            endDateInput.value = nextYear.toISOString().split('T')[0];
+        }
+
+        // DEBOUNCE Function
+        function debounce(func, wait) {
+            let timeout;
+            return function(...args) {
+                const context = this;
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(context, args), wait);
+            };
+        }
+
+        // --- 2. MODAL LOGIC ---
+        function openModal(isEdit = false, data = null) {
+            if (!isEdit) {
+                modalTitle.textContent = 'ลงทะเบียนรถใหม่';
+                modalSaveBtn.innerHTML = '<i class="lucide-save w-4 h-4 mr-2"></i> บันทึกข้อมูล';
+                modalForm.reset();
+                editIdInput.value = '';
+                listTypeInput.value = 'allowlist'; // Default
+                setDefaultDates();
+            } else {
+                modalTitle.textContent = 'แก้ไขข้อมูล';
+                modalSaveBtn.innerHTML = '<i class="lucide-refresh-cw w-4 h-4 mr-2"></i> อัปเดตข้อมูล';
+                editIdInput.value = data.id;
+                plateInput.value = data.plate_number;
+                houseInput.value = data.house_number || '';
+                listTypeInput.value = data.list_type || 'allowlist';
+                startDateInput.value = data.start_date;
+                endDateInput.value = data.end_date;
+            }
+            carModal.classList.remove('hidden');
+            lucide.createIcons();
+            setTimeout(() => plateInput.focus(), 100);
+        }
+
+        function closeModal() {
+            carModal.classList.add('hidden');
+        }
+
+        function openSettingsModal() {
+            settingsModal.classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function closeSettingsModal() {
+            settingsModal.classList.add('hidden');
+        }
+
+        // --- 3. DATA FETCHING ---
+        async function fetchCars() {
+            try {
+                const { data, error } = await supabaseClient
+                    .from('allowed_cars')
+                    .select('*')
+                    .neq('status', 'pending_delete')
+                    .order('created_at', { ascending: false });
+
+                if (error) {
+                    // Suppress AbortError to console only if debugging
+                    if (error.message && error.message.includes('AbortError')) {
+                        console.warn('Fetch aborted due to rapid updates');
+                        return;
+                    }
+                    console.error(error);
+                    return;
+                }
+                renderList(data);
+            } catch (err) {
+                // Catch network/abort errors
+                console.warn('Fetch error:', err);
+            }
+        }
+
+        // --- 4. RENDER LIST VIEW ---
+        function renderList(cars) {
+            totalCountEl.innerHTML = `${cars.length} <span class="text-lg font-normal text-slate-400">คัน</span>`;
+            carList.innerHTML = '';
+
+            if (cars.length === 0) {
+                carList.innerHTML = `
+                    <div class="flex flex-col items-center justify-center py-20 text-slate-400">
+                        <div class="bg-white p-4 rounded-full shadow-sm mb-4">
+                            <i data-lucide="clipboard-list" class="w-8 h-8 opacity-50"></i>
+                        </div>
+                        <p class="text-sm font-medium">ยังไม่มีข้อมูลในระบบ</p>
+                        <p class="text-xs mt-1">กดปุ่ม + เพื่อเพิ่มรถคันแรก</p>
+                    </div>
+                `;
+                lucide.createIcons();
+                return;
+            }
+
+            cars.forEach((car, index) => {
+                let statusConfig = {
+                    color: 'bg-amber-500',
+                    bg: 'bg-amber-50 text-amber-700 border-amber-100',
+                    text: 'รอส่งข้อมูล'
+                };
+                
+                if (car.status === 'synced') {
+                    statusConfig = {
+                        color: 'bg-emerald-500',
+                        bg: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+                        text: 'ซิ๊งข้อมูลแล้ว'
+                    };
+                } else if (car.status && car.status.includes('pending_update')) {
+                    statusConfig = {
+                        color: 'bg-blue-500',
+                        bg: 'bg-blue-50 text-blue-700 border-blue-100',
+                        text: 'รออัปเดต'
+                    };
+                }
+
+                const isBlocklist = car.list_type === 'blocklist';
+                const cardBorderClass = isBlocklist ? 'border-red-200 shadow-red-100' : 'border-slate-100';
+                const badgeHtml = isBlocklist 
+                    ? `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-red-50 text-red-700 border border-red-200">⛔ Blocklist</span>`
+                    : `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">✅ Allowlist</span>`;
+
+                const safeData = JSON.stringify(car).replace(/"/g, '&quot;');
+                const animationDelay = index * 50; 
+
+                const item = document.createElement('div');
+                item.className = `group relative bg-white rounded-2xl p-4 shadow-sm border ${cardBorderClass} hover:shadow-md transition-all duration-300 slide-up`;
+                item.style.animationDelay = `${animationDelay}ms`;
+
+                item.innerHTML = `
+                    <div class="flex flex-col sm:flex-row gap-4">
+                        <div class="flex-shrink-0 flex justify-center sm:justify-start">
+                            <div class="plate-box w-28 h-14 flex items-center justify-center bg-white">
+                                <span class="text-xl text-slate-900 tracking-wider z-10">${car.plate_number}</span>
+                                <div class="absolute text-[8px] text-slate-200 bottom-0.5 right-1">THAILAND</div>
+                            </div>
+                        </div>
+
+                        <div class="flex-1 min-w-0 pt-1">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <h4 class="text-base font-bold text-slate-800 truncate pr-2">
+                                        ${car.house_number || '<span class="text-slate-400 italic">ไม่ระบุบ้านเลขที่</span>'}
+                                    </h4>
+                                    <div class="flex items-center gap-1.5 mt-1">
+                                        <i data-lucide="calendar-range" class="w-3.5 h-3.5 text-slate-400"></i>
+                                        <span class="text-xs text-slate-500 font-medium">${formatDate(car.start_date)} - ${formatDate(car.end_date)}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="mt-3 flex items-center gap-2 flex-wrap">
+                                ${badgeHtml}
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold border ${statusConfig.bg}">
+                                    <span class="w-1.5 h-1.5 rounded-full ${statusConfig.color} mr-1.5 animate-pulse"></span>
+                                    ${statusConfig.text}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="flex sm:flex-col items-center justify-end gap-2 border-t sm:border-0 border-slate-50 mt-3 sm:mt-0 pt-3 sm:pt-0">
+                            <button onclick='handleEdit(${safeData})' class="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all click-scale" title="แก้ไข">
+                                <i data-lucide="pencil" class="w-5 h-5"></i>
+                            </button>
+                            <button onclick="handleDelete(${car.id}, '${car.plate_number}')" class="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all click-scale" title="ลบ">
+                                <i data-lucide="trash-2" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+                carList.appendChild(item);
+            });
+            lucide.createIcons();
+        }
+
+        // --- 5. CRUD LOGIC ---
+        
+        async function saveData() {
+            const id = editIdInput.value;
+            const plate = plateInput.value.trim().toUpperCase();
+            const house = houseInput.value.trim();
+            const listType = listTypeInput.value; 
+            const start = startDateInput.value;
+            const end = endDateInput.value;
+
+            if (!plate) {
+                Swal.fire({ icon: 'warning', title: 'กรุณาระบุเลขทะเบียนรถ', timer: 1500, showConfirmButton: false });
+                return;
+            }
+            modalSaveBtn.disabled = true;
+            modalSaveBtn.innerHTML = '<span class="animate-spin mr-2">⟳</span> กำลังบันทึก...';
+
+            try {
+                if (id) {
+                    const { error } = await supabaseClient.from('allowed_cars')
+                        .update({ 
+                            plate_number: plate, 
+                            house_number: house, 
+                            list_type: listType,
+                            start_date: start, 
+                            end_date: end, 
+                            status: 'pending_update' 
+                        })
+                        .eq('id', id);
+                    if (error) throw error;
+                } else {
+                    const { data: exist } = await supabaseClient.from('allowed_cars')
+                        .select('id').eq('plate_number', plate).neq('status', 'pending_delete').maybeSingle();
+                    if (exist) throw new Error('ทะเบียนนี้มีในระบบแล้ว');
+
+                    let ok = false;
+                    for (let i = 0; i < 5; i++) {
+                        const { error } = await supabaseClient.from('allowed_cars')
+                            .insert([{ 
+                                plate_number: plate, 
+                                house_number: house, 
+                                list_type: listType,
+                                start_date: start, 
+                                end_date: end, 
+                                status: 'pending' 
+                            }]);
+                        if (!error) { ok = true; break; }
+                        if (error.code !== '23505') throw error;
+                    }
+                    if (!ok) throw new Error('ระบบไม่ว่าง (ID Conflict)');
+                }
+                Swal.fire({ icon: 'success', title: 'บันทึกเรียบร้อย', background: '#fff', iconColor: '#10b981', timer: 1500, showConfirmButton: false });
+                closeModal();
+            } catch (e) {
+                Swal.fire('เกิดข้อผิดพลาด', e.message, 'error');
+            } finally {
+                modalSaveBtn.disabled = false;
+            }
+        }
+
+        window.handleEdit = (data) => openModal(true, data);
+
+        window.handleDelete = async (id, plate) => {
+            const { value: pin } = await Swal.fire({
+                title: 'ยืนยันตัวตน Admin',
+                text: `กรอก PIN เพื่อลบ ${plate}`,
+                input: 'password',
+                inputAttributes: { maxlength: 4, autocapitalize: 'off', autocorrect: 'off' },
+                inputPlaceholder: 'PIN',
+                showCancelButton: true,
+                confirmButtonColor: '#ef4444',
+                confirmButtonText: 'ลบข้อมูล',
+                cancelButtonText: 'ยกเลิก',
+                background: '#fff',
+                customClass: { input: 'text-center text-2xl tracking-widest' }
+            });
+
+            if (pin) {
+                if (pin === '9999') {
+                    try {
+                        await supabaseClient.from('allowed_cars').update({ status: 'pending_delete' }).eq('id', id);
+                        Swal.fire({ icon: 'success', title: 'ลบข้อมูลเรียบร้อย', timer: 1500, showConfirmButton: false });
+                    } catch (err) {
+                        Swal.fire('Error', err.message, 'error');
+                    }
+                } else {
+                    Swal.fire({ icon: 'error', title: 'รหัสผ่านไม่ถูกต้อง', confirmButtonColor: '#3b82f6' });
+                }
+            }
+        };
+
+        // --- 6. IMPORT / EXPORT / CLEAR LOGIC ---
+
+        // EXPORT
+        async function handleExport() {
+            Swal.fire({ title: 'กำลังส่งออกข้อมูล...', didOpen: () => Swal.showLoading() });
+            
+            const { data, error } = await supabaseClient
+                .from('allowed_cars')
+                .select('plate_number, house_number, list_type, start_date, end_date, status, created_at')
+                .neq('status', 'pending_delete');
+
+            if (error) {
+                Swal.fire('Error', error.message, 'error');
+                return;
+            }
+
+            if (!data || data.length === 0) {
+                Swal.fire('แจ้งเตือน', 'ไม่มีข้อมูลสำหรับส่งออก', 'info');
+                return;
+            }
+
+            const csv = Papa.unparse(data);
+            const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            
+            const timestamp = new Date().toISOString().slice(0,19).replace(/:/g,"-");
+            link.setAttribute("href", url);
+            link.setAttribute("download", `car_data_${timestamp}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            Swal.fire({ icon: 'success', title: 'ส่งออกข้อมูลสำเร็จ', timer: 1500, showConfirmButton: false });
+        }
+
+        // IMPORT
+        function handleImport(input) {
+            const file = input.files[0];
+            if (!file) return;
+
+            Swal.fire({
+                title: 'กำลังอ่านไฟล์...',
+                text: 'กรุณารอสักครู่',
+                allowOutsideClick: false,
+                didOpen: () => Swal.showLoading()
+            });
+
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: async function(results) {
+                    const rows = results.data;
+                    let successCount = 0;
+                    let failCount = 0;
+
+                    for (const row of rows) {
+                        if (!row.plate_number) {
+                            failCount++;
+                            continue;
+                        }
+
+                        const plate = row.plate_number.trim().toUpperCase();
+                        const house = row.house_number || '';
+                        const listType = row.list_type || 'allowlist';
+                        
+                        let start = parseDateToISO(row.start_date);
+                        let end = parseDateToISO(row.end_date);
+                        
+                        const today = new Date().toISOString().split('T')[0];
+                        const nextYear = new Date();
+                        nextYear.setFullYear(nextYear.getFullYear() + 1);
+                        
+                        if (!start) start = today;
+                        if (!end) end = nextYear.toISOString().split('T')[0];
+
+                        const { data: exist } = await supabaseClient
+                            .from('allowed_cars')
+                            .select('id')
+                            .eq('plate_number', plate)
+                            .neq('status', 'pending_delete')
+                            .maybeSingle();
+
+                        if (!exist) {
+                            const { error } = await supabaseClient.from('allowed_cars').insert([{
+                                plate_number: plate,
+                                house_number: house,
+                                list_type: listType, 
+                                start_date: start,
+                                end_date: end,
+                                status: 'pending'
+                            }]);
+                            
+                            if (!error) {
+                                successCount++;
+                            } else {
+                                console.error('Insert Error:', error);
+                                failCount++;
+                            }
+                        } else {
+                            failCount++;
+                        }
+                    }
+
+                    input.value = '';
+                    closeSettingsModal();
+
+                    Swal.fire({
+                        title: 'นำเข้าเสร็จสิ้น',
+                        html: `สำเร็จ: <b class="text-green-600">${successCount}</b> รายการ<br>ล้มเหลว/ซ้ำ: <b class="text-red-600">${failCount}</b> รายการ`,
+                        icon: 'success'
+                    });
+                }
+            });
+        }
+
+        // CLEAR DATA
+        async function handleClearData() {
+            closeSettingsModal();
+            const { value: pin } = await Swal.fire({
+                title: 'ยืนยันล้างข้อมูล',
+                text: "ข้อมูลทั้งหมดจะถูกลบ! กรุณาใส่ PIN (9999)",
+                icon: 'warning',
+                input: 'password',
+                inputAttributes: { maxlength: 4, autocapitalize: 'off', autocorrect: 'off' },
+                showCancelButton: true,
+                confirmButtonColor: '#ef4444',
+                confirmButtonText: 'ล้างข้อมูลเดี๋ยวนี้',
+                cancelButtonText: 'ยกเลิก',
+                customClass: { input: 'text-center text-2xl tracking-widest' }
+            });
+
+            if (pin === '9999') {
+                Swal.fire({ title: 'กำลังลบ...', didOpen: () => Swal.showLoading() });
+                
+                const { data: allCars } = await supabaseClient
+                    .from('allowed_cars')
+                    .select('id')
+                    .neq('status', 'pending_delete');
+
+                if (allCars && allCars.length > 0) {
+                    const ids = allCars.map(c => c.id);
+                    const { error } = await supabaseClient
+                        .from('allowed_cars')
+                        .update({ status: 'pending_delete' })
+                        .in('id', ids);
+
+                    if (error) {
+                        Swal.fire('Error', error.message, 'error');
+                    } else {
+                        Swal.fire('สำเร็จ', 'ล้างข้อมูลเรียบร้อยแล้ว', 'success');
+                    }
+                } else {
+                    Swal.fire('แจ้งเตือน', 'ไม่มีข้อมูลให้ลบ', 'info');
+                }
+            } else if (pin) {
+                Swal.fire('ผิดพลาด', 'รหัส PIN ไม่ถูกต้อง', 'error');
+            }
+        }
+
+        // Realtime with Debounce
+        const debouncedFetch = debounce(() => fetchCars(), 500);
+
+        supabaseClient.channel('public:allowed_cars')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'allowed_cars' }, () => {
+                debouncedFetch();
+            })
+            .subscribe();
+
+        // Initial
+        fetchCars();
+    </script>
+</body>
+</html>
