@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ลงทะเบียนรถชั่วคราว - Smart Gate</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        prompt: ['Prompt', 'sans-serif'],
+                        sarabun: ['Sarabun', 'sans-serif']
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&family=Sarabun:wght@300;400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <!-- LINE LIFF SDK -->
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+    <style>
+        body {
+            font-family: 'Sarabun', sans-serif;
+            background-color: #f0f4f8;
+            background-image: linear-gradient(135deg, #f0f4f8 0%, #dbeafe 100%);
+            min-height: 100vh;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .font-prompt { font-family: 'Prompt', sans-serif; }
+        .plate-box {
+            font-family: 'Sarabun', sans-serif;
+            font-weight: 700;
+            background: #fff;
+            border: 2px solid #1e293b;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            position: relative;
+            background-image: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
+            color: #0f172a;
+        }
+        .click-scale:active { transform: scale(0.96); }
+        
+        /* Profile Image Styles */
+        .profile-ring {
+            background: linear-gradient(45deg, #3b82f6, #8b5cf6, #ec4899);
+            padding: 3px;
+            border-radius: 50%;
+        }
+    </style>
+</head>
+<body class="text-slate-800 flex items-center justify-center p-4">
+
+    <div class="w-full max-w-md bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/50 overflow-hidden relative">
+        
+        <!-- Loading Overlay for LIFF -->
+        <div id="liffLoader" class="absolute inset-0 z-50 bg-white/90 flex flex-col items-center justify-center transition-opacity duration-500">
+            <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <p class="mt-3 text-sm text-slate-500 font-prompt">กำลังเชื่อมต่อ LINE...</p>
+        </div>
+
+        <!-- Header with Profile -->
+        <div class="bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-700 px-6 pt-8 pb-6 text-center relative overflow-hidden">
+            <!-- Decorations -->
+            <div class="absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
+            <div class="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-2xl"></div>
+            
+            <div class="relative z-10 flex flex-col items-center">
+                <!-- LINE Profile Section -->
+                <div id="lineProfileSection" class="hidden flex-col items-center mb-4 transition-all duration-500 transform translate-y-4 opacity-0">
+                    <div class="profile-ring shadow-lg mb-2">
+                        <img id="linePicture" src="https://via.placeholder.com/150" alt="Profile" class="w-20 h-20 rounded-full border-2 border-white object-cover">
+                    </div>
+                    <div class="bg-white/10 backdrop-blur-md px-4 py-1.5 rounded-full border border-white/20">
+                        <p class="text-white font-prompt text-sm">สวัสดี, <span id="lineDisplayName" class="font-bold">Guest</span> 👋</p>
+                    </div>
+                </div>
+
+                <!-- Default Icon (If no LINE) -->
+                <div id="defaultIcon" class="hidden mb-4 w-16 h-16 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center shadow-lg">
+                    <i data-lucide="car" class="w-8 h-8 text-white"></i>
+                </div>
+
+                <h1 class="text-2xl font-bold font-prompt text-white">ลงทะเบียนรถเข้าหมู่บ้าน</h1>
+                <p class="text-indigo-100 text-xs mt-1 opacity-80">Visitor Registration System</p>
+            </div>
+        </div>
+
+        <!-- Form -->
+        <div class="px-6 py-6 space-y-5">
+            
+            <!-- Date Display -->
+            <div class="bg-indigo-50/50 border border-indigo-100 rounded-2xl p-4 flex items-center justify-between">
+                <div>
+                    <div class="flex items-center gap-1.5 text-indigo-600 mb-0.5">
+                        <i data-lucide="calendar-check" class="w-4 h-4"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">สิทธิ์เข้า-ออก</span>
+                    </div>
+                    <p class="text-sm font-medium text-slate-600 font-prompt">อนุญาตเฉพาะวันนี้ (One Day Pass)</p>
+                </div>
+                <div class="text-right bg-white px-3 py-1.5 rounded-xl shadow-sm border border-indigo-50">
+                    <p class="text-xl font-bold text-indigo-600 leading-none" id="displayDateDay">--</p>
+                    <p class="text-[10px] text-slate-400 font-medium uppercase" id="displayDateMonth">--</p>
+                </div>
+            </div>
+
+            <form id="residentForm" class="space-y-5">
+                <!-- Plate Input -->
+                <div class="space-y-2">
+                    <label class="block text-sm font-bold text-slate-700 ml-1">ป้ายทะเบียนและจังหวัด <span class="text-red-500">*</span></label>
+                    <div class="grid grid-cols-1 gap-3">
+                        <div class="relative">
+                            <input type="text" id="plateNumber" required
+                                class="plate-box block w-full py-4 px-4 text-center text-4xl uppercase tracking-widest focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 transition-all placeholder-slate-300"
+                                placeholder="1กข9999">
+                        </div>
+                        <div class="relative">
+                            <input type="text" id="provinceInput" list="provinceOptions" required
+                                class="block w-full py-3 px-4 rounded-xl border border-slate-200 bg-slate-50 text-center text-sm focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 focus:bg-white transition-all font-medium text-slate-700"
+                                placeholder="ระบุจังหวัด">
+                            <datalist id="provinceOptions">
+                                <option value="กรุงเทพมหานคร">
+                                <option value="กระบี่">
+                                <option value="กาญจนบุรี">
+                                <option value="กาฬสินธุ์">
+                                <option value="กำแพงเพชร">
+                                <option value="ขอนแก่น">
+                                <option value="จันทบุรี">
+                                <option value="ฉะเชิงเทรา">
+                                <option value="ชลบุรี">
+                                <option value="ชัยนาท">
+                                <option value="ชัยภูมิ">
+                                <option value="ชุมพร">
+                                <option value="เชียงราย">
+                                <option value="เชียงใหม่">
+                                <option value="ตรัง">
+                                <option value="ตราด">
+                                <option value="ตาก">
+                                <option value="นครนายก">
+                                <option value="นครปฐม">
+                                <option value="นครพนม">
+                                <option value="นครราชสีมา">
+                                <option value="นครศรีธรรมราช">
+                                <option value="นครสวรรค์">
+                                <option value="นนทบุรี">
+                                <option value="นราธิวาส">
+                                <option value="น่าน">
+                                <option value="บึงกาฬ">
+                                <option value="บุรีรัมย์">
+                                <option value="ปทุมธานี">
+                                <option value="ประจวบคีรีขันธ์">
+                                <option value="ปราจีนบุรี">
+                                <option value="ปัตตานี">
+                                <option value="พระนครศรีอยุธยา">
+                                <option value="พะเยา">
+                                <option value="พังงา">
+                                <option value="พัทลุง">
+                                <option value="พิจิตร">
+                                <option value="พิษณุโลก">
+                                <option value="เพชรบุรี">
+                                <option value="เพชรบูรณ์">
+                                <option value="แพร่">
+                                <option value="ภูเก็ต">
+                                <option value="มหาสารคาม">
+                                <option value="มุกดาหาร">
+                                <option value="แม่ฮ่องสอน">
+                                <option value="ยโสธร">
+                                <option value="ยะลา">
+                                <option value="ร้อยเอ็ด">
+                                <option value="ระนอง">
+                                <option value="ระยอง">
+                                <option value="ราชบุรี">
+                                <option value="ลพบุรี">
+                                <option value="ลำปาง">
+                                <option value="ลำพูน">
+                                <option value="เลย">
+                                <option value="ศรีสะเกษ">
+                                <option value="สกลนคร">
+                                <option value="สงขลา">
+                                <option value="สตูล">
+                                <option value="สมุทรปราการ">
+                                <option value="สมุทรสงคราม">
+                                <option value="สมุทรสาคร">
+                                <option value="สระแก้ว">
+                                <option value="สระบุรี">
+                                <option value="สิงห์บุรี">
+                                <option value="สุโขทัย">
+                                <option value="สุพรรณบุรี">
+                                <option value="สุราษฎร์ธานี">
+                                <option value="สุรินทร์">
+                                <option value="หนองคาย">
+                                <option value="หนองบัวลำภู">
+                                <option value="อ่างทอง">
+                                <option value="อำนาจเจริญ">
+                                <option value="อุดรธานี">
+                                <option value="อุตรดิตถ์">
+                                <option value="อุทัยธานี">
+                                <option value="อุบลราชธานี">
+                            </datalist>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- House Input -->
+                <div class="space-y-2">
+                    <label class="block text-sm font-bold text-slate-700 ml-1">บ้านเลขที่ผู้ติดต่อ <span class="text-red-500">*</span></label>
+                    <div class="relative">
+                        <div class="absolute left-4 top-3.5 w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center text-indigo-600">
+                            <i data-lucide="home" class="w-4 h-4"></i>
+                        </div>
+                        <input type="text" id="houseNumber" required
+                            class="block w-full rounded-2xl border-slate-200 bg-slate-50 py-4 pl-14 pr-4 text-base focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all placeholder-slate-400 font-medium"
+                            placeholder="เช่น 123/45">
+                    </div>
+                </div>
+
+                <!-- Submit Button -->
+                <button type="submit" id="submitBtn"
+                    class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold font-prompt text-lg py-4 rounded-2xl shadow-xl shadow-indigo-500/30 hover:shadow-indigo-500/50 hover:-translate-y-1 transition-all click-scale flex items-center justify-center gap-2 group">
+                    <span>ยืนยันการลงทะเบียน</span>
+                    <i data-lucide="arrow-right" class="w-5 h-5 group-hover:translate-x-1 transition-transform"></i>
+                </button>
+            </form>
+
+            <div class="pt-4 border-t border-slate-100 text-center">
+                <p class="text-xs text-slate-400">ระบบบันทึกข้อมูลเวลา: <span id="currentTime" class="font-mono">--:--</span></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIG ---
+        const supabaseUrl = 'https://kiumelolsilduqnvrekf.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
+        const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
+        
+        // LIFF ID for MINI App
+        const LIFF_ID = '2009015553-lDCDwJF4'; 
+
+        // Variables to store LINE Profile
+        let lineProfile = {
+            userId: null,
+            displayName: null,
+            pictureUrl: null
+        };
+
+        // --- INIT ---
+        lucide.createIcons();
+        
+        // Display Dates
+        const now = new Date();
+        const thMonths = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+        document.getElementById('displayDateDay').textContent = now.getDate();
+        document.getElementById('displayDateMonth').textContent = `${thMonths[now.getMonth()]} ${now.getFullYear() + 543}`;
+        document.getElementById('currentTime').textContent = now.toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'});
+
+        // --- LIFF INITIALIZATION ---
+        async function initLiff() {
+            try {
+                if (!LIFF_ID) throw new Error("LIFF ID is missing");
+
+                await liff.init({ liffId: LIFF_ID });
+                
+                if (liff.isLoggedIn()) {
+                    const profile = await liff.getProfile();
+                    lineProfile = {
+                        userId: profile.userId,
+                        displayName: profile.displayName,
+                        pictureUrl: profile.pictureUrl
+                    };
+                    
+                    // Show Profile UI
+                    const pic = document.getElementById('linePicture');
+                    if (pic) pic.src = profile.pictureUrl || 'https://via.placeholder.com/150';
+                    document.getElementById('lineDisplayName').textContent = profile.displayName;
+                    
+                    const profileSection = document.getElementById('lineProfileSection');
+                    profileSection.classList.remove('hidden');
+                    // Animation
+                    setTimeout(() => {
+                        profileSection.classList.remove('translate-y-4', 'opacity-0');
+                    }, 100);
+
+                } else {
+                    // Not logged in -> Attempt login if inside LINE Client to get UserID for MINI App usage
+                    if (liff.isInClient()) {
+                        liff.login();
+                    } else {
+                        // External browser: Show default icon
+                        document.getElementById('defaultIcon').classList.remove('hidden');
+                    }
+                }
+            } catch (err) {
+                console.warn('LIFF Init Failed (App running in fallback mode):', err.message);
+                document.getElementById('defaultIcon').classList.remove('hidden');
+            } finally {
+                // Hide Loader
+                const loader = document.getElementById('liffLoader');
+                loader.style.opacity = '0';
+                setTimeout(() => loader.classList.add('hidden'), 500);
+            }
+        }
+
+        // Initialize LIFF
+        if (typeof liff !== 'undefined') {
+            initLiff();
+        } else {
+            document.getElementById('liffLoader').classList.add('hidden');
+            document.getElementById('defaultIcon').classList.remove('hidden');
+        }
+
+        // --- SUBMIT LOGIC ---
+        const form = document.getElementById('residentForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const plateInput = document.getElementById('plateNumber');
+        const provinceInput = document.getElementById('provinceInput');
+        const houseInput = document.getElementById('houseNumber');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const plate = plateInput.value.trim().toUpperCase();
+            const province = provinceInput.value.trim();
+            const house = houseInput.value.trim();
+
+            if (!plate || !house || !province) {
+                return Swal.fire({ icon: 'warning', title: 'ข้อมูลไม่ครบ', text: 'กรุณากรอกข้อมูลให้ครบถ้วน', confirmButtonColor: '#4f46e5' });
+            }
+
+            // Get Today (Local)
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = String(today.getMonth() + 1).padStart(2, '0');
+            const day = String(today.getDate()).padStart(2, '0');
+            const todayStr = `${year}-${month}-${day}`;
+
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="animate-spin mr-2">⟳</span> กำลังบันทึก...';
+
+            try {
+                // Check Duplicate
+                const { data: exist } = await supabaseClient
+                    .from('allowed_cars')
+                    .select('id')
+                    .eq('plate_number', plate)
+                    .neq('status', 'pending_delete')
+                    .maybeSingle();
+
+                if (exist) throw new Error('รถคันนี้มีการลงทะเบียนอยู่ในระบบแล้ว');
+
+                // Insert Data with LINE info
+                const { error } = await supabaseClient.from('allowed_cars').insert([{
+                    plate_number: plate,
+                    province: province,
+                    house_number: house,
+                    list_type: 'allowlist',
+                    start_date: todayStr,
+                    end_date: todayStr,
+                    status: 'pending',
+                    // LINE Data (if available)
+                    line_user_id: lineProfile.userId,
+                    line_display_name: lineProfile.displayName,
+                    line_picture_url: lineProfile.pictureUrl
+                }]);
+
+                if (error) {
+                    if (error.code === '23505') throw new Error('ระบบไม่ว่าง หรือมีการลงทะเบียนซ้ำ');
+                    throw error;
+                }
+
+                // Success
+                await Swal.fire({
+                    icon: 'success',
+                    title: 'ลงทะเบียนสำเร็จ!',
+                    html: `รถทะเบียน <b>${plate}</b> ${province}<br>สามารถเข้าได้วันนี้`,
+                    confirmButtonText: 'ปิดหน้าต่าง',
+                    confirmButtonColor: '#4f46e5'
+                });
+
+                // Close LIFF Window if available
+                if (liff.isInClient()) {
+                    liff.closeWindow();
+                } else {
+                    form.reset();
+                }
+
+            } catch (err) {
+                Swal.fire({ icon: 'error', title: 'เกิดข้อผิดพลาด', text: err.message, confirmButtonColor: '#4f46e5' });
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<span>ยืนยันการลงทะเบียน</span><i data-lucide="arrow-right" class="w-5 h-5"></i>';
+                lucide.createIcons();
+            }
+        });
+    </script>
+</body>
+</html>
