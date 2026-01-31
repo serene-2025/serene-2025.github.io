@@ -107,14 +107,14 @@
 </head>
 <body class="text-slate-800 px-4 py-6 sm:p-6 overflow-x-hidden flex items-center justify-center">
 
-    <!-- 1. LOADING SCREEN (แสดงตอนแรกสุด) -->
+    <!-- 1. LOADING SCREEN -->
     <div id="loadingScreen" class="fixed inset-0 z-50 bg-white/95 backdrop-blur-md flex flex-col items-center justify-center transition-all duration-500">
         <div class="loader-ring"><div></div><div></div><div></div><div></div></div>
         <h2 class="mt-4 text-xl font-bold font-prompt text-slate-700">กำลังตรวจสอบสิทธิ์...</h2>
         <p class="text-sm text-slate-500">Checking Permissions</p>
     </div>
 
-    <!-- 2. ACCESS DENIED SCREEN (แสดงเมื่อไม่ผ่านเงื่อนไข) -->
+    <!-- 2. ACCESS DENIED SCREEN -->
     <div id="deniedScreen" class="hidden w-full max-w-sm mx-auto glass-card rounded-[2rem] overflow-hidden relative animate-fade-in-up">
         <div class="bg-rose-500 px-5 pt-10 pb-12 text-center relative rounded-b-[2.5rem] shadow-lg overflow-visible">
             <div class="mb-4 bg-white/20 w-24 h-24 rounded-full flex items-center justify-center mx-auto backdrop-blur-sm shadow-inner">
@@ -128,13 +128,13 @@
                 <p class="text-slate-700 font-bold text-lg mb-2 font-prompt" id="deniedReasonTitle">ติดขัดปัญหาเรื่องสิทธิ์</p>
                 <div class="text-slate-500 text-sm" id="deniedReasonDetail">กรุณาติดต่อเจ้าหน้าที่นิติบุคคลเพื่อตรวจสอบสถานะของท่าน</div>
             </div>
-            <button onclick="liff.closeWindow()" class="w-full bg-slate-800 text-white font-bold font-prompt text-lg py-3 rounded-xl shadow-lg hover:bg-slate-900 transition-all click-scale">
+            <button onclick="closeApp()" class="w-full bg-slate-800 text-white font-bold font-prompt text-lg py-3 rounded-xl shadow-lg hover:bg-slate-900 transition-all click-scale">
                 ปิดหน้าต่าง
             </button>
         </div>
     </div>
 
-    <!-- 3. MAIN CONTENT (แสดงเมื่อผ่านการตรวจสอบ) -->
+    <!-- 3. MAIN CONTENT -->
     <div id="mainContent" class="hidden w-full max-w-sm mx-auto glass-card rounded-[2rem] overflow-hidden relative transition-all duration-500 animate-fade-in-up mb-10">
         
         <!-- Header Section -->
@@ -285,7 +285,7 @@
 
         async function checkUserPermission(userId) {
             try {
-                // 1. Get House Number from 'userhome' (using 'uid' and 'house_no')
+                // 1. Get House Number from 'userhome' (using 'uid' -> 'house_no')
                 const { data: userHome, error: homeError } = await supabaseClient
                     .from('userhome')
                     .select('house_no')
@@ -302,6 +302,7 @@
                 document.getElementById('userHouseNumber').textContent = userHouseNumber;
 
                 // 2. Check Debt in 'house_payments' (using 'house_numbe')
+                // Note: using 'house_numbe' as per CSV structure
                 const { data: payments, error: paymentError } = await supabaseClient
                     .from('house_payments')
                     .select('*')
@@ -314,14 +315,18 @@
                 let unpaidCount = 0;
                 if (payments && payments.length > 0) {
                     const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+                    
                     payments.forEach(record => {
                         months.forEach(month => {
-                            if (record[month] === 'ยังไม่จ่าย') {
+                            // Check precise string match "ยังไม่จ่าย"
+                            if (record[month] && record[month].trim() === 'ยังไม่จ่าย') {
                                 unpaidCount++;
                             }
                         });
                     });
                 }
+
+                console.log(`Checking permission for house ${userHouseNumber}: Unpaid count = ${unpaidCount}`);
 
                 if (unpaidCount > 3) {
                     showDeniedScreen("ระงับสิทธิ์การใช้งาน", `เนื่องจากมียอดค้างชำระค่าส่วนกลางจำนวน <b class="text-rose-600 text-xl">${unpaidCount}</b> งวด<br>กรุณาติดต่อฝ่ายบัญชี`);
@@ -349,6 +354,21 @@
             document.getElementById('deniedScreen').classList.remove('hidden');
         }
 
+        // --- CLOSE APP FUNCTION ---
+        function closeApp() {
+            if (liff.isInClient()) {
+                liff.closeWindow();
+            } else {
+                Swal.fire({
+                    icon: 'info',
+                    title: 'ปิดหน้าต่าง',
+                    text: 'กรุณากดปิดแท็บเบราว์เซอร์ของท่าน',
+                    confirmButtonText: 'ตกลง',
+                    confirmButtonColor: '#475569'
+                });
+            }
+        }
+
         // --- SUBMIT LOGIC ---
         const form = document.getElementById('residentForm');
         form.addEventListener('submit', async (e) => {
@@ -368,13 +388,15 @@
             submitBtn.classList.add('opacity-75');
 
             try {
+                // Check Duplicate
                 const { data: exist } = await supabaseClient.from('allowed_cars').select('id').eq('plate_number', plate).neq('status', 'pending_delete').maybeSingle();
                 if (exist) throw new Error('รถคันนี้มีการลงทะเบียนในระบบแล้ว');
 
+                // Insert
                 const { error } = await supabaseClient.from('allowed_cars').insert([{
                     plate_number: plate,
                     province: province,
-                    house_number: userHouseNumber,
+                    house_number: userHouseNumber, // Use verified house number
                     list_type: 'allowlist',
                     start_date: todayStr,
                     end_date: todayStr,
@@ -395,14 +417,14 @@
                             <p class="text-green-600 font-bold mt-2">✨ เข้า-ออกได้ภายในวันนี้</p></div>`,
                     confirmButtonText: 'ปิดหน้าต่าง',
                     confirmButtonColor: '#4f46e5'
+                }).then(() => {
+                    closeApp();
                 });
 
-                if (liff.isInClient()) liff.closeWindow();
-                else {
-                    form.reset();
-                    document.getElementById('houseNumber').value = userHouseNumber;
-                    fetchMyRegistrations();
-                }
+                // In case user doesn't close
+                form.reset();
+                document.getElementById('houseNumber').value = userHouseNumber;
+                fetchMyRegistrations();
 
             } catch (err) {
                 Swal.fire({ icon: 'error', title: 'เกิดข้อผิดพลาด', text: err.message, confirmButtonColor: '#4f46e5' });
