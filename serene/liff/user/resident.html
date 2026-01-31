@@ -95,25 +95,21 @@
         }
 
         .click-scale:active { transform: scale(0.96); transition: transform 0.1s; }
-        
-        /* Custom Input Reset */
         input:focus { outline: none; }
     </style>
 </head>
 <body class="text-slate-800 px-4 py-6 sm:p-6 overflow-x-hidden">
 
-    <!-- Container: ใช้ mx-auto เพื่อจัดกลาง แต่ใช้ margin-top เล็กน้อยเพื่อให้ไม่ติดขอบบนจนเกินไป -->
+    <!-- Main Container -->
     <div class="w-full max-w-sm mx-auto glass-card rounded-[2rem] overflow-hidden relative transition-all duration-500 animate-fade-in-up mb-10">
         
-        <!-- Loading Overlay for LIFF -->
+        <!-- Loading Overlay -->
         <div id="liffLoader" class="absolute inset-0 z-50 bg-white/95 flex flex-col items-center justify-center transition-opacity duration-500 backdrop-blur-sm">
             <div class="relative">
                 <div class="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
-                <div class="absolute inset-0 flex items-center justify-center">
-                    <span class="text-lg">🚀</span>
-                </div>
+                <div class="absolute inset-0 flex items-center justify-center"><span class="text-lg">🚀</span></div>
             </div>
-            <p class="mt-4 text-sm text-slate-600 font-prompt font-medium">กำลังเชื่อมต่อ LINE...</p>
+            <p class="mt-4 text-sm text-slate-600 font-prompt font-medium">กำลังยืนยันตัวตนผ่าน LINE...</p>
         </div>
 
         <!-- Header Section -->
@@ -124,7 +120,7 @@
             
             <div class="relative z-10 flex flex-col items-center">
                 
-                <!-- LINE Profile Section (Hidden by default) -->
+                <!-- LINE Profile Section -->
                 <div id="lineProfileSection" class="hidden flex-col items-center mb-5 transform transition-all duration-500 translate-y-4 opacity-0">
                     <div class="profile-glow mb-3">
                         <img id="linePicture" src="https://via.placeholder.com/150" alt="Profile" class="w-20 h-20 rounded-full border-4 border-white shadow-lg object-cover">
@@ -139,7 +135,7 @@
                     </div>
                 </div>
 
-                <!-- Default Icon (If no LINE) -->
+                <!-- Default Icon -->
                 <div id="defaultIcon" class="hidden mb-5 w-20 h-20 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center shadow-inner border-2 border-white/30 animate-bounce-slow">
                     <span class="text-4xl">🚗</span>
                 </div>
@@ -187,7 +183,6 @@
                         <input type="text" id="plateNumber" required
                             class="plate-box block w-full py-4 px-4 text-center text-3xl font-bold uppercase tracking-widest focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all placeholder-slate-200"
                             placeholder="1กข9999" autocomplete="off">
-                        <!-- Decorative screws -->
                         <div class="absolute top-1/2 -translate-y-1/2 left-3 w-1.5 h-1.5 rounded-full bg-slate-300 border border-slate-400 shadow-inner"></div>
                         <div class="absolute top-1/2 -translate-y-1/2 right-3 w-1.5 h-1.5 rounded-full bg-slate-300 border border-slate-400 shadow-inner"></div>
                     </div>
@@ -315,6 +310,19 @@
                     </p>
                 </div>
             </div>
+
+            <!-- My Registrations Section -->
+            <div id="myRegistrationsSection" class="mt-8 hidden">
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="w-1 h-5 bg-indigo-500 rounded-full"></div>
+                    <h3 class="text-base font-bold font-prompt text-slate-700">รายการที่ลงทะเบียนวันนี้</h3>
+                </div>
+                
+                <div id="myRegistrationsList" class="space-y-3">
+                    <!-- Items will be injected here -->
+                </div>
+            </div>
+
         </div>
     </div>
 
@@ -365,20 +373,26 @@
                         profileSection.classList.remove('translate-y-4', 'opacity-0');
                     });
 
+                    // Fetch My Data
+                    fetchMyRegistrations();
+
                 } else {
-                    if (liff.isInClient()) {
-                        liff.login();
-                    } else {
-                        document.getElementById('defaultIcon').classList.remove('hidden');
-                    }
+                    // หากไม่ได้ Login ให้สั่ง Login ทันที (รองรับทั้งมือถือและ PC)
+                    liff.login();
                 }
             } catch (err) {
                 console.warn('LIFF Error:', err.message);
                 document.getElementById('defaultIcon').classList.remove('hidden');
-            } finally {
+                // Hide loader in case of error
                 const loader = document.getElementById('liffLoader');
                 loader.classList.add('opacity-0');
                 setTimeout(() => loader.classList.add('hidden'), 500);
+            } finally {
+                if (liff.isLoggedIn()) {
+                    const loader = document.getElementById('liffLoader');
+                    loader.classList.add('opacity-0');
+                    setTimeout(() => loader.classList.add('hidden'), 500);
+                }
             }
         }
 
@@ -387,6 +401,69 @@
         } else {
             document.getElementById('liffLoader').classList.add('hidden');
             document.getElementById('defaultIcon').classList.remove('hidden');
+        }
+
+        // --- FETCH MY REGISTRATIONS ---
+        async function fetchMyRegistrations() {
+            if (!lineProfile.userId) return;
+
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = String(today.getMonth() + 1).padStart(2, '0');
+            const day = String(today.getDate()).padStart(2, '0');
+            const todayStr = `${year}-${month}-${day}`;
+
+            try {
+                const { data, error } = await supabaseClient
+                    .from('allowed_cars')
+                    .select('*')
+                    .eq('line_user_id', lineProfile.userId)
+                    .eq('start_date', todayStr)
+                    .neq('status', 'pending_delete')
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+
+                const listContainer = document.getElementById('myRegistrationsList');
+                const section = document.getElementById('myRegistrationsSection');
+                
+                listContainer.innerHTML = '';
+                
+                if (data && data.length > 0) {
+                    section.classList.remove('hidden');
+                    data.forEach(car => {
+                        let statusColor = 'bg-yellow-100 text-yellow-700';
+                        let statusText = 'รอส่งข้อมูล';
+                        if (car.status === 'synced') {
+                            statusColor = 'bg-emerald-100 text-emerald-700';
+                            statusText = 'เข้าได้แล้ว';
+                        }
+
+                        const item = document.createElement('div');
+                        item.className = 'bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex justify-between items-center';
+                        item.innerHTML = `
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center text-lg font-bold text-slate-700 font-prompt border border-slate-200">
+                                    🚗
+                                </div>
+                                <div>
+                                    <div class="font-bold text-slate-800 text-sm">${car.plate_number}</div>
+                                    <div class="text-[10px] text-slate-500">${car.province || ''}</div>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold ${statusColor}">${statusText}</span>
+                                <div class="text-[10px] text-slate-400 mt-1">บ้าน ${car.house_number}</div>
+                            </div>
+                        `;
+                        listContainer.appendChild(item);
+                    });
+                } else {
+                    section.classList.add('hidden');
+                }
+            } catch (err) {
+                console.error('Fetch My Reg Error:', err);
+            }
         }
 
         // --- SUBMIT ---
@@ -420,8 +497,10 @@
             }
 
             const today = new Date();
-            const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-            const todayStr = toYMD(today);
+            const year = today.getFullYear();
+            const month = String(today.getMonth() + 1).padStart(2, '0');
+            const day = String(today.getDate()).padStart(2, '0');
+            const todayStr = `${year}-${month}-${day}`;
 
             submitBtn.disabled = true;
             submitBtn.innerHTML = '<span class="animate-spin text-xl mr-2">⏳</span> กำลังบันทึก...';
@@ -478,12 +557,12 @@
                     backdrop: `rgba(15, 23, 42, 0.6)`
                 });
 
-                if (liff.isInClient()) {
-                    liff.closeWindow();
-                } else {
-                    form.reset();
-                    plateInput.focus();
-                }
+                // Refresh My List
+                fetchMyRegistrations();
+                
+                // Reset Form
+                form.reset();
+                plateInput.focus();
 
             } catch (err) {
                 Swal.fire({ 
