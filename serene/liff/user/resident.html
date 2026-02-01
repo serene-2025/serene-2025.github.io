@@ -48,16 +48,13 @@
         body {
             font-family: 'Sarabun', sans-serif;
             background-color: #f0f4f8;
-            /* พื้นหลังไล่สีสวยๆ */
             background-image: linear-gradient(120deg, #a1c4fd 0%, #c2e9fb 100%);
             min-height: 100vh;
-            /* ป้องกันการซูมและการกดไฮไลท์ */
             -webkit-tap-highlight-color: transparent;
             touch-action: manipulation;
         }
         .font-prompt { font-family: 'Prompt', sans-serif; }
         
-        /* ป้ายทะเบียนดีไซน์ใหม่ */
         .plate-box {
             font-family: 'Sarabun', sans-serif;
             font-weight: 700;
@@ -70,7 +67,6 @@
             color: #0f172a;
         }
 
-        /* Glass Card */
         .glass-card {
             background: rgba(255, 255, 255, 0.92);
             backdrop-filter: blur(20px);
@@ -78,10 +74,7 @@
             box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.1);
         }
 
-        /* Profile Image Glow */
-        .profile-glow {
-            position: relative;
-        }
+        .profile-glow { position: relative; }
         .profile-glow::before {
             content: '';
             position: absolute;
@@ -148,7 +141,7 @@
                 <p class="text-slate-700 font-bold text-lg mb-2 font-prompt" id="deniedReasonTitle">ติดขัดปัญหาเรื่องสิทธิ์</p>
                 <div class="text-slate-500 text-sm" id="deniedReasonDetail">กรุณาติดต่อเจ้าหน้าที่นิติบุคคลเพื่อตรวจสอบสถานะของท่าน</div>
             </div>
-            <button onclick="liff.closeWindow()" class="w-full bg-slate-800 text-white font-bold font-prompt text-lg py-3 rounded-xl shadow-lg hover:bg-slate-900 transition-all click-scale">
+            <button onclick="closeApp()" class="w-full bg-slate-800 text-white font-bold font-prompt text-lg py-3 rounded-xl shadow-lg hover:bg-slate-900 transition-all click-scale">
                 ปิดหน้าต่าง
             </button>
         </div>
@@ -266,25 +259,17 @@
         // Init UI
         lucide.createIcons();
         
-        // --- TIME HELPER (FIXED: Reliable Thai Time) ---
+        // --- TIME HELPER ---
         function getThaiDate() {
-            // Create a date object from the current time
-            const now = new Date();
-            // Convert to Thai time string
-            const thaiTimeStr = now.toLocaleString("en-US", {timeZone: "Asia/Bangkok"});
-            // Parse back to Date object
-            return new Date(thaiTimeStr);
+            const d = new Date();
+            const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
+            return new Date(utc + (3600000 * 7));
         }
-
         function getThaiYMD() {
             const d = getThaiDate();
-            const year = d.getFullYear();
-            const month = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
+            return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
         }
 
-        // Display Dates
         const now = getThaiDate();
         const thMonths = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
         document.getElementById('displayDateDay').textContent = now.getDate();
@@ -326,9 +311,10 @@
         async function checkUserPermission(userId) {
             try {
                 // 1. Get House Number from 'userhome'
+                // SELECT house_no, check_mode FROM userhome
                 const { data: userHome, error: homeError } = await supabaseClient
                     .from('userhome')
-                    .select('house_no')
+                    .select('house_no, check_mode')
                     .eq('uid', userId)
                     .maybeSingle();
 
@@ -341,7 +327,19 @@
                 document.getElementById('houseNumber').value = userHouseNumber;
                 document.getElementById('userHouseNumberLabel').textContent = userHouseNumber;
 
-                // 2. Check Debt in 'house_payments'
+                // --- NEW LOGIC: CHECK MODE ---
+                // ถ้าเป็น "เมนวน" (Manual) ให้ข้ามการตรวจหนี้ไปเลย
+                if (userHome.check_mode && userHome.check_mode.trim() === 'เมนวน') {
+                    console.log(`Manual Mode (เมนวน) for house ${userHouseNumber}: Skipping debt check.`);
+                    // PASS -> Show Main Content
+                    document.getElementById('loadingScreen').classList.add('hidden');
+                    document.getElementById('mainContent').classList.remove('hidden');
+                    fetchMyRegistrations();
+                    checkAndCleanupExpired();
+                    return; 
+                }
+
+                // 2. Check Debt in 'house_payments' (AUTO MODE)
                 const { data: payments, error: paymentError } = await supabaseClient
                     .from('house_payments')
                     .select('*')
@@ -361,7 +359,7 @@
                     });
                 }
 
-                console.log(`Permission Check: House ${userHouseNumber} owes ${unpaidCount} months.`);
+                console.log(`Permission Check (Auto): House ${userHouseNumber} owes ${unpaidCount} months.`);
 
                 if (unpaidCount > 3) {
                     showDeniedScreen("ระงับสิทธิ์การใช้งาน", `เนื่องจากมียอดค้างชำระค่าส่วนกลางจำนวน <b class="text-rose-600 text-2xl">${unpaidCount}</b> งวด<br>กรุณาติดต่อฝ่ายบัญชี`);
@@ -422,7 +420,8 @@
                         line_display_name: c.line_display_name, line_picture_url: c.line_picture_url
                     }));
                     await supabaseClient.from('visitor_history').insert(archiveData);
-                    await supabaseClient.from('allowed_cars').update({ status: 'pending_delete' }).in('id', expiredCars.map(c => c.id));
+                    const ids = expiredCars.map(c => c.id);
+                    await supabaseClient.from('allowed_cars').update({ status: 'pending_delete' }).in('id', ids);
                     fetchMyRegistrations();
                 }
             } catch (err) { console.warn('Auto-cleanup warning:', err); }
@@ -440,9 +439,9 @@
                 return Swal.fire({ icon: 'warning', title: 'ข้อมูลไม่ครบ', text: 'กรุณากรอกทะเบียนรถและจังหวัด', confirmButtonColor: '#4f46e5' });
             }
 
-            // Important: userHouseNumber must be set by checkUserPermission
-            if (!userHouseNumber) {
-                 return Swal.fire({ icon: 'error', title: 'ไม่พบข้อมูลบ้านเลขที่', text: 'กรุณารีโหลดหน้าเว็บใหม่', confirmButtonColor: '#4f46e5' });
+            // use userHouseNumber which is already fetched
+            if(!userHouseNumber) {
+                 return Swal.fire({ icon: 'error', title: 'ไม่พบข้อมูลบ้าน', text: 'กรุณารีโหลดหน้าเว็บ', confirmButtonColor: '#4f46e5' });
             }
 
             const todayStr = getThaiYMD();
@@ -452,15 +451,13 @@
             submitBtn.classList.add('opacity-75');
 
             try {
-                // Check Duplicate
                 const { data: exist } = await supabaseClient.from('allowed_cars').select('id').eq('plate_number', plate).neq('status', 'pending_delete').maybeSingle();
                 if (exist) throw new Error('รถคันนี้มีการลงทะเบียนในระบบแล้ว');
 
-                // Insert
                 const { error } = await supabaseClient.from('allowed_cars').insert([{
                     plate_number: plate,
                     province: province,
-                    house_number: userHouseNumber, 
+                    house_number: userHouseNumber, // Verified house number
                     list_type: 'allowlist',
                     start_date: todayStr,
                     end_date: todayStr,
@@ -534,7 +531,10 @@
                                     <div class="text-[10px] text-slate-500">${car.province || ''}</div>
                                 </div>
                             </div>
-                            <div class="text-right text-xs font-bold">${statusText}</div>
+                            <div class="text-right">
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold ${statusColor = 'bg-slate-100 text-slate-600' && car.status === 'synced' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">${statusText}</span>
+                                <div class="text-[10px] text-slate-400 mt-1">บ้าน ${car.house_number}</div>
+                            </div>
                         `;
                         listContainer.appendChild(item);
                     });
