@@ -152,6 +152,13 @@
             return "bg-slate-600 text-white shadow-lg shadow-slate-500/40 border-slate-500";
         };
 
+        const getHistoryStatusBadge = (status) => {
+            if (!status) return <span className="text-gray-400">-</span>;
+            if (status.includes('ตรวจสอบแล้ว') || status.includes('อนุมัติ') || status.includes('ถูกต้อง') || status.includes('เรียบร้อย')) return <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] font-bold border border-green-200 flex items-center gap-1"><CheckCircle size={10}/> ตรวจสอบแล้ว</span>;
+            if (status.includes('รอ') || status.includes('ตรวจสอบ')) return <span className="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded text-[10px] font-bold border border-yellow-200 flex items-center gap-1"><Clock size={10}/> รอตรวจสอบ</span>;
+            if (status.includes('ยกเลิก') || status.includes('ไม่ผ่าน')) return <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[10px] font-bold border border-red-200 flex items-center gap-1"><X size={10}/> ไม่อนุมัติ</span>;
+            return <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[10px] font-bold border border-gray-200">{status}</span>;
+        };
         const getHistoryCardHeaderStyle = (status) => {
             if (!status) return { bg: 'bg-gradient-to-r from-slate-50 to-white dark:from-slate-700 dark:to-slate-800', text: 'text-slate-700 dark:text-slate-200', iconColor: 'text-indigo-600', iconBg: 'bg-indigo-100', border: 'border-slate-100 dark:border-slate-600' };
             if (status.includes('ตรวจสอบแล้ว') || status.includes('อนุมัติ') || status.includes('ถูกต้อง') || status.includes('เรียบร้อย')) return { bg: 'bg-gradient-to-r from-emerald-500 to-green-600', text: 'text-white', iconColor: 'text-emerald-600', iconBg: 'bg-white', border: 'border-emerald-600' };
@@ -377,6 +384,7 @@
         };
 
         const Dashboard = ({ supabase, appConfig }) => {
+            // ... (Dashboard Logic - same as before) ...
             const [rawData, setRawData] = useState([]);
             const [loading, setLoading] = useState(true);
             const [yearFilter, setYearFilter] = useState('all');
@@ -388,13 +396,11 @@
                     if (!supabase) return;
                     setLoading(true);
                     try {
-                        // Fetch House Payments
                         const { data: houseData, error: houseError } = await supabase.from('house_payments').select('*');
                         if (houseError) throw houseError;
                         setRawData(houseData);
                         setYearFilter('all');
 
-                        // Fetch Pending Fees
                         const { data: pendingData, error: pendingError } = await supabase
                             .from('common_fees')
                             .select('*')
@@ -409,7 +415,7 @@
                 fetchAllData();
             }, [supabase]);
 
-            // ... (Filter Logic and Stats Calculation remains same) ...
+            // ** Filter Logic Integration **
             const filteredRawData = useMemo(() => {
                 const currentThaiYear = new Date().getFullYear() + 543;
                 return rawData.filter(item => {
@@ -470,7 +476,19 @@
 
             const availableYears = useMemo(() => [...new Set(filteredRawData.map(d => d.year))].sort((a,b) => b-a), [filteredRawData]);
 
-            const exportToCSV = () => { /* ... export logic ... */ }; // keeping simple for brevity
+            const exportToCSV = () => {
+                if (!stats || !stats.overdueList) return;
+                const headers = ["บ้านเลขที่", "จำนวนเดือนที่ค้าง", "ยอดรวม (บาท)"];
+                const rows = stats.overdueList.map(item => [item.houseNo, item.totalMonths, item.totalAmount]);
+                const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+                const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `overdue_report_${new Date().toISOString().slice(0,10)}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
 
             if (loading) return <div className="flex flex-col items-center justify-center py-20 text-white"><Loader2 size={48} className="animate-spin mb-4" /><p>กำลังคำนวณข้อมูลภาพรวม...</p></div>;
             if (!stats) return <div className="text-center py-20 text-white"><p>ไม่พบข้อมูล</p></div>;
@@ -513,10 +531,7 @@
                         </div>
                     )}
 
-                    {/* Existing Charts and Filters ... */}
-                    {/* ... (Existing dashboard content here: filter, cards, chart, overdue list) ... */}
-                    {/* For brevity, omitting duplicate dashboard render code here, using what was in previous version */}
-                    {/* Filter Bar */}
+                    {/* Filter Bar & Export */}
                     <div className="bg-white/10 backdrop-blur-md p-4 rounded-2xl mb-8 flex flex-col md:flex-row gap-4 items-center justify-between border border-white/20 shadow-lg">
                         <div className="flex flex-col md:flex-row gap-4 items-center">
                             <div className="flex items-center gap-2 text-white font-medium"><Filter size={20} /> ตัวกรอง:</div>
@@ -531,6 +546,7 @@
                                 </select>
                             </div>
                         </div>
+                        <button onClick={exportToCSV} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold shadow-md transition-colors flex items-center gap-2"><Download size={18} /> Export Excel</button>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -568,19 +584,12 @@
                                 const paidHeight = (m.paid / total) * 100;
                                 const unpaidHeight = (m.unpaid / total) * 100;
                                 const waitingHeight = (m.waiting / total) * 100;
-                                
                                 return (
                                     <div key={idx} className="flex flex-col items-center gap-2 h-full justify-end flex-1 min-w-[40px]">
                                         <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-t-lg relative flex flex-col justify-end overflow-hidden h-full">
-                                            <div className="bg-red-400 w-full transition-all duration-1000 ease-out hover:bg-red-500 relative group" style={{ height: `${unpaidHeight}%` }}>
-                                                {m.unpaid > 0 && <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap transition-opacity pointer-events-none z-10">ค้าง {m.unpaid}</div>}
-                                            </div>
-                                            <div className="bg-yellow-400 w-full transition-all duration-1000 ease-out hover:bg-yellow-500 relative group" style={{ height: `${waitingHeight}%` }}>
-                                                {m.waiting > 0 && <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap transition-opacity pointer-events-none z-10">รอ {m.waiting}</div>}
-                                            </div>
-                                            <div className="bg-green-500 w-full transition-all duration-1000 ease-out hover:bg-green-600 relative group" style={{ height: `${paidHeight}%` }}>
-                                                {m.paid > 0 && <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap transition-opacity pointer-events-none z-10">จ่าย {m.paid}</div>}
-                                            </div>
+                                            <div className="bg-red-400 w-full transition-all duration-1000 ease-out hover:bg-red-500 relative group" style={{ height: `${unpaidHeight}%` }}><div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap transition-opacity pointer-events-none z-10">ค้าง {m.unpaid}</div></div>
+                                            <div className="bg-yellow-400 w-full transition-all duration-1000 ease-out hover:bg-yellow-500 relative group" style={{ height: `${waitingHeight}%` }}><div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap transition-opacity pointer-events-none z-10">รอ {m.waiting}</div></div>
+                                            <div className="bg-green-500 w-full transition-all duration-1000 ease-out hover:bg-green-600 relative group" style={{ height: `${paidHeight}%` }}><div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap transition-opacity pointer-events-none z-10">จ่าย {m.paid}</div></div>
                                         </div>
                                         <span className="text-xs font-bold text-slate-500 dark:text-slate-400">{m.label}</span>
                                     </div>
@@ -611,26 +620,15 @@
                                     {stats.overdueList.length > 0 ? (
                                         stats.overdueList.map((house, idx) => (
                                             <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                                                <td className="px-4 py-3 font-medium flex items-center gap-2">
-                                                    <Home size={16} className="text-slate-400" /> {house.houseNo}
-                                                </td>
-                                                <td className="px-4 py-3 text-center">
-                                                    <span className="bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 px-2 py-1 rounded-md text-xs font-bold">
-                                                        {house.totalMonths} เดือน
-                                                    </span>
-                                                </td>
-                                                <td className="px-4 py-3 text-right font-bold text-red-600 dark:text-red-400">
-                                                    ฿{house.totalAmount.toLocaleString()}
-                                                </td>
+                                                <td className="px-4 py-3 font-medium flex items-center gap-2"><Home size={16} className="text-slate-400" /> {house.houseNo}</td>
+                                                <td className="px-4 py-3 text-center"><span className="bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 px-2 py-1 rounded-md text-xs font-bold">{house.totalMonths} เดือน</span></td>
+                                                <td className="px-4 py-3 text-right font-bold text-red-600 dark:text-red-400">฿{house.totalAmount.toLocaleString()}</td>
                                             </tr>
                                         ))
                                     ) : (
                                         <tr>
                                             <td colSpan="3" className="px-4 py-8 text-center text-slate-400">
-                                                <div className="flex flex-col items-center gap-2">
-                                                    <CheckCircle size={32} className="text-green-400" />
-                                                    <span>ไม่พบรายการค้างชำระในช่วงเวลานี้</span>
-                                                </div>
+                                                <div className="flex flex-col items-center gap-2"><CheckCircle size={32} className="text-green-400" /><span>ไม่พบรายการค้างชำระในช่วงเวลานี้</span></div>
                                             </td>
                                         </tr>
                                     )}
@@ -641,9 +639,7 @@
 
                      {/* Soi Ranking Section */}
                     <div className="bg-white dark:bg-slate-800 rounded-3xl p-6 md:p-8 shadow-xl border border-slate-100 dark:border-slate-700">
-                        <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2">
-                            <MapPin className="text-orange-500" /> อันดับยอดค้างชำระแยกตามซอย
-                        </h3>
+                        <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2"><MapPin className="text-orange-500" /> อันดับยอดค้างชำระแยกตามซอย</h3>
                         {stats.soiList.length > 0 ? (
                             <div className="space-y-4">
                                 {stats.soiList.map((soi, index) => {
@@ -653,10 +649,7 @@
                                         <div key={index} className="flex items-center gap-4">
                                             <div className="w-20 text-sm font-bold text-slate-600 dark:text-slate-300 shrink-0">{soi.name}</div>
                                             <div className="flex-1 h-4 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden relative">
-                                                <div 
-                                                    className="h-full bg-gradient-to-r from-orange-400 to-red-500 rounded-full relative"
-                                                    style={{ width: `${percentage}%` }}
-                                                ></div>
+                                                <div className="h-full bg-gradient-to-r from-orange-400 to-red-500 rounded-full relative" style={{ width: `${percentage}%` }}></div>
                                             </div>
                                             <div className="w-24 text-right text-sm font-bold text-red-600 dark:text-red-400 shrink-0">฿{soi.amount.toLocaleString()}</div>
                                         </div>
@@ -672,8 +665,7 @@
         };
 
         const HomeContent = ({ payments, loading, error, supabase, openDetailModal, handleSyncStatus, handlePrint, toggleNameVisibility, visibleNames, syncingId, allPendingFees }) => {
-             // ... existing HomeContent logic ...
-             if (!supabase) return <div className="text-center py-20 no-print"><div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-white/30 border-t-white mb-4"></div><p className="text-white/80 animate-pulse">กำลังเชื่อมต่อระบบฐานข้อมูล...</p></div>;
+            if (!supabase) return <div className="text-center py-20 no-print"><div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-white/30 border-t-white mb-4"></div><p className="text-white/80 animate-pulse">กำลังเชื่อมต่อระบบฐานข้อมูล...</p></div>;
             if (loading) return <div className="text-center py-20 flex flex-col items-center no-print"><div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-white/30 border-t-white mb-4"></div><p className="text-white/80 animate-pulse font-medium">กำลังตรวจสอบและอัปเดตข้อมูลล่าสุด...</p></div>;
             if (error) return <div className="max-w-md mx-auto bg-red-500/10 backdrop-blur border border-red-500/30 p-4 rounded-xl text-center text-white no-print"><AlertCircle className="mx-auto mb-2 text-red-300" size={32} /><p>{error}</p></div>;
             
@@ -950,9 +942,9 @@
                 }
             };
 
-            const handleGlobalSync = async () => {
+            const handleGlobalSync = async (silent = false) => {
                 if (!supabase) return;
-                setIsSaving(true);
+                if (!silent) setIsSaving(true);
                 try {
                     const currentYear = new Date().getFullYear() + 543; 
                     const { data: houses, error: houseError } = await supabase.from('house_payments').select('*');
@@ -1014,11 +1006,13 @@
                         }
                     }
 
-                    setResultModal({
-                        isOpen: true,
-                        type: 'success',
-                        message: `ดึงข้อมูลเรียบร้อยแล้ว อัพเดท ${updatedCount} รายการ`
-                    });
+                    if (!silent) {
+                        setResultModal({
+                            isOpen: true,
+                            type: 'success',
+                            message: `ดึงข้อมูลเรียบร้อยแล้ว อัพเดท ${updatedCount} รายการ`
+                        });
+                    }
 
                     // Refresh Dashboard if active
                      if (currentPage === 'dashboard') {
@@ -1032,9 +1026,9 @@
 
                 } catch (err) {
                     console.error("Global Sync Error:", err);
-                    setResultModal({ isOpen: true, type: 'error', message: 'เกิดข้อผิดพลาดในการดึงข้อมูล: ' + err.message });
+                    if (!silent) setResultModal({ isOpen: true, type: 'error', message: 'เกิดข้อผิดพลาดในการดึงข้อมูล: ' + err.message });
                 } finally {
-                    setIsSaving(false);
+                    if (!silent) setIsSaving(false);
                 }
             };
 
@@ -1194,6 +1188,10 @@
             const handleSearchClick = async () => {
                 setLoading(true);
                 if (searchTerm.trim()) { saveSearchLog(searchTerm.trim()); }
+                
+                // Add Global Sync before search
+                await handleGlobalSync(true); // silent sync
+
                 const results = await fetchPayments(searchTerm, true);
                 await fetchAllPendingFees();
                 if (results && results.length > 0) {
