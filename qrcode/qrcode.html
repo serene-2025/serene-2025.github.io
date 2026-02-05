@@ -112,7 +112,7 @@
     </div>
     
     <div id="user-profile" class="hidden profile-area">
-        <img id="userPicture" src="https://via.placeholder.com/80" class="profile-img">
+        <img id="userPicture" src="https://via.placeholder.com/80" class="profile-img" crossorigin="anonymous">
         <div class="profile-name">สวัสดี, <span id="userName">User</span></div>
     </div>
 
@@ -172,31 +172,28 @@
                 return;
             }
 
-            // ดึงข้อมูลโปรไฟล์
             lineProfile = await liff.getProfile();
             
-            // อัปเดต UI
             document.getElementById('liff-loading').classList.add('hidden');
             document.getElementById('user-profile').classList.remove('hidden');
             document.getElementById('setup-form').classList.remove('hidden');
             
-            document.getElementById('userPicture').src = lineProfile.pictureUrl || 'https://via.placeholder.com/80';
+            // เพิ่ม timestamp เพื่อเลี่ยง cache และ crossorigin สำหรับ html2canvas
+            document.getElementById('userPicture').src = lineProfile.pictureUrl + "?" + new Date().getTime(); 
             document.getElementById('userName').innerText = lineProfile.displayName;
 
         } catch (err) {
             console.error(err);
-            // กรณีรันนอก LINE (Test Mode)
             document.getElementById('liff-loading').innerHTML = `<span style="color:red">กรุณาเปิดผ่าน LINE</span>`;
         }
     }
     main();
 
-    // --- 2. สร้างรหัสและเก็บข้อมูล LINE ---
+    // --- 2. สร้างรหัส ---
     async function generatePass() {
         const house = document.getElementById('houseNumber').value.trim();
         if (!house) return Swal.fire('แจ้งเตือน', 'กรุณาระบุบ้านเลขที่', 'warning');
 
-        // Loading
         const btn = document.getElementById('genBtn');
         btn.disabled = true;
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังสร้าง...';
@@ -215,7 +212,6 @@
             const exp = new Date();
             exp.setHours(exp.getHours() + 24);
 
-            // Insert ข้อมูลพร้อม LINE Profile
             const { error } = await supabaseClient.from('access_tokens').insert([{
                 token_code: code,
                 house_number: house,
@@ -223,9 +219,9 @@
                 type: 'visitor',
                 valid_until: exp.toISOString(),
                 use_count: 0,
-                requester_line_id: lineProfile?.userId || 'unknown', // เก็บ UserID
-                requester_name: lineProfile?.displayName || 'Guest',  // เก็บชื่อไลน์
-                requester_picture: lineProfile?.pictureUrl || ''      // เก็บรูป
+                requester_line_id: lineProfile?.userId || 'unknown',
+                requester_name: lineProfile?.displayName || 'Guest',
+                requester_picture: lineProfile?.pictureUrl || ''
             }]);
 
             if (error) throw error;
@@ -256,13 +252,46 @@
         new QRCode(qrContainer, { text: code, width: 180, height: 180 });
     }
 
+    // --- 3. ฟังก์ชันบันทึกภาพ (แก้ไขสำหรับ LIFF) ---
     function saveAsImage() {
         const element = document.getElementById('capture-area');
-        html2canvas(element, { scale: 3 }).then(canvas => {
-            const link = document.createElement('a');
-            link.download = `Pass-${generatedPass}.png`;
-            link.href = canvas.toDataURL();
-            link.click();
+        
+        // แสดง Loading
+        Swal.fire({
+            title: 'กำลังประมวลผล...',
+            allowOutsideClick: false,
+            didOpen: () => { Swal.showLoading() }
+        });
+
+        // ใช้ html2canvas สร้างรูป (useCORS: true สำคัญมากสำหรับรูปโปรไฟล์)
+        html2canvas(element, { scale: 3, useCORS: true }).then(canvas => {
+            const dataUrl = canvas.toDataURL("image/png");
+            Swal.close(); // ปิด Loading
+
+            if (liff.isInClient() && (liff.getOS() === "ios" || liff.getOS() === "android")) {
+                // *** กรณีเปิดใน LINE LIFF ***
+                // แสดงรูปใน Popup แล้วบอกให้กดค้างเพื่อ Save
+                Swal.fire({
+                    title: 'บันทึกรูปภาพ',
+                    text: '👉 กดค้างที่รูปภาพด้านล่างแล้วเลือก "บันทึกรูปภาพ" (Save Image)',
+                    imageUrl: dataUrl,
+                    imageWidth: 280,
+                    imageAlt: 'Visitor Pass',
+                    showConfirmButton: true,
+                    confirmButtonText: 'ปิด',
+                    confirmButtonColor: '#4f46e5'
+                });
+            } else {
+                // *** กรณีเปิดใน Browser ปกติ ***
+                // ดาวน์โหลดได้เลย
+                const link = document.createElement('a');
+                link.download = `Pass-${generatedPass}.png`;
+                link.href = dataUrl;
+                link.click();
+            }
+        }).catch(err => {
+            Swal.close();
+            Swal.fire('Error', 'ไม่สามารถสร้างรูปภาพได้: ' + err.message, 'error');
         });
     }
 
@@ -274,14 +303,12 @@
             }]).then(() => {
                 Swal.fire('สำเร็จ', 'ส่งข้อความเรียบร้อย', 'success');
             }).catch((err) => {
-                // ถ้าส่งไม่ได้ (เช่นไม่ได้เปิดจากห้องแชท) ให้เปิด Share Target Picker
                 liff.shareTargetPicker([{
                     type: 'text',
                     text: `🏠 บัตรผ่านเข้าหมู่บ้าน\n📍 บ้านเลขที่: ${document.getElementById('displayHouse').innerText}\n🔑 รหัสผ่าน: ${generatedPass}`
                 }]);
             });
         } else {
-            // Fallback
             alert("กรุณาเปิดใน LINE เพื่อใช้งานฟีเจอร์นี้");
         }
     }
