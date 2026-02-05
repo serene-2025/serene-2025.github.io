@@ -138,11 +138,11 @@
             <div style="font-size:0.9rem; color:#64748b;" id="expDate"></div>
         </div>
 
-        <button class="btn btn-save" onclick="saveAsImage()">
-            <i class="fa-solid fa-download"></i> บันทึกรูปภาพ
+        <button class="btn btn-save" onclick="sendImageToChat()">
+            <i class="fa-solid fa-paper-plane"></i> ส่งรูปบัตรเข้าแชท LINE
         </button>
         <button class="btn btn-line" onclick="shareToLine()">
-            <i class="fa-brands fa-line"></i> ส่งให้เพื่อน
+            <i class="fa-brands fa-line"></i> ส่งข้อความให้เพื่อน
         </button>
         <button class="btn" style="background:transparent; color:#94a3b8; margin-top:5px;" onclick="location.reload()">
             สร้างใหม่
@@ -152,7 +152,7 @@
 
 <script>
     // --- Config ---
-    const LIFF_ID = "2000143615-rk76Q732"; // **ใส่ LIFF ID ของพี่ที่นี่**
+    const LIFF_ID = "2000143615-rk76Q732"; // **อย่าลืมใส่ LIFF ID ของพี่**
     const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
     const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
 
@@ -178,7 +178,7 @@
             document.getElementById('user-profile').classList.remove('hidden');
             document.getElementById('setup-form').classList.remove('hidden');
             
-            // เพิ่ม timestamp เพื่อเลี่ยง cache และ crossorigin สำหรับ html2canvas
+            // เพิ่ม timestamp เพื่อเลี่ยง cache และ crossorigin
             document.getElementById('userPicture').src = lineProfile.pictureUrl + "?" + new Date().getTime(); 
             document.getElementById('userName').innerText = lineProfile.displayName;
 
@@ -252,62 +252,96 @@
         new QRCode(qrContainer, { text: code, width: 180, height: 180 });
     }
 
-    // --- 3. ฟังก์ชันบันทึกภาพ (แก้ไขสำหรับ LIFF) ---
-    function saveAsImage() {
+    // Helper Function: แปลง DataURL เป็น Blob
+    function dataURLtoBlob(dataurl) {
+        var arr = dataurl.split(','), mime = arr[0].match(/:(.*?);/)[1],
+            bstr = atob(arr[1]), n = bstr.length, u8arr = new Uint8Array(n);
+        while(n--){
+            u8arr[n] = bstr.charCodeAt(n);
+        }
+        return new Blob([u8arr], {type:mime});
+    }
+
+    // --- 3. อัปโหลดรูปและส่งเข้าแชท LINE (แก้ปัญหา Android) ---
+    async function sendImageToChat() {
+        if (!liff.isInClient()) {
+            return Swal.fire('แจ้งเตือน', 'ฟีเจอร์นี้ใช้งานได้เฉพาะในแอป LINE เท่านั้น', 'warning');
+        }
+
         const element = document.getElementById('capture-area');
         
-        // แสดง Loading
         Swal.fire({
-            title: 'กำลังประมวลผล...',
+            title: 'กำลังสร้างรูปภาพ...',
+            text: 'กรุณารอสักครู่ ระบบกำลังส่งรูปเข้าห้องแชท',
             allowOutsideClick: false,
             didOpen: () => { Swal.showLoading() }
         });
 
-        // ใช้ html2canvas สร้างรูป (useCORS: true สำคัญมากสำหรับรูปโปรไฟล์)
-        html2canvas(element, { scale: 3, useCORS: true }).then(canvas => {
-            const dataUrl = canvas.toDataURL("image/png");
-            Swal.close(); // ปิด Loading
+        try {
+            // 1. สร้างรูปภาพจาก HTML
+            const canvas = await html2canvas(element, { scale: 2, useCORS: true });
+            const blob = dataURLtoBlob(canvas.toDataURL("image/png"));
+            const fileName = `pass-${generatedPass}-${Date.now()}.png`;
 
-            if (liff.isInClient() && (liff.getOS() === "ios" || liff.getOS() === "android")) {
-                // *** กรณีเปิดใน LINE LIFF ***
-                // แสดงรูปใน Popup แล้วบอกให้กดค้างเพื่อ Save
-                Swal.fire({
-                    title: 'บันทึกรูปภาพ',
-                    text: '👉 กดค้างที่รูปภาพด้านล่างแล้วเลือก "บันทึกรูปภาพ" (Save Image)',
-                    imageUrl: dataUrl,
-                    imageWidth: 280,
-                    imageAlt: 'Visitor Pass',
-                    showConfirmButton: true,
-                    confirmButtonText: 'ปิด',
-                    confirmButtonColor: '#4f46e5'
-                });
+            // 2. อัปโหลดไป Supabase Storage (ต้องสร้าง Bucket ชื่อ 'visitor-passes' และเปิด Public)
+            const { data, error } = await supabaseClient.storage
+                .from('visitor-passes')
+                .upload(fileName, blob, { contentType: 'image/png', upsert: true });
+
+            if (error) throw new Error('Upload Failed: ' + error.message);
+
+            // 3. ขอ Public URL
+            const { data: publicUrlData } = supabaseClient.storage
+                .from('visitor-passes')
+                .getPublicUrl(fileName);
+            
+            const imageUrl = publicUrlData.publicUrl;
+
+            // 4. ส่งรูปเข้าห้องแชท LINE
+            if (liff.getContext().type !== "none") {
+                // กรณีเปิดจากห้องแชท (Rich Menu)
+                await liff.sendMessages([{
+                    type: "image",
+                    originalContentUrl: imageUrl,
+                    previewImageUrl: imageUrl
+                }]);
+                Swal.fire({ icon: 'success', title: 'ส่งเรียบร้อย', text: 'รูปบัตรผ่านถูกส่งเข้าแชทแล้วครับ', timer: 2000 });
             } else {
-                // *** กรณีเปิดใน Browser ปกติ ***
-                // ดาวน์โหลดได้เลย
-                const link = document.createElement('a');
-                link.download = `Pass-${generatedPass}.png`;
-                link.href = dataUrl;
-                link.click();
+                // กรณีเปิดจาก Link ภายนอก -> ใช้ ShareTargetPicker
+                await liff.shareTargetPicker([{
+                    type: "image",
+                    originalContentUrl: imageUrl,
+                    previewImageUrl: imageUrl
+                }]);
             }
-        }).catch(err => {
+            
             Swal.close();
-            Swal.fire('Error', 'ไม่สามารถสร้างรูปภาพได้: ' + err.message, 'error');
-        });
+
+        } catch (err) {
+            Swal.close();
+            console.error(err);
+            
+            // กรณีส่งไม่ผ่านจริงๆ ให้แสดงปุ่มเปิด Browser
+            Swal.fire({
+                icon: 'error',
+                title: 'ส่งอัตโนมัติไม่สำเร็จ',
+                text: 'ระบบจะพาคุณไปดาวน์โหลดผ่าน Browser แทน',
+                showCancelButton: true,
+                confirmButtonText: 'เปิด Browser',
+                cancelButtonText: 'ยกเลิก'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    liff.openWindow({ url: window.location.href, external: true });
+                }
+            });
+        }
     }
 
+    // ฟังก์ชันแชร์ข้อความ (Text) ปกติ
     function shareToLine() {
         if (liff.isInClient()) {
-            liff.sendMessages([{
-                type: 'text',
-                text: `🏠 บัตรผ่านเข้าหมู่บ้าน\n📍 บ้านเลขที่: ${document.getElementById('displayHouse').innerText}\n🔑 รหัสผ่าน: ${generatedPass}`
-            }]).then(() => {
-                Swal.fire('สำเร็จ', 'ส่งข้อความเรียบร้อย', 'success');
-            }).catch((err) => {
-                liff.shareTargetPicker([{
-                    type: 'text',
-                    text: `🏠 บัตรผ่านเข้าหมู่บ้าน\n📍 บ้านเลขที่: ${document.getElementById('displayHouse').innerText}\n🔑 รหัสผ่าน: ${generatedPass}`
-                }]);
-            });
+            const msg = `🏠 บัตรผ่านเข้าหมู่บ้าน\n📍 บ้านเลขที่: ${document.getElementById('displayHouse').innerText}\n🔑 รหัสผ่าน: ${generatedPass}\n(ใช้สแกน QR Code ที่ป้อมยาม)`;
+            liff.shareTargetPicker([{ type: 'text', text: msg }]);
         } else {
             alert("กรุณาเปิดใน LINE เพื่อใช้งานฟีเจอร์นี้");
         }
