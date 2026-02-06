@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Gate Remote - Goldenland Serene</title>
+    
+    <!-- Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Kanit', sans-serif; background: #f1f5f9; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .header i { font-size: 3rem; color: #4f46e5; }
+        .header h2 { margin: 10px 0 0; color: #1e293b; }
+        
+        .remote-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; width: 100%; max-width: 500px; }
+        
+        .btn-remote {
+            border: none; border-radius: 20px; padding: 30px 20px;
+            font-family: 'Kanit', sans-serif; cursor: pointer; transition: transform 0.1s;
+            display: flex; flex-direction: column; align-items: center; gap: 15px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1); width: 100%;
+        }
+        .btn-remote:active { transform: scale(0.95); }
+        .btn-remote i { font-size: 2.5rem; }
+        .btn-remote span { font-size: 1.2rem; font-weight: 600; }
+
+        .btn-in { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; }
+        .btn-out { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; }
+        
+        .status-log { margin-top: 30px; width: 100%; max-width: 500px; background: white; border-radius: 15px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .log-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f1f5f9; font-size: 0.9rem; color: #64748b; }
+        .log-item:last-child { border-bottom: none; }
+        .badge { padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; color: white; }
+        .bg-green { background: #10b981; } .bg-orange { background: #f59e0b; }
+        
+        #user-info { margin-bottom: 20px; color: #64748b; cursor: pointer; border-bottom: 1px dashed #ccc; display: inline-block; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <i class="fa-solid fa-wifi"></i>
+        <h2>Smart Remote</h2>
+        <div id="user-info" onclick="changeName()">
+            <i class="fa-solid fa-user-gear"></i> ผู้สั่งงาน: <span>Guest</span> (แตะเพื่อเปลี่ยน)
+        </div>
+    </div>
+
+    <div class="remote-grid">
+        <button class="btn-remote btn-in" onclick="sendCommand('IN')">
+            <i class="fa-solid fa-arrow-right-to-bracket"></i>
+            <span>เปิดทางเข้า</span>
+        </button>
+        
+        <button class="btn-remote btn-out" onclick="sendCommand('OUT')">
+            <i class="fa-solid fa-arrow-right-from-bracket"></i>
+            <span>เปิดทางออก</span>
+        </button>
+    </div>
+
+    <div class="status-log">
+        <h4 style="margin:0 0 10px 0; color:#334155;">ประวัติคำสั่งล่าสุด</h4>
+        <div id="log-list">
+            <div style="text-align:center; padding:20px;">กำลังโหลด...</div>
+        </div>
+    </div>
+
+<script>
+    // --- Config ---
+    const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
+    
+    const { createClient } = supabase;
+    const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY);
+    
+    let currentUserName = localStorage.getItem('gate_remote_user') || 'Admin';
+
+    // 1. Initialize
+    function init() {
+        updateUserDisplay();
+        loadHistory();
+    }
+
+    function updateUserDisplay() {
+        document.querySelector('#user-info span').innerText = currentUserName;
+    }
+
+    async function changeName() {
+        const { value: name } = await Swal.fire({
+            title: 'ตั้งชื่อผู้สั่งงาน',
+            input: 'text',
+            inputValue: currentUserName,
+            showCancelButton: true,
+            confirmButtonText: 'บันทึก',
+            cancelButtonText: 'ยกเลิก',
+            inputValidator: (value) => {
+                if (!value) {
+                    return 'กรุณาใส่ชื่อ!';
+                }
+            }
+        });
+
+        if (name) {
+            currentUserName = name;
+            localStorage.setItem('gate_remote_user', name);
+            updateUserDisplay();
+            Swal.fire('บันทึกชื่อแล้ว', '', 'success');
+        }
+    }
+
+    // 2. Send Command Function
+    async function sendCommand(direction) {
+        // ถามยืนยันก่อนกด
+        const result = await Swal.fire({
+            title: `ยืนยันเปิด${direction === 'IN' ? 'ทางเข้า' : 'ทางออก'}?`,
+            text: `สั่งงานโดย: ${currentUserName}`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: direction === 'IN' ? '#10b981' : '#f59e0b',
+            cancelButtonColor: '#d33',
+            confirmButtonText: 'ใช่, สั่งเปิดเลย',
+            cancelButtonText: 'ยกเลิก'
+        });
+
+        if (result.isConfirmed) {
+            Swal.fire({ title: 'กำลังส่งคำสั่ง...', didOpen: () => Swal.showLoading() });
+
+            // Insert คำสั่งลง Supabase
+            const { error } = await supabaseClient.from('gate_commands').insert({
+                direction: direction,
+                command_by: currentUserName, // ใช้ชื่อที่ตั้งไว้
+                status: 'pending'
+            });
+
+            if (error) {
+                Swal.fire('Error', error.message, 'error');
+            } else {
+                Swal.fire({ icon: 'success', title: 'สั่งงานสำเร็จ', timer: 1500, showConfirmButton: false });
+                loadHistory(); // รีโหลดประวัติ
+            }
+        }
+    }
+
+    // 3. Load History
+    async function loadHistory() {
+        const { data, error } = await supabaseClient
+            .from('gate_commands')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(5);
+
+        const list = document.getElementById('log-list');
+        list.innerHTML = '';
+        
+        if (data) {
+            data.forEach(item => {
+                const time = new Date(item.created_at).toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'});
+                const badgeClass = item.direction === 'IN' ? 'bg-green' : 'bg-orange';
+                const label = item.direction === 'IN' ? 'เข้า' : 'ออก';
+                const statusIcon = item.status === 'executed' ? '<i class="fa-solid fa-check text-success"></i>' : '<i class="fa-regular fa-clock"></i>';
+                
+                list.innerHTML += `
+                    <div class="log-item">
+                        <div>
+                            <span class="badge ${badgeClass}">${label}</span> 
+                            โดย ${item.command_by}
+                        </div>
+                        <div>${time} ${statusIcon}</div>
+                    </div>
+                `;
+            });
+        }
+    }
+
+    // Realtime Update History
+    supabaseClient.channel('remote_history')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'gate_commands' }, () => loadHistory())
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'gate_commands' }, () => loadHistory())
+        .subscribe();
+
+    // Start
+    init();
+
+</script>
+</body>
+</html>
