@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ใบรายงานอุบัติเหตุ (Fit A4)</title>
+    <title>ใบรายงานอุบัติเหตุ (Supabase)</title>
     <!-- เรียกใช้ Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- เรียกใช้ Supabase JS -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap');
         
@@ -32,6 +34,8 @@
             box-shadow: 0 0 15px rgba(0,0,0,0.3);
             position: relative;
             box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
         }
 
         /* Input Styles - เส้นบรรทัดจุดไข่ปลา */
@@ -67,17 +71,20 @@
             border-collapse: collapse;
             font-size: 14px;
             margin-top: 5px;
+            table-layout: fixed; /* บังคับ layout เพื่อให้ปรับขนาดคอลัมน์ได้ดีขึ้น */
         }
         th, td {
             border: 1px solid #000;
             padding: 6px 8px;
             vertical-align: middle;
+            word-wrap: break-word;
         }
         th {
             background-color: #e5e7eb; /* สีเทาหัวตาราง */
             text-align: center;
             font-weight: 600;
             color: #000;
+            position: relative; /* เพื่อวางตัว Resizer */
         }
         td input {
             text-align: center;
@@ -85,6 +92,23 @@
         /* ช่องหมายเหตุชิดซ้าย */
         td:last-child input {
             text-align: left;
+        }
+
+        /* Styles สำหรับตัวปรับขนาดตาราง (Resizer) */
+        .resizer {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 5px;
+            cursor: col-resize;
+            user-select: none;
+            height: 100%;
+            z-index: 10;
+        }
+        
+        /* แสดงสีเมื่อเอาเมาส์ไปชี้หรือกำลังลาก */
+        .resizer:hover, .resizing {
+            border-right: 2px solid #3b82f6; /* สีฟ้า */
         }
 
         /* Header Section Style (แถบหัวข้อ) */
@@ -136,6 +160,18 @@
             margin-right: 5px;
             min-width: fit-content;
         }
+        
+        /* สไตล์สำหรับหัวข้อที่แก้ไขได้ */
+        [contenteditable="true"]:hover {
+            background-color: #f3f4f6; /* สีเทาอ่อนเมื่อเอาเมาส์ไปชี้ */
+            border-radius: 4px;
+            cursor: text;
+        }
+        [contenteditable="true"]:focus {
+            outline: 2px solid #93c5fd; /* เส้นขอบสีฟ้าเมื่อกำลังพิมพ์ */
+            background-color: #fff;
+            border-radius: 4px;
+        }
 
         /* --- PRINT SETTINGS (สำคัญที่สุดสำหรับการบังคับหน้าเดียว) --- */
         @media print {
@@ -163,6 +199,10 @@
                 display: none !important;
             }
             
+            /* ซ่อนตัวปรับขนาดและพื้นหลังตอนแก้ไขเมื่อพิมพ์ */
+            .resizer { display: none; }
+            [contenteditable="true"] { background-color: transparent !important; outline: none !important; }
+            
             /* บีบอัดระยะห่างต่างๆ เพื่อให้พอดีหน้าเดียว */
             h1 { font-size: 18pt !important; margin-bottom: 5px !important; }
             p { font-size: 10pt !important; }
@@ -174,8 +214,8 @@
                 background-color: #e5e7eb !important; /* บังคับสีพื้นหลังตอนพิมพ์ */
             }
             
-            .mb-5 { margin-bottom: 10px !important; }
-            .mb-6 { margin-bottom: 10px !important; }
+            .mb-5 { margin-bottom: 8px !important; } /* ลดระยะห่างลงเล็กน้อย */
+            .mb-6 { margin-bottom: 8px !important; }
             
             /* ลดขนาด Font ในตารางและ Input */
             td, th { padding: 4px 5px !important; font-size: 12pt !important; }
@@ -190,25 +230,30 @@
 </head>
 <body>
 
-    <!-- ปุ่มสั่งพิมพ์ (ลอยอยู่มุมขวาบน) -->
+    <!-- ปุ่มสั่งพิมพ์และบันทึก (ลอยอยู่มุมขวาบน) -->
     <div class="no-print fixed top-5 right-5 z-50 flex flex-col gap-2">
+        <button onclick="saveToSupabase()" id="btnSave" class="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg shadow-xl font-bold flex items-center justify-center gap-2 transition transform hover:scale-105">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            </svg>
+            บันทึกข้อมูล
+        </button>
+
         <button onclick="window.print()" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg shadow-xl font-bold flex items-center justify-center gap-2 transition transform hover:scale-105">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
             </svg>
-            พิมพ์เอกสาร / บันทึก PDF
+            พิมพ์ / PDF
         </button>
+        
         <div class="bg-white p-3 rounded shadow text-xs text-gray-600 w-64 border border-gray-200">
-            <b>💡 คำแนะนำ:</b><br>
-            1. ตั้งค่า Margins เป็น "Default" หรือ "None"<br>
-            2. ติ๊ก "Background graphics" เพื่อให้เห็นสีแถบหัวข้อ<br>
-            3. เลือก Scale "Fit to printable area"
+            <b>💡 สถานะ:</b> <span id="statusMsg">พร้อมใช้งาน</span>
         </div>
     </div>
 
     <!-- หน้ากระดาษ A4 -->
     <div class="page">
-        <!-- ส่วนหัว -->
+        <!-- ส่วนหัว (ปรับปรุงให้แก้ไขได้) -->
         <div class="flex justify-between items-start mb-2 border-b-2 border-black pb-2">
             <div class="w-32 mr-4 flex items-center justify-center">
                 <!-- โลโก้ Goldenland Serene -->
@@ -218,9 +263,13 @@
                      onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'w-24 h-24 bg-gray-100 border border-gray-300 flex items-center justify-center text-xs text-gray-400 rounded p-2 text-center\'>Logo not found<br>(Check Permission)</div>'">
             </div>
             <div class="text-center flex-1 pt-2">
-                <h1 class="text-2xl font-bold text-black">ใบรายงานอุบัติเหตุและประเมินความเสียหายทรัพย์สิน</h1>
-                <p class="text-gray-600 font-medium">(ระบบไม้กั้นรถยนต์ / ระบบรักษาความปลอดภัย)</p>
+                <!-- หัวข้อหลักแก้ไขได้ -->
+                <h1 id="headerTitle" contenteditable="true" class="text-2xl font-bold text-black" title="คลิกเพื่อแก้ไขชื่อเอกสาร">ใบรายงานอุบัติเหตุและประเมินความเสียหายทรัพย์สิน</h1>
+                <!-- หัวข้อรองแก้ไขได้ -->
+                <p id="headerSubtitle" contenteditable="true" class="text-gray-600 font-medium" title="คลิกเพื่อแก้ไขรายละเอียด">(ระบบไม้กั้นรถยนต์ / ระบบรักษาความปลอดภัย)</p>
                 <p class="text-gray-800 font-bold mt-1 text-lg">หมู่บ้าน โกลเด้นแลนด์ ซีรีน</p>
+                <!-- เพิ่มที่อยู่และอีเมลตามที่ขอ -->
+                <p class="text-gray-600 text-sm mt-1 leading-tight">ที่อยู่ 998 หมู่ 2 ต.มาบยางพร อ.ปลวกแดง จ.ระยอง 21140<br>E-mail : goldenland.serene@gmail.com</p>
             </div>
             <div class="w-24 text-right text-xs pt-2">
                 <div>FM-SEC-01</div>
@@ -231,7 +280,8 @@
         <div class="flex justify-between mb-4 text-sm px-2">
             <div class="form-group w-1/3">
                 <span class="form-label">เลขที่เอกสาร:</span> 
-                <input type="text" class="text-center font-bold text-red-600" placeholder="Auto/Manual">
+                <!-- ใส่ ID เพื่อให้ JS รันเลข auto -->
+                <input type="text" id="docNo" class="text-center font-bold text-red-600" placeholder="รอสร้างเลข...">
             </div>
             <div class="form-group w-1/3 justify-center">
                 <span class="form-label">วันที่เกิดเหตุ:</span> 
@@ -251,35 +301,35 @@
                 <div class="form-row">
                     <div class="form-group flex-grow">
                         <span class="form-label">ชื่อ-นามสกุล:</span>
-                        <input type="text">
+                        <input type="text" id="partyName">
                     </div>
                     <div class="form-group w-1/3">
                         <span class="form-label">เบอร์โทรศัพท์:</span>
-                        <input type="text">
+                        <input type="text" id="partyPhone">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group w-1/3">
                         <span class="form-label">ทะเบียนรถ:</span>
-                        <input type="text">
+                        <input type="text" id="carLicense">
                     </div>
                     <div class="form-group w-1/3">
                         <span class="form-label">จังหวัด:</span>
-                        <input type="text">
+                        <input type="text" id="carProvince">
                     </div>
                     <div class="form-group w-1/3">
                         <span class="form-label">ยี่ห้อ/รุ่น:</span>
-                        <input type="text">
+                        <input type="text" id="carModel">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group w-1/2">
                         <span class="form-label">บริษัทประกันภัย:</span>
-                        <input type="text">
+                        <input type="text" id="insuranceCompany">
                     </div>
                     <div class="form-group w-1/2">
                         <span class="form-label">เลขที่กรมธรรม์:</span>
-                        <input type="text">
+                        <input type="text" id="insurancePolicy">
                     </div>
                 </div>
             </div>
@@ -292,100 +342,118 @@
                 <div class="mb-3 text-sm flex items-center flex-wrap gap-4">
                     <span class="form-label">จุดเกิดเหตุ:</span> 
                     <label class="flex items-center cursor-pointer hover:bg-gray-100 px-2 py-1 rounded">
-                        <input type="checkbox"> ทางเข้าหมู่บ้าน
+                        <input type="checkbox" id="locIn"> 
+                        <!-- แก้ไขให้ชื่อจุดเกิดเหตุแก้ไขได้ -->
+                        <span contenteditable="true" class="ml-1 px-1 hover:bg-white outline-none focus:bg-white rounded" title="คลิกเพื่อแก้ไขชื่อ">ทางเข้าหมู่บ้าน</span>
                     </label>
                     <label class="flex items-center cursor-pointer hover:bg-gray-100 px-2 py-1 rounded">
-                        <input type="checkbox"> ทางออกหมู่บ้าน
+                        <input type="checkbox" id="locOut"> 
+                        <!-- แก้ไขให้ชื่อจุดเกิดเหตุแก้ไขได้ -->
+                        <span contenteditable="true" class="ml-1 px-1 hover:bg-white outline-none focus:bg-white rounded" title="คลิกเพื่อแก้ไขชื่อ">ทางออกหมู่บ้าน</span>
                     </label>
                     <div class="flex items-center gap-2">
                         <label class="flex items-center cursor-pointer hover:bg-gray-100 px-2 py-1 rounded">
-                            <input type="checkbox"> อื่นๆ
+                            <input type="checkbox" id="locOtherCheck"> อื่นๆ
                         </label>
-                        <input type="text" class="w-32 border-b border-dotted border-gray-400" placeholder="ระบุ...">
+                        <input type="text" id="locOtherText" class="w-32 border-b border-dotted border-gray-400" placeholder="ระบุ...">
                     </div>
                 </div>
                 <div>
                     <span class="form-label block mb-1">ลักษณะเหตุการณ์ (โดยสังเขป):</span>
-                    <textarea rows="3" placeholder="อธิบายเหตุการณ์... (เช่น รถลูกบ้านชนไม้กั้นขณะปิดลง เนื่องจากไม่ชะลอความเร็ว, ลมพัดแรงทำให้ไม้กั้นตกใส่หลังคารถ)"></textarea>
+                    <textarea id="incidentDesc" rows="3" placeholder="อธิบายเหตุการณ์... (เช่น รถลูกบ้านชนไม้กั้นขณะปิดลง เนื่องจากไม่ชะลอความเร็ว, ลมพัดแรงทำให้ไม้กั้นตกใส่หลังคารถ)"></textarea>
                 </div>
             </div>
         </div>
 
-        <!-- 3. รายการประเมิน -->
+        <!-- 3. รายการประเมิน (แก้ไขให้เพิ่มลดแถวได้ และปรับขนาดคอลัมน์ได้) -->
         <div class="mb-5">
-            <div class="section-header">3. รายการประเมินความเสียหาย (ทรัพย์สินส่วนกลาง)</div>
-            <table>
+            <div class="section-header flex justify-between items-center">
+                <span>3. รายการประเมินความเสียหาย (ทรัพย์สินส่วนกลาง)</span>
+                <button onclick="addItem()" class="no-print bg-green-600 hover:bg-green-700 text-white text-xs px-2 py-1 rounded flex items-center gap-1 transition">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" /></svg>
+                    เพิ่มรายการ
+                </button>
+            </div>
+            <table id="damageTable">
                 <thead>
                     <tr>
-                        <th class="w-10">#</th>
-                        <th>รายการทรัพย์สิน</th>
-                        <th class="w-1/3">ลักษณะความเสียหาย (หัก/งอ/ถลอก)</th>
-                        <th class="w-16">จำนวน</th>
-                        <th class="w-1/4">หมายเหตุ</th>
+                        <th style="width: 8%;">#</th>
+                        <th style="width: 32%;">รายการทรัพย์สิน</th>
+                        <th style="width: 25%;">ลักษณะความเสียหาย</th>
+                        <th style="width: 15%;">จำนวน</th>
+                        <th style="width: 20%;">หมายเหตุ</th>
+                        <th class="w-8 no-print bg-white border-0" style="width: 30px;"></th> <!-- Column ลบ -->
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="damageTableBody">
+                    <!-- รายการเริ่มต้น -->
                     <tr>
                         <td class="text-center">1</td>
-                        <td>แขนกั้น (ไม้กั้นรถยนต์)</td>
-                        <td><input type="text"></td>
-                        <td><input type="number"></td>
-                        <td><input type="text"></td>
+                        <td><input type="text" value="แขนกั้น (ไม้กั้นรถยนต์)" class="w-full text-center item-name"></td>
+                        <td><input type="text" class="item-damage"></td>
+                        <td><input type="number" class="item-qty"></td>
+                        <td><input type="text" class="item-remark"></td>
+                        <td class="no-print border-0 p-0 text-center"><button onclick="deleteItem(this)" class="text-red-500 hover:text-red-700 p-1"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" /></svg></button></td>
                     </tr>
                     <tr>
                         <td class="text-center">2</td>
-                        <td>ชุดมอเตอร์ / เฟืองเกียร์</td>
-                        <td><input type="text"></td>
-                        <td><input type="number"></td>
-                        <td><input type="text"></td>
+                        <td><input type="text" value="ชุดมอเตอร์ / เฟืองเกียร์" class="w-full text-center item-name"></td>
+                        <td><input type="text" class="item-damage"></td>
+                        <td><input type="number" class="item-qty"></td>
+                        <td><input type="text" class="item-remark"></td>
+                        <td class="no-print border-0 p-0 text-center"><button onclick="deleteItem(this)" class="text-red-500 hover:text-red-700 p-1"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" /></svg></button></td>
                     </tr>
                     <tr>
                         <td class="text-center">3</td>
-                        <td>ตัวถังตู้ (Housing)</td>
-                        <td><input type="text"></td>
-                        <td><input type="number"></td>
-                        <td><input type="text"></td>
+                        <td><input type="text" value="ตัวถังตู้ (Housing)" class="w-full text-center item-name"></td>
+                        <td><input type="text" class="item-damage"></td>
+                        <td><input type="number" class="item-qty"></td>
+                        <td><input type="text" class="item-remark"></td>
+                        <td class="no-print border-0 p-0 text-center"><button onclick="deleteItem(this)" class="text-red-500 hover:text-red-700 p-1"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" /></svg></button></td>
                     </tr>
                     <tr>
                         <td class="text-center">4</td>
-                        <td>ระบบเซนเซอร์ (Loop/Photo)</td>
-                        <td><input type="text"></td>
-                        <td><input type="number"></td>
-                        <td><input type="text"></td>
+                        <td><input type="text" value="ระบบเซนเซอร์ (Loop/Photo)" class="w-full text-center item-name"></td>
+                        <td><input type="text" class="item-damage"></td>
+                        <td><input type="number" class="item-qty"></td>
+                        <td><input type="text" class="item-remark"></td>
+                        <td class="no-print border-0 p-0 text-center"><button onclick="deleteItem(this)" class="text-red-500 hover:text-red-700 p-1"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" /></svg></button></td>
                     </tr>
                     <tr>
                         <td class="text-center">5</td>
-                        <td>อื่นๆ <input type="text" class="w-24 inline border-b border-gray-300 text-xs" placeholder="(ระบุ)"></td>
-                        <td><input type="text"></td>
-                        <td><input type="number"></td>
-                        <td><input type="text"></td>
+                        <td><input type="text" value="ชุดกล้องอ่านป้ายทะเบียน (LPR)" class="w-full text-center item-name"></td>
+                        <td><input type="text" class="item-damage"></td>
+                        <td><input type="number" class="item-qty"></td>
+                        <td><input type="text" class="item-remark"></td>
+                        <td class="no-print border-0 p-0 text-center"><button onclick="deleteItem(this)" class="text-red-500 hover:text-red-700 p-1"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" /></svg></button></td>
                     </tr>
                 </tbody>
             </table>
         </div>
 
-        <!-- 4. สรุปมูลค่า -->
+        <!-- 4. สรุปมูลค่า (ปรับขนาดให้กระชับขึ้น) -->
         <div class="mb-6">
             <div class="section-header">4. สรุปมูลค่าความเสียหายเบื้องต้น</div>
             <div class="flex justify-end pr-4">
-                <div class="w-full md:w-2/3 lg:w-1/2 bg-gray-50 p-4 rounded border border-gray-200">
-                    <div class="flex justify-between items-center mb-2">
+                <!-- ปรับลด Padding จาก p-4 เป็น p-2 และลด margin ต่างๆ -->
+                <div class="w-full md:w-2/3 lg:w-1/2 bg-gray-50 p-2 rounded border border-gray-200 text-sm">
+                    <div class="flex justify-between items-center mb-1">
                         <span class="font-medium">1. ค่าอะไหล่ / อุปกรณ์:</span>
                         <div class="flex items-center">
-                            <input type="number" id="costParts" class="w-32 text-right font-bold bg-white px-2 py-1 border border-gray-300 rounded mr-2" placeholder="0.00" oninput="calcTotal()">
+                            <input type="number" id="costParts" class="w-28 text-right font-bold bg-white px-1 py-0.5 border border-gray-300 rounded mr-2" placeholder="0.00" oninput="calcTotal()">
                             <span>บาท</span>
                         </div>
                     </div>
-                    <div class="flex justify-between items-center mb-2">
+                    <div class="flex justify-between items-center mb-1">
                         <span class="font-medium">2. ค่าแรงและดำเนินการ:</span>
                         <div class="flex items-center">
-                            <input type="number" id="costLabor" class="w-32 text-right font-bold bg-white px-2 py-1 border border-gray-300 rounded mr-2" placeholder="0.00" oninput="calcTotal()">
+                            <input type="number" id="costLabor" class="w-28 text-right font-bold bg-white px-1 py-0.5 border border-gray-300 rounded mr-2" placeholder="0.00" oninput="calcTotal()">
                             <span>บาท</span>
                         </div>
                     </div>
-                    <div class="flex justify-between items-center border-t-2 border-black pt-2 mt-2">
-                        <span class="font-bold text-lg">รวมมูลค่าความเสียหายทั้งสิ้น:</span>
-                        <div class="font-bold text-xl text-blue-900">
+                    <div class="flex justify-between items-center border-t border-black pt-1 mt-1">
+                        <span class="font-bold text-base">รวมมูลค่าความเสียหายทั้งสิ้น:</span>
+                        <div class="font-bold text-lg text-blue-900">
                             <span id="grandTotal">0.00</span> บาท
                         </div>
                     </div>
@@ -393,15 +461,25 @@
             </div>
         </div>
 
-        <!-- 5. ลงชื่อ -->
-        <div class="mt-auto"> <!-- ดันส่วนนี้ไปด้านล่างสุดของพื้นที่ที่เหลือ -->
-            <div class="section-header">5. ลงชื่อยืนยันข้อมูล</div>
+        <!-- 5. ข้อความแจ้งการดำเนินการ (เพิ่มใหม่) -->
+        <div class="mb-5">
+             <div class="section-header">5. การดำเนินการ / ข้อความแจ้ง</div>
+             <div class="px-2">
+                <!-- ใส่ contenteditable เพื่อให้แก้ไขข้อความได้ และจัด style ให้ดูเป็นช่องกรอกข้อมูล -->
+                <div id="noticeText" contenteditable="true" class="text-sm leading-relaxed border border-dotted border-gray-300 p-2 rounded hover:bg-gray-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300 transition-colors whitespace-pre-wrap" title="คลิกเพื่อแก้ไขข้อความ">ทาง นิติบุคคล จึงขอแจ้งให้ท่านดำเนินการประสานงานกับบริษัทประกันภัยของท่าน หรือดำเนินการติดต่อกลับเพื่อชดใช้ค่าเสียหายที่เกิดขึ้นภายใน 7 วัน นับแต่วันที่ได้รับหนังสือฉบับนี้
+จึงเรียนมาเพื่อโปรดพิจารณาดำเนินการ</div>
+             </div>
+        </div>
+
+        <!-- 6. ลงชื่อ (เปลี่ยนเลขข้อเป็น 6 และดันลงล่างสุด) -->
+        <div class="mt-auto"> 
+            <div class="section-header">6. ลงชื่อยืนยันข้อมูล</div>
             <div class="flex justify-between text-center gap-4 mt-8 px-4">
                 <div class="w-1/3 flex flex-col items-center">
                     <div class="h-10 w-full border-b border-dotted border-black mb-2"></div>
                     <div class="w-full relative">
                         <span class="absolute left-0 top-1 text-sm">(</span>
-                        <input type="text" class="text-center w-[85%] text-sm" placeholder="ชื่อ-นามสกุล ตัวบรรจง">
+                        <input type="text" id="signerParty" class="text-center w-[85%] text-sm" placeholder="ชื่อ-นามสกุล ตัวบรรจง">
                         <span class="absolute right-0 top-1 text-sm">)</span>
                     </div>
                     <div class="text-xs text-gray-500 mt-1 font-semibold">ผู้ขับขี่ / คู่กรณี</div>
@@ -411,7 +489,7 @@
                     <div class="h-10 w-full border-b border-dotted border-black mb-2"></div>
                     <div class="w-full relative">
                         <span class="absolute left-0 top-1 text-sm">(</span>
-                        <input type="text" class="text-center w-[85%] text-sm" placeholder="ชื่อ-นามสกุล ตัวบรรจง">
+                        <input type="text" id="signerStaff" class="text-center w-[85%] text-sm" placeholder="ชื่อ-นามสกุล ตัวบรรจง">
                         <span class="absolute right-0 top-1 text-sm">)</span>
                     </div>
                     <div class="text-xs text-gray-500 mt-1 font-semibold">จนท.หมู่บ้าน / นิติบุคคล</div>
@@ -421,7 +499,7 @@
                     <div class="h-10 w-full border-b border-dotted border-black mb-2"></div>
                     <div class="w-full relative">
                         <span class="absolute left-0 top-1 text-sm">(</span>
-                        <input type="text" class="text-center w-[85%] text-sm" placeholder="ชื่อ-นามสกุล ตัวบรรจง">
+                        <input type="text" id="signerWitness" class="text-center w-[85%] text-sm" placeholder="ชื่อ-นามสกุล ตัวบรรจง">
                         <span class="absolute right-0 top-1 text-sm">)</span>
                     </div>
                     <div class="text-xs text-gray-500 mt-1 font-semibold">พยาน / รปภ.</div>
@@ -432,11 +510,27 @@
     </div>
 
     <script>
+        // --- 1. การตั้งค่า Supabase ---
+        // กรุณาใส่ URL และ Key ของ Supabase Project ของคุณที่นี่
+        const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co'; 
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
+        
+        // เริ่มต้นใช้งาน Supabase Client
+        let supabaseClient;
+        try {
+            if (SUPABASE_URL !== 'YOUR_SUPABASE_URL') {
+                supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+            }
+        } catch (e) {
+            console.error("Supabase init error:", e);
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             // ตั้งค่าวันที่และเวลาปัจจุบัน
             const now = new Date();
             const dateInput = document.getElementById('dateInput');
             const timeInput = document.getElementById('timeInput');
+            const docNoInput = document.getElementById('docNo');
             
             if (dateInput) dateInput.valueAsDate = now;
             if (timeInput) {
@@ -444,6 +538,21 @@
                 const minutes = String(now.getMinutes()).padStart(2, '0');
                 timeInput.value = `${hours}:${minutes}`;
             }
+
+            // --- สร้างเลขที่เอกสารอัตโนมัติ (Format: DOC-YYYYMMDD-HHMM) ---
+            if (!docNoInput.value) {
+                const year = now.getFullYear();
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                const day = String(now.getDate()).padStart(2, '0');
+                const hh = String(now.getHours()).padStart(2, '0');
+                const mm = String(now.getMinutes()).padStart(2, '0');
+                const randomPart = Math.floor(Math.random() * 100); // กันซ้ำ
+                docNoInput.value = `DOC-${year}${month}${day}-${hh}${mm}-${randomPart}`;
+            }
+
+            // เริ่มต้นการทำงานของ Resizable Columns
+            const table = document.getElementById('damageTable');
+            createResizableTable(table);
         });
 
         // ฟังก์ชันคำนวณเงิน
@@ -458,6 +567,165 @@
                 maximumFractionDigits: 2
             });
         }
+
+        // ฟังก์ชันเพิ่มรายการ
+        function addItem() {
+            const tbody = document.getElementById('damageTableBody');
+            const rowCount = tbody.rows.length + 1;
+            const row = tbody.insertRow();
+            
+            row.innerHTML = `
+                <td class="text-center">${rowCount}</td>
+                <td><input type="text" class="w-full text-center item-name" placeholder="ระบุรายการ..."></td>
+                <td><input type="text" class="item-damage"></td>
+                <td><input type="number" class="item-qty"></td>
+                <td><input type="text" class="item-remark"></td>
+                <td class="no-print border-0 p-0 text-center"><button onclick="deleteItem(this)" class="text-red-500 hover:text-red-700 p-1"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" /></svg></button></td>
+            `;
+        }
+
+        // ฟังก์ชันลบรายการและรันเลขลำดับใหม่
+        function deleteItem(btn) {
+            const row = btn.parentNode.parentNode;
+            row.parentNode.removeChild(row);
+            
+            // รันเลขลำดับใหม่
+            const tbody = document.getElementById('damageTableBody');
+            for (let i = 0; i < tbody.rows.length; i++) {
+                tbody.rows[i].cells[0].innerText = i + 1;
+            }
+        }
+
+        // --- Logic สำหรับการบันทึกข้อมูลลง Supabase ---
+        async function saveToSupabase() {
+            if (!supabaseClient) {
+                alert('กรุณาตั้งค่า SUPABASE_URL และ SUPABASE_KEY ในโค้ดก่อนใช้งาน');
+                return;
+            }
+
+            const btn = document.getElementById('btnSave');
+            const statusMsg = document.getElementById('statusMsg');
+            
+            // เปลี่ยนสถานะปุ่ม
+            btn.innerHTML = '<span class="animate-spin">⏳</span> กำลังบันทึก...';
+            btn.disabled = true;
+            statusMsg.innerText = "กำลังส่งข้อมูล...";
+
+            try {
+                // 1. รวบรวมข้อมูลรายการทรัพย์สิน (Array of Objects)
+                const items = [];
+                const rows = document.getElementById('damageTableBody').querySelectorAll('tr');
+                rows.forEach(row => {
+                    const name = row.querySelector('.item-name').value;
+                    const damage = row.querySelector('.item-damage').value;
+                    const qty = row.querySelector('.item-qty').value;
+                    const remark = row.querySelector('.item-remark').value;
+                    if(name) { // บันทึกเฉพาะแถวที่มีชื่อรายการ
+                        items.push({ name, damage, qty, remark });
+                    }
+                });
+
+                // 2. รวบรวมข้อมูลทั้งหมด
+                const formData = {
+                    doc_no: document.getElementById('docNo').value,
+                    incident_date: document.getElementById('dateInput').value,
+                    incident_time: document.getElementById('timeInput').value,
+                    // ข้อมูลคู่กรณี
+                    party_name: document.getElementById('partyName').value,
+                    party_phone: document.getElementById('partyPhone').value,
+                    car_license: document.getElementById('carLicense').value,
+                    car_province: document.getElementById('carProvince').value,
+                    car_model: document.getElementById('carModel').value,
+                    insurance_company: document.getElementById('insuranceCompany').value,
+                    insurance_policy: document.getElementById('insurancePolicy').value,
+                    // สถานที่
+                    loc_in: document.getElementById('locIn').checked,
+                    loc_out: document.getElementById('locOut').checked,
+                    loc_other: document.getElementById('locOtherCheck').checked ? document.getElementById('locOtherText').value : null,
+                    description: document.getElementById('incidentDesc').value,
+                    // รายการความเสียหาย (JSON)
+                    damage_items: items,
+                    // สรุปยอด
+                    cost_parts: parseFloat(document.getElementById('costParts').value) || 0,
+                    cost_labor: parseFloat(document.getElementById('costLabor').value) || 0,
+                    total_cost: (parseFloat(document.getElementById('costParts').value) || 0) + (parseFloat(document.getElementById('costLabor').value) || 0),
+                    // ข้อความแจ้งและผู้ลงนาม
+                    notice_text: document.getElementById('noticeText').innerText,
+                    signer_party: document.getElementById('signerParty').value,
+                    signer_staff: document.getElementById('signerStaff').value,
+                    signer_witness: document.getElementById('signerWitness').value
+                };
+
+                // 3. ส่งข้อมูลไป Insert (ชื่อตารางต้องตรงกับใน Supabase)
+                const { data, error } = await supabaseClient
+                    .from('accident_reports')
+                    .insert([formData]);
+
+                if (error) throw error;
+
+                // สำเร็จ
+                alert('✅ บันทึกข้อมูลสำเร็จ!');
+                statusMsg.innerText = "บันทึกล่าสุด: " + new Date().toLocaleTimeString();
+
+            } catch (error) {
+                console.error('Error saving:', error);
+                alert('❌ เกิดข้อผิดพลาด: ' + error.message);
+                statusMsg.innerText = "เกิดข้อผิดพลาดในการบันทึก";
+            } finally {
+                // คืนค่าปุ่ม
+                btn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    บันทึกข้อมูล`;
+                btn.disabled = false;
+            }
+        }
+
+        // --- Logic สำหรับการปรับขนาดคอลัมน์ตาราง ---
+        const createResizableTable = function(table) {
+            const cols = table.querySelectorAll('th');
+            [].forEach.call(cols, function(col) {
+                // ข้ามคอลัมน์สุดท้าย (ปุ่มลบ)
+                if (col.classList.contains('no-print')) return;
+
+                // สร้าง Resizer Handle
+                const resizer = document.createElement('div');
+                resizer.classList.add('resizer');
+                resizer.style.height = '100%';
+                col.appendChild(resizer);
+
+                createResizableColumn(col, resizer);
+            });
+        };
+
+        const createResizableColumn = function(col, resizer) {
+            let x = 0;
+            let w = 0;
+
+            const mouseDownHandler = function(e) {
+                x = e.clientX;
+                const styles = window.getComputedStyle(col);
+                w = parseInt(styles.width, 10);
+
+                document.addEventListener('mousemove', mouseMoveHandler);
+                document.addEventListener('mouseup', mouseUpHandler);
+                resizer.classList.add('resizing'); // เพิ่ม class เพื่อเปลี่ยนสีตอนลาก
+            };
+
+            const mouseMoveHandler = function(e) {
+                const dx = e.clientX - x;
+                col.style.width = `${w + dx}px`;
+            };
+
+            const mouseUpHandler = function() {
+                document.removeEventListener('mousemove', mouseMoveHandler);
+                document.removeEventListener('mouseup', mouseUpHandler);
+                resizer.classList.remove('resizing');
+            };
+
+            resizer.addEventListener('mousedown', mouseDownHandler);
+        };
     </script>
 </body>
 </html>
