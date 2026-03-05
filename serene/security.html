@@ -6,6 +6,8 @@
     <title>โกลเด้นแลนด์ ซีรีน Security</title>
     <!-- ใช้ Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- เพิ่ม LIFF SDK ของ LINE -->
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <style>
         body { overscroll-behavior-y: none; } 
         .pb-safe { padding-bottom: env(safe-area-inset-bottom); } 
@@ -171,23 +173,24 @@
         const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
         // ==========================================
+        // 🌟 ตั้งค่า LINE LIFF ID
+        // ==========================================
+        const MY_LIFF_ID = "2009335510-jARRdAsU"; // ⚠️ นำ LIFF ID จาก LINE Developers มาใส่ตรงนี้
+
+        // ==========================================
         // ตัวแปรระบบ
         // ==========================================
         let currentUser = {
             id: null,       // UUID จาก DB
             emp_code: null, // G001
             name: null,
-            line_uid: null  // ดึงจาก LIFF (จำลอง)
+            line_uid: null  // ดึงจาก LIFF จริง
         };
         
-        // ⚠️ [จำลอง] ค่าที่ดึงมาจาก LINE LIFF (liff.getProfile)
-        const MOCK_LIFF_PROFILE = {
-            userId: "2009335510-jARRdAsU", 
-            displayName: "รปภ. มือใหม่ (LINE)"
-        };
+        let actualLineProfile = null; // เก็บโปรไฟล์ที่ได้จาก LINE ของจริง
 
         // ==========================================
-        // 1. เริ่มทำงานเมื่อเปิดเว็บ (Initialize & Check Auth)
+        // 1. เริ่มทำงานเมื่อเปิดเว็บ (Initialize LIFF & Check Auth)
         // ==========================================
         window.onload = async () => {
             const statusText = document.getElementById('loginStatusText');
@@ -197,45 +200,62 @@
             const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
             document.getElementById('currentDateDisplay').innerText = `${now.getDate()} ${thaiMonths[now.getMonth()]} ${now.getFullYear() + 543}`;
 
-            setTimeout(async () => {
-                statusText.innerText = "ตรวจสอบประวัติในฐานข้อมูล...";
+            try {
+                statusText.innerText = "กำลังเชื่อมต่อระบบ LINE...";
                 
-                try {
-                    // นำ LINE UID ไปค้นหาในตาราง guards ว่าเคยผูกบัญชีไว้หรือยัง
-                    const { data, error } = await supabase
-                        .from('guards')
-                        .select('id, emp_code, full_name, push_token')
-                        .eq('line_uid', MOCK_LIFF_PROFILE.userId)
-                        .single();
-
-                    if (data) {
-                        // 🟢 กรณีที่ 1: "เจอข้อมูล" (ล็อกอินอัตโนมัติสำเร็จ)
-                        currentUser = { id: data.id, emp_code: data.emp_code, name: data.full_name, line_uid: MOCK_LIFF_PROFILE.userId };
-                        
-                        document.getElementById('splashScreen').classList.add('fade-out');
-                        setTimeout(() => {
-                            document.getElementById('splashScreen').classList.add('hidden');
-                            
-                            // เช็คว่าเคยมี Token แจ้งเตือนหรือยัง ถ้ายังให้ขอ
-                            if (!data.push_token) {
-                                document.getElementById('pushPermissionSection').classList.remove('hidden');
-                            } else {
-                                launchApp();
-                            }
-                        }, 300);
-
-                    } else {
-                        // 🔴 กรณีที่ 2: "ไม่เจอข้อมูล" (เข้างานครั้งแรก ต้องดึงรายชื่อมาให้เลือกผูกบัญชี)
-                        statusText.innerText = "กำลังเตรียมหน้าต่างผูกบัญชี...";
-                        await loadGuardsForBinding();
-                    }
-
-                } catch (err) {
-                    alert("เชื่อมต่อฐานข้อมูลล้มเหลว: " + err.message);
-                    statusText.innerText = "❌ เกิดข้อผิดพลาด ไม่สามารถเข้าระบบได้";
+                // 1.1 เริ่มต้นระบบ LIFF
+                await liff.init({ liffId: MY_LIFF_ID });
+                
+                // 1.2 ตรวจสอบว่าผู้ใช้ล็อกอิน LINE แล้วหรือยัง
+                if (!liff.isLoggedIn()) {
+                    statusText.innerText = "กรุณาล็อกอินผ่าน LINE...";
+                    liff.login(); // คำสั่งนี้จะพากระโดดไปหน้าล็อกอินของ LINE อัตโนมัติ
+                    return; // หยุดทำงาน เพื่อรอให้ล็อกอินเสร็จแล้วเว็บโหลดใหม่
                 }
 
-            }, 1000); // หน่วงเวลาให้เห็น Animation สวยๆ
+                // 1.3 ดึงข้อมูลโปรไฟล์จริงจาก LINE
+                statusText.innerText = "กำลังดึงข้อมูลโปรไฟล์...";
+                actualLineProfile = await liff.getProfile();
+
+                statusText.innerText = "ตรวจสอบประวัติในฐานข้อมูล...";
+                
+                // 1.4 นำ LINE UID จริงไปค้นหาในตาราง guards
+                const { data, error } = await supabase
+                    .from('guards')
+                    .select('id, emp_code, full_name, push_token')
+                    .eq('line_uid', actualLineProfile.userId)
+                    .single();
+
+                if (data) {
+                    // 🟢 กรณีที่ 1: "เจอข้อมูล" (เคยผูกบัญชีแล้ว -> ล็อกอินอัตโนมัติสำเร็จ)
+                    currentUser = { id: data.id, emp_code: data.emp_code, name: data.full_name, line_uid: actualLineProfile.userId };
+                    
+                    document.getElementById('splashScreen').classList.add('fade-out');
+                    setTimeout(() => {
+                        document.getElementById('splashScreen').classList.add('hidden');
+                        
+                        // เช็คว่าเคยมี Token แจ้งเตือนหรือยัง ถ้ายังให้ขอสิทธิ์
+                        if (!data.push_token) {
+                            document.getElementById('pushPermissionSection').classList.remove('hidden');
+                        } else {
+                            launchApp();
+                        }
+                    }, 300);
+
+                } else {
+                    // 🔴 กรณีที่ 2: "ไม่เจอข้อมูล" (เข้าใช้งานครั้งแรก ต้องให้เลือกชื่อเพื่อผูกบัญชี)
+                    statusText.innerText = "กำลังเตรียมหน้าต่างผูกบัญชี...";
+                    await loadGuardsForBinding();
+                }
+
+            } catch (err) {
+                console.error("ระบบทำงานผิดพลาด:", err);
+                statusText.innerText = "❌ เกิดข้อผิดพลาด: โปรดตรวจสอบ LIFF ID";
+                // ให้แจ้งเตือนด้วยหากยังไม่ได้เปลี่ยน LIFF ID
+                if(MY_LIFF_ID === "ใส่_LIFF_ID_ของคุณที่นี่") {
+                    alert("กรุณาใส่ LIFF ID ของคุณในโค้ดก่อนใช้งานครับ");
+                }
+            }
         };
 
         // ==========================================
@@ -262,8 +282,8 @@
                     selectBox.appendChild(option);
                 });
 
-                // แสดงหน้าต่างผูกบัญชี
-                document.getElementById('displayLineName').innerText = MOCK_LIFF_PROFILE.displayName;
+                // แสดงหน้าต่างผูกบัญชี พร้อมชื่อ LINE ของจริง
+                document.getElementById('displayLineName').innerText = actualLineProfile.displayName;
                 document.getElementById('splashScreen').classList.add('fade-out');
                 setTimeout(() => {
                     document.getElementById('splashScreen').classList.add('hidden');
@@ -290,10 +310,10 @@
             const selectedOption = selectBox.options[selectBox.selectedIndex];
             
             try {
-                // ยิงคำสั่ง UPDATE ข้อมูล line_uid ลงตาราง guards
+                // ยิงคำสั่ง UPDATE ข้อมูล line_uid ของจริง ลงตาราง guards
                 const { error } = await supabase
                     .from('guards')
-                    .update({ line_uid: MOCK_LIFF_PROFILE.userId })
+                    .update({ line_uid: actualLineProfile.userId })
                     .eq('id', selectedUuid);
 
                 if (error) throw error;
@@ -303,7 +323,7 @@
                     id: selectedUuid,
                     emp_code: selectedOption.dataset.empCode,
                     name: selectedOption.dataset.name,
-                    line_uid: MOCK_LIFF_PROFILE.userId
+                    line_uid: actualLineProfile.userId
                 };
 
                 spinner.classList.add('hidden');
