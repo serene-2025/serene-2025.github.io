@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>โกลเด้นแลนด์ ซีรีน Security</title>
+    <!-- ใช้ Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { overscroll-behavior-y: none; } 
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom); } 
+        .fade-in { animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .fade-out { animation: fadeOut 0.3s forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-10px); visibility: hidden; } }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #4f46e5; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* ซ่อน Scrollbar แต่ยังเลื่อนได้ */
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+    </style>
+</head>
+<body class="bg-slate-50 text-gray-800 font-sans antialiased h-screen flex flex-col overflow-hidden relative">
+
+    <!-- ========================================== -->
+    <!-- 1. หน้าต่าง Splash Screen (กำลังตรวจสอบ LINE) -->
+    <!-- ========================================== -->
+    <div id="splashScreen" class="absolute inset-0 bg-white z-[100] flex flex-col items-center justify-center">
+        <div class="text-center">
+            <div class="inline-block bg-indigo-50 p-6 rounded-full mb-6 shadow-inner">
+                <span class="text-6xl drop-shadow-md">🛡️</span>
+            </div>
+            <h1 class="text-2xl font-black text-indigo-700 tracking-wide mb-2">โกลเด้นแลนด์ ซีรีน</h1>
+            <p class="text-sm text-gray-500 mb-8">Security Operating System</p>
+            
+            <div id="loginStatusSection">
+                <div class="loader mb-4"></div>
+                <p id="loginStatusText" class="text-sm font-bold text-gray-600 animate-pulse">กำลังตรวจสอบสิทธิ์ (LINE Login)...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 2. หน้าต่างผูกบัญชี (ไม่พบ UID ในระบบ) -->
+    <!-- ========================================== -->
+    <div id="bindingSection" class="hidden absolute inset-0 bg-white z-[90] flex flex-col p-6 items-center justify-center fade-in">
+        <div class="w-full max-w-sm bg-white p-6 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-gray-100 text-center">
+            <div class="inline-block bg-green-50 p-4 rounded-full mb-4 shadow-inner border border-green-100">
+                <span class="text-4xl drop-shadow-sm">🔗</span>
+            </div>
+            <h2 class="text-xl font-black text-gray-800 mb-2">ยืนยันตัวตนครั้งแรก</h2>
+            <p class="text-xs text-gray-500 mb-6">ระบบตรวจพบว่าคุณยังไม่เคยเข้าใช้งาน กรุณาเลือกรหัสประจำตัวเพื่อผูกบัญชี LINE (ทำครั้งเดียว)</p>
+            
+            <div class="flex items-center gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-100 mb-5 text-left">
+                <div class="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center overflow-hidden shrink-0">
+                    <span class="text-xs">👤</span>
+                </div>
+                <div>
+                    <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">บัญชี LINE ของคุณ</p>
+                    <p class="text-sm font-bold text-gray-700" id="displayLineName">กำลังโหลด...</p>
+                </div>
+            </div>
+
+            <select id="guardSelect" class="w-full border-2 border-slate-200 p-4 rounded-2xl mb-4 bg-slate-50 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm font-bold text-gray-700 appearance-none">
+                <option value="">-- เลือกรหัส รปภ. ของคุณ --</option>
+                <!-- Option จะถูกดึงจาก Supabase มาใส่ด้วย JS -->
+            </select>
+            <button onclick="bindAccountToSupabase()" class="w-full bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-700 hover:to-indigo-600 text-white py-4 rounded-2xl font-black text-md shadow-lg shadow-indigo-500/30 transition-all active:scale-95 flex justify-center items-center gap-2">
+                ยืนยันการผูกบัญชี <span id="bindSpinner" class="hidden animate-spin">⏳</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 3. หน้าต่างขอสิทธิ์แจ้งเตือน (Push Permission) -->
+    <!-- ========================================== -->
+    <div id="pushPermissionSection" class="hidden absolute inset-0 bg-slate-900/60 backdrop-blur-sm z-[95] flex flex-col p-4 items-center justify-center fade-in">
+        <div class="w-full max-w-sm bg-white p-6 rounded-3xl shadow-2xl text-center relative overflow-hidden">
+            <div class="absolute -top-10 -right-10 w-32 h-32 bg-red-50 rounded-full blur-2xl"></div>
+            <div class="relative z-10">
+                <div class="inline-block bg-gradient-to-br from-red-100 to-red-50 p-4 rounded-2xl mb-4 border border-red-100 shadow-inner">
+                    <span class="text-4xl animate-bounce drop-shadow-sm inline-block">🔔</span>
+                </div>
+                <h2 class="text-lg font-black text-gray-800 mb-2 tracking-tight">รับประกาศฉุกเฉิน</h2>
+                <p class="text-xs text-gray-600 mb-6 leading-relaxed">
+                    ระบบต้องการส่งข้อความ <b class="text-red-600">แจ้งเหตุฉุกเฉิน</b> ให้คุณทราบทันที กรุณากด "อนุญาต" ในหน้าต่างถัดไป
+                </p>
+                <button onclick="requestPushToken()" class="w-full bg-red-500 hover:bg-red-600 text-white py-4 rounded-2xl font-bold text-sm shadow-lg shadow-red-500/30 transition-all active:scale-95 mb-3 flex justify-center items-center gap-2">
+                    อนุญาตแจ้งเตือน <span class="text-lg">👉</span>
+                </button>
+                <button onclick="skipPermission()" class="text-[10px] font-bold text-gray-400 hover:text-gray-600 underline">ข้าม (อาจพลาดคำสั่งสำคัญ)</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 4. แอปพลิเคชันหลัก (Dashboard) -->
+    <!-- ========================================== -->
+    <div id="mainAppContainer" class="hidden flex-col h-full w-full">
+        <!-- Header -->
+        <header class="bg-indigo-700 text-white p-4 shadow-md z-40 shrink-0 relative overflow-hidden">
+            <div class="absolute inset-0 bg-white opacity-5 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-white to-transparent"></div>
+            <h1 class="text-xl font-bold text-center tracking-wider relative z-10">Security OS</h1>
+        </header>
+
+        <!-- พื้นที่เนื้อหาหลัก -->
+        <main class="flex-1 overflow-y-auto w-full max-w-md mx-auto relative px-4 pt-4 pb-28">
+            
+            <div id="homeView" class="fade-in space-y-4">
+                <!-- การ์ดต้อนรับ -->
+                <div class="bg-gradient-to-br from-indigo-600 to-blue-600 p-6 rounded-3xl shadow-lg shadow-indigo-500/20 text-white relative overflow-hidden">
+                    <div class="absolute top-0 right-0 w-32 h-32 bg-white opacity-10 rounded-full blur-xl -mr-10 -mt-10"></div>
+                    <div class="relative z-10 flex justify-between items-start mb-5">
+                        <div class="text-left">
+                            <p class="text-indigo-200 text-[10px] font-bold mb-0.5 uppercase tracking-widest flex items-center gap-1">
+                                <span class="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></span> เชื่อมต่อฐานข้อมูลแล้ว
+                            </p>
+                            <h2 class="text-3xl font-black tracking-tight drop-shadow-md" id="homeGuardName">คุณ รปภ.</h2>
+                        </div>
+                        <div class="w-14 h-14 bg-white/20 backdrop-blur-sm rounded-2xl p-2 shadow-inner border border-white/20 flex items-center justify-center">
+                            <span class="text-2xl drop-shadow-lg">👮</span>
+                        </div>
+                    </div>
+                    <div class="relative z-10 pt-4 border-t border-white/20 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="text-lg">🏡</span>
+                            <span class="text-sm font-bold tracking-wide drop-shadow-sm" id="projectNameDisplay">โกลเด้นแลนด์ ซีรีน</span>
+                        </div>
+                        <span class="text-[10px] bg-black/20 backdrop-blur-sm font-bold px-2.5 py-1 rounded-lg border border-white/10" id="currentDateDisplay">-</span>
+                    </div>
+                </div>
+
+                <!-- กล่องสถานะการเชื่อมต่อ Database -->
+                <div class="bg-white p-4 rounded-3xl shadow-sm border border-gray-100 flex items-center gap-3 text-sm">
+                    <div class="bg-green-50 p-2 rounded-xl border border-green-100 text-green-600 text-xl">✅</div>
+                    <div>
+                        <p class="font-bold text-gray-800 leading-tight">Supabase Connected</p>
+                        <p class="text-[10px] text-gray-400">ระบบพร้อมบันทึกพิกัดและรูปถ่ายลงฐานข้อมูลจริง</p>
+                    </div>
+                </div>
+
+                <!-- ปุ่มจำลองการทำงาน -->
+                <div class="grid grid-cols-2 gap-3 mt-4">
+                    <button class="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 p-4 rounded-2xl flex flex-col items-center justify-center shadow-sm transition active:scale-95 group">
+                        <span class="text-3xl mb-1 group-hover:scale-110 transition">📸</span>
+                        <span class="text-xs font-bold">เทสเช็คอิน</span>
+                    </button>
+                    <button class="bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-700 p-4 rounded-2xl flex flex-col items-center justify-center shadow-sm transition active:scale-95 group">
+                        <span class="text-3xl mb-1 group-hover:scale-110 transition">🔦</span>
+                        <span class="text-xs font-bold">เทสเดินตรวจ</span>
+                    </button>
+                </div>
+
+                <div class="mt-8 text-center bg-gray-50 border border-dashed border-gray-300 p-4 rounded-2xl">
+                    <p class="text-xs text-gray-500 mb-2">หน้านี้เป็นเวอร์ชันทดสอบโครงสร้าง <b>Database Auth Flow</b></p>
+                    <p class="text-[10px] text-gray-400">เมื่อทดสอบผ่านแล้ว จะนำระบบลงเวลาและแจ้งเหตุจากไฟล์ก่อนหน้ามารวมกันในขั้นต่อไป</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ES Module สำหรับ Supabase -->
+    <script type="module">
+        import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+        // ==========================================
+        // 🌟 ตั้งค่า Supabase (แก้ไข URL และ KEY ของคุณที่นี่)
+        // ==========================================
+        const SUPABASE_URL = 'https://jyfmvreupoywrtexhvzb.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5Zm12cmV1cG95d3J0ZXhodnpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MTEwNDcsImV4cCI6MjA4ODA4NzA0N30.goym3Cm1cFQu9DFwIbocyN_t5RhrUeNcKfYb0zEiUbE';
+        const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        // ==========================================
+        // ตัวแปรระบบ
+        // ==========================================
+        let currentUser = {
+            id: null,       // UUID จาก DB
+            emp_code: null, // G001
+            name: null,
+            line_uid: null  // ดึงจาก LIFF (จำลอง)
+        };
+        
+        // ⚠️ [จำลอง] ค่าที่ดึงมาจาก LINE LIFF (liff.getProfile)
+        const MOCK_LIFF_PROFILE = {
+            userId: "U_TEST_LINE_UID_12345", 
+            displayName: "รปภ. มือใหม่ (LINE)"
+        };
+
+        // ==========================================
+        // 1. เริ่มทำงานเมื่อเปิดเว็บ (Initialize & Check Auth)
+        // ==========================================
+        window.onload = async () => {
+            const statusText = document.getElementById('loginStatusText');
+            
+            // วันที่ภาษาไทย
+            const now = new Date();
+            const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+            document.getElementById('currentDateDisplay').innerText = `${now.getDate()} ${thaiMonths[now.getMonth()]} ${now.getFullYear() + 543}`;
+
+            setTimeout(async () => {
+                statusText.innerText = "ตรวจสอบประวัติในฐานข้อมูล...";
+                
+                try {
+                    // นำ LINE UID ไปค้นหาในตาราง guards ว่าเคยผูกบัญชีไว้หรือยัง
+                    const { data, error } = await supabase
+                        .from('guards')
+                        .select('id, emp_code, full_name, push_token')
+                        .eq('line_uid', MOCK_LIFF_PROFILE.userId)
+                        .single();
+
+                    if (data) {
+                        // 🟢 กรณีที่ 1: "เจอข้อมูล" (ล็อกอินอัตโนมัติสำเร็จ)
+                        currentUser = { id: data.id, emp_code: data.emp_code, name: data.full_name, line_uid: MOCK_LIFF_PROFILE.userId };
+                        
+                        document.getElementById('splashScreen').classList.add('fade-out');
+                        setTimeout(() => {
+                            document.getElementById('splashScreen').classList.add('hidden');
+                            
+                            // เช็คว่าเคยมี Token แจ้งเตือนหรือยัง ถ้ายังให้ขอ
+                            if (!data.push_token) {
+                                document.getElementById('pushPermissionSection').classList.remove('hidden');
+                            } else {
+                                launchApp();
+                            }
+                        }, 300);
+
+                    } else {
+                        // 🔴 กรณีที่ 2: "ไม่เจอข้อมูล" (เข้างานครั้งแรก ต้องดึงรายชื่อมาให้เลือกผูกบัญชี)
+                        statusText.innerText = "กำลังเตรียมหน้าต่างผูกบัญชี...";
+                        await loadGuardsForBinding();
+                    }
+
+                } catch (err) {
+                    alert("เชื่อมต่อฐานข้อมูลล้มเหลว: " + err.message);
+                    statusText.innerText = "❌ เกิดข้อผิดพลาด ไม่สามารถเข้าระบบได้";
+                }
+
+            }, 1000); // หน่วงเวลาให้เห็น Animation สวยๆ
+        };
+
+        // ==========================================
+        // 2. โหลดรายชื่อ รปภ. ที่ยังไม่ผูก LINE
+        // ==========================================
+        async function loadGuardsForBinding() {
+            try {
+                // ดึงเฉพาะ รปภ. ที่ line_uid เป็น NULL (ยังไม่โดนผูก)
+                const { data, error } = await supabase
+                    .from('guards')
+                    .select('id, emp_code, full_name')
+                    .is('line_uid', null);
+
+                if (error) throw error;
+
+                const selectBox = document.getElementById('guardSelect');
+                data.forEach(g => {
+                    const option = document.createElement('option');
+                    option.value = g.id; // ใช้ UUID เป็น Value
+                    option.text = `👮 ${g.emp_code} - ${g.full_name}`;
+                    // แอบเก็บชื่อแยกไว้ที่ dataset เผื่อใช้งาน
+                    option.dataset.name = g.full_name;
+                    option.dataset.empCode = g.emp_code;
+                    selectBox.appendChild(option);
+                });
+
+                // แสดงหน้าต่างผูกบัญชี
+                document.getElementById('displayLineName').innerText = MOCK_LIFF_PROFILE.displayName;
+                document.getElementById('splashScreen').classList.add('fade-out');
+                setTimeout(() => {
+                    document.getElementById('splashScreen').classList.add('hidden');
+                    document.getElementById('bindingSection').classList.remove('hidden');
+                }, 300);
+
+            } catch (err) {
+                alert("ดึงรายชื่อพนักงานล้มเหลว: " + err.message);
+            }
+        }
+
+        // ==========================================
+        // 3. ยืนยันการผูกบัญชีลง Supabase (UPDATE)
+        // ==========================================
+        window.bindAccountToSupabase = async function() {
+            const selectBox = document.getElementById('guardSelect');
+            const selectedUuid = selectBox.value;
+            
+            if(!selectedUuid) return alert("⚠️ กรุณาเลือกรหัสพนักงานของคุณ");
+
+            const spinner = document.getElementById('bindSpinner');
+            spinner.classList.remove('hidden');
+
+            const selectedOption = selectBox.options[selectBox.selectedIndex];
+            
+            try {
+                // ยิงคำสั่ง UPDATE ข้อมูล line_uid ลงตาราง guards
+                const { error } = await supabase
+                    .from('guards')
+                    .update({ line_uid: MOCK_LIFF_PROFILE.userId })
+                    .eq('id', selectedUuid);
+
+                if (error) throw error;
+
+                // อัปเดตตัวแปรระบบ
+                currentUser = {
+                    id: selectedUuid,
+                    emp_code: selectedOption.dataset.empCode,
+                    name: selectedOption.dataset.name,
+                    line_uid: MOCK_LIFF_PROFILE.userId
+                };
+
+                spinner.classList.add('hidden');
+                document.getElementById('bindingSection').classList.add('fade-out');
+                
+                // ถัดไป: บังคับเปิดหน้าขอ Push Permission
+                setTimeout(() => {
+                    document.getElementById('bindingSection').classList.add('hidden');
+                    document.getElementById('pushPermissionSection').classList.remove('hidden');
+                }, 300);
+
+            } catch (err) {
+                spinner.classList.add('hidden');
+                alert("ผูกบัญชีไม่สำเร็จ: " + err.message);
+            }
+        }
+
+        // ==========================================
+        // 4. ระบบขอสิทธิ์แจ้งเตือน (และบันทึก Token ลง Supabase)
+        // ==========================================
+        window.requestPushToken = async function() {
+            const btn = document.querySelector('#pushPermissionSection button');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = `<span class="animate-spin text-xl">⏳</span> กำลังขอสิทธิ์...`;
+            
+            // ⚠️ ในระบบจริง ตรงนี้จะเรียก Firebase (FCM) เพื่อขอ Token
+            // const token = await getToken(messaging, { vapidKey: 'YOUR_KEY' });
+            
+            setTimeout(async () => {
+                // จำลองว่าได้ Token กลับมาจาก Firebase แล้ว
+                const mockFcmToken = "fcm_token_sample_xyz_987654321";
+
+                try {
+                    // นำ Token ที่ได้ เซฟอัปเดตลงตาราง guards ของคนคนนั้น
+                    const { error } = await supabase
+                        .from('guards')
+                        .update({ push_token: mockFcmToken })
+                        .eq('id', currentUser.id);
+
+                    if (error) throw error;
+
+                    // ปิดหน้าต่างและเข้าแอปหลัก
+                    document.getElementById('pushPermissionSection').classList.add('fade-out');
+                    setTimeout(() => {
+                        document.getElementById('pushPermissionSection').classList.add('hidden');
+                        launchApp();
+                    }, 300);
+
+                } catch (err) {
+                    btn.innerHTML = originalText;
+                    alert("บันทึก Token ล้มเหลว: " + err.message);
+                }
+
+            }, 1500);
+        }
+
+        window.skipPermission = function() {
+            document.getElementById('pushPermissionSection').classList.add('hidden');
+            launchApp();
+        }
+
+        // ==========================================
+        // 5. รันแอปพลิเคชัน (Dashboard)
+        // ==========================================
+        function launchApp() {
+            // โชว์ชื่อ รปภ. ที่หน้าแรก
+            document.getElementById('homeGuardName').innerText = `คุณ ${currentUser.name}`;
+            
+            // เปิดคอนเทนเนอร์หลัก
+            const appContainer = document.getElementById('mainAppContainer');
+            appContainer.classList.remove('hidden');
+            appContainer.classList.add('flex');
+        }
+
+    </script>
+</body>
+</html>
