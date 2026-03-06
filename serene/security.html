@@ -35,7 +35,7 @@
 <body class="bg-slate-50 text-gray-800 font-sans antialiased h-screen flex flex-col overflow-hidden relative">
 
     <!-- ========================================== -->
-    <!-- Custom Modal แจ้งเตือน (แทน Alert เดิม) -->
+    <!-- Custom Modal แจ้งเตือน -->
     <!-- ========================================== -->
     <div id="customAlertModal" class="hidden fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[200] flex items-center justify-center p-4 fade-in">
         <div class="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden transform transition-transform duration-300">
@@ -50,6 +50,21 @@
                 <button onclick="window.closeCustomAlert()" class="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3.5 rounded-xl transition active:scale-95 shadow-md">
                     ตกลง (OK)
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- Modal: ดูรายละเอียดประวัติการลงเวลา -->
+    <!-- ========================================== -->
+    <div id="historyDetailModal" class="hidden fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[180] flex items-center justify-center p-4 fade-in">
+        <div class="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                <h3 class="text-lg font-black text-gray-800">ข้อมูลลงเวลาแบบละเอียด</h3>
+                <button onclick="document.getElementById('historyDetailModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-3xl font-bold leading-none">&times;</button>
+            </div>
+            <div class="p-5 overflow-y-auto" id="historyDetailContent">
+                <!-- เนื้อหาจะถูกแทรกที่นี่ด้วย JS -->
             </div>
         </div>
     </div>
@@ -173,7 +188,7 @@
                 </div>
 
                 <!-- พิกัด GPS พร้อมปุ่ม Refresh -->
-                <div class="bg-white p-3.5 rounded-3xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-gray-100 flex items-center gap-3">
+                <div id="globalGpsBox" class="bg-white p-3.5 rounded-3xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-gray-100 flex items-center gap-3">
                     <div class="bg-slate-50 p-2.5 rounded-2xl shadow-inner">
                         <span id="gpsIcon" class="text-lg">📍</span>
                     </div>
@@ -359,12 +374,13 @@
             </div>
 
             <!-- แท็บ: ประวัติ (History View) -->
-            <div id="historyView" class="hidden bg-white p-5 rounded-3xl shadow-sm border border-gray-100 mt-2 fade-in">
+            <div id="historyView" class="hidden bg-slate-50 mt-2 fade-in">
                 <div class="text-center mb-4 mt-2">
                     <h3 class="text-xl font-bold text-gray-800">ประวัติการทำงาน</h3>
-                    <p class="text-sm text-gray-500">ข้อมูลการลงเวลาย้อนหลังของคุณ</p>
+                    <p class="text-sm text-gray-500">สามารถกดที่รายการเพื่อดูข้อมูลและรูปถ่าย</p>
                 </div>
-                <div id="historyList" class="space-y-3">
+                <!-- รายการประวัติ -->
+                <div id="historyList" class="space-y-3 pb-4">
                     <p class="text-center text-gray-400 text-sm py-4">กำลังโหลดข้อมูลจากฐานข้อมูล...</p>
                 </div>
             </div>
@@ -664,7 +680,8 @@
         let pendingActionType = null;
         let pendingBase64Image = null;
         
-        window.currentActiveTab = 'home'; // ติดตามแท็บที่เปิดอยู่
+        window.currentActiveTab = 'home'; 
+        window.historyLogsData = {}; // เก็บข้อมูลประวัติสำหรับเปิดดูใน Modal
 
         // ==========================================
         // 🚀 Custom Alert Modal Logic
@@ -1013,9 +1030,17 @@
                 
                 if (error) throw error;
                 list.innerHTML = '';
-                if (data.length === 0) return list.innerHTML = '<p class="text-center text-gray-400 py-4 text-sm">ยังไม่มีประวัติการทำงาน</p>';
                 
+                if (data.length === 0) {
+                    list.innerHTML = '<p class="text-center text-gray-400 py-4 text-sm">ยังไม่มีประวัติการทำงาน</p>';
+                    return;
+                }
+                
+                window.historyLogsData = {}; // เคลียร์ของเก่า
+
                 data.forEach(log => {
+                    window.historyLogsData[log.id] = log; // เก็บไว้ใน global สำหรับกดเปิดดูรายละเอียด
+                    
                     const d = new Date(log.work_date);
                     const dateStr = `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()+543}`;
                     const inTime = log.check_in_time ? new Date(log.check_in_time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'}) : '-';
@@ -1023,28 +1048,90 @@
                     const isWorking = !log.check_out_time;
                     const shiftBadge = log.shift_type === 'overtime' ? '<span class="bg-indigo-100 text-indigo-700 text-[9px] px-1.5 py-0.5 rounded ml-1 font-bold">OT</span>' : '';
 
+                    // สร้างรูปขนาดย่อ (Thumbnail) ถ้าไม่มีใช้กล้องไอคอนแทน
+                    const thumbUrl = log.check_in_photo || '';
+                    const thumbHtml = thumbUrl 
+                        ? `<img src="${thumbUrl}" class="w-full h-full object-cover">` 
+                        : `<div class="w-full h-full bg-slate-100 flex items-center justify-center text-xl text-slate-300">📸</div>`;
+
                     list.innerHTML += `
-                    <div class="border border-gray-200 p-4 rounded-xl flex flex-col gap-2 ${isWorking ? 'border-blue-300 bg-blue-50/30' : 'bg-white'}">
-                        <div class="flex justify-between items-center border-b border-gray-100 pb-2">
-                            <div>
-                                <span class="font-bold text-gray-800">${dateStr}</span>
+                    <div onclick="window.openHistoryDetail('${log.id}')" class="cursor-pointer border border-gray-200 p-3 rounded-2xl flex gap-3 items-center ${isWorking ? 'border-blue-300 bg-blue-50/40' : 'bg-white hover:bg-gray-50'} transition active:scale-95 shadow-sm">
+                        <!-- ส่วนแสดงรูปขนาดย่อ -->
+                        <div class="w-16 h-16 shrink-0 rounded-xl overflow-hidden border border-gray-100 shadow-inner relative">
+                            ${thumbHtml}
+                            ${isWorking ? '<div class="absolute bottom-0 left-0 right-0 bg-blue-500/90 backdrop-blur-sm text-white text-[8px] text-center font-bold py-0.5">กำลังทำงาน</div>' : ''}
+                        </div>
+                        
+                        <!-- ส่วนข้อมูล -->
+                        <div class="flex-1 flex flex-col justify-center">
+                            <div class="mb-1.5">
+                                <span class="font-bold text-gray-800 text-sm">${dateStr}</span>
                                 ${shiftBadge}
                             </div>
-                            ${isWorking ? '<span class="bg-blue-100 text-blue-700 text-[10px] px-2 py-1 rounded-full font-bold">เข้างานแล้ว</span>' : '<span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-1 rounded-full font-bold">ออกงานแล้ว</span>'}
+                            <div class="flex justify-between text-xs">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-[10px] text-gray-400 font-bold">เข้า</span>
+                                    <span class="font-bold text-green-600">${inTime}</span>
+                                </div>
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-[10px] text-gray-400 font-bold">ออก</span>
+                                    <span class="font-bold ${outTime === '-' ? 'text-gray-400' : 'text-red-500'}">${outTime}</span>
+                                </div>
+                            </div>
                         </div>
-                        <div class="flex justify-between mt-1 px-1">
-                            <div class="flex flex-col">
-                                <span class="text-[10px] text-gray-400 font-medium">เข้างาน</span>
-                                <span class="text-sm font-bold text-green-600 flex items-center gap-1"><span class="text-xs">🟢</span> ${inTime} น.</span>
-                            </div>
-                            <div class="flex flex-col text-right">
-                                <span class="text-[10px] text-gray-400 font-medium">ออกงาน</span>
-                                <span class="text-sm font-bold ${outTime === '-' ? 'text-gray-400' : 'text-red-500'} flex items-center justify-end gap-1"><span class="text-xs">${outTime === '-' ? '⚪' : '🔴'}</span> ${outTime} ${outTime !== '-' ? 'น.' : ''}</span>
-                            </div>
+                        
+                        <!-- ลูกศรด้านขวา -->
+                        <div class="text-gray-300 px-1">
+                            <span class="text-lg leading-none">›</span>
                         </div>
                     </div>`;
                 });
             } catch(e) { list.innerHTML = '<p class="text-center text-red-400 py-4 text-sm">โหลดประวัติล้มเหลว</p>'; }
+        }
+
+        // --- เปิดหน้าดูรายละเอียดประวัติ ---
+        window.openHistoryDetail = function(id) {
+            const log = window.historyLogsData[id];
+            if(!log) return;
+            
+            const d = new Date(log.work_date);
+            const dateStr = `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()+543}`;
+            const inTime = log.check_in_time ? new Date(log.check_in_time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'}) : '-';
+            const outTime = log.check_out_time ? new Date(log.check_out_time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'}) : '-';
+            const shiftType = log.shift_type === 'overtime' ? 'ควงกะ (OT)' : 'กะปกติ';
+            
+            let html = `
+                <div class="mb-5 text-center">
+                    <p class="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">วันที่ปฏิบัติงาน</p>
+                    <p class="text-2xl font-black text-indigo-600">${dateStr}</p>
+                    <p class="text-xs text-gray-500 mt-1">ประเภทการเข้างาน: <span class="font-bold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-md">${shiftType}</span></p>
+                </div>
+                
+                <div class="space-y-4">
+                    <!-- ข้อมูล Check In -->
+                    <div class="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="text-sm font-bold text-green-600 flex items-center gap-1.5"><span class="text-xs">🟢</span> เวลาเข้างาน</span>
+                            <span class="text-lg font-black text-gray-800">${inTime} น.</span>
+                        </div>
+                        ${log.check_in_photo ? `<img src="${log.check_in_photo}" class="w-full h-40 object-cover rounded-xl shadow-sm border border-gray-200">` : '<div class="w-full h-24 bg-gray-100 rounded-xl flex items-center justify-center text-xs text-gray-400 italic">ไม่มีรูปถ่าย</div>'}
+                    </div>
+
+                    <!-- ข้อมูล Check Out -->
+                    <div class="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="text-sm font-bold ${log.check_out_time ? 'text-red-500' : 'text-gray-400'} flex items-center gap-1.5">
+                                <span class="text-xs">${log.check_out_time ? '🔴' : '⚪'}</span> ${log.check_out_time ? 'เวลาออกงาน' : 'ยังไม่ออกงาน'}
+                            </span>
+                            <span class="text-lg font-black text-gray-800">${outTime !== '-' ? outTime + ' น.' : '-'}</span>
+                        </div>
+                        ${log.check_out_photo ? `<img src="${log.check_out_photo}" class="w-full h-40 object-cover rounded-xl shadow-sm border border-gray-200">` : (log.check_out_time ? '<div class="w-full h-24 bg-gray-100 rounded-xl flex items-center justify-center text-xs text-gray-400 italic">ไม่มีรูปถ่าย</div>' : '')}
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('historyDetailContent').innerHTML = html;
+            document.getElementById('historyDetailModal').classList.remove('hidden');
         }
 
         // ==========================================
@@ -1131,7 +1218,6 @@
             }
         }
 
-        // ฟังก์ชันเมื่อกดปุ่มรีเฟรช GPS 🔄
         window.refreshGPS = function() {
             const statusText = document.getElementById('gpsStatus');
             const distText = document.getElementById('distanceStatus');
@@ -1157,7 +1243,6 @@
             }
         }
 
-        // ปรับปรุงฟังก์ชันการคำนวณระยะทางใน UI ให้แปรผันตามแท็บที่ใช้งานอยู่
         function updateLocationUI(position) {
             const statusText = document.getElementById('gpsStatus');
             const distText = document.getElementById('distanceStatus');
@@ -1170,7 +1255,6 @@
             let targetRadius = ALLOWED_RADIUS;
             let isPatrolMode = false;
 
-            // ถ้ากำลังอยู่หน้าเดินตรวจ ให้สลับไปใช้พิกัดของจุดตรวจที่ถูกเลือกแทน
             if (window.currentActiveTab === 'patrol') {
                 const selectedCpId = document.getElementById('checkpointSelect').value;
                 if (selectedCpId && checkpointsData[selectedCpId]) {
@@ -1179,7 +1263,6 @@
                     targetRadius = checkpointsData[selectedCpId].radius;
                     isPatrolMode = true;
                 } else {
-                    // กรณีอยู่หน้าเดินตรวจแต่ยังไม่ได้เลือกจุดสแกน
                     distText.innerText = "กรุณาเลือกจุดตรวจ";
                     distText.className = "text-sm mt-1 font-bold text-orange-500";
                     document.getElementById('gpsIcon').innerText = "📍";
@@ -1220,10 +1303,26 @@
         // ==========================================
         const tabs = ['home', 'checkin', 'patrol', 'history', 'report', 'rules'];
         window.switchTab = function(activeTab) {
-            window.currentActiveTab = activeTab; // บันทึกแท็บปัจจุบันเพื่อใช้ร่วมกับ GPS
+            window.currentActiveTab = activeTab; 
             document.getElementById('previewSection').classList.add('hidden');
             const globalHeader = document.getElementById('globalHeader');
-            (activeTab === 'home' || activeTab === 'report' || activeTab === 'rules') ? globalHeader.classList.add('hidden') : globalHeader.classList.remove('hidden');
+            const globalGpsBox = document.getElementById('globalGpsBox');
+            
+            // จัดการแสดง/ซ่อน Global Header ทั้งก้อน (Profile + GPS)
+            if (activeTab === 'home' || activeTab === 'report' || activeTab === 'rules') {
+                globalHeader.classList.add('hidden');
+            } else {
+                globalHeader.classList.remove('hidden');
+            }
+
+            // กรณีอยู่หน้า History ให้ซ่อนกล่อง GPS แยกต่างหาก
+            if (globalGpsBox) {
+                if (activeTab === 'history') {
+                    globalGpsBox.classList.add('hidden');
+                } else {
+                    globalGpsBox.classList.remove('hidden');
+                }
+            }
 
             tabs.forEach(tab => {
                 const view = document.getElementById(tab + 'View');
@@ -1246,7 +1345,6 @@
                 }
             });
 
-            // บังคับให้อัปเดต UI พิกัดใหม่ทันทีเมื่อสลับแท็บ (ถ้ามีข้อมูลพิกัดปัจจุบันแล้ว)
             if(currentLocation) {
                 updateLocationUI({ coords: { latitude: currentLocation.lat, longitude: currentLocation.lng } });
             }
@@ -1267,10 +1365,9 @@
             if (actionType === 'checkin') {
                 const distance = calculateDistance(currentLocation.lat, currentLocation.lng, guardHouseLocation.lat, guardHouseLocation.lng);
                 
-                // ตรวจสอบ ถ้าระยะห่างเกิน และไม่ได้ตั้งค่าป้อมเป็น 0,0
                 if (guardHouseLocation.lat !== 0 && guardHouseLocation.lng !== 0 && distance > ALLOWED_RADIUS) {
                     window.showCustomAlert('อยู่นอกพื้นที่ (ลงเวลา)', `คุณอยู่ห่างจากป้อมเกินระยะที่กำหนด\n\nระยะปัจจุบัน: ${Math.round(distance)} เมตร\nอนุญาตไม่เกิน: ${ALLOWED_RADIUS} เมตร`, 'error');
-                    return; // บล็อกการทำงาน ไม่ให้เปิดกล้อง
+                    return; 
                 }
                 
                 document.getElementById('cameraInput').click();
@@ -1285,10 +1382,9 @@
                 if (cpInfo && cpInfo.lat !== 0 && cpInfo.lng !== 0) {
                     const distance = calculateDistance(currentLocation.lat, currentLocation.lng, cpInfo.lat, cpInfo.lng);
                     
-                    // ตรวจสอบ ถ้าระยะห่างจากจุดสแกนเกินรัศมีที่ตั้งไว้
                     if (distance > cpInfo.radius) {
                         window.showCustomAlert('อยู่นอกพื้นที่ (จุดตรวจ)', `คุณอยู่ห่างจากจุดตรวจมากเกินไป\n\nระยะปัจจุบัน: ${Math.round(distance)} เมตร\nต้องอยู่ในรัศมี: ${cpInfo.radius} เมตร`, 'error');
-                        return; // บล็อกการทำงาน ไม่ให้เปิดกล้อง
+                        return; 
                     }
                 }
                 document.getElementById('patrolCameraInput').click();
