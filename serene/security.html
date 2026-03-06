@@ -202,7 +202,7 @@
                     <div class="bg-white p-4 rounded-3xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
                         <span class="text-3xl mb-2 drop-shadow-sm">⏱️</span>
                         <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-1">สถานะวันนี้</p>
-                        <p class="text-sm font-black text-green-600 bg-green-50/80 border border-green-100 px-4 py-1.5 rounded-xl w-full shadow-sm">เข้างานแล้ว</p>
+                        <p id="homeStatusText" class="text-sm font-black text-gray-500 bg-gray-100 border border-gray-200 px-4 py-1.5 rounded-xl w-full shadow-sm">กำลังตรวจสอบ...</p>
                     </div>
                     <!-- ปุ่มทดสอบระบบเสียงพูด -->
                     <button onclick="window.triggerVoiceAlert('ทดสอบระบบเสียงพูดแจ้งเตือน มีเหตุฉุกเฉินที่ซอย 5', 'ทดสอบแจ้งเตือนผู้บุกรุก')" class="bg-red-50 p-4 rounded-3xl shadow-sm border border-red-100 flex flex-col items-center justify-center text-center active:scale-95 transition">
@@ -245,7 +245,7 @@
                     <p class="text-sm text-gray-500">บันทึกเวลาเข้า-ออก พร้อมยืนยันตัวตน</p>
                 </div>
                 <input type="file" id="cameraInput" accept="image/*" capture="environment" class="hidden" onchange="window.handlePhotoCapture(event, 'checkin')">
-                <button onclick="window.checkLocationAndCapture('checkin')" class="w-full bg-blue-500 hover:bg-blue-600 text-white py-6 rounded-2xl font-bold text-lg shadow-lg shadow-blue-200 flex flex-col justify-center items-center gap-2 transition active:scale-95">
+                <button id="attendanceBtn" onclick="window.checkLocationAndCapture('checkin')" class="w-full bg-blue-500 hover:bg-blue-600 text-white py-6 rounded-2xl font-bold text-lg shadow-lg shadow-blue-200 flex flex-col justify-center items-center gap-2 transition active:scale-95">
                     <span class="text-5xl drop-shadow-md mb-1">📸</span> ถ่ายรูปเช็คอินเข้างาน
                 </button>
             </div>
@@ -587,6 +587,8 @@
         let guardHouseLocation = { lat: 0, lng: 0 }; 
         let ALLOWED_RADIUS = 50; 
         let currentReportImageBase64 = null;
+        let isCheckedIn = false;
+        let currentAttendanceId = null;
 
         // ==========================================
         // 2. กระบวนการเริ่มต้นระบบ (Initialize LIFF & Supabase)
@@ -736,9 +738,66 @@
             document.getElementById('mainAppContainer').classList.add('flex');
             
             loadCheckpoints(); 
+            window.checkAttendanceStatus(); // ตรวจสอบสถานะการเข้า-ออกงาน
             window.switchTab('home');
             startGPS();
             setupRealtimeListener(); 
+        }
+
+        // ตรวจสอบสถานะ เข้างาน/ออกงาน ล่าสุดของวันนี้
+        window.checkAttendanceStatus = async function() {
+            const today = new Date().toISOString().split('T')[0];
+            try {
+                const { data, error } = await supabase
+                    .from('attendance_logs')
+                    .select('id')
+                    .eq('guard_id', currentUser.id)
+                    .eq('work_date', today)
+                    .is('check_out_time', null)
+                    .single();
+                
+                const btn = document.getElementById('attendanceBtn');
+                const badge = document.getElementById('shiftBadge');
+                const homeStatus = document.getElementById('homeStatusText');
+                
+                if (data) {
+                    // หากพบข้อมูลที่ยังไม่ได้ check_out = กำลังเข้างานอยู่
+                    isCheckedIn = true;
+                    currentAttendanceId = data.id;
+                    
+                    if(btn) {
+                        btn.className = "w-full bg-red-500 hover:bg-red-600 text-white py-6 rounded-2xl font-bold text-lg shadow-lg shadow-red-200 flex flex-col justify-center items-center gap-2 transition active:scale-95";
+                        btn.innerHTML = `<span class="text-5xl drop-shadow-md mb-1">📸</span> ถ่ายรูปเช็คเอาท์ (เลิกงาน)`;
+                    }
+                    if(badge) {
+                        badge.className = "bg-green-100 border border-green-200 text-green-700 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm";
+                        badge.innerText = "เข้างานแล้ว";
+                    }
+                    if(homeStatus) {
+                        homeStatus.innerText = "เข้างานแล้ว";
+                        homeStatus.className = "text-sm font-black text-green-600 bg-green-50/80 border border-green-100 px-4 py-1.5 rounded-xl w-full shadow-sm";
+                    }
+                } else {
+                    // หากไม่พบข้อมูล = เลิกงานแล้ว หรือ ยังไม่เริ่มงาน
+                    isCheckedIn = false;
+                    currentAttendanceId = null;
+                    
+                    if(btn) {
+                        btn.className = "w-full bg-blue-500 hover:bg-blue-600 text-white py-6 rounded-2xl font-bold text-lg shadow-lg shadow-blue-200 flex flex-col justify-center items-center gap-2 transition active:scale-95";
+                        btn.innerHTML = `<span class="text-5xl drop-shadow-md mb-1">📸</span> ถ่ายรูปเช็คอิน (เข้างาน)`;
+                    }
+                    if(badge) {
+                        badge.className = "bg-gray-100 border border-gray-200 text-gray-500 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm";
+                        badge.innerText = "ยังไม่เข้างาน";
+                    }
+                    if(homeStatus) {
+                        homeStatus.innerText = "ยังไม่เข้างาน";
+                        homeStatus.className = "text-sm font-black text-gray-500 bg-gray-100 border border-gray-200 px-4 py-1.5 rounded-xl w-full shadow-sm";
+                    }
+                }
+            } catch (err) {
+                console.log("ไม่มีประวัติเข้างานที่ค้างอยู่ หรือ เริ่มวันใหม่");
+            }
         }
 
         // ดึงจุดตรวจมาใส่ Dropdown
@@ -942,10 +1001,34 @@
                         const timeStr = new Date().toISOString();
 
                         if (actionType === 'checkin') {
-                            await supabase.from('attendance_logs').insert([{ guard_id: currentUser.id, work_date: today, check_in_time: timeStr, check_in_lat_lng: locStr, check_in_photo: base64 }]);
+                            if (!isCheckedIn) {
+                                // เช็คอินเข้างาน (INSERT แถวใหม่)
+                                const { data, error } = await supabase.from('attendance_logs')
+                                    .insert([{ guard_id: currentUser.id, work_date: today, check_in_time: timeStr, check_in_lat_lng: locStr, check_in_photo: base64 }])
+                                    .select('id').single();
+                                if (error) throw error;
+                                
+                                // แจ้งเตือนเข้า Telegram
+                                window.sendTelegramAlert(`✅ ลงเวลาเข้างาน\nพนักงาน: ${currentUser.full_name}\nเวลา: ${new Date().toLocaleTimeString('th-TH')} น.`);
+                            } else {
+                                // เช็คเอาท์ออกงาน (UPDATE แถวเดิมของวันนี้)
+                                const { error } = await supabase.from('attendance_logs')
+                                    .update({ check_out_time: timeStr, check_out_lat_lng: locStr, check_out_photo: base64 })
+                                    .eq('id', currentAttendanceId);
+                                if (error) throw error;
+                                
+                                // แจ้งเตือนเข้า Telegram
+                                window.sendTelegramAlert(`🔴 ลงเวลาออกงาน\nพนักงาน: ${currentUser.full_name}\nเวลา: ${new Date().toLocaleTimeString('th-TH')} น.`);
+                            }
                             
-                            // แจ้งเตือนเข้า Telegram
-                            window.sendTelegramAlert(`✅ ลงเวลาเข้างาน\nพนักงาน: ${currentUser.full_name}\nเวลา: ${new Date().toLocaleTimeString('th-TH')} น.`);
+                            // ดึงสถานะใหม่เพื่อเปลี่ยนสีปุ่มทันที
+                            await window.checkAttendanceStatus();
+                            
+                            // โหลดประวัติใหม่ถ้าหน้าประวัติเปิดอยู่
+                            if (!document.getElementById('historyView').classList.contains('hidden')) {
+                                window.loadHistory();
+                            }
+
                         } else {
                             await supabase.from('patrol_logs').insert([{ guard_id: currentUser.id, checkpoint_id: document.getElementById('checkpointSelect').value, gps_location: locStr, photo_url: base64 }]);
                             
