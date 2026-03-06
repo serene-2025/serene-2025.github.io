@@ -589,6 +589,7 @@
         let currentReportImageBase64 = null;
         let isCheckedIn = false;
         let currentAttendanceId = null;
+        let checkpointsData = {}; // ตัวแปรเก็บพิกัดของจุดตรวจต่างๆ
 
         // ==========================================
         // 2. กระบวนการเริ่มต้นระบบ (Initialize LIFF & Supabase)
@@ -806,7 +807,14 @@
                 const { data } = await supabase.from('checkpoints').select('*').order('id', { ascending: true });
                 const cpSelect = document.getElementById('checkpointSelect');
                 cpSelect.innerHTML = '<option value="">-- แตะเพื่อเลือกจุดตรวจ --</option>';
+                checkpointsData = {}; // รีเซ็ตข้อมูลใหม่
                 data?.forEach(cp => {
+                    // เก็บข้อมูลพิกัดแยกรหัสจุดตรวจ
+                    checkpointsData[cp.id] = {
+                        lat: cp.lat,
+                        lng: cp.lng,
+                        radius: cp.radius_meters || 20 // ใช้รัศมีจากฐานข้อมูล (ค่าเริ่มต้น 20m)
+                    };
                     const opt = document.createElement('option');
                     opt.value = cp.id; opt.text = `📍 ${cp.id} - ${cp.name}`;
                     cpSelect.appendChild(opt);
@@ -972,7 +980,32 @@
         // ==========================================
         window.checkLocationAndCapture = function(actionType) {
             if (!currentLocation) return alert("รอระบบค้นหาพิกัด GPS ก่อนครับ");
-            document.getElementById(actionType === 'checkin' ? 'cameraInput' : 'patrolCameraInput').click();
+
+            if (actionType === 'checkin') {
+                // ตรวจสอบระยะห่างการลงเวลากับป้อม รปภ.
+                const distance = calculateDistance(currentLocation.lat, currentLocation.lng, guardHouseLocation.lat, guardHouseLocation.lng);
+                if (guardHouseLocation.lat !== 0 && guardHouseLocation.lng !== 0 && distance > ALLOWED_RADIUS) {
+                    return alert(`ลงเวลาไม่ได้!\nคุณอยู่ห่างจากป้อมเกินระยะที่กำหนด\n(ระยะห่าง: ${Math.round(distance)} เมตร / อนุญาต: ${ALLOWED_RADIUS} เมตร)`);
+                }
+                document.getElementById('cameraInput').click();
+
+            } else if (actionType === 'patrol') {
+                const selectedCpId = document.getElementById('checkpointSelect').value;
+                if(!selectedCpId) return alert("กรุณาเลือกจุดตรวจก่อนครับ");
+
+                // ดึงข้อมูลจุดตรวจที่เลือกขึ้นมาเช็คพิกัด
+                const cpInfo = checkpointsData[selectedCpId];
+                if (cpInfo) {
+                    // อนุโลมให้ผ่านถ้ายกเว้นพิกัดยังไม่ได้ตั้งค่า (เป็น 0,0)
+                    if (cpInfo.lat !== 0 && cpInfo.lng !== 0) {
+                        const distance = calculateDistance(currentLocation.lat, currentLocation.lng, cpInfo.lat, cpInfo.lng);
+                        if (distance > cpInfo.radius) {
+                            return alert(`บันทึกจุดตรวจไม่ได้!\nคุณอยู่ห่างจากจุดตรวจมากเกินไป\n(ระยะห่าง: ${Math.round(distance)} เมตร / ต้องอยู่ในรัศมี: ${cpInfo.radius} เมตร)`);
+                        }
+                    }
+                }
+                document.getElementById('patrolCameraInput').click();
+            }
         }
 
         window.handlePhotoCapture = function(event, actionType) {
