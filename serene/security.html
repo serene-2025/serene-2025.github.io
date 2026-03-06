@@ -101,7 +101,7 @@
     </div>
 
     <!-- ========================================== -->
-    <!-- หน้าต่างขอสิทธิ์แจ้งเตือน (Push Permission) -->
+    <!-- หน้าต่างขอสิทธิ์แจ้งเตือน (Push Permission) - จะข้ามถ้าเปิดใน LINE -->
     <!-- ========================================== -->
     <div id="pushPermissionSection" class="hidden absolute inset-0 bg-slate-900/60 backdrop-blur-sm z-[95] flex flex-col p-4 items-center justify-center fade-in">
         <div class="w-full max-w-sm bg-white p-6 rounded-3xl shadow-2xl text-center relative overflow-hidden">
@@ -593,18 +593,16 @@
 
             try {
                 // [A] เชื่อมต่อและดึงข้อมูลจาก LIFF
-                if (LIFF_ID && LIFF_ID !== 'YOUR_LIFF_ID') {
-                    await liff.init({ liffId: LIFF_ID });
-                    if (!liff.isLoggedIn()) {
-                        liff.login();
-                        return; // รอรีเฟรชกลับมาหลังล็อกอิน
-                    }
-                    statusText.innerText = "กำลังดึงข้อมูล LINE โปรไฟล์...";
-                    actualLineProfile = await liff.getProfile();
-                } else {
-                    console.warn("⚠️ ข้ามการเชื่อมต่อกับ LINE เพราะยังไม่มี LIFF ID");
-                    actualLineProfile = { userId: "U_TEST_UID_LINE_12345", displayName: "ผู้ใช้ทดสอบ" };
+                statusText.innerText = "กำลังเชื่อมต่อระบบ LINE...";
+                await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true }); // ให้ Login อัตโนมัติถ้าเปิดนอกแอป
+                
+                if (!liff.isLoggedIn()) {
+                    liff.login();
+                    return; // รอรีเฟรชกลับมาหลังล็อกอิน
                 }
+                
+                statusText.innerText = "กำลังดึงข้อมูล LINE โปรไฟล์...";
+                actualLineProfile = await liff.getProfile();
 
                 // [B] โหลดการตั้งค่าระบบจาก Supabase
                 statusText.innerText = "กำลังโหลดการตั้งค่าระบบ...";
@@ -626,9 +624,8 @@
                     setTimeout(() => {
                         document.getElementById('splashScreen').classList.add('hidden');
                         
-                        const isInLineApp = (typeof liff !== 'undefined' && liff.isInClient && typeof liff.isInClient === 'function') ? liff.isInClient() : false;
-
-                        if (!guardData.push_token && !isInLineApp) { 
+                        // ข้ามการขอสิทธิ์ Push Notification ถ้าเปิดผ่านแอป LINE (เพราะ LINE ไม่รองรับ Web Push)
+                        if (!guardData.push_token && !liff.isInClient()) { 
                             document.getElementById('pushPermissionSection').classList.remove('hidden');
                         } else {
                             launchApp();
@@ -644,24 +641,32 @@
             }
         };
 
-        // --- ระบบผูกบัญชี ---
+        // --- ระบบผูกบัญชี (ปรับปรุงวิธีดึงข้อมูลป้องกัน Error ค่าว่าง) ---
         async function loadGuardsForBinding() {
             const selectBox = document.getElementById('guardSelect');
-            selectBox.innerHTML = '<option value="">กำลังโหลดรายชื่อ...</option>';
+            selectBox.innerHTML = '<option value="">กำลังโหลดรายชื่อพนักงาน...</option>';
 
             try {
-                const { data, error } = await supabase.from('guards').select('id, emp_code, full_name').is('line_uid', null);
-                if (error) throw error;
+                // ดึงรายชื่อพนักงานทั้งหมดมา กรองค่าว่างและ null ออกที่หน้าบ้าน 
+                // (ป้องกันปัญหากรณีฐานข้อมูลเซ็ตค่าว่างเป็น "" ไม่ใช่ NULL)
+                const { data, error } = await supabase.from('guards').select('id, emp_code, full_name, line_uid');
+                
+                if (error) {
+                    throw error;
+                }
+
+                // กรองเฉพาะคนที่ยังไม่ได้ผูก LINE (line_uid เป็น null หรือ ค่าว่าง)
+                const availableGuards = data.filter(g => !g.line_uid || g.line_uid.trim() === '');
 
                 selectBox.innerHTML = '<option value="">-- เลือกรหัส รปภ. ของคุณ --</option>';
 
-                if (!data || data.length === 0) {
-                    selectBox.innerHTML = '<option value="">❌ ไม่พบรายชื่อพนักงานใหม่ (กรุณาแจ้ง Admin)</option>';
+                if (availableGuards.length === 0) {
+                    selectBox.innerHTML = '<option value="">❌ ไม่พบรายชื่อพนักงานใหม่ (โปรดแจ้ง Admin ให้เพิ่มชื่อ)</option>';
                     selectBox.disabled = true;
                     document.getElementById('bindSpinner').parentNode.classList.add('opacity-50', 'cursor-not-allowed');
                 } else {
                     selectBox.disabled = false;
-                    data.forEach(g => {
+                    availableGuards.forEach(g => {
                         const option = document.createElement('option');
                         option.value = g.id;
                         option.text = `👮 ${g.emp_code} - ${g.full_name}`;
@@ -670,6 +675,7 @@
                     });
                 }
                 
+                // แสดงรูปและชื่อ LINE สำหรับการยืนยัน
                 document.getElementById('displayLineName').innerText = actualLineProfile.displayName;
                 if(actualLineProfile.pictureUrl) {
                     const img = document.getElementById('displayLineImg');
@@ -683,7 +689,7 @@
 
             } catch (err) {
                 console.error("Load Guards Error:", err);
-                alert("ไม่สามารถดึงรายชื่อได้: " + err.message + "\n(กรุณาเช็ค RLS ใน Supabase)");
+                alert("ไม่สามารถดึงรายชื่อจากฐานข้อมูลได้ โปรดตรวจสอบว่าปิด RLS แล้วหรือไม่ (" + err.message + ")");
                 selectBox.innerHTML = '<option value="">⚠️ เกิดข้อผิดพลาดในการดึงข้อมูล</option>';
             }
         }
@@ -696,16 +702,17 @@
             const selectedName = selectBox.options[selectBox.selectedIndex].dataset.name;
 
             try {
+                // บันทึก line_uid ลงฐานข้อมูล
                 await supabase.from('guards').update({ line_uid: actualLineProfile.userId }).eq('id', selectBox.value);
                 currentUser = { id: selectBox.value, full_name: selectedName };
                 
                 document.getElementById('bindingSection').classList.add('hidden');
                 
-                const isInLineApp = (typeof liff !== 'undefined' && liff.isInClient && typeof liff.isInClient === 'function') ? liff.isInClient() : false;
-
-                if(!isInLineApp) {
+                // ถ้าเปิดบนเบราว์เซอร์อื่นที่ไม่ใช่แอป LINE ให้เด้งไปขอสิทธิ์แจ้งเตือน
+                if(!liff.isInClient()) {
                     document.getElementById('pushPermissionSection').classList.remove('hidden');
                 } else {
+                    // ถ้าอยู่ใน LINE ให้เข้าแอปเลย
                     launchApp();
                 }
             } catch (err) { alert("ผูกบัญชีล้มเหลว: " + err.message); }
