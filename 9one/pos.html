@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ระบบ POS ร้านปันสุข (V.4.0 - Mobile & Pro Tools)</title>
+    <title>ระบบ POS ร้านปันสุข (V.4.1 - Camera & Audio)</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Supabase JS (Client) -->
@@ -381,6 +381,7 @@
                 <h3 class="font-bold text-lg text-gray-800"><i class="fas fa-camera mr-2 text-indigo-600"></i> สแกนบาร์โค้ด</h3>
                 <button onclick="stopBarcodeScanner()" class="w-8 h-8 bg-gray-100 hover:bg-red-100 hover:text-red-500 rounded-full flex items-center justify-center transition"><i class="fas fa-times"></i></button>
             </div>
+            <!-- Container for the scanner -->
             <div id="reader" class="w-full rounded-2xl overflow-hidden bg-black min-h-[300px]"></div>
             <p class="text-center text-xs text-gray-500">จ่อบาร์โค้ดให้อยู่ในกรอบ</p>
         </div>
@@ -471,7 +472,7 @@
         </div>
     </div>
 
-    <!-- Product Form Modal -->
+    <!-- Product Form Modal (Responsive Fix) -->
     <div id="productModal" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-[80] backdrop-blur-sm p-4 sm:p-6">
         <div class="bg-white rounded-3xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in duration-200">
             <!-- Modal Header -->
@@ -730,6 +731,13 @@
             if (event.touches.length > 1) { event.preventDefault(); }
         }, { passive: false });
 
+        // --- Audio for success ---
+        const successAudio = new Audio('https://actions.google.com/sounds/v1/ui/beep_short.ogg');
+        
+        function playSuccessSound() {
+            successAudio.play().catch(e => console.log('Audio play failed:', e));
+        }
+
         // --- SUPABASE CONFIG ---
         var SUPABASE_URL = 'https://tkjlbzgcxifvqjepetbd.supabase.co';
         var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRramxiemdjeGlmdnFqZXBldGJkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg5MTkxMTUsImV4cCI6MjA4NDQ5NTExNX0.6lSukioWnZvg88ObAwfxJA1hBxP6Ow4p7GLQwDBT2ZI';
@@ -762,8 +770,8 @@
 
             const config = { fps: 10, qrbox: { width: 250, height: 250 } };
             
-            // สั่งให้เปิดกล้องหลัง (environment) อัตโนมัติ
-            html5QrCode.start({ facingMode: "environment" }, config, 
+            // สั่งให้เปิดกล้องหลัง (environment) แบบเฉพาะเจาะจง
+            html5QrCode.start({ facingMode: { exact: "environment" } }, config, 
                 (decodedText, decodedResult) => {
                     // เมื่อสแกนสำเร็จ
                     const inputEl = document.getElementById(targetId);
@@ -781,8 +789,26 @@
                     // ไม่ต้องทำอะไรหากกำลังค้นหาบาร์โค้ด
                 }
             ).catch((err) => {
-                console.error("Camera start failed:", err);
-                showToast('ไม่สามารถเปิดกล้องได้ กรุณาตรวจสอบสิทธิ์ / ต้องใช้งานผ่าน HTTPS', 'error');
+                console.warn("Exact environment camera not found, falling back to general environment.", err);
+                // Fallback เผื่ออุปกรณ์บางรุ่นไม่รองรับ { exact: "environment" }
+                html5QrCode.start({ facingMode: "environment" }, config,
+                    (decodedText, decodedResult) => {
+                        const inputEl = document.getElementById(targetId);
+                        if(inputEl) {
+                            inputEl.value = decodedText;
+                            inputEl.dispatchEvent(new Event('input'));
+                            if (targetId === 'searchInput') {
+                                inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+                            }
+                        }
+                        stopBarcodeScanner();
+                        showToast('สแกนบาร์โค้ดสำเร็จ', 'normal');
+                    },
+                    (errorMessage) => {}
+                ).catch(err2 => {
+                     console.error("Camera start failed:", err2);
+                     showToast('ไม่สามารถเปิดกล้องได้ กรุณาตรวจสอบสิทธิ์', 'error');
+                })
             });
         }
 
@@ -1220,7 +1246,7 @@
                             <div class="flex justify-between items-center mt-2">
                                 <span class="text-[10px] md:text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-md">${p.stock} ${p.unit}</span>
                                 <span class="font-bold text-sm md:text-lg text-indigo-600">${p.price}.-</span>
-                  a          </div>
+                            </div>
                         </div>
                         ${out ? '<div class="absolute inset-0 flex items-center justify-center bg-white/40 backdrop-blur-[1px] font-black text-red-500 text-xl rotate-12 border-4 border-red-500 rounded-2xl m-6">หมด</div>' : ''}
                     </button>
@@ -1520,6 +1546,7 @@
             }
 
             document.getElementById('receiptChange').innerText = (cash-total).toLocaleString(undefined,{minimumFractionDigits:2});
+            playSuccessSound(); // <--- Play sound here
             openModal('receiptModal');
             
             // Reset / Remove paid cart
