@@ -961,13 +961,47 @@
         // ==========================================
         // 🚨 แจ้งเตือน Telegram
         // ==========================================
-        window.sendTelegramAlert = async function(message) {
+        window.sendTelegramAlert = async function(message, base64Image = null) {
             const botToken = '7708637309:AAHU2swP8U67XVWITdjsxjQoqiXIL9KbBJs';
             const chatId = '7585120244';
-            const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+            
             try {
-                await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: message }) });
-            } catch (error) { console.error("Telegram Notification Failed:", error); }
+                if (base64Image) {
+                    // กรณีมีรูปภาพ: ใช้ sendPhoto API
+                    const url = `https://api.telegram.org/bot${botToken}/sendPhoto`;
+                    
+                    // แปลง Base64 ให้เป็นไฟล์ (Blob) เพื่อเตรียมส่งเข้า Telegram
+                    const byteString = atob(base64Image.split(',')[1]);
+                    const mimeString = base64Image.split(',')[0].split(':')[1].split(';')[0];
+                    const ab = new ArrayBuffer(byteString.length);
+                    const ia = new Uint8Array(ab);
+                    for (let i = 0; i < byteString.length; i++) {
+                        ia[i] = byteString.charCodeAt(i);
+                    }
+                    const blob = new Blob([ab], {type: mimeString});
+                    
+                    // สร้างชุดข้อมูล Form Data ใส่รูปและข้อความบรรยาย
+                    const formData = new FormData();
+                    formData.append('chat_id', chatId);
+                    formData.append('caption', message);
+                    formData.append('photo', blob, 'photo.jpg');
+
+                    await fetch(url, {
+                        method: 'POST',
+                        body: formData
+                    });
+                } else {
+                    // กรณีไม่มีรูปภาพ: ส่งเฉพาะข้อความ (เช่น แจ้งเตือนทั่วไป)
+                    const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+                    await fetch(url, { 
+                        method: 'POST', 
+                        headers: { 'Content-Type': 'application/json' }, 
+                        body: JSON.stringify({ chat_id: chatId, text: message }) 
+                    });
+                }
+            } catch (error) { 
+                console.error("Telegram Notification Failed:", error); 
+            }
         }
 
         // ==========================================
@@ -1200,14 +1234,14 @@
                         if (error) throw error;
                         
                         const shiftText = currentShiftType === 'overtime' ? '(ควงกะ)' : '';
-                        window.sendTelegramAlert(`✅ ลงเวลาเข้างาน ${shiftText}\nพนักงาน: ${currentUser.full_name}\nเวลา: ${new Date().toLocaleTimeString('th-TH')} น.`);
+                        window.sendTelegramAlert(`✅ ลงเวลาเข้างาน ${shiftText}\nพนักงาน: ${currentUser.full_name}\nเวลา: ${new Date().toLocaleTimeString('th-TH')} น.`, pendingBase64Image);
                     } else {
                         // ออกงาน
                         const { error } = await supabase.from('attendance_logs')
                             .update({ check_out_time: timeStr, check_out_lat_lng: locStr, check_out_photo: pendingBase64Image })
                             .eq('id', currentAttendanceId);
                         if (error) throw error;
-                        window.sendTelegramAlert(`🔴 ลงเวลาออกงาน\nพนักงาน: ${currentUser.full_name}\nเวลา: ${new Date().toLocaleTimeString('th-TH')} น.`);
+                        window.sendTelegramAlert(`🔴 ลงเวลาออกงาน\nพนักงาน: ${currentUser.full_name}\nเวลา: ${new Date().toLocaleTimeString('th-TH')} น.`, pendingBase64Image);
                     }
                     await window.checkAttendanceStatus();
                     if (!document.getElementById('historyView').classList.contains('hidden')) window.loadHistory();
@@ -1216,7 +1250,7 @@
                     await supabase.from('patrol_logs').insert([{ guard_id: currentUser.id, checkpoint_id: document.getElementById('checkpointSelect').value, gps_location: locStr, photo_url: pendingBase64Image }]);
                     const cpSelect = document.getElementById('checkpointSelect');
                     const cpName = cpSelect.options[cpSelect.selectedIndex].text;
-                    window.sendTelegramAlert(`🔦 บันทึกจุดตรวจ\nพนักงาน: ${currentUser.full_name}\nจุดตรวจ: ${cpName}\nเวลา: ${new Date().toLocaleTimeString('th-TH')} น.`);
+                    window.sendTelegramAlert(`🔦 บันทึกจุดตรวจ\nพนักงาน: ${currentUser.full_name}\nจุดตรวจ: ${cpName}\nเวลา: ${new Date().toLocaleTimeString('th-TH')} น.`, pendingBase64Image);
                 }
                 
                 // แสดงสถานะสำเร็จ
@@ -1288,7 +1322,7 @@
                 }]);
                 
                 const alertMessage = `🚨 แจ้งเหตุฉุกเฉิน 🚨\n\nผู้แจ้ง: ${currentUser.full_name}\nประเภท: ${type}\nรายละเอียด: ${details}\nเวลา: ${new Date().toLocaleString('th-TH')}`;
-                window.sendTelegramAlert(alertMessage);
+                window.sendTelegramAlert(alertMessage, currentReportImageBase64);
                 
                 document.getElementById('loadingIcon').innerText = "✅"; 
                 document.getElementById('loadingText').innerText = "แจ้งเหตุสำเร็จ!";
