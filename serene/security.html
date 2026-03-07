@@ -6,6 +6,8 @@
     <title>Smart Village Security</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <!-- โหลด Supabase SDK ด้วยวิธีมาตรฐาน (เสถียรบนมือถือมากกว่า) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         body { overscroll-behavior-y: none; } 
         .pb-safe { padding-bottom: env(safe-area-inset-bottom); } 
@@ -214,7 +216,7 @@
                     </div>
                 </div>
 
-                <!-- การ์ดต้อนรับ (เพิ่มข้อมูล เบอร์ และ รหัส) -->
+                <!-- การ์ดต้อนรับ -->
                 <div class="bg-animated-gradient p-6 rounded-3xl shadow-lg shadow-indigo-500/20 text-white relative overflow-hidden transform transition-all">
                     <div class="absolute top-0 right-0 w-40 h-40 bg-white opacity-10 rounded-full blur-2xl -mr-10 -mt-10"></div>
                     <div class="absolute bottom-0 left-0 w-32 h-32 bg-white opacity-10 rounded-full blur-xl -ml-8 -mb-8"></div>
@@ -694,15 +696,15 @@
 
     <!-- ES Module สำหรับ Supabase -->
     <script type="module">
-        import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-
+        // ไม่ต้อง import แล้ว เพราะโหลด SDK มาจาก CDN แทน
+        
         // ==========================================
         // 🌟 1. ตั้งค่า API 
         // ==========================================
         const SUPABASE_URL = 'https://jyfmvreupoywrtexhvzb.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5Zm12cmV1cG95d3J0ZXhodnpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MTEwNDcsImV4cCI6MjA4ODA4NzA0N30.goym3Cm1cFQu9DFwIbocyN_t5RhrUeNcKfYb0zEiUbE';
-        const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
         
+        // ใช้ LIFF ID จริง
         const LIFF_ID = '2009335510-jARRdAsU'; 
 
         // ==========================================
@@ -760,12 +762,14 @@
         // 2. กระบวนการเริ่มต้นระบบ 
         // ==========================================
         window.onload = async () => {
+            // เรียกใช้งาน global object supabase
+            window.supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY); 
+
             const statusText = document.getElementById('loginStatusText');
             const now = new Date();
             const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
             document.getElementById('currentDateDisplay').innerText = `${now.getDate()} ${thaiMonths[now.getMonth()]} ${now.getFullYear() + 543}`;
 
-            // กำหนดวันที่ค่าเริ่มต้นให้ตัวกรองประวัติเป็นวันปัจจุบัน (Local Timezone)
             const localDate = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
             document.getElementById('checkinDateFilter').value = localDate;
             document.getElementById('patrolDateFilter').value = localDate;
@@ -785,7 +789,7 @@
 
                 // [B] โหลดการตั้งค่า
                 statusText.innerText = "กำลังโหลดการตั้งค่าระบบ...";
-                const { data: settings } = await supabase.from('system_settings').select('*').eq('id', 1).single();
+                const { data: settings } = await window.supabaseClient.from('system_settings').select('*').eq('id', 1).single();
                 if (settings) {
                     guardHouseLocation = { lat: settings.guard_house_lat, lng: settings.guard_house_lng };
                     ALLOWED_RADIUS = settings.allowed_radius;
@@ -794,7 +798,7 @@
 
                 // [C] ตรวจสอบประวัติพนักงาน
                 statusText.innerText = "ตรวจสอบประวัติพนักงาน...";
-                const { data: guardData, error } = await supabase.from('guards').select('id, emp_code, full_name, line_uid, push_token, phone_number').eq('line_uid', actualLineProfile.userId).single();
+                const { data: guardData, error } = await window.supabaseClient.from('guards').select('id, emp_code, full_name, line_uid, push_token, phone_number').eq('line_uid', actualLineProfile.userId).single();
 
                 if (guardData) {
                     currentUser = guardData;
@@ -824,7 +828,7 @@
             selectBox.innerHTML = '<option value="">กำลังโหลดรายชื่อพนักงาน...</option>';
 
             try {
-                const { data, error } = await supabase.from('guards').select('id, emp_code, full_name, line_uid');
+                const { data, error } = await window.supabaseClient.from('guards').select('id, emp_code, full_name, line_uid');
                 if (error) throw error;
 
                 const availableGuards = data.filter(g => !g.line_uid || g.line_uid.trim() === '');
@@ -872,10 +876,9 @@
             const selectedName = selectBox.options[selectBox.selectedIndex].dataset.name;
 
             try {
-                await supabase.from('guards').update({ line_uid: actualLineProfile.userId }).eq('id', selectBox.value);
+                await window.supabaseClient.from('guards').update({ line_uid: actualLineProfile.userId }).eq('id', selectBox.value);
                 
-                // ดึงข้อมูลตัวเองมาเก็บใหม่หลังผูกเสร็จ
-                const { data } = await supabase.from('guards').select('id, emp_code, full_name, phone_number').eq('id', selectBox.value).single();
+                const { data } = await window.supabaseClient.from('guards').select('id, emp_code, full_name, phone_number').eq('id', selectBox.value).single();
                 currentUser = data;
                 
                 document.getElementById('bindingSection').classList.add('hidden');
@@ -896,7 +899,7 @@
             document.querySelector('#pushPermissionSection button').innerHTML = "กำลังบันทึก...";
             setTimeout(async () => {
                 const mockToken = "fcm_token_" + Date.now();
-                await supabase.from('guards').update({ push_token: mockToken }).eq('id', currentUser.id);
+                await window.supabaseClient.from('guards').update({ push_token: mockToken }).eq('id', currentUser.id);
                 document.getElementById('pushPermissionSection').classList.add('hidden');
                 launchApp();
             }, 1000);
@@ -914,7 +917,6 @@
             document.getElementById('homeGuardName').innerText = `คุณ ${currentUser.full_name}`;
             document.getElementById('currentGuardName').innerText = currentUser.full_name;
             
-            // นำรหัสพนักงานและเบอร์โทรมาแสดง
             document.getElementById('homeEmpCode').innerText = currentUser.emp_code || '-';
             document.getElementById('homePhone').innerText = currentUser.phone_number || 'ไม่ได้ระบุ';
             
@@ -950,7 +952,7 @@
             
             try {
                 const todayIso = new Date().toISOString();
-                const { data, error } = await supabase
+                const { data, error } = await window.supabaseClient
                     .from('announcements')
                     .select('*')
                     .gte('expires_at', todayIso) 
@@ -1001,7 +1003,7 @@
 
             const today = new Date().toISOString().split('T')[0];
             try {
-                const { data, error } = await supabase.from('attendance_logs')
+                const { data, error } = await window.supabaseClient.from('attendance_logs')
                     .select('id, shift_type').eq('guard_id', currentUser.id)
                     .is('check_out_time', null).order('check_in_time', { ascending: false }).limit(1).single();
                 
@@ -1053,7 +1055,7 @@
         // --- โหลดจุดตรวจ ---
         async function loadCheckpoints() {
             try {
-                const { data } = await supabase.from('checkpoints').select('*').order('id', { ascending: true });
+                const { data } = await window.supabaseClient.from('checkpoints').select('*').order('id', { ascending: true });
                 const cpSelect = document.getElementById('checkpointSelect');
                 cpSelect.innerHTML = '<option value="">-- กรุณาเลือกจุดตรวจ --</option>';
                 checkpointsData = {}; 
@@ -1089,16 +1091,14 @@
             try {
                 const result = await liff.scanCodeV2();
                 if (result && result.value) {
-                    const scannedValue = result.value.trim(); // ควรอ่านค่าได้เช่น "CP001"
+                    const scannedValue = result.value.trim(); 
                     
                     if (checkpointsData[scannedValue]) {
-                        // เลือก Dropdown อัตโนมัติ
                         document.getElementById('checkpointSelect').value = scannedValue;
                         window.handleCheckpointChange();
                         
                         window.showCustomAlert('สแกนสำเร็จ', `จุดตรวจ: ${checkpointsData[scannedValue].name}\nระบบกำลังตรวจสอบพิกัดและเปิดกล้อง...`, 'success');
                         
-                        // รอให้ปิด alert แล้วเช็คโลเคชั่น
                         setTimeout(() => {
                             window.closeCustomAlert();
                             window.checkLocationAndCapture('patrol');
@@ -1120,7 +1120,7 @@
             list.innerHTML = '<p class="text-center text-gray-400 py-4 text-xs animate-pulse">กำลังโหลด...</p>';
             
             try {
-                const { data, error } = await supabase.from('attendance_logs')
+                const { data, error } = await window.supabaseClient.from('attendance_logs')
                     .select('*').eq('guard_id', currentUser.id).eq('work_date', filterDate).order('check_in_time', { ascending: false });
                 
                 if (error) throw error;
@@ -1181,11 +1181,10 @@
             list.innerHTML = '<p class="text-center text-gray-400 py-4 text-xs animate-pulse">กำลังโหลด...</p>';
             
             try {
-                // สร้างขอบเขตเวลาสำหรับค้นหาในวันนั้น
                 const startOfDay = new Date(`${filterDate}T00:00:00+07:00`).toISOString(); 
                 const endOfDay = new Date(`${filterDate}T23:59:59+07:00`).toISOString();
 
-                const { data, error } = await supabase.from('patrol_logs')
+                const { data, error } = await window.supabaseClient.from('patrol_logs')
                     .select('*, checkpoints(name)')
                     .eq('guard_id', currentUser.id)
                     .gte('scanned_time', startOfDay)
@@ -1397,7 +1396,7 @@
         }
 
         // ==========================================
-        // ควบคุม UI (Tabs) เปลี่ยน History เป็น Report
+        // ควบคุม UI (Tabs) 
         // ==========================================
         const tabs = ['home', 'checkin', 'patrol', 'report', 'rules'];
         window.switchTab = function(activeTab) {
@@ -1563,7 +1562,7 @@
 
                 if (pendingActionType === 'checkin') {
                     if (!isCheckedIn) {
-                        const { data, error } = await supabase.from('attendance_logs')
+                        const { data, error } = await window.supabaseClient.from('attendance_logs')
                             .insert([{ guard_id: currentUser.id, work_date: today, check_in_time: timeStr, check_in_lat_lng: locStr, check_in_photo: pendingBase64Image, shift_type: currentShiftType }])
                             .select('id').single();
                         if (error) throw error;
@@ -1571,7 +1570,7 @@
                         const shiftText = currentShiftType === 'overtime' ? '(ควงกะ)' : '';
                         window.sendTelegramAlert(`✅ ลงเวลาเข้างาน ${shiftText}\nพนักงาน: ${currentUser.full_name}\nเวลา: ${new Date().toLocaleTimeString('th-TH')} น.`, pendingBase64Image);
                     } else {
-                        const { error } = await supabase.from('attendance_logs')
+                        const { error } = await window.supabaseClient.from('attendance_logs')
                             .update({ check_out_time: timeStr, check_out_lat_lng: locStr, check_out_photo: pendingBase64Image })
                             .eq('id', currentAttendanceId);
                         if (error) throw error;
@@ -1579,7 +1578,7 @@
                     }
                     await window.checkAttendanceStatus();
                 } else {
-                    await supabase.from('patrol_logs').insert([{ guard_id: currentUser.id, checkpoint_id: document.getElementById('checkpointSelect').value, gps_location: locStr, photo_url: pendingBase64Image }]);
+                    await window.supabaseClient.from('patrol_logs').insert([{ guard_id: currentUser.id, checkpoint_id: document.getElementById('checkpointSelect').value, gps_location: locStr, photo_url: pendingBase64Image }]);
                     const cpSelect = document.getElementById('checkpointSelect');
                     const cpName = cpSelect.options[cpSelect.selectedIndex].text;
                     window.sendTelegramAlert(`🔦 บันทึกจุดตรวจ\nพนักงาน: ${currentUser.full_name}\nจุดตรวจ: ${cpName}\nเวลา: ${new Date().toLocaleTimeString('th-TH')} น.`, pendingBase64Image);
@@ -1658,7 +1657,7 @@
             actionText.innerHTML = "";
 
             try {
-                await supabase.from('incident_reports').insert([{
+                await window.supabaseClient.from('incident_reports').insert([{
                     guard_id: currentUser.id, incident_type: type, details: details, photo_url: currentReportImageBase64
                 }]);
                 
