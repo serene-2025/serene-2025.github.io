@@ -341,19 +341,32 @@
 
             <!-- แท็บ: เดินตรวจ (Patrol) -->
             <div id="patrolView" class="hidden fade-in">
-                <!-- ส่วนสแกนจุดตรวจ -->
+                <!-- ส่วนสแกนจุดตรวจอัจฉริยะ -->
                 <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 mt-2">
                     <div class="text-center mb-6 mt-2">
                         <h3 class="text-xl font-bold text-gray-800">ระบบเดินตรวจ</h3>
-                        <p class="text-sm text-gray-500">เลือกจุดตรวจและถ่ายภาพรายงาน</p>
+                        <p class="text-sm text-gray-500">บันทึกจุดตรวจโดยการสแกน QR Code</p>
                     </div>
-                    <label class="block text-sm font-semibold text-gray-600 mb-2">จุดตรวจปัจจุบัน</label>
-                    <select id="checkpointSelect" class="w-full border-2 border-gray-100 p-4 rounded-2xl mb-6 bg-slate-50 focus:outline-none focus:ring-4 focus:ring-orange-500/20 focus:border-orange-400 text-md font-bold text-gray-700 shadow-inner appearance-none" onchange="window.handleCheckpointChange()">
-                        <option value="">-- แตะเพื่อเลือกจุดตรวจ --</option>
+
+                    <!-- ปุ่มเปิดสแกน QR LINE -->
+                    <button onclick="window.scanCheckpointQR()" class="w-full bg-slate-800 hover:bg-slate-700 text-white py-4 rounded-2xl font-bold text-lg shadow-lg flex justify-center items-center gap-2 transition active:scale-95 mb-5">
+                        <span class="text-2xl">📱</span> สแกน QR Code ประจำจุด
+                    </button>
+
+                    <div class="relative flex py-2 items-center mb-4">
+                        <div class="flex-grow border-t border-gray-200"></div>
+                        <span class="flex-shrink-0 mx-4 text-gray-400 text-[10px] font-bold uppercase tracking-wider">หรือเลือกด้วยตนเอง (กรณีฉุกเฉิน)</span>
+                        <div class="flex-grow border-t border-gray-200"></div>
+                    </div>
+
+                    <label class="block text-xs font-semibold text-gray-500 mb-1">รายชื่อจุดตรวจ</label>
+                    <select id="checkpointSelect" class="w-full border-2 border-gray-100 p-3.5 rounded-2xl mb-4 bg-slate-50 focus:outline-none focus:ring-4 focus:ring-orange-500/20 focus:border-orange-400 text-sm font-bold text-gray-700 shadow-inner appearance-none" onchange="window.handleCheckpointChange()">
+                        <option value="">-- กรุณาเลือกจุดตรวจ --</option>
                     </select>
+
                     <input type="file" id="patrolCameraInput" accept="image/*" capture="environment" class="hidden" onchange="window.handlePhotoCapture(event, 'patrol')">
-                    <button onclick="window.checkLocationAndCapture('patrol')" class="w-full bg-orange-500 hover:bg-orange-600 text-white py-6 rounded-2xl font-bold text-lg shadow-lg shadow-orange-200 flex flex-col justify-center items-center gap-2 transition active:scale-95">
-                        <span class="text-5xl drop-shadow-md mb-1">🔦</span> ถ่ายรูปบันทึกจุดตรวจ
+                    <button onclick="window.checkLocationAndCapture('patrol')" class="w-full bg-orange-500 hover:bg-orange-600 text-white py-4 rounded-xl font-bold text-sm shadow-md shadow-orange-200 flex justify-center items-center gap-2 transition active:scale-95">
+                        <span class="text-xl">📸</span> ถ่ายรูปบันทึกจุดตรวจ (แบบแมนนวล)
                     </button>
                 </div>
 
@@ -921,7 +934,6 @@
             window.loadAnnouncements(); 
             window.switchTab('home');
             startGPS();
-            // setupRealtimeListener();  (ปิดฟังก์ชัน Voice แจ้งเตือนตามที่ต้องการ)
         }
 
         function getCurrentShift() {
@@ -1043,10 +1055,10 @@
             try {
                 const { data } = await supabase.from('checkpoints').select('*').order('id', { ascending: true });
                 const cpSelect = document.getElementById('checkpointSelect');
-                cpSelect.innerHTML = '<option value="">-- แตะเพื่อเลือกจุดตรวจ --</option>';
+                cpSelect.innerHTML = '<option value="">-- กรุณาเลือกจุดตรวจ --</option>';
                 checkpointsData = {}; 
                 data?.forEach(cp => {
-                    checkpointsData[cp.id] = { lat: cp.lat, lng: cp.lng, radius: cp.radius_meters || 20 };
+                    checkpointsData[cp.id] = { lat: cp.lat, lng: cp.lng, radius: cp.radius_meters || 20, name: cp.name };
                     const opt = document.createElement('option');
                     opt.value = cp.id; opt.text = `📍 ${cp.id} - ${cp.name}`;
                     cpSelect.appendChild(opt);
@@ -1057,6 +1069,47 @@
         window.handleCheckpointChange = function() {
             if(currentLocation) {
                 updateLocationUI({ coords: { latitude: currentLocation.lat, longitude: currentLocation.lng } });
+            }
+        }
+
+        // ==========================================
+        // ระบบสแกน QR Code ผ่าน LIFF (สำหรับจุดตรวจ)
+        // ==========================================
+        window.scanCheckpointQR = async function() {
+            if (!liff.isInClient()) {
+                window.showCustomAlert('แจ้งเตือน', 'ฟังก์ชันสแกน QR Code รองรับเฉพาะการเปิดผ่านแอป LINE เท่านั้น', 'warning');
+                return;
+            }
+            
+            if (!liff.scanCodeV2) {
+                window.showCustomAlert('ข้อผิดพลาด', 'ยังไม่ได้เปิดสิทธิ์ Scan QR ใน LINE Developers\nกรุณาติดต่อแอดมิน', 'error');
+                return;
+            }
+
+            try {
+                const result = await liff.scanCodeV2();
+                if (result && result.value) {
+                    const scannedValue = result.value.trim(); // ควรอ่านค่าได้เช่น "CP001"
+                    
+                    if (checkpointsData[scannedValue]) {
+                        // เลือก Dropdown อัตโนมัติ
+                        document.getElementById('checkpointSelect').value = scannedValue;
+                        window.handleCheckpointChange();
+                        
+                        window.showCustomAlert('สแกนสำเร็จ', `จุดตรวจ: ${checkpointsData[scannedValue].name}\nระบบกำลังตรวจสอบพิกัดและเปิดกล้อง...`, 'success');
+                        
+                        // รอให้ปิด alert แล้วเช็คโลเคชั่น
+                        setTimeout(() => {
+                            window.closeCustomAlert();
+                            window.checkLocationAndCapture('patrol');
+                        }, 2000);
+                        
+                    } else {
+                        window.showCustomAlert('ไม่พบข้อมูล', `รหัส QR Code (${scannedValue}) ไม่มีในระบบจุดตรวจ`, 'error');
+                    }
+                }
+            } catch (err) {
+                console.error('QR Scan Error', err);
             }
         }
 
@@ -1222,6 +1275,7 @@
             try {
                 if (base64Image) {
                     const url = `https://api.telegram.org/bot${botToken}/sendPhoto`;
+                    
                     const byteString = atob(base64Image.split(',')[1]);
                     const mimeString = base64Image.split(',')[0].split(':')[1].split(';')[0];
                     const ab = new ArrayBuffer(byteString.length);
