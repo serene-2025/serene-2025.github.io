@@ -108,26 +108,29 @@
 
     <script>
         // ==========================================
-        // การตั้งค่าระบบ
+        // 🛠️ 1. สวิตช์ตั้งค่าโหมดการทำงาน
         // ==========================================
-        const LIFF_ID = "2009449342-yVPOB6Pb";
-        const SUPABASE_URL = "https://jyfmvreupoywrtexhvzb.supabase.co";
-        // คำเตือน: คีย์นี้คือ service_role key ใช้สำหรับทดสอบได้ แต่อนาคตควรเปลี่ยนเป็น anon key
+        // เปลี่ยนเป็น true เมื่อคุณได้คีย์ของ Supabase และพร้อมบันทึกของจริง
+        const ENABLE_REAL_DATABASE = false; 
+
+        const SUPABASE_URL = "https://jyfmvreupoywrtexhvzb.supabase.co"; 
         const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5Zm12cmV1cG95d3J0ZXhodnpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MTEwNDcsImV4cCI6MjA4ODA4NzA0N30.goym3Cm1cFQu9DFwIbocyN_t5RhrUeNcKfYb0zEiUbE";
         const EDGE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/check-in-handler`;
 
-        let supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        let supabaseClient = null;
+        if (ENABLE_REAL_DATABASE) {
+            supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        }
 
-        // Mock Data รปภ. (ของจริงดึงจาก DB โดยใช้ Line User ID)
         const GUARD_DATA = { id: "001", employeeId: "G-001", name: "สมชาย ใจสู้", phone: "081-123-4567" };
         let currentLat = null;
         let currentLng = null;
         let compressedPhotoBlob = null;
 
         // ==========================================
-        // 1. เริ่มทำงานทันทีเมื่อโหลดหน้าเว็บเสร็จ
+        // 2. เริ่มทำงานทันทีเมื่อโหลดหน้าเว็บเสร็จ
         // ==========================================
-        window.addEventListener('DOMContentLoaded', async () => {
+        window.addEventListener('DOMContentLoaded', () => {
             updateClock();
             setInterval(updateClock, 1000);
             
@@ -135,20 +138,6 @@
             document.getElementById('shift-select').value = (hour >= 7 && hour < 19) ? "1" : "2";
 
             getLocation();
-
-            // เริ่มต้นระบบ LIFF และดึงรูปโปรไฟล์ LINE
-            try {
-                await liff.init({ liffId: LIFF_ID });
-                if (liff.isLoggedIn()) {
-                    const profile = await liff.getProfile();
-                    document.getElementById('profile-img').src = profile.pictureUrl;
-                    document.getElementById('profile-img').classList.remove('hidden');
-                } else {
-                    liff.login();
-                }
-            } catch (err) {
-                console.error('LIFF Init Error:', err);
-            }
         });
 
         function updateClock() {
@@ -180,18 +169,15 @@
         }
 
         // ==========================================
-        // 2. จัดการกล้องและรูปภาพ
+        // 3. จัดการกล้องและรูปภาพ
         // ==========================================
         document.getElementById('camera-input').addEventListener('change', async function(e) {
             const file = e.target.files[0];
             if (!file) return;
 
-            showLoading('กำลังประมวลผลรูปภาพ...');
+            showLoading('กำลังบีบอัดรูปภาพ...');
             try {
-                // บีบอัดรูป
                 compressedPhotoBlob = await compressImage(file, { maxWidth: 800, maxHeight: 800, quality: 0.6 });
-                
-                // แสดงรูปพรีวิว
                 const previewUrl = URL.createObjectURL(compressedPhotoBlob);
                 document.getElementById('photo-preview').src = previewUrl;
                 document.getElementById('preview-container').classList.remove('hidden');
@@ -239,11 +225,10 @@
         }
 
         // ==========================================
-        // 3. ปุ่มกดเข้างาน / ออกงาน (เวอร์ชันทำงานจริง)
+        // 4. กระบวนการหลัก: บันทึกและแชร์
         // ==========================================
         async function processAction(actionType) {
-            // เช็คว่ามี GPS และ รูปถ่าย หรือยัง
-            if (!currentLat || !currentLng) return Swal.fire('แจ้งเตือน', 'รอค้นหาพิกัด GPS สักครู่ หรืออนุญาตให้เว็บเข้าถึงตำแหน่งของคุณ', 'warning');
+            if (!currentLat || !currentLng) return Swal.fire('แจ้งเตือน', 'รอค้นหาพิกัด GPS สักครู่', 'warning');
             if (!compressedPhotoBlob) return Swal.fire('แจ้งเตือน', 'กรุณาถ่ายรูปหน้าป้อมยามเพื่อยืนยัน', 'warning');
 
             const actionName = actionType === 'check_in' ? 'เข้างาน' : 'ออกงาน';
@@ -260,85 +245,102 @@
 
             if (!confirm.isConfirmed) return;
 
-            showLoading(`กำลังอัปโหลดรูปภาพ...`);
+            showLoading(`กำลังบันทึกข้อมูล...`);
+            const shiftName = document.getElementById('shift-select').options[document.getElementById('shift-select').selectedIndex].text;
+            const recordedTime = document.getElementById('current-time').innerText;
 
+            // ------------------------------------------
+            // โหมด 1: จำลองการทำงาน (ไม่ต่อเน็ต)
+            // ------------------------------------------
+            if (!ENABLE_REAL_DATABASE) {
+                setTimeout(() => {
+                    hideLoading();
+                    
+                    // ลองสร้าง JSON ของ Flex Message ให้ดูใน Console
+                    const fakePhotoUrl = "https://via.placeholder.com/600x400.jpg?text=Mock+Photo";
+                    const flexMsg = createFlexMessage(actionName, fakePhotoUrl, GUARD_DATA, shiftName, recordedTime, currentLat, currentLng);
+                    console.log("ตัวอย่างข้อมูลแชร์ LINE:", JSON.stringify(flexMsg));
+
+                    // ถ้าเปิดใน LINE LIFF จริงๆ จะลองแชร์ให้ดู
+                    if (typeof liff !== 'undefined' && liff.isApiAvailable('shareTargetPicker')) {
+                        liff.shareTargetPicker([flexMsg]).then(res => {
+                            if (res) Swal.fire('สำเร็จ', 'แชร์ลงกลุ่มจำลองเรียบร้อย', 'success').then(() => liff.closeWindow());
+                        }).catch(e => console.error(e));
+                    } else {
+                        Swal.fire({
+                            title: 'ทำงานสำเร็จ! (โหมดจำลอง)',
+                            text: 'ระบบข้ามขั้นตอนการอัปโหลดฐานข้อมูล และสร้างรายงานเตรียมแชร์ลง LINE แล้ว',
+                            icon: 'success'
+                        }).then(() => clearPhoto());
+                    }
+                }, 1500);
+                return; // จบการทำงานโหมดจำลองตรงนี้
+            }
+
+            // ------------------------------------------
+            // โหมด 2: ใช้งานจริง (ต่อ Supabase)
+            // ------------------------------------------
             try {
-                // 3.1 อัปโหลดรูปลง Supabase Storage
+                // 1. อัปโหลดรูปภาพ
                 const fileName = `${GUARD_DATA.employeeId}_${Date.now()}.jpg`;
                 const { data: uploadData, error: uploadError } = await supabaseClient.storage
                     .from('attendance_photos')
                     .upload(fileName, compressedPhotoBlob, { contentType: 'image/jpeg' });
 
-                if (uploadError) throw new Error("อัปโหลดรูปไม่สำเร็จ (คุณสร้าง Bucket ชื่อ attendance_photos หรือยัง?): " + uploadError.message);
+                if (uploadError) throw new Error("ไม่สามารถอัปโหลดรูปภาพได้ (เช็ค URL หรือสิทธิ์การเขียน)");
 
-                // 3.2 สร้าง URL รูปภาพ
                 const { data: urlData } = supabaseClient.storage.from('attendance_photos').getPublicUrl(fileName);
                 const photoPublicUrl = urlData.publicUrl;
 
-                showLoading(`กำลังบันทึกข้อมูลลงฐานระบบ...`);
-
-                // 3.3 ส่งข้อมูลไปตรวจสอบที่ Edge Function
+                // 2. ยิง API บันทึกฐานข้อมูล
                 const shiftId = document.getElementById('shift-select').value;
-                const shiftName = document.getElementById('shift-select').options[document.getElementById('shift-select').selectedIndex].text;
-                
+                const payload = { action: actionType, guardId: GUARD_DATA.id, guardName: GUARD_DATA.name, shiftId, lat: currentLat, lng: currentLng, photoUrl: photoPublicUrl };
+
                 const apiResponse = await fetch(EDGE_FUNCTION_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        action: actionType, 
-                        guardId: GUARD_DATA.id, 
-                        guardName: GUARD_DATA.name, 
-                        shiftId: shiftId, 
-                        lat: currentLat, 
-                        lng: currentLng, 
-                        photoUrl: photoPublicUrl 
-                    })
+                    body: JSON.stringify(payload)
                 });
-                
-                const apiData = await apiResponse.json();
-                if (!apiResponse.ok || !apiData.success) {
-                     throw new Error(apiData.message || "เกิดข้อผิดพลาดในการบันทึกพิกัด/เวลา (คุณ Deploy Edge Function หรือยัง?)");
+
+                if (!apiResponse.ok) {
+                    const errData = await apiResponse.json();
+                    throw new Error(errData.message || "เกิดข้อผิดพลาดจากเซิร์ฟเวอร์");
                 }
-                
+
                 hideLoading();
 
-                // 3.4 เตรียมข้อความ Flex Message 
-                const recordedTime = new Date().toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'});
+                // 3. แชร์ลงกลุ่ม LINE
                 const flexMsg = createFlexMessage(actionName, photoPublicUrl, GUARD_DATA, shiftName, recordedTime, currentLat, currentLng);
                 
-                // 3.5 แชร์ลง LINE กลุ่ม
-                if (liff.isApiAvailable('shareTargetPicker')) {
+                if (typeof liff !== 'undefined' && liff.isApiAvailable('shareTargetPicker')) {
                     const shareRes = await liff.shareTargetPicker([flexMsg]);
                     if (shareRes) {
-                        Swal.fire({ title: 'สำเร็จ!', text: 'บันทึกและแชร์ข้อมูลลงกลุ่มเรียบร้อย', icon: 'success' })
-                            .then(() => liff.closeWindow());
-                    } else {
-                        Swal.fire('เตือน', 'คุณยกเลิกการแชร์ ข้อมูลบันทึกสำเร็จแต่ไม่ได้ส่งลงกลุ่ม', 'warning')
-                            .then(() => clearPhoto());
+                        Swal.fire('สำเร็จ!', 'บันทึกและแชร์ข้อมูลลงกลุ่มเรียบร้อย', 'success').then(() => {
+                            clearPhoto();
+                            liff.closeWindow();
+                        });
                     }
                 } else {
-                    // กรณีเปิดผ่านเว็บเบราว์เซอร์ปกติที่ไม่ได้อยู่ในแอป LINE
-                    Swal.fire('สำเร็จ', 'บันทึกข้อมูลเรียบร้อย (ไม่ได้เปิดผ่านแอป LINE จึงแชร์ไม่ได้)', 'success')
-                        .then(() => clearPhoto());
+                    Swal.fire('บันทึกสำเร็จ!', 'ข้อมูลอยู่ในฐานข้อมูลแล้ว', 'success').then(() => clearPhoto());
                 }
 
             } catch (error) {
                 hideLoading();
-                Swal.fire('เกิดข้อผิดพลาด', error.message, 'error');
+                // ดักจับ Error Failed to fetch
+                if (error.message.includes("Failed to fetch") || error.message.includes("NetworkError")) {
+                    Swal.fire('เชื่อมต่อล้มเหลว', 'ไม่สามารถติดต่อฐานข้อมูลได้ (Failed to fetch) กรุณาตรวจสอบลิงก์ Supabase หรืออินเทอร์เน็ตของคุณ', 'error');
+                } else {
+                    Swal.fire('เกิดข้อผิดพลาด', error.message, 'error');
+                }
             }
         }
 
-        // ==========================================
-        // 4. สร้าง JSON Flex Message
-        // ==========================================
         function createFlexMessage(action, photoUrl, guard, shift, time, lat, lng) {
             const actionColor = action === 'เข้างาน' ? '#1DB446' : '#FF3B30';
             return {
-                "type": "flex",
-                "altText": `รายงาน${action}: ${guard.name}`,
+                "type": "flex", "altText": `รายงาน${action}: ${guard.name}`,
                 "contents": {
-                    "type": "bubble",
-                    "hero": { "type": "image", "url": photoUrl, "size": "full", "aspectRatio": "4:3", "aspectMode": "cover" },
+                    "type": "bubble", "hero": { "type": "image", "url": photoUrl, "size": "full", "aspectRatio": "4:3", "aspectMode": "cover" },
                     "body": {
                         "type": "box", "layout": "vertical",
                         "contents": [
@@ -355,23 +357,13 @@
                             ]}
                         ]
                     },
-                    "footer": {
-                        "type": "box", "layout": "vertical", "spacing": "sm",
-                        "contents": [
-                            { "type": "button", "style": "secondary", "height": "sm", "action": { "type": "uri", "label": "📍 ตรวจสอบพิกัด (แผนที่)", "uri": `https://maps.google.com/?q=${lat},${lng}` } }
-                        ]
-                    }
+                    "footer": { "type": "box", "layout": "vertical", "spacing": "sm", "contents": [ { "type": "button", "style": "secondary", "height": "sm", "action": { "type": "uri", "label": "📍 ตรวจสอบพิกัด (แผนที่)", "uri": `https://maps.google.com/?q=${lat},${lng}` } } ] }
                 }
             };
         }
 
-        function showLoading(text) {
-            document.getElementById('loading-text').innerText = text;
-            document.getElementById('loading').classList.remove('hidden');
-        }
-        function hideLoading() {
-            document.getElementById('loading').classList.add('hidden');
-        }
+        function showLoading(text) { document.getElementById('loading-text').innerText = text; document.getElementById('loading').classList.remove('hidden'); }
+        function hideLoading() { document.getElementById('loading').classList.add('hidden'); }
     </script>
 </body>
 </html>
