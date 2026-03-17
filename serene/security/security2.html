@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smart Village Security (Google Sheets)</title>
+    <!-- โหลด Tailwind -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- โหลดไลบรารี html5-qrcode สำหรับสแกน QR -->
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    
+    <style>
+        html { height: -webkit-fill-available; }
+        body { 
+            min-height: 100vh; min-height: -webkit-fill-available; min-height: 100dvh; 
+            overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; 
+        } 
+        .pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 24px); } 
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .bg-animated-gradient {
+            background: linear-gradient(-45deg, #10b981, #3b82f6, #2563eb, #059669);
+            background-size: 400% 400%;
+            animation: gradientMove 8s ease infinite;
+        }
+        @keyframes gradientMove { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #10b981; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        #qr-reader { width: 100%; max-width: 400px; margin: 0 auto; border-radius: 1rem; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
+        #qr-reader__scan_region { background: white; }
+    </style>
+</head>
+<body class="bg-slate-50 text-gray-800 font-sans antialiased h-[100dvh] flex flex-col overflow-hidden relative">
+
+    <!-- Custom Modal แจ้งเตือน -->
+    <div id="customAlertModal" class="hidden fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[200] flex items-center justify-center p-4 fade-in">
+        <div class="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden transform transition-transform duration-300">
+            <div id="customAlertHeader" class="p-6 text-center border-b border-gray-100 bg-gray-50">
+                <span id="customAlertIcon" class="text-5xl block mb-2 drop-shadow-sm">⚠️</span>
+                <h3 id="customAlertTitle" class="text-xl font-black text-gray-800 tracking-wide">แจ้งเตือน</h3>
+            </div>
+            <div class="p-6 text-center bg-white max-h-48 overflow-y-auto">
+                <p id="customAlertMessage" class="text-sm text-gray-600 leading-relaxed whitespace-pre-line"></p>
+            </div>
+            <div class="p-5 bg-gray-50 text-center">
+                <button onclick="closeCustomAlert()" class="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3.5 rounded-xl transition active:scale-95 shadow-md">
+                    ตกลง (OK)
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- หน้าต่าง Splash Screen (Login ด้วยรหัสพนักงาน) -->
+    <div id="splashScreen" class="absolute inset-0 bg-white z-[100] flex flex-col items-center justify-center px-6">
+        <div class="text-center mb-8 w-full max-w-sm">
+            <div class="inline-block bg-emerald-50 p-6 rounded-full mb-6 shadow-inner">
+                <span class="text-6xl drop-shadow-md">🛡️</span>
+            </div>
+            <h1 class="text-2xl font-black text-emerald-700 tracking-wide mb-2">Smart Village</h1>
+            <p class="text-sm text-gray-500 mb-8">เชื่อมต่อกับ Google Sheets</p>
+            
+            <div id="loginForm" class="space-y-4">
+                <div>
+                    <label class="block text-left text-sm font-bold text-gray-700 mb-2">รหัสประจำตัวพนักงาน</label>
+                    <input type="text" id="loginEmpCode" placeholder="เช่น G001" class="w-full border-2 border-slate-200 p-4 rounded-2xl bg-slate-50 focus:outline-none focus:ring-4 focus:ring-emerald-500/20 focus:border-emerald-500 text-center font-bold text-lg uppercase tracking-widest text-slate-700">
+                </div>
+                <button onclick="loginWithEmpCode()" id="loginBtn" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-4 rounded-2xl font-bold text-lg shadow-lg shadow-emerald-500/30 transition-all active:scale-95 flex justify-center items-center gap-2">
+                    เข้าสู่ระบบ <span id="loginSpinner" class="hidden animate-spin">⏳</span>
+                </button>
+            </div>
+
+            <!-- กล่องแสดงสถานะที่หายไป เพิ่มกลับมาให้แล้ว -->
+            <div id="loginStatusSection" class="hidden mt-6">
+                <div class="loader mb-4"></div>
+                <p id="loginStatusText" class="text-sm font-bold text-gray-600 animate-pulse">กำลังเตรียมระบบ...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- คอนเทนเนอร์แอปพลิเคชันหลัก -->
+    <div id="mainAppContainer" class="hidden flex-col h-full w-full">
+        <!-- Header -->
+        <header class="bg-emerald-600 text-white p-4 shadow-md z-50 shrink-0 relative overflow-hidden">
+            <div class="absolute inset-0 bg-white opacity-10 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-white via-transparent to-transparent"></div>
+            <h1 class="text-xl font-bold text-center relative z-10 tracking-wide">Smart Village Security</h1>
+        </header>
+
+        <main class="flex-1 overflow-y-auto w-full max-w-md mx-auto relative px-4 pt-4 pb-32">
+            
+            <!-- [ส่วนกลาง] ข้อมูลผู้ใช้งาน และ GPS -->
+            <div id="globalHeader" class="space-y-3 fade-in hidden">
+                <div class="bg-white p-4 rounded-3xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-gray-100 flex justify-between items-center">
+                    <div class="flex items-center gap-3">
+                        <div class="bg-emerald-100 text-emerald-600 rounded-full w-12 h-12 flex items-center justify-center font-bold text-xl shadow-inner">👮</div>
+                        <div class="text-left">
+                            <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest">ผู้ปฏิบัติงาน</p>
+                            <p class="text-md font-black text-gray-800 tracking-tight" id="currentGuardName">-</p>
+                        </div>
+                    </div>
+                    <div class="flex flex-col items-end">
+                        <div class="bg-gray-100 border border-gray-200 text-gray-500 text-xs font-bold px-3 py-1 rounded-full shadow-sm mb-1" id="shiftBadge">สถานะ...</div>
+                        <div class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md" id="currentShiftText">กะ...</div>
+                    </div>
+                </div>
+
+                <div class="bg-white p-3.5 rounded-3xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-gray-100 flex items-center gap-3">
+                    <div class="bg-slate-50 p-2.5 rounded-2xl shadow-inner">
+                        <span id="gpsIcon" class="text-lg">📍</span>
+                    </div>
+                    <div class="flex-1">
+                        <p id="gpsStatus" class="text-xs text-gray-500 font-medium tracking-wide">กำลังค้นหาตำแหน่ง...</p>
+                        <p id="distanceStatus" class="text-sm text-emerald-600 font-bold mt-0.5"></p>
+                    </div>
+                    <button onclick="refreshGPS()" class="bg-emerald-50 text-emerald-600 p-2.5 rounded-xl hover:bg-emerald-100 transition active:scale-90 border border-emerald-100 shadow-sm flex items-center gap-1">
+                        <span class="text-lg" id="refreshGpsIcon">🔄</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- แท็บ: หน้าแรก (Home View) -->
+            <div id="homeView" class="fade-in space-y-4 mt-2">
+                <div class="bg-animated-gradient p-6 rounded-3xl shadow-lg shadow-emerald-500/20 text-white relative overflow-hidden transform transition-all">
+                    <div class="absolute top-0 right-0 w-40 h-40 bg-white opacity-10 rounded-full blur-2xl -mr-10 -mt-10"></div>
+                    <div class="absolute bottom-0 left-0 w-32 h-32 bg-white opacity-10 rounded-full blur-xl -ml-8 -mb-8"></div>
+                    
+                    <div class="relative z-10 flex justify-between items-start mb-5">
+                        <div>
+                            <p class="text-emerald-100 text-xs font-medium mb-1 drop-shadow-sm">สวัสดี, ยินดีต้อนรับ</p>
+                            <h2 class="text-2xl font-black tracking-tight drop-shadow-md mb-2" id="homeGuardName">คุณ รปภ.</h2>
+                            <div class="flex items-center gap-2 text-[10px] text-emerald-50 bg-black/20 inline-flex px-3 py-1.5 rounded-xl backdrop-blur-md border border-white/10">
+                                <span>รหัส: <b id="homeEmpCode">-</b></span>
+                            </div>
+                        </div>
+                        <div class="bg-white/20 p-2 rounded-2xl backdrop-blur-md shadow-inner border border-white/20 overflow-hidden w-14 h-14 shrink-0 flex justify-center items-center">
+                            <span class="text-3xl drop-shadow-lg">🛡️</span>
+                        </div>
+                    </div>
+                    <div class="relative z-10 pt-4 border-t border-white/20 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xl drop-shadow-sm">🏡</span>
+                            <span class="text-sm font-bold tracking-wide drop-shadow-sm" id="homeProjectName">ระบบรักษาความปลอดภัย</span>
+                        </div>
+                        <span class="text-[10px] bg-black/25 backdrop-blur-sm font-medium px-3 py-1.5 rounded-xl border border-white/10" id="currentDateDisplay">-</span>
+                    </div>
+                </div>
+
+                <!-- เมนูด่วน -->
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
+                    <h3 class="text-sm font-black text-gray-800 mb-4 flex items-center gap-2 tracking-wide">
+                        <span class="bg-emerald-100 text-emerald-600 p-1.5 rounded-lg text-xs">⚡</span> เมนูด่วน (เชื่อม Google Sheets)
+                    </h3>
+                    <div class="grid grid-cols-2 gap-3 text-center">
+                        <button onclick="switchTab('checkin')" class="flex flex-col items-center group bg-slate-50 p-4 rounded-2xl border border-slate-100 active:scale-95 transition">
+                            <div class="text-3xl mb-2">📸</div>
+                            <span class="text-xs font-bold text-gray-600">ลงเวลา</span>
+                        </button>
+                        <button onclick="switchTab('patrol')" class="flex flex-col items-center group bg-slate-50 p-4 rounded-2xl border border-slate-100 active:scale-95 transition">
+                            <div class="text-3xl mb-2">🔦</div>
+                            <span class="text-xs font-bold text-gray-600">เดินตรวจ</span>
+                        </button>
+                        <button onclick="switchTab('report')" class="flex flex-col items-center group bg-red-50 p-4 rounded-2xl border border-red-100 active:scale-95 transition col-span-2">
+                            <div class="text-3xl mb-2">🚨</div>
+                            <span class="text-xs font-bold text-red-600">แจ้งเหตุฉุกเฉิน</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- แท็บ: ลงเวลา (Check-in) -->
+            <div id="checkinView" class="hidden fade-in">
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 mt-2">
+                    <div class="text-center mb-6 mt-2">
+                        <h3 class="text-xl font-bold text-gray-800">ลงเวลาปฏิบัติงาน</h3>
+                        <p class="text-sm text-gray-500">ข้อมูลและรูปจะถูกบันทึกลง Google Sheets</p>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <label class="block text-sm font-bold text-gray-700 mb-3">ประเภทการเข้างาน:</label>
+                        <div class="flex gap-4">
+                            <label class="flex items-center gap-2 cursor-pointer bg-gray-50 px-4 py-2 rounded-xl border border-gray-200 flex-1">
+                                <input type="radio" name="shiftType" value="ปกติ" checked class="w-4 h-4 text-emerald-600 focus:ring-emerald-500 border-gray-300">
+                                <span class="text-sm text-gray-800 font-bold">กะปกติ</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer bg-emerald-50 px-4 py-2 rounded-xl border border-emerald-100 flex-1">
+                                <input type="radio" name="shiftType" value="ควงกะ (OT)" class="w-4 h-4 text-emerald-600 focus:ring-emerald-500 border-gray-300">
+                                <span class="text-sm text-emerald-700 font-bold">ควงกะ (OT)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <input type="file" id="cameraInput" accept="image/*" capture="user" class="hidden" onchange="handlePhotoCapture(event, 'checkin')">
+                    <button onclick="checkLocationAndCapture('checkin')" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white py-6 rounded-2xl font-bold text-lg shadow-lg shadow-emerald-200 flex flex-col justify-center items-center gap-2 transition active:scale-95">
+                        <span class="text-5xl drop-shadow-md mb-1">📸</span> ถ่ายรูปเช็คอินเข้างาน
+                    </button>
+                    
+                    <button onclick="checkLocationAndCapture('checkout')" class="w-full bg-red-500 hover:bg-red-600 text-white py-6 rounded-2xl font-bold text-lg shadow-lg shadow-red-200 flex flex-col justify-center items-center gap-2 transition active:scale-95 mt-4">
+                        <span class="text-5xl drop-shadow-md mb-1">🚪</span> ถ่ายรูปเช็คเอาท์ออกงาน
+                    </button>
+                </div>
+            </div>
+
+            <!-- แท็บ: เดินตรวจ (Patrol) -->
+            <div id="patrolView" class="hidden fade-in">
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 mt-2 relative">
+                    <div class="text-center mb-6 mt-2">
+                        <h3 class="text-xl font-bold text-gray-800">ระบบเดินตรวจ</h3>
+                        <p class="text-sm text-gray-500">สแกน QR Code ประจำจุดตรวจ</p>
+                    </div>
+
+                    <div id="qrScannerContainer" class="hidden mb-6">
+                        <div id="qr-reader" class="mx-auto border-4 border-orange-200 rounded-2xl overflow-hidden shadow-inner"></div>
+                        <button onclick="stopQRScanner()" class="mt-3 w-full bg-slate-200 hover:bg-slate-300 text-slate-700 py-3 rounded-xl font-bold text-sm transition">
+                            ยกเลิกการสแกน
+                        </button>
+                    </div>
+
+                    <button id="startScanBtn" onclick="startQRScanner()" class="w-full bg-slate-800 hover:bg-slate-700 text-white py-6 rounded-2xl font-bold text-lg shadow-lg flex flex-col justify-center items-center gap-2 transition active:scale-95 mb-4">
+                        <span class="text-4xl drop-shadow-md mb-1">📱</span> เปิดกล้องสแกน QR
+                    </button>
+
+                    <div id="scanSuccessData" class="hidden bg-orange-50 border border-orange-200 rounded-2xl p-4 text-center mb-4 fade-in">
+                        <p class="text-xs text-orange-600 font-bold uppercase tracking-widest mb-1">จุดตรวจที่เลือก</p>
+                        <p id="scannedCheckpointName" class="text-xl font-black text-orange-800 mb-3">-</p>
+                        
+                        <button onclick="checkLocationAndCapture('patrol')" class="w-full bg-orange-500 hover:bg-orange-600 text-white py-4 rounded-xl font-bold text-lg shadow-md shadow-orange-200 flex justify-center items-center gap-2 transition active:scale-95">
+                            <span class="text-2xl">📸</span> ถ่ายรูปบันทึกจุดตรวจ
+                        </button>
+                    </div>
+
+                    <div id="patrolScanStatus" class="bg-orange-50 border border-orange-100 rounded-xl p-4 text-center mt-4">
+                        <p class="text-sm text-orange-700 font-bold mb-1">⚠️ คำแนะนำ</p>
+                        <p class="text-xs text-orange-600 mb-3">กดปุ่มสแกน QR Code ประจำจุด หรือ หากสแกนไม่ได้ สามารถเลือกจุดตรวจแบบแมนนวลได้ด้านล่าง</p>
+                        <button onclick="showManualDropdown()" class="text-xs font-bold text-orange-700 underline px-2 py-1">เลือกจุดตรวจเอง (กรณีฉุกเฉิน)</button>
+                    </div>
+
+                    <div id="manualDropdownContainer" class="hidden mt-4 p-4 bg-gray-50 rounded-xl border border-gray-200 fade-in">
+                        <label class="block text-xs font-semibold text-gray-500 mb-1">รายชื่อจุดตรวจ</label>
+                        <select id="checkpointSelect" class="w-full border-2 border-gray-200 p-3 rounded-xl mb-3 bg-white focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm font-bold text-gray-700 appearance-none" onchange="handleManualSelection()">
+                            <option value="">-- กรุณาเลือกจุดตรวจ --</option>
+                            <option value="CP001">CP001 - ทางเข้าหลัก</option>
+                            <option value="CP002">CP002 - คลับเฮ้าส์</option>
+                            <option value="CP003">CP003 - สวนสาธารณะ</option>
+                            <option value="CP004">CP004 - ท้ายซอย 5</option>
+                        </select>
+                        <button onclick="document.getElementById('manualDropdownContainer').classList.add('hidden')" class="text-[10px] text-gray-400 underline block text-center w-full">ซ่อน</button>
+                    </div>
+                    
+                    <input type="file" id="patrolCameraInput" accept="image/*" capture="environment" class="hidden" onchange="handlePhotoCapture(event, 'patrol')">
+                </div>
+            </div>
+
+            <!-- แท็บ: แจ้งเหตุ (Report) -->
+            <div id="reportView" class="hidden bg-white p-5 rounded-3xl shadow-sm border border-red-100 mt-2 fade-in">
+                <div class="flex justify-between items-center mb-4 border-b border-gray-100 pb-3">
+                    <h3 class="text-xl font-black text-red-700 flex items-center gap-2"><span class="text-2xl">🚨</span> แจ้งเหตุฉุกเฉิน</h3>
+                    <button onclick="switchTab('home')" class="text-gray-400 hover:text-gray-600 bg-gray-100 px-3 py-1 rounded-full text-xs font-bold">✖️ ปิด</button>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">ประเภทเหตุการณ์ <span class="text-red-500">*</span></label>
+                        <select id="reportType" class="w-full border-2 border-gray-100 p-3.5 rounded-2xl bg-slate-50 focus:outline-none focus:ring-4 focus:ring-red-500/20 text-sm font-bold text-gray-700 appearance-none">
+                            <option value="">-- เลือกประเภทเหตุ --</option>
+                            <option value="อุบัติเหตุ/รถชน">💥 อุบัติเหตุ / รถชน</option>
+                            <option value="ทรัพย์สินเสียหาย">🚧 ทรัพย์สินเสียหาย</option>
+                            <option value="บุคคลต้องสงสัย">🥷 บุคคลต้องสงสัย</option>
+                            <option value="เหตุเพลิงไหม้">🔥 เหตุเพลิงไหม้</option>
+                            <option value="อื่นๆ">📝 อื่นๆ (โปรดระบุ)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">รายละเอียด <span class="text-red-500">*</span></label>
+                        <textarea id="reportDetail" rows="3" class="w-full border-2 border-gray-100 p-3.5 rounded-2xl bg-slate-50 focus:outline-none focus:ring-4 focus:ring-red-500/20 text-sm text-gray-700 resize-none" placeholder="ระบุรายละเอียดเหตุการณ์..."></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">ภาพประกอบ</label>
+                        <input type="file" id="reportCameraInput" accept="image/*" capture="environment" class="hidden" onchange="handleReportPhoto(event)">
+                        <div id="reportPhotoPreviewContainer" class="hidden relative mb-2">
+                            <img id="reportPhotoPreview" src="" class="w-full h-48 object-cover rounded-2xl border-2 border-slate-200">
+                            <button onclick="removeReportPhoto()" class="absolute top-3 right-3 bg-red-500 text-white rounded-full p-2 text-xs">❌ ลบรูป</button>
+                        </div>
+                        <button onclick="document.getElementById('reportCameraInput').click()" id="reportPhotoBtn" class="w-full bg-slate-50 hover:bg-slate-100 text-slate-600 py-4 rounded-2xl font-bold text-sm border-2 border-dashed border-slate-300 flex justify-center items-center gap-2 active:scale-95">
+                            <span class="text-xl">📸</span> ถ่ายภาพสถานที่เกิดเหตุ
+                        </button>
+                    </div>
+                    <button onclick="submitReportToGAS()" class="w-full bg-gradient-to-r from-red-600 to-red-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg shadow-red-200 mt-2 active:scale-95 flex justify-center items-center gap-2">
+                        ส่งรายงานเข้าระบบ 🚀
+                    </button>
+                </div>
+            </div>
+
+            <!-- กล่องแสดงผลลัพธ์ตอนประมวลผล (Preview) -->
+            <div id="previewSection" class="hidden bg-slate-900 text-white p-5 rounded-3xl shadow-xl mt-4 fade-in border border-slate-700">
+                <div id="previewHeader" class="flex items-center gap-2 mb-4 hidden">
+                    <span class="text-yellow-400 text-2xl animate-spin" id="loadingIcon">⏳</span>
+                    <h4 class="text-lg font-bold text-white tracking-wide" id="loadingText">กำลังประมวลผล...</h4>
+                </div>
+                
+                <div id="imageConfirmContainer" class="hidden">
+                    <h4 class="text-lg font-bold text-white tracking-wide mb-2 text-center" id="confirmTitle">ตรวจสอบข้อมูลก่อนบันทึก</h4>
+                    <img id="imagePreview" src="" class="w-full h-auto rounded-2xl border-2 border-slate-600 mb-4 object-cover max-h-64 shadow-lg">
+                    <div id="actionResultText" class="text-sm text-gray-300 bg-slate-800 p-4 rounded-2xl leading-relaxed border border-slate-700 mb-4"></div>
+                    
+                    <div class="flex gap-2">
+                        <button id="retakeBtn" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-xl font-bold transition">ถ่ายใหม่</button>
+                        <button id="confirmSaveBtn" class="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white py-3 rounded-xl font-bold shadow-lg transition">ยืนยันส่งเข้า Sheets</button>
+                    </div>
+                </div>
+
+                <div id="savingContainer" class="hidden flex-col items-center justify-center py-4">
+                    <div class="loader mb-3"></div>
+                    <p class="text-emerald-400 font-bold mt-3">กำลังส่งข้อมูลและอัปโหลดรูปภาพ...</p>
+                </div>
+                
+                <div id="successContainer" class="hidden text-center py-4">
+                    <span class="text-5xl block mb-2">✅</span>
+                    <p class="text-emerald-400 font-bold text-lg">บันทึกสำเร็จ!</p>
+                    <p class="text-sm text-gray-400 mt-1">ข้อมูลถูกอัปเดตลง Google Sheets เรียบร้อยแล้ว</p>
+                    <button onclick="closePreviewAndRefresh()" class="mt-4 bg-slate-800 hover:bg-slate-700 text-white px-8 py-3 rounded-xl font-bold border border-slate-600 transition active:scale-95">ปิดหน้าต่าง</button>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- แถบเมนูด้านล่าง -->
+        <nav id="bottomNav" class="bg-white fixed bottom-0 w-full max-w-md left-1/2 transform -translate-x-1/2 flex justify-between items-center pb-safe pt-2 z-50 shadow-[0_-15px_30px_-5px_rgba(0,0,0,0.05)] border-t border-slate-100 px-2 hidden">
+            <button onclick="switchTab('checkin')" id="tabBtnCheckin" class="flex-1 py-3 flex flex-col items-center transition text-gray-400"><span id="iconCheckin" class="text-2xl mb-1 filter grayscale opacity-50">⏱️</span><span id="textCheckin" class="text-[10px] font-bold">ลงเวลา</span></button>
+            <button onclick="switchTab('patrol')" id="tabBtnPatrol" class="flex-1 py-3 flex flex-col items-center transition text-gray-400"><span id="iconPatrol" class="text-2xl mb-1 filter grayscale opacity-50">🔦</span><span id="textPatrol" class="text-[10px] font-bold">เดินตรวจ</span></button>
+            <button onclick="switchTab('home')" id="tabBtnHome" class="flex-1 py-2 flex flex-col items-center justify-center transition">
+                <div id="iconHomeBg" class="bg-gradient-to-br from-emerald-500 to-emerald-700 w-14 h-11 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-200 text-white"><span id="iconHome" class="text-2xl">🏠</span></div>
+                <span id="textHome" class="text-[10px] font-black text-emerald-700 mt-1.5">หน้าแรก</span>
+            </button>
+            <button onclick="switchTab('report')" id="tabBtnReport" class="flex-1 py-3 flex flex-col items-center transition text-gray-400"><span id="iconReport" class="text-2xl mb-1 filter grayscale opacity-50">🚨</span><span id="textReport" class="text-[10px] font-bold">แจ้งเหตุ</span></button>
+        </nav>
+    </div>
+
+    <!-- โค้ดควบคุมระบบ (Vanilla JS) สำหรับเชื่อมกับ Google Apps Script -->
+    <script>
+        // ==========================================
+        // 🌟 1. ตั้งค่า URL ของ Google Apps Script API (Web App URL)
+        // ==========================================
+        // ⚠️ ต้องนำ URL ที่ได้จากการ Deploy ของ Google Apps Script มาใส่ตรงนี้
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbz1ctr0sNGYnTgAnrkJLQZsjnuBQca3X-3Oa6K4WhAaUvBywo9whz6JTXvl7ajkXOrY/exec"; 
+
+        // ==========================================
+        // ตัวแปรระบบ
+        // ==========================================
+        let currentUser = null;
+        let currentLocation = null;
+        let guardHouseLocation = { lat: 12.981353, lng: 101.143047 }; 
+        let ALLOWED_RADIUS = 50;
+        
+        let pendingActionType = null;
+        let pendingBase64Image = null;
+        let currentReportImageBase64 = null;
+        
+        let html5QrcodeScanner = null;
+
+        // Modal Alert Helper
+        function showCustomAlert(title, message, type = 'warning') {
+            const modal = document.getElementById('customAlertModal');
+            document.getElementById('customAlertTitle').innerText = title;
+            document.getElementById('customAlertMessage').innerText = message;
+            const iconEl = document.getElementById('customAlertIcon');
+
+            if (type === 'error') {
+                iconEl.innerText = '⛔'; document.getElementById('customAlertTitle').className = 'text-xl font-black text-red-600';
+            } else if (type === 'success') {
+                iconEl.innerText = '✅'; document.getElementById('customAlertTitle').className = 'text-xl font-black text-green-600';
+            } else {
+                iconEl.innerText = '⚠️'; document.getElementById('customAlertTitle').className = 'text-xl font-black text-orange-500';
+            }
+            modal.classList.remove('hidden');
+        }
+        function closeCustomAlert() { document.getElementById('customAlertModal').classList.add('hidden'); }
+
+        // ==========================================
+        // ฟังก์ชันช่วยเหลือสำหรับเรียก API ไปที่ Google Apps Script
+        // ==========================================
+        async function callGasApi(payload) {
+            if (!GAS_URL || GAS_URL.includes('ใส่_URL')) {
+                throw new Error("ยังไม่ได้นำลิงก์จาก Google Apps Script มาใส่ในโค้ด HTML");
+            }
+            
+            // ต้องส่งข้อมูลแบบ text/plain ใน body เพื่อหลีกเลี่ยงปัญหา CORS preflight (OPTIONS request) ใน GAS
+            const response = await fetch(GAS_URL, {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                headers: {
+                    'Content-Type': 'text/plain;charset=utf-8',
+                }
+            });
+            return await response.json();
+        }
+
+        // ==========================================
+        // Initialize App
+        // ==========================================
+        document.addEventListener("DOMContentLoaded", () => {
+            const now = new Date();
+            const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+            document.getElementById('currentDateDisplay').innerText = `${now.getDate()} ${thaiMonths[now.getMonth()]} ${now.getFullYear() + 543}`;
+        });
+
+        // ==========================================
+        // การเข้าสู่ระบบด้วยรหัส (Login) -> เช็คผ่าน GAS
+        // ==========================================
+        async function loginWithEmpCode() {
+            const empCodeInput = document.getElementById('loginEmpCode').value.trim().toUpperCase();
+            if (!empCodeInput) return showCustomAlert('แจ้งเตือน', 'กรุณากรอกรหัสประจำตัวพนักงาน', 'warning');
+            
+            document.getElementById('loginSpinner').classList.remove('hidden');
+            document.getElementById('loginBtn').disabled = true;
+
+            try {
+                // เรียก GAS API (action: login)
+                const result = await callGasApi({
+                    action: 'login',
+                    emp_code: empCodeInput
+                });
+
+                if (result.success && result.data) {
+                    currentUser = result.data;
+                    
+                    if(document.getElementById('loginStatusSection')) {
+                        document.getElementById('loginStatusSection').classList.remove('hidden');
+                        document.getElementById('loginStatusText').innerText = "กำลังดึงข้อมูลพิกัดและจุดตรวจ...";
+                    }
+                    
+                    // 🌟 ดึงข้อมูล Settings และ Checkpoints จาก Google Sheets
+                    const configResult = await callGasApi({ action: 'getConfig' });
+                    if (configResult.success) {
+                        guardHouseLocation = { lat: configResult.settings.lat, lng: configResult.settings.lng };
+                        ALLOWED_RADIUS = configResult.settings.radius;
+                        if(document.getElementById('homeProjectName')) {
+                            document.getElementById('homeProjectName').innerText = configResult.settings.name;
+                        }
+                        
+                        // สร้าง Dropdown จุดตรวจจาก Google Sheets
+                        checkpointsData = {};
+                        const cpSelect = document.getElementById('checkpointSelect');
+                        if (cpSelect) {
+                            cpSelect.innerHTML = '<option value="">-- กรุณาเลือกจุดตรวจ --</option>';
+                            configResult.checkpoints.forEach(cp => {
+                                checkpointsData[cp.id] = { lat: cp.lat, lng: cp.lng, radius: cp.radius, name: cp.name };
+                                const opt = document.createElement('option');
+                                opt.value = cp.id; opt.text = `📍 ${cp.name}`;
+                                cpSelect.appendChild(opt);
+                            });
+                        }
+                    }
+
+                    document.getElementById('splashScreen').classList.add('fade-out');
+                    setTimeout(() => {
+                        document.getElementById('splashScreen').classList.add('hidden');
+                        launchApp();
+                    }, 400);
+                } else {
+                    throw new Error(result.error || "ไม่พบข้อมูล รปภ. รหัสนีในระบบ");
+                }
+            } catch (err) {
+                console.error(err);
+                // 💡 Fallback สำหรับใช้ทดสอบกรณีไม่ได้ใส่ GAS URL
+                if (err.message.includes("ยังไม่ได้นำลิงก์")) {
+                    currentUser = { emp_code: empCodeInput, full_name: "พนักงานทดสอบ " + empCodeInput };
+                    document.getElementById('splashScreen').classList.add('hidden');
+                    launchApp();
+                    showCustomAlert("โหมดทดสอบ", "คุณกำลังใช้งานในโหมดทดสอบ (ยังไม่ได้เชื่อม Google Sheets)", "success");
+                } else {
+                    showCustomAlert('เข้าสู่ระบบล้มเหลว', err.message, 'error');
+                }
+            } finally {
+                document.getElementById('loginSpinner').classList.add('hidden');
+                document.getElementById('loginBtn').disabled = false;
+            }
+        }
+
+        function launchApp() {
+            document.getElementById('homeGuardName').innerText = `คุณ ${currentUser.full_name}`;
+            document.getElementById('currentGuardName').innerText = currentUser.full_name;
+            document.getElementById('homeEmpCode').innerText = currentUser.emp_code;
+
+            document.getElementById('mainAppContainer').classList.remove('hidden');
+            document.getElementById('mainAppContainer').classList.add('flex');
+            document.getElementById('bottomNav').classList.remove('hidden');
+            
+            switchTab('home');
+            startGPS();
+        }
+
+        function getCurrentShift() {
+            const hours = new Date().getHours();
+            return (hours >= 7 && hours < 19) ? "กะเช้า" : "กะดึก";
+        }
+
+        // ==========================================
+        // UI Navigation Logic
+        // ==========================================
+        window.switchTab = function(activeTab) {
+            document.getElementById('previewSection').classList.add('hidden');
+            if(html5QrcodeScanner) window.stopQRScanner();
+            
+            const globalHeader = document.getElementById('globalHeader');
+            if (activeTab === 'home') { globalHeader.classList.add('hidden'); } else { globalHeader.classList.remove('hidden'); }
+
+            const tabs = ['home', 'checkin', 'patrol', 'report'];
+            tabs.forEach(tab => {
+                const view = document.getElementById(tab + 'View');
+                if(view) view.classList.toggle('hidden', tab !== activeTab);
+                
+                const capitalized = tab.charAt(0).toUpperCase() + tab.slice(1);
+                const btn = document.getElementById('tabBtn' + capitalized);
+                const icon = document.getElementById('icon' + capitalized);
+                const text = document.getElementById('text' + capitalized);
+                
+                if(btn && icon) {
+                    if(tab === activeTab) {
+                        if(tab === 'home') {
+                            document.getElementById('iconHomeBg').className = "bg-gradient-to-br from-emerald-500 to-emerald-700 w-14 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all text-white scale-110 -translate-y-1";
+                        } else {
+                            if(document.getElementById('iconHomeBg')) document.getElementById('iconHomeBg').className = "bg-slate-100 border border-slate-200 w-12 h-10 rounded-xl flex items-center justify-center transition-all text-emerald-400";
+                            btn.className = `flex-1 py-3 flex flex-col items-center transition text-emerald-600`;
+                            icon.className = `text-2xl mb-1 filter-none opacity-100 scale-110 drop-shadow-sm`;
+                        }
+                    } else {
+                        if(tab !== 'home') {
+                            btn.className = `flex-1 py-3 flex flex-col items-center transition text-gray-400`;
+                            icon.className = `text-2xl mb-1 filter grayscale opacity-40`;
+                        }
+                    }
+                }
+            });
+            
+            document.getElementById('currentShiftText').innerText = getCurrentShift();
+        }
+
+        // ==========================================
+        // ระบบ GPS เบื้องต้น
+        // ==========================================
+        function startGPS() {
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(
+                    (position) => {
+                        currentLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
+                        document.getElementById('gpsStatus').innerText = `${currentLocation.lat.toFixed(5)}, ${currentLocation.lng.toFixed(5)}`;
+                        document.getElementById('gpsIcon').innerText = "🟢";
+                    },
+                    (error) => {
+                        document.getElementById('gpsStatus').innerText = "ไม่สามารถดึง GPS ได้"; document.getElementById('gpsIcon').innerText = "❌";
+                    }, { enableHighAccuracy: true }
+                );
+            }
+        }
+        window.refreshGPS = startGPS;
+
+        // ==========================================
+        // ระบบกล้อง QR Code
+        // ==========================================
+        window.startQRScanner = function() {
+            document.getElementById('qrScannerContainer').classList.remove('hidden');
+            document.getElementById('startScanBtn').classList.add('hidden');
+            document.getElementById('patrolScanStatus').classList.add('hidden');
+            document.getElementById('scanSuccessData').classList.add('hidden');
+            document.getElementById('manualDropdownContainer').classList.add('hidden');
+
+            if (!html5QrcodeScanner) html5QrcodeScanner = new Html5Qrcode("qr-reader");
+            
+            html5QrcodeScanner.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } }, 
+                (decodedText) => {
+                    window.stopQRScanner();
+                    const val = decodedText.trim();
+                    document.getElementById('scannedCheckpointName').innerText = `📍 จุดสแกนรหัส: ${val}`;
+                    // จำลองเลือกค่าลง dropdown (ถึงแม้ไม่มีใน option ก็บังคับใส่)
+                    const sel = document.getElementById('checkpointSelect');
+                    if(!Array.from(sel.options).some(o => o.value === val)){
+                        const opt = document.createElement('option'); opt.value = val; opt.text = val; sel.appendChild(opt);
+                    }
+                    sel.value = val;
+                    document.getElementById('scanSuccessData').classList.remove('hidden');
+                    if (navigator.vibrate) navigator.vibrate(200);
+                }, 
+                (err) => {}
+            ).catch(err => {
+                showCustomAlert("กล้องขัดข้อง", "โปรดอนุญาตการเข้าถึงกล้อง", "error");
+                window.stopQRScanner();
+                window.showManualDropdown();
+            });
+        }
+        window.stopQRScanner = function() {
+            if (html5QrcodeScanner) {
+                html5QrcodeScanner.stop().then(() => { html5QrcodeScanner.clear(); html5QrcodeScanner = null; 
+                    document.getElementById('qrScannerContainer').classList.add('hidden');
+                    document.getElementById('startScanBtn').classList.remove('hidden');
+                    document.getElementById('patrolScanStatus').classList.remove('hidden');
+                }).catch(e => html5QrcodeScanner = null);
+            }
+        }
+        window.showManualDropdown = function() {
+            document.getElementById('manualDropdownContainer').classList.remove('hidden');
+            document.getElementById('patrolScanStatus').classList.add('hidden');
+        }
+        window.handleManualSelection = function() {
+            const val = document.getElementById('checkpointSelect').value;
+            if(val) {
+                document.getElementById('scannedCheckpointName').innerText = `📍 จุดตรวจ: ${document.getElementById('checkpointSelect').options[document.getElementById('checkpointSelect').selectedIndex].text}`;
+                document.getElementById('scanSuccessData').classList.remove('hidden');
+            } else { document.getElementById('scanSuccessData').classList.add('hidden'); }
+        }
+
+        // ==========================================
+        // การถ่ายรูป & ส่งไป GAS
+        // ==========================================
+        window.checkLocationAndCapture = function(actionType) {
+            if (!currentLocation) return showCustomAlert('รอพิกัด GPS', 'กรุณารอระบบค้นหาพิกัด GPS', 'warning');
+            if (actionType === 'patrol' && !document.getElementById('checkpointSelect').value) return showCustomAlert('แจ้งเตือน', 'กรุณาเลือกจุดตรวจ', 'warning');
+            
+            document.getElementById(actionType === 'patrol' ? 'patrolCameraInput' : 'cameraInput').click();
+            
+            // แอบเก็บว่าเป็นการเช็คอินแบบไหน (เข้า/ออก) ถ้ามาจากปุ่ม checkin
+            if(actionType === 'checkin' || actionType === 'checkout') pendingActionType = actionType;
+            if(actionType === 'patrol') pendingActionType = 'patrol';
+        }
+
+        window.handlePhotoCapture = function(event, inputType) {
+            const file = event.target.files[0]; if (!file) return;
+            
+            document.getElementById('previewSection').classList.remove('hidden');
+            document.getElementById('previewSection').scrollIntoView({ behavior: 'smooth' });
+            document.getElementById('previewHeader').classList.add('hidden');
+            document.getElementById('imageConfirmContainer').classList.add('hidden');
+            document.getElementById('savingContainer').classList.remove('hidden');
+            document.getElementById('successContainer').classList.add('hidden');
+
+            const reader = new FileReader();
+            reader.onload = e => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas'); let w = img.width, h = img.height, MAX = 600; // บีบเล็กหน่อยให้ส่ง API เร็ว
+                    if (w > h && w > MAX) { h *= MAX / w; w = MAX; } else if (h > MAX) { w *= MAX / h; h = MAX; }
+                    canvas.width = w; canvas.height = h; canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    
+                    pendingBase64Image = canvas.toDataURL('image/jpeg', 0.6); // 60% quality
+                    
+                    let actionLabel = "";
+                    if (pendingActionType === 'checkin') actionLabel = "บันทึกเวลา เข้างาน";
+                    else if (pendingActionType === 'checkout') actionLabel = "บันทึกเวลา ออกงาน";
+                    else {
+                        const sel = document.getElementById('checkpointSelect');
+                        actionLabel = "บันทึกจุดตรวจ " + (sel.options[sel.selectedIndex]?.text || "");
+                    }
+
+                    document.getElementById('savingContainer').classList.add('hidden');
+                    document.getElementById('imagePreview').src = pendingBase64Image; 
+                    document.getElementById('actionResultText').innerHTML = `<p><span class="text-gray-400">รายการ:</span> <span class="text-white font-bold">${actionLabel}</span></p>`;
+                    document.getElementById('imageConfirmContainer').classList.remove('hidden');
+                }
+                img.src = e.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+
+        // ยืนยันการส่งข้อมูล
+        document.getElementById('retakeBtn').onclick = () => {
+            document.getElementById('previewSection').classList.add('hidden');
+            if (pendingActionType === 'patrol') document.getElementById('patrolCameraInput').click();
+            else document.getElementById('cameraInput').click();
+        };
+
+        document.getElementById('confirmSaveBtn').onclick = async () => {
+            document.getElementById('imageConfirmContainer').classList.add('hidden');
+            document.getElementById('savingContainer').classList.remove('hidden');
+
+            const locStr = `${currentLocation.lat},${currentLocation.lng}`;
+            let payload = {
+                guard_id: currentUser.emp_code,
+                guard_name: currentUser.full_name,
+                lat_lng: locStr,
+                base64_image: pendingBase64Image.split(',')[1] // ตัด Header Data:image/jpeg;base64, ออกเพื่อให้ GAS รับง่ายๆ
+            };
+
+            if (pendingActionType === 'checkin' || pendingActionType === 'checkout') {
+                payload.action = 'attendance';
+                payload.type = pendingActionType; // 'checkin' or 'checkout'
+                payload.shift = document.querySelector('input[name="shiftType"]:checked').value;
+            } else if (pendingActionType === 'patrol') {
+                payload.action = 'patrol';
+                payload.checkpoint = document.getElementById('checkpointSelect').value;
+            }
+
+            try {
+                // เรียก GAS
+                const result = await callGasApi(payload);
+                if (result.success) {
+                    document.getElementById('savingContainer').classList.add('hidden');
+                    document.getElementById('successContainer').classList.remove('hidden');
+                } else {
+                    throw new Error(result.error || "เกิดข้อผิดพลาดไม่ทราบสาเหตุ");
+                }
+            } catch (err) {
+                document.getElementById('savingContainer').classList.add('hidden');
+                document.getElementById('imageConfirmContainer').classList.remove('hidden');
+                if(err.message.includes('ยังไม่ได้นำลิงก์')) {
+                    // Mock Success Mode
+                    setTimeout(() => {
+                        document.getElementById('savingContainer').classList.add('hidden');
+                        document.getElementById('successContainer').classList.remove('hidden');
+                    }, 1000);
+                } else {
+                    showCustomAlert('บันทึกไม่สำเร็จ', err.message, 'error');
+                }
+            }
+        };
+
+        window.closePreviewAndRefresh = function() {
+            document.getElementById('previewSection').classList.add('hidden');
+            document.getElementById('scanSuccessData').classList.add('hidden');
+            document.getElementById('startScanBtn').classList.remove('hidden');
+            window.scrollTo({top: 0, behavior: 'smooth'});
+        }
+
+        // ==========================================
+        // แจ้งเหตุฉุกเฉิน (Report)
+        // ==========================================
+        window.handleReportPhoto = function(event) {
+            const file = event.target.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas'); 
+                    let w = img.width, h = img.height, MAX = 600; 
+                    if (w > h && w > MAX) { h *= MAX / w; w = MAX; } else if (h > MAX) { w *= MAX / h; h = MAX; }
+                    canvas.width = w; canvas.height = h; canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    currentReportImageBase64 = canvas.toDataURL('image/jpeg', 0.6);
+                    document.getElementById('reportPhotoPreview').src = currentReportImageBase64;
+                    document.getElementById('reportPhotoPreviewContainer').classList.remove('hidden');
+                    document.getElementById('reportPhotoBtn').classList.add('hidden');
+                }
+                img.src = e.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+        
+        window.removeReportPhoto = function() {
+            currentReportImageBase64 = null;
+            document.getElementById('reportPhotoPreviewContainer').classList.add('hidden');
+            document.getElementById('reportPhotoBtn').classList.remove('hidden');
+        }
+
+        window.submitReportToGAS = async function() {
+            const type = document.getElementById('reportType').value;
+            const details = document.getElementById('reportDetail').value;
+            if (!type || !details.trim()) return showCustomAlert('ข้อมูลไม่ครบ', 'กรุณาระบุรายละเอียด', 'warning');
+            
+            switchTab('home'); 
+            const preview = document.getElementById('previewSection');
+            preview.classList.remove('hidden'); preview.scrollIntoView({ behavior: 'smooth' });
+            
+            document.getElementById('imageConfirmContainer').classList.add('hidden');
+            document.getElementById('successContainer').classList.add('hidden');
+            document.getElementById('previewHeader').classList.remove('hidden');
+            document.getElementById('loadingIcon').innerText = "🚨"; document.getElementById('loadingText').innerText = "กำลังส่งสัญญาณฉุกเฉินไปที่ Sheets...";
+            
+            let base64Data = currentReportImageBase64 ? currentReportImageBase64.split(',')[1] : null;
+
+            try {
+                const locStr = currentLocation ? `${currentLocation.lat},${currentLocation.lng}` : "ไม่ทราบ";
+                const result = await callGasApi({
+                    action: 'report',
+                    guard_id: currentUser.emp_code,
+                    guard_name: currentUser.full_name,
+                    incident_type: type,
+                    details: details,
+                    lat_lng: locStr,
+                    base64_image: base64Data
+                });
+
+                if (result.success || result.message?.includes('mock')) {
+                    document.getElementById('loadingIcon').innerText = "✅"; document.getElementById('loadingText').innerText = "แจ้งเหตุสำเร็จ!";
+                    document.getElementById('reportType').value = ''; document.getElementById('reportDetail').value = ''; window.removeReportPhoto();
+                } else {
+                    throw new Error(result.error);
+                }
+            } catch (err) {
+                if(err.message.includes('ยังไม่ได้นำลิงก์')) {
+                    setTimeout(() => {
+                        document.getElementById('loadingIcon').innerText = "✅"; document.getElementById('loadingText').innerText = "แจ้งเหตุสำเร็จ (โหมดจำลอง)";
+                        document.getElementById('reportType').value = ''; document.getElementById('reportDetail').value = ''; window.removeReportPhoto();
+                    }, 1000);
+                } else {
+                    document.getElementById('loadingIcon').innerText = "❌"; document.getElementById('loadingText').innerText = "ส่งล้มเหลว: " + err.message;
+                }
+            }
+        }
+    </script>
+</body>
+</html>
