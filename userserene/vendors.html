@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ลงทะเบียนร้านค้า/ขนส่ง ประจำหมู่บ้าน</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Phosphor Icons for UI -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <!-- Leaflet CSS for Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <!-- Supabase JS -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Prompt', 'sans-serif'],
+                    },
+                    colors: {
+                        primary: '#3b82f6', // Blue 500
+                        primary_dark: '#2563eb', // Blue 600
+                        bg_light: '#f8fafc',
+                    },
+                    boxShadow: {
+                        'soft': '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
+                        'glow': '0 0 15px rgba(59, 130, 246, 0.5)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Prompt', sans-serif;
+            background: linear-gradient(135deg, #f0f4ff 0%, #e5edff 100%);
+            -webkit-tap-highlight-color: transparent;
+            overflow-x: hidden;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+        }
+        /* Animations */
+        .fade-in-up {
+            animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        .delay-100 { animation-delay: 0.1s; }
+        .delay-200 { animation-delay: 0.2s; }
+        .delay-300 { animation-delay: 0.3s; }
+        
+        @keyframes fadeInUp {
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* Modern Inputs */
+        .input-field {
+            width: 100%;
+            padding: 0.875rem 1rem;
+            border-radius: 0.75rem;
+            border: 1.5px solid #e2e8f0;
+            background-color: #f8fafc;
+            color: #1e293b;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-sizing: border-box; /* Prevent overflow */
+        }
+        .input-field:focus {
+            background-color: #ffffff;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+            outline: none;
+        }
+        .label-text {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #475569;
+            margin-bottom: 0.375rem;
+        }
+        /* Map Adjustments */
+        #map {
+            z-index: 1; /* Keep map behind headers/dropdowns */
+        }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+    </style>
+</head>
+<body class="text-gray-800 antialiased h-screen w-screen flex justify-center overflow-hidden">
+
+    <!-- Mobile Container (Max Width Constrained) -->
+    <div class="w-full max-w-md bg-white/50 h-full flex flex-col relative shadow-2xl overflow-hidden sm:border-x sm:border-white/40">
+        
+        <!-- Header (Glassmorphism) -->
+        <header class="bg-gradient-to-r from-primary to-indigo-500 text-white pt-12 pb-6 px-6 rounded-b-[2rem] shadow-lg z-20 flex-shrink-0 relative overflow-hidden">
+            <!-- Decorative circle -->
+            <div class="absolute -top-10 -right-10 w-32 h-32 bg-white/10 rounded-full blur-xl"></div>
+            
+            <div class="flex items-center justify-between relative z-10">
+                <div>
+                    <h1 class="text-2xl font-bold tracking-tight text-white drop-shadow-sm">ลงทะเบียนร้านค้า</h1>
+                    <p class="text-blue-100 text-sm mt-1 font-light flex items-center gap-1">
+                        <i class="ph ph-map-pin"></i> สำหรับเข้าออกประจำหมู่บ้าน
+                    </p>
+                </div>
+                <div class="bg-white/20 p-3.5 rounded-2xl backdrop-blur-md border border-white/20 shadow-inner">
+                    <i class="ph ph-truck text-3xl text-white"></i>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 overflow-y-auto overflow-x-hidden p-5 pb-32 relative" id="mainContent">
+            
+            <!-- FORM SECTION -->
+            <form id="registrationForm" class="space-y-5 w-full">
+                
+                <!-- Section 1: Shop Info & Location -->
+                <div class="bg-white rounded-[1.25rem] p-5 shadow-soft border border-gray-100 fade-in-up w-full">
+                    <div class="flex items-center gap-2.5 mb-5">
+                        <div class="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-primary">
+                            <i class="ph ph-storefront text-xl"></i>
+                        </div>
+                        <h2 class="font-semibold text-gray-800 text-lg">ข้อมูลร้านค้า / บริษัท</h2>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <label class="label-text">ชื่อร้านค้า / บริษัท <span class="text-red-500">*</span></label>
+                            <input type="text" id="shopName" required class="input-field" placeholder="เช่น ร้านซักรีด A, ขนส่ง B">
+                        </div>
+                        <div>
+                            <label class="label-text">ประเภทบริการ <span class="text-red-500">*</span></label>
+                            <div class="relative">
+                                <select id="serviceType" required class="input-field appearance-none cursor-pointer">
+                                    <option value="" disabled selected>เลือกประเภทบริการ...</option>
+                                    <option value="delivery">พัสดุ / ขนส่ง (Flash, Kerry, ฯลฯ)</option>
+                                    <option value="food">ส่งอาหาร / น้ำดื่ม</option>
+                                    <option value="laundry">ซักรีด</option>
+                                    <option value="contractor">ช่างซ่อมบำรุง / ต่อเติม</option>
+                                    <option value="other">อื่นๆ</option>
+                                </select>
+                                <i class="ph ph-caret-down absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none"></i>
+                            </div>
+                        </div>
+
+                        <!-- MAP SECTION -->
+                        <div class="pt-2">
+                            <label class="label-text flex justify-between items-center">
+                                <span>พิกัดที่ตั้งร้าน <span class="text-red-500">*</span></span>
+                                <button type="button" onclick="getCurrentLocation()" class="text-xs text-primary font-medium bg-blue-50 px-2 py-1 rounded-md hover:bg-blue-100 transition flex items-center gap-1 active:scale-95">
+                                    <i class="ph ph-crosshair"></i> ดึงตำแหน่งปัจจุบัน
+                                </button>
+                            </label>
+                            <div class="p-1 bg-gray-50 border border-gray-200 rounded-xl mt-1">
+                                <!-- Map Container -->
+                                <div id="map" class="h-40 w-full rounded-lg"></div>
+                            </div>
+                            <input type="text" id="locationCoords" readonly class="w-full mt-2 text-xs text-gray-500 bg-transparent border-none outline-none px-1" placeholder="เลื่อนหมุดบนแผนที่เพื่อระบุพิกัด" required>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 2: Contact Info -->
+                <div class="bg-white rounded-[1.25rem] p-5 shadow-soft border border-gray-100 fade-in-up delay-100 w-full">
+                    <div class="flex items-center gap-2.5 mb-5">
+                        <div class="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-primary">
+                            <i class="ph ph-user text-xl"></i>
+                        </div>
+                        <h2 class="font-semibold text-gray-800 text-lg">ข้อมูลผู้ติดต่อ</h2>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <label class="label-text">ชื่อ - นามสกุล <span class="text-red-500">*</span></label>
+                            <input type="text" id="fullName" required class="input-field" placeholder="นาย สมชาย ใจดี">
+                        </div>
+                        <div>
+                            <label class="label-text">เบอร์โทรศัพท์ <span class="text-red-500">*</span></label>
+                            <input type="tel" id="phone" required class="input-field" placeholder="08X-XXX-XXXX" pattern="[0-9]{10}" inputmode="numeric">
+                        </div>
+                        <!-- นำช่องเลขบัตรประชาชนออกตามที่ร้องขอ -->
+                    </div>
+                </div>
+
+                <!-- Section 3: Vehicle Info -->
+                <div class="bg-white rounded-[1.25rem] p-5 shadow-soft border border-gray-100 fade-in-up delay-200 w-full">
+                    <div class="flex items-center gap-2.5 mb-5">
+                        <div class="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-primary">
+                            <i class="ph ph-car text-xl"></i>
+                        </div>
+                        <h2 class="font-semibold text-gray-800 text-lg">ข้อมูลยานพาหนะ</h2>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="label-text">ประเภทรถ <span class="text-red-500">*</span></label>
+                                <div class="relative">
+                                    <select id="vehicleType" required class="input-field appearance-none cursor-pointer px-3">
+                                        <option value="motorcycle">มอเตอร์ไซค์</option>
+                                        <option value="car">รถยนต์</option>
+                                        <option value="pickup">รถกระบะ</option>
+                                        <option value="truck">รถบรรทุก</option>
+                                    </select>
+                                    <i class="ph ph-caret-down absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none"></i>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="label-text">สีรถ</label>
+                                <input type="text" id="vehicleColor" class="input-field px-3" placeholder="เช่น ขาว">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="label-text">ป้ายทะเบียนรถ <span class="text-red-500">*</span></label>
+                            <input type="text" id="licensePlate" required class="input-field text-lg font-medium text-center tracking-wide" placeholder="1กข 1234 กทม">
+                        </div>
+                        
+                        <!-- Camera Upload Modern -->
+                        <div class="pt-1">
+                            <label class="label-text">รูปรถยนต์ หรือ ป้ายทะเบียน <span class="text-gray-400 font-normal">(ไม่บังคับ)</span></label>
+                            <label class="w-full flex flex-col items-center justify-center px-4 py-6 bg-blue-50/50 text-primary rounded-xl border-2 border-dashed border-blue-200 cursor-pointer hover:bg-blue-50 hover:border-primary transition-all group" id="uploadContainer">
+                                <div class="w-12 h-12 rounded-full bg-white shadow-sm flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                                    <i class="ph ph-camera text-2xl" id="uploadIcon"></i>
+                                </div>
+                                <span class="text-sm font-medium" id="uploadText">กดเพื่อถ่ายภาพ หรือ อัปโหลด</span>
+                                <input type="file" id="vehicleImage" class="hidden" accept="image/*" capture="environment">
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+            </form>
+
+            <!-- SUCCESS SECTION (Hidden) -->
+            <div id="successView" class="hidden flex-col items-center justify-center h-full pb-10 w-full animate-[fadeInUp_0.6s_ease-out]">
+                
+                <div class="relative mb-6">
+                    <div class="absolute inset-0 bg-green-400 rounded-full blur animate-pulse opacity-50"></div>
+                    <div class="w-24 h-24 bg-gradient-to-tr from-green-400 to-green-500 rounded-full flex items-center justify-center relative shadow-lg text-white">
+                        <i class="ph ph-check text-5xl font-bold"></i>
+                    </div>
+                </div>
+                
+                <h2 class="text-2xl font-bold text-gray-800 mb-2">ลงทะเบียนสำเร็จ!</h2>
+                <p class="text-gray-500 text-center mb-8 px-4 text-sm">บันทึกข้อมูลและพิกัดเข้าระบบเรียบร้อยแล้ว</p>
+
+                <!-- Digital Ticket -->
+                <div class="bg-white w-full rounded-3xl shadow-xl border border-gray-100 overflow-hidden relative">
+                    <!-- Ticket Header -->
+                    <div class="bg-gradient-to-r from-gray-800 to-gray-900 p-5 text-center text-white relative">
+                        <!-- Cutouts -->
+                        <div class="absolute -left-4 bottom-[-16px] w-8 h-8 bg-[#f8fafc] rounded-full z-10"></div>
+                        <div class="absolute -right-4 bottom-[-16px] w-8 h-8 bg-[#f8fafc] rounded-full z-10"></div>
+                        
+                        <p class="text-gray-300 text-xs uppercase tracking-widest mb-1">E-Pass Ticket</p>
+                        <h3 class="font-bold text-xl">ใบยืนยันรับคีย์การ์ด</h3>
+                    </div>
+                    
+                    <!-- Ticket Body -->
+                    <div class="p-6 pt-8 bg-white relative border-t-2 border-dashed border-gray-200">
+                        <div class="flex justify-between items-center mb-5 pb-5 border-b border-gray-100">
+                            <span class="text-gray-500 text-sm">รหัสอ้างอิง</span>
+                            <span class="font-bold text-primary text-lg tracking-wider bg-blue-50 px-3 py-1 rounded-lg" id="displayRefCode">REF-12345</span>
+                        </div>
+                        <div class="space-y-4">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <span class="text-xs text-gray-400 block mb-0.5">ร้านค้า / บริการ</span>
+                                    <span class="font-medium text-gray-800 line-clamp-1" id="displayShopName">-</span>
+                                </div>
+                                <div>
+                                    <span class="text-xs text-gray-400 block mb-0.5">ผู้ติดต่อ</span>
+                                    <span class="font-medium text-gray-800 line-clamp-1" id="displayFullName">-</span>
+                                </div>
+                                <div>
+                                    <span class="text-xs text-gray-400 block mb-0.5">ทะเบียนรถ</span>
+                                    <span class="font-medium text-gray-800" id="displayLicense">-</span>
+                                </div>
+                                <div>
+                                    <span class="text-xs text-gray-400 block mb-0.5">พิกัด</span>
+                                    <span class="font-medium text-primary text-xs" id="displayCoords">มีข้อมูล</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- QR Code Area -->
+                        <div class="mt-8 flex flex-col items-center justify-center p-5 bg-gray-50 rounded-2xl border border-gray-100">
+                            <i class="ph ph-qr-code text-7xl text-gray-800"></i>
+                            <p class="text-xs text-gray-500 mt-3 text-center leading-relaxed">โปรดแสดงหน้านี้แก่ รปภ.<br>เพื่อรับคีย์การ์ดประจำ</p>
+                        </div>
+                    </div>
+                </div>
+
+                <button onclick="resetForm()" class="mt-8 text-gray-500 font-medium hover:text-primary transition-colors p-2 flex items-center gap-2">
+                    <i class="ph ph-arrow-counter-clockwise"></i> ลงทะเบียนคันอื่น
+                </button>
+            </div>
+
+        </main>
+
+        <!-- Sticky Bottom Bar (Glassmorphism) -->
+        <div id="bottomBar" class="absolute bottom-0 left-0 right-0 glass-panel border-t border-white/50 p-4 pb-6 shadow-[0_-10px_40px_rgba(0,0,0,0.08)] z-30 transition-transform duration-300">
+            <button form="registrationForm" type="submit" id="submitBtn" class="w-full bg-primary hover:bg-primary_dark active:scale-[0.98] text-white font-semibold text-lg py-3.5 rounded-2xl shadow-lg shadow-primary/30 transition-all flex items-center justify-center gap-2 group overflow-hidden relative disabled:opacity-70 disabled:cursor-not-allowed">
+                <span class="relative z-10" id="submitText">ยืนยันลงทะเบียน</span>
+                <i class="ph ph-paper-plane-right text-xl relative z-10 group-hover:translate-x-1 transition-transform" id="submitIcon"></i>
+                <!-- Button shine effect -->
+                <div class="absolute inset-0 -translate-x-full group-hover:animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent z-0"></div>
+            </button>
+        </div>
+
+    </div>
+
+    <!-- Leaflet JS for Map -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <script>
+        // Supabase Configuration
+        const supabaseUrl = 'https://ejlfuuiibexnwysckaxz.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVqbGZ1dWlpYmV4bnd5c2NrYXh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxMTU1MTMsImV4cCI6MjA4OTY5MTUxM30.I0JqH7PL0jiSzioOsIjuuYcydtl85w32qSpWyyLRv5U';
+        
+        // แก้ไขข้อผิดพลาด Identifier 'supabase' has already been declared
+        // โดยเปลี่ยนชื่อตัวแปรที่รับค่าเป็น supabaseClient เพื่อไม่ให้ชนกับไลบรารี
+        const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+        // Map Variables
+        let map;
+        let marker;
+        const defaultLat = 12.98161687073843; // Default Bangkok 12.98161687073843, 101.14260778845703
+        const defaultLng = 101.14260778845703;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initMap();
+
+            const form = document.getElementById('registrationForm');
+            const formView = document.getElementById('registrationForm');
+            const successView = document.getElementById('successView');
+            const bottomBar = document.getElementById('bottomBar');
+            const mainContent = document.getElementById('mainContent');
+            
+            // Elements สำหรับอัปโหลดและปุ่มกดยืนยัน
+            const fileInput = document.getElementById('vehicleImage');
+            const uploadText = document.getElementById('uploadText');
+            const uploadIcon = document.getElementById('uploadIcon');
+            const submitBtn = document.getElementById('submitBtn');
+            const submitText = document.getElementById('submitText');
+            const submitIcon = document.getElementById('submitIcon');
+
+            // แสดงชื่อไฟล์และเปลี่ยนไอคอนเมื่อเลือกรูปภาพ
+            fileInput.addEventListener('change', (e) => {
+                if(e.target.files.length > 0) {
+                    const fileName = e.target.files[0].name;
+                    uploadText.textContent = fileName;
+                    uploadIcon.className = "ph ph-image text-2xl text-green-500";
+                } else {
+                    uploadText.textContent = "กดเพื่อถ่ายภาพ หรือ อัปโหลด";
+                    uploadIcon.className = "ph ph-camera text-2xl";
+                }
+            });
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+
+                // ตรวจสอบข้อมูลพิกัดแผนที่
+                const coords = document.getElementById('locationCoords').value;
+                if(!coords) {
+                    alert('กรุณาเลื่อนหมุดบนแผนที่เพื่อระบุพิกัดร้านค้า');
+                    return;
+                }
+
+                // ปิดปุ่มและแสดงสถานะกำลังโหลด
+                submitBtn.disabled = true;
+                submitText.textContent = 'กำลังบันทึกข้อมูล...';
+                submitIcon.className = 'ph ph-spinner animate-spin text-xl relative z-10';
+
+                try {
+                    // ดึงข้อมูลฟอร์ม
+                    const shopName = document.getElementById('shopName').value;
+                    const serviceType = document.getElementById('serviceType').value;
+                    const fullName = document.getElementById('fullName').value;
+                    const phone = document.getElementById('phone').value;
+                    const vehicleType = document.getElementById('vehicleType').value;
+                    const vehicleColor = document.getElementById('vehicleColor').value;
+                    const licensePlate = document.getElementById('licensePlate').value;
+                    
+                    const [lat, lng] = coords.split(',').map(c => parseFloat(c.trim()));
+                    
+                    // สร้างรหัสอ้างอิง
+                    const randomNum = Math.floor(10000 + Math.random() * 90000);
+                    const refCode = `REG-${randomNum}`;
+
+                    let imageUrl = null;
+
+                    // 1. กระบวนการอัปโหลดรูปภาพ (ถ้ามีการแนบไฟล์มา)
+                    if (fileInput.files.length > 0) {
+                        const file = fileInput.files[0];
+                        const fileExt = file.name.split('.').pop();
+                        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+                        
+                        const { data: uploadData, error: uploadError } = await supabaseClient.storage
+                            .from('vendor_images')
+                            .upload(fileName, file);
+                            
+                        if (uploadError) throw new Error('ไม่สามารถอัปโหลดรูปภาพได้: ' + uploadError.message);
+
+                        // ดึง URL ที่เป็นสาธารณะของรูปภาพ
+                        const { data: publicUrlData } = supabaseClient.storage
+                            .from('vendor_images')
+                            .getPublicUrl(fileName);
+                            
+                        imageUrl = publicUrlData.publicUrl;
+                    }
+
+                    // 2. บันทึกข้อมูลทั้งหมดลงใน Database ของ Supabase
+                    const { data: insertData, error: insertError } = await supabaseClient
+                        .from('vendors')
+                        .insert([
+                            {
+                                ref_code: refCode,
+                                shop_name: shopName,
+                                service_type: serviceType,
+                                full_name: fullName,
+                                phone: phone,
+                                vehicle_type: vehicleType,
+                                vehicle_color: vehicleColor,
+                                license_plate: licensePlate,
+                                latitude: lat,
+                                longitude: lng,
+                                image_url: imageUrl
+                            }
+                        ]);
+
+                    if (insertError) throw new Error('ไม่สามารถบันทึกข้อมูลได้: ' + insertError.message);
+
+                    // อัปเดตข้อมูลในหน้าสำเร็จ
+                    document.getElementById('displayRefCode').textContent = refCode;
+                    document.getElementById('displayShopName').textContent = shopName;
+                    document.getElementById('displayFullName').textContent = fullName;
+                    document.getElementById('displayLicense').textContent = licensePlate;
+
+                    // เปลี่ยนหน้า UI
+                    formView.classList.add('hidden');
+                    bottomBar.style.transform = 'translateY(100%)';
+                    
+                    setTimeout(() => {
+                        bottomBar.classList.add('hidden');
+                        successView.classList.remove('hidden');
+                        successView.classList.add('flex');
+                        mainContent.scrollTop = 0;
+                    }, 300);
+
+                } catch (error) {
+                    console.error('Error:', error);
+                    alert(error.message);
+                } finally {
+                    // คืนค่าปุ่มกลับเป็นสถานะปกติ
+                    submitBtn.disabled = false;
+                    submitText.textContent = 'ยืนยันลงทะเบียน';
+                    submitIcon.className = 'ph ph-paper-plane-right text-xl relative z-10 group-hover:translate-x-1 transition-transform';
+                }
+            });
+        });
+
+        // Initialize Map
+        function initMap() {
+            // Setup Map
+            map = L.map('map').setView([defaultLat, defaultLng], 13);
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '© OSM'
+            }).addTo(map);
+
+            // Add Draggable Marker
+            marker = L.marker([defaultLat, defaultLng], {
+                draggable: true
+            }).addTo(map);
+
+            // Update Input on Drag End
+            marker.on('dragend', function (e) {
+                const position = marker.getLatLng();
+                updateLocationInput(position.lat, position.lng);
+            });
+
+            // Update Marker & Input on Map Click
+            map.on('click', function(e) {
+                marker.setLatLng(e.latlng);
+                updateLocationInput(e.latlng.lat, e.latlng.lng);
+            });
+
+            // Fix map rendering issue in hidden/flex containers
+            setTimeout(() => { map.invalidateSize(); }, 500);
+        }
+
+        function updateLocationInput(lat, lng) {
+            document.getElementById('locationCoords').value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        }
+
+        // Get Current Geolocation
+        function getCurrentLocation() {
+            if (navigator.geolocation) {
+                const btn = event.currentTarget;
+                const originalText = btn.innerHTML;
+                btn.innerHTML = '<i class="ph ph-spinner animate-spin"></i> กำลังค้นหา...';
+                
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const lat = position.coords.latitude;
+                        const lng = position.coords.longitude;
+                        
+                        // Center map and move marker
+                        map.setView([lat, lng], 16);
+                        marker.setLatLng([lat, lng]);
+                        updateLocationInput(lat, lng);
+                        
+                        btn.innerHTML = '<i class="ph ph-check text-green-500"></i> สำเร็จ';
+                        setTimeout(() => btn.innerHTML = originalText, 2000);
+                    },
+                    (error) => {
+                        alert("ไม่สามารถดึงตำแหน่งได้ โปรดตรวจสอบการอนุญาต Location หรือระบุพิกัดบนแผนที่ด้วยตนเอง");
+                        btn.innerHTML = originalText;
+                    },
+                    { enableHighAccuracy: true }
+                );
+            } else {
+                alert("เบราว์เซอร์ของคุณไม่รองรับการดึงตำแหน่ง");
+            }
+        }
+
+        // Reset App State
+        function resetForm() {
+            const formView = document.getElementById('registrationForm');
+            const successView = document.getElementById('successView');
+            const bottomBar = document.getElementById('bottomBar');
+            const uploadText = document.getElementById('uploadText');
+            const uploadIcon = document.getElementById('uploadIcon');
+
+            document.getElementById('registrationForm').reset();
+            document.getElementById('locationCoords').value = '';
+            
+            // รีเซ็ตการแสดงผลอัปโหลด
+            uploadText.textContent = "กดเพื่อถ่ายภาพ หรือ อัปโหลด";
+            uploadIcon.className = "ph ph-camera text-2xl";
+            
+            // Reset map position
+            map.setView([defaultLat, defaultLng], 13);
+            marker.setLatLng([defaultLat, defaultLng]);
+
+            successView.classList.add('hidden');
+            successView.classList.remove('flex');
+            
+            formView.classList.remove('hidden');
+            bottomBar.classList.remove('hidden');
+            
+            setTimeout(() => {
+                bottomBar.style.transform = 'translateY(0)';
+                map.invalidateSize();
+            }, 50);
+        }
+
+        // Keyframe for button shimmer
+        tailwind.config.theme.extend.keyframes = {
+            ...tailwind.config.theme.extend.keyframes,
+            shimmer: {
+                '100%': { transform: 'translateX(100%)' }
+            }
+        }
+    </script>
+</body>
+</html>
