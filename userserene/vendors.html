@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="th">
 <head>
@@ -13,6 +14,8 @@
     
     <!-- Supabase JS -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- LINE LIFF SDK -->
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     
     <script>
         tailwind.config = {
@@ -122,6 +125,16 @@
                     <i class="ph ph-truck text-3xl text-white"></i>
                 </div>
             </div>
+
+            <!-- LINE Profile Display (Hidden by default, shown when LIFF is ready) -->
+            <div id="lineProfileInfo" class="hidden items-center gap-3 bg-white/10 p-3 rounded-2xl backdrop-blur-sm border border-white/10 mt-5 relative z-10 transition-all">
+                <img id="lineProfilePic" src="" class="w-11 h-11 rounded-full border-2 border-white/80 object-cover shadow-sm" alt="LINE Profile">
+                <div class="flex-1">
+                    <p class="text-[10px] text-blue-200 uppercase tracking-widest font-semibold mb-0.5">ผู้ทำรายการ (LINE)</p>
+                    <p id="lineProfileName" class="text-sm font-medium text-white line-clamp-1"></p>
+                </div>
+                <i class="ph-fill ph-check-circle text-green-400 text-xl"></i>
+            </div>
         </header>
 
         <!-- Main Content Area -->
@@ -194,7 +207,6 @@
                             <label class="label-text">เบอร์โทรศัพท์ <span class="text-red-500">*</span></label>
                             <input type="tel" id="phone" required class="input-field" placeholder="08X-XXX-XXXX" pattern="[0-9]{10}" inputmode="numeric">
                         </div>
-                        <!-- นำช่องเลขบัตรประชาชนออกตามที่ร้องขอ -->
                     </div>
                 </div>
 
@@ -330,22 +342,24 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     
     <script>
-        // Supabase Configuration
+        // --- 1. การตั้งค่า Supabase ---
         const supabaseUrl = 'https://ejlfuuiibexnwysckaxz.supabase.co';
         const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVqbGZ1dWlpYmV4bnd5c2NrYXh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxMTU1MTMsImV4cCI6MjA4OTY5MTUxM30.I0JqH7PL0jiSzioOsIjuuYcydtl85w32qSpWyyLRv5U';
-        
-        // แก้ไขข้อผิดพลาด Identifier 'supabase' has already been declared
-        // โดยเปลี่ยนชื่อตัวแปรที่รับค่าเป็น supabaseClient เพื่อไม่ให้ชนกับไลบรารี
         const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
 
-        // Map Variables
+        // --- 2. การตั้งค่าตัวแปร LIFF ---
+        const MY_LIFF_ID = 'YOUR_LIFF_ID_HERE'; // <<< ใส่ LIFF ID ของคุณที่นี่
+        let lineUserData = null; // เก็บข้อมูลผู้ใช้ LINE
+
+        // --- 3. การตั้งค่า Map Variables ---
         let map;
         let marker;
-        const defaultLat = 12.98161687073843; // Default Bangkok 12.98161687073843, 101.14260778845703
-        const defaultLng = 101.14260778845703;
+        const defaultLat = 13.7563; // Default Bangkok
+        const defaultLng = 100.5018;
 
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             initMap();
+            await initializeLiff();
 
             const form = document.getElementById('registrationForm');
             const formView = document.getElementById('registrationForm');
@@ -426,24 +440,28 @@
                         imageUrl = publicUrlData.publicUrl;
                     }
 
-                    // 2. บันทึกข้อมูลทั้งหมดลงใน Database ของ Supabase
+                    // 2. บันทึกข้อมูลทั้งหมดลงใน Database ของ Supabase รวมถึงข้อมูลจาก LINE
+                    const payload = {
+                        ref_code: refCode,
+                        shop_name: shopName,
+                        service_type: serviceType,
+                        full_name: fullName,
+                        phone: phone,
+                        vehicle_type: vehicleType,
+                        vehicle_color: vehicleColor,
+                        license_plate: licensePlate,
+                        latitude: lat,
+                        longitude: lng,
+                        image_url: imageUrl,
+                        // เพิ่มข้อมูล LINE จาก LIFF (ถ้ามี)
+                        line_uid: lineUserData ? lineUserData.userId : null,
+                        line_display_name: lineUserData ? lineUserData.displayName : null,
+                        line_picture_url: lineUserData ? lineUserData.pictureUrl : null
+                    };
+
                     const { data: insertData, error: insertError } = await supabaseClient
                         .from('vendors')
-                        .insert([
-                            {
-                                ref_code: refCode,
-                                shop_name: shopName,
-                                service_type: serviceType,
-                                full_name: fullName,
-                                phone: phone,
-                                vehicle_type: vehicleType,
-                                vehicle_color: vehicleColor,
-                                license_plate: licensePlate,
-                                latitude: lat,
-                                longitude: lng,
-                                image_url: imageUrl
-                            }
-                        ]);
+                        .insert([payload]);
 
                     if (insertError) throw new Error('ไม่สามารถบันทึกข้อมูลได้: ' + insertError.message);
 
@@ -475,6 +493,44 @@
                 }
             });
         });
+
+        // --- ฟังก์ชันสำหรับ LIFF (LINE) ---
+        async function initializeLiff() {
+            try {
+                // หากยังไม่ได้แก้ LIFF ID ให้ข้ามไปก่อนเพื่อไม่ให้ระบบพัง
+                if (MY_LIFF_ID === '2009557105-GVEX9acG') return;
+
+                await liff.init({ liffId: MY_LIFF_ID });
+                
+                if (liff.isLoggedIn()) {
+                    lineUserData = await liff.getProfile();
+                    displayLineProfile(lineUserData);
+                } else {
+                    // หากไม่ได้ล็อคอิน ให้ล็อคอินอัตโนมัติ (จะทำงานเมื่อเปิดใน Browser ข้างนอก)
+                    liff.login();
+                }
+            } catch (err) {
+                console.error('LIFF Initialization failed', err);
+            }
+        }
+
+        function displayLineProfile(profile) {
+            const profileInfoBox = document.getElementById('lineProfileInfo');
+            const profilePic = document.getElementById('lineProfilePic');
+            const profileName = document.getElementById('lineProfileName');
+
+            profilePic.src = profile.pictureUrl || 'https://via.placeholder.com/150';
+            profileName.textContent = profile.displayName;
+
+            // แสดงหน้าต่างโปรไฟล์
+            profileInfoBox.classList.remove('hidden');
+            profileInfoBox.classList.add('flex');
+            
+            // แนะนำผู้ใช้ให้นำชื่อไปกรอกอัตโนมัติ (Optional)
+            if(!document.getElementById('fullName').value) {
+                 document.getElementById('fullName').value = profile.displayName;
+            }
+        }
 
         // Initialize Map
         function initMap() {
@@ -552,6 +608,11 @@
 
             document.getElementById('registrationForm').reset();
             document.getElementById('locationCoords').value = '';
+            
+            // ใส่ชื่อจาก LINE กลับไปใหม่ถ้ามี
+            if(lineUserData) {
+                document.getElementById('fullName').value = lineUserData.displayName;
+            }
             
             // รีเซ็ตการแสดงผลอัปโหลด
             uploadText.textContent = "กดเพื่อถ่ายภาพ หรือ อัปโหลด";
