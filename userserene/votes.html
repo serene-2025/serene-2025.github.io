@@ -90,7 +90,7 @@
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-stone-700 mb-1">บ้านเลขที่</label>
-                        <input type="text" id="house-number" placeholder="เช่น 998/999" class="w-full px-4 py-3 rounded-xl border border-stone-300 focus:ring-2 focus:ring-teal-600 focus:border-teal-600 outline-none transition-all text-sm bg-stone-50 focus:bg-white shadow-sm">
+                        <input type="text" id="house-number" placeholder="เช่น 999/999" class="w-full px-4 py-3 rounded-xl border border-stone-300 focus:ring-2 focus:ring-teal-600 focus:border-teal-600 outline-none transition-all text-sm bg-stone-50 focus:bg-white shadow-sm">
                     </div>
                 </div>
 
@@ -239,12 +239,36 @@
     <!-- JavaScript สำหรับจัดการ Logic -->
     <script>
         // === ตั้งค่า Supabase ===
-        // ⚠️ กรุณาเปลี่ยน URL และ KEY ด้านล่างให้เป็นของโปรเจกต์คุณ (ดูวิธีทำด้านล่าง)
         const SUPABASE_URL = 'https://ejlfuuiibexnwysckaxz.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVqbGZ1dWlpYmV4bnd5c2NrYXh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxMTU1MTMsImV4cCI6MjA4OTY5MTUxM30.I0JqH7PL0jiSzioOsIjuuYcydtl85w32qSpWyyLRv5U';
-        
-        // แก้ไขชื่อตัวแปรเป็น supabaseClient เพื่อไม่ให้ชนกับคำว่า supabase ที่มีอยู่แล้วในระบบ Global
         const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // === ตั้งค่า Telegram Bot ===
+        const TELEGRAM_BOT_TOKEN = '7708637309:AAHU2swP8U67XVWITdjsxjQoqiXIL9KbBJs';
+        const TELEGRAM_CHAT_ID = '7585120244'; // Chat ID ของ Admin (test9one)
+
+        // ฟังก์ชันสำหรับส่งแจ้งเตือน Telegram
+        async function sendTelegramNotification(name, house, decision) {
+            if (!TELEGRAM_CHAT_ID || TELEGRAM_CHAT_ID === 'YOUR_CHAT_ID') return;
+
+            const decisionText = decision === 'agree' ? '✅ เห็นชอบ' : '❌ ไม่เห็นชอบ';
+            const message = `📢 *มีการลงมติใหม่*\n🏠 บ้านเลขที่: \`${house}\`\n👤 ชื่อ: ${name}\n📝 มติ: ${decisionText}`;
+            const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+
+            try {
+                await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: TELEGRAM_CHAT_ID,
+                        text: message,
+                        parse_mode: 'Markdown'
+                    })
+                });
+            } catch (error) {
+                console.error('Error sending Telegram notification:', error);
+            }
+        }
 
         document.addEventListener('DOMContentLoaded', () => {
             const votingSection = document.getElementById('voting-section');
@@ -302,7 +326,6 @@
 
                 // แสดง Modal
                 confirmModal.classList.remove('hidden');
-                // ใช้ setTimeout เล็กน้อยเพื่อให้ CSS transition ทำงาน
                 setTimeout(() => {
                     confirmModal.classList.remove('opacity-0');
                     modalContent.classList.remove('scale-95');
@@ -319,7 +342,7 @@
                 }, 300);
             };
 
-            // 4. ฟังก์ชันยืนยันการโหวตจาก Modal (เพิ่มการส่งข้อมูลไป Supabase)
+            // 4. ฟังก์ชันยืนยันการโหวตจาก Modal (เพิ่มการส่งข้อมูลไป Supabase + Telegram)
             window.confirmVote = async function() {
                 if (!pendingDecision) return;
 
@@ -328,14 +351,13 @@
                 const decision = pendingDecision;
                 const confirmBtn = document.getElementById('confirm-btn');
 
-                // เปลี่ยนสถานะปุ่มเป็นกำลังโหลด (Loading)
+                // เปลี่ยนสถานะปุ่มเป็นกำลังโหลด
                 const originalText = confirmBtn.innerHTML;
                 confirmBtn.innerHTML = '<svg class="animate-spin -ml-1 mr-2 h-5 w-5 text-white inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>กำลังบันทึก...';
                 confirmBtn.disabled = true;
 
                 try {
-                    // ส่งข้อมูลขึ้นฐานข้อมูล Supabase ในตารางที่ชื่อว่า 'votes'
-                    // เปลี่ยนจาก supabase.from(...) เป็น supabaseClient.from(...)
+                    // ส่งข้อมูลขึ้น Supabase
                     const { data, error } = await supabaseClient
                         .from('votes')
                         .insert([
@@ -344,7 +366,10 @@
 
                     if (error) throw error;
 
-                    // บันทึกสำเร็จ: เก็บข้อมูลลง localStorage เครื่องผู้ใช้เพื่อกันโหวตซ้ำ
+                    // ส่งแจ้งเตือนไปยัง Telegram (ถ้าตั้งค่า CHAT ID ไว้แล้ว)
+                    sendTelegramNotification(name, house, decision);
+
+                    // บันทึกสำเร็จ: เก็บข้อมูลลง localStorage เครื่องผู้ใช้
                     localStorage.setItem('gl_serene_voted', 'true');
                     localStorage.setItem('gl_serene_house', house);
                     localStorage.setItem('gl_serene_decision', decision);
@@ -360,7 +385,6 @@
                     console.error('Error inserting data:', error);
                     alert('เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล กรุณาลองใหม่อีกครั้ง');
                 } finally {
-                    // คืนค่าปุ่มกลับเป็นเหมือนเดิม
                     confirmBtn.innerHTML = originalText;
                     confirmBtn.disabled = false;
                 }
@@ -425,14 +449,12 @@
             };
 
             window.loadAdminDashboard = async function() {
-                // เปิดหน้า Dashboard ขึ้นมาปิดทับ (เต็มจอภายใน Container)
                 adminDashboard.classList.remove('hidden');
                 
                 const tableBody = document.getElementById('admin-table-body');
                 tableBody.innerHTML = '<tr><td colspan="4" class="px-3 py-6 text-center text-stone-500"><svg class="animate-spin h-5 w-5 mx-auto mb-2 text-teal-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>กำลังดึงข้อมูล...</td></tr>';
 
                 try {
-                    // ดึงข้อมูลจากตาราง votes ใน Supabase เรียงลำดับตามเวลาล่าสุด
                     const { data, error } = await supabaseClient
                         .from('votes')
                         .select('*')
@@ -471,11 +493,9 @@
                     if (row.decision === 'agree') agreeCount++;
                     if (row.decision === 'disagree') disagreeCount++;
 
-                    // แปลงเวลาให้เป็นฟอร์แมตไทยแบบอ่านง่าย
                     const dateObj = new Date(row.created_at);
                     const dateStr = dateObj.toLocaleDateString('th-TH', { day: '2-digit', month: 'short' }) + ' ' + dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute:'2-digit' });
                     
-                    // ป้ายกำกับ (Badge) มติ
                     const decisionText = row.decision === 'agree' 
                         ? '<span class="text-teal-700 bg-teal-100 px-2 py-0.5 rounded-md font-bold">เห็นชอบ</span>' 
                         : '<span class="text-rose-700 bg-rose-100 px-2 py-0.5 rounded-md font-bold">ไม่เห็นชอบ</span>';
@@ -491,40 +511,33 @@
                     tableBody.appendChild(tr);
                 });
 
-                // อัปเดตตัวเลขสรุป
                 statTotal.textContent = data.length;
                 statAgree.textContent = agreeCount;
                 statDisagree.textContent = disagreeCount;
             }
 
-            // ฟังก์ชันโหลดข้อมูลออกมาเป็นไฟล์ .CSV เปิดใน Excel ได้ทันที
             window.exportToCSV = function() {
                 if (!currentAdminData || currentAdminData.length === 0) {
                     alert('ไม่มีข้อมูลให้ Export');
                     return;
                 }
 
-                // สร้างหัวตาราง (Header)
                 let csvContent = "วัน/เวลา,บ้านเลขที่,ชื่อ-นามสกุล,มติ\n";
                 
-                // นำข้อมูลมาต่อกัน
                 currentAdminData.forEach(row => {
                     const dateObj = new Date(row.created_at);
                     const dateStr = dateObj.toLocaleString('th-TH');
                     const decisionTh = row.decision === 'agree' ? 'เห็นชอบ' : 'ไม่เห็นชอบ';
                     
-                    // ป้องกัน Error กรณีชื่อหรือบ้านเลขที่มีเครื่องหมายคอมม่า (,) ซ่อนอยู่
                     const safeName = '"' + (row.resident_name || '').replace(/"/g, '""') + '"';
                     const safeHouse = '"' + (row.house_number || '').replace(/"/g, '""') + '"';
                     
                     csvContent += `${dateStr},${safeHouse},${safeName},${decisionTh}\n`;
                 });
 
-                // การใส่ \uFEFF (BOM) เป็นเทคนิคทำให้ Microsoft Excel ภาษาไทยอ่านตัวอักษรได้ถูกต้อง 100% ไม่เป็นภาษาต่างดาว
                 const BOM = "\uFEFF";
                 const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
                 
-                // สร้างลิงก์ดาวน์โหลดจำลองแล้วกดคลิกเอง
                 const link = document.createElement("a");
                 const url = URL.createObjectURL(blob);
                 link.setAttribute("href", url);
@@ -534,7 +547,6 @@
                 link.click();
                 document.body.removeChild(link);
             };
-
         });
     </script>
 </body>
