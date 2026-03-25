@@ -360,11 +360,11 @@
               </label>
               <select class="form-select" id="name3" name="name3" required>
                 <option selected disabled value="">-- เลือกปี --</option>
-                <option>2567</option>
-                <option>2568</option>
-                <option>2569</option>
-                <option>2570</option>
-                <option>2571</option>
+                <option value="2567">2567</option>
+                <option value="2568">2568</option>
+                <option value="2569">2569</option>
+                <option value="2570">2570</option>
+                <option value="2571">2571</option>
               </select>
             </div>
         </div>
@@ -458,7 +458,7 @@
       </div>
       
       <div class="text-center mt-4 text-muted small">
-          9one © 2024 V.5 (Multi-Month Support)
+          9one © 2024 V.6 (Multi-Month Support)
       </div>
     </div>
   </div>
@@ -596,11 +596,20 @@
         });
     }
 
-    // --- Function เช็คสถานะค้างจ่าย (Supabase) ---
+    // --- Function เช็คสถานะค้างจ่าย (Supabase) และปิดปีที่จ่ายครบแล้ว ---
     async function checkUnpaidStatus(houseNumber) {
       const container = document.getElementById('unpaidStatusContainer');
       const tableBody = document.getElementById('unpaidStatusBody');
+      const yearSelect = document.getElementById('name3');
       
+      // 1. รีเซ็ต Dropdown ปีให้กลับมาเลือกได้ปกติทั้งหมดก่อน (เผื่อมีการลบพิมพ์บ้านเลขที่ใหม่)
+      Array.from(yearSelect.options).forEach(opt => {
+          if (opt.value !== "") {
+              opt.disabled = false;
+              opt.text = opt.value; // เอาคำว่า "(จ่ายครบแล้ว)" ออก
+          }
+      });
+
       if(!houseNumber || houseNumber.length < 5) { // ต้องยาวกว่า "998/"
           container.style.display = 'none';
           return;
@@ -623,31 +632,32 @@
 
         let totalUnpaidCount = 0;
         tableBody.innerHTML = ''; 
+        let fullyPaidYears = []; // ตัวแปรเก็บ "ปีที่จ่ายครบแล้ว"
 
         if (data && data.length > 0) {
             const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
             const thaiMonths = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 
             data.forEach(row => {
-                // ตรวจสอบค่าปี และกำหนดสี
                 const yearStr = row.year ? String(row.year).trim() : '';
-                let yearBadgeClass = 'bg-secondary'; // ค่าเริ่มต้น
+                let yearBadgeClass = 'bg-secondary'; 
+                let hasUnpaid = false; // ตัวแปรเช็คว่าปีนี้มีค้างจ่ายหรือไม่
 
-                // กำหนดสีให้แตกต่างกันชัดเจนในแต่ละปี
                 switch (yearStr) {
                     case '2566': yearBadgeClass = 'bg-secondary'; break;
-                    case '2567': yearBadgeClass = 'bg-primary'; break;       // สีน้ำเงิน
-                    case '2568': yearBadgeClass = 'bg-success'; break;       // สีเขียว
-                    case '2569': yearBadgeClass = 'bg-info text-dark'; break; // สีฟ้า
-                    case '2570': yearBadgeClass = 'bg-warning text-dark'; break; // สีเหลือง
-                    case '2571': yearBadgeClass = 'bg-danger'; break;        // สีแดง
-                    default: yearBadgeClass = 'bg-dark';                     // สีดำ (กรณีปีอื่นๆ)
+                    case '2567': yearBadgeClass = 'bg-primary'; break;       
+                    case '2568': yearBadgeClass = 'bg-success'; break;       
+                    case '2569': yearBadgeClass = 'bg-info text-dark'; break; 
+                    case '2570': yearBadgeClass = 'bg-warning text-dark'; break; 
+                    case '2571': yearBadgeClass = 'bg-danger'; break;        
+                    default: yearBadgeClass = 'bg-dark';                     
                 }
 
                 months.forEach((monthKey, index) => {
                     const status = row[monthKey];
                     // เช็คสถานะ "ยังไม่จ่าย" หรือ "ค้างจ่าย"
                     if (status && (status === 'ยังไม่จ่าย' || status === 'ค้างจ่าย')) {
+                        hasUnpaid = true; // พบว่ามีเดือนที่ค้างจ่ายในปีนี้
                         totalUnpaidCount++;
                         const rowHtml = `
                           <tr>
@@ -663,9 +673,35 @@
                         tableBody.innerHTML += rowHtml;
                     }
                 });
+
+                // ถ้าเช็คครบ 12 เดือนแล้ว ไม่พบว่าค้างจ่ายเลย แปลว่าปีนี้จ่ายครบแล้ว
+                if (!hasUnpaid && yearStr !== '') {
+                    fullyPaidYears.push(yearStr);
+                }
             });
         }
 
+        // 2. นำ "ปีที่จ่ายครบแล้ว" มาปิดการเลือกใน Dropdown
+        let currentSelectedDisabled = false;
+        Array.from(yearSelect.options).forEach(opt => {
+            if (opt.value !== "" && fullyPaidYears.includes(opt.value)) {
+                opt.disabled = true; // ปิดไม่ให้กด
+                opt.text = opt.value + " (จ่ายครบแล้ว)"; // เปลี่ยนข้อความให้รู้ว่าทำไมกดไม่ได้
+                
+                // ถ้าบังเอิญระบบไปเลือกปีที่ถูกปิดไว้ ให้ล้างค่าที่เลือกออก
+                if (yearSelect.value === opt.value) {
+                    currentSelectedDisabled = true;
+                }
+            }
+        });
+        
+        // ถ้าปีที่เลือกไว้อยู่โดนล็อก ให้เคลียร์ช่องปีทิ้ง แล้วเช็คปุ่มบันทึกใหม่
+        if (currentSelectedDisabled) {
+            yearSelect.value = "";
+            checkFormValidity();
+        }
+
+        // 3. จัดการแสดงผลหน้าต่างค้างจ่าย (เหมือนเดิม)
         if (totalUnpaidCount > 0) {
             // อัปเดตข้อมูลบนหน้าเว็บ (ใน Container หลัก)
             document.getElementById('statusHouseNo').innerText = houseNumber;
