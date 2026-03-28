@@ -291,6 +291,23 @@
           </label>
           <input type="text" class="form-control fw-bold text-primary" style="font-size: 1.1rem;" id="name1" name="name1" value="998/" placeholder="เช่น 998/47" required>
         </div>
+
+        <div class="row">
+            <div class="col-md-12 mb-3">
+              <label class="form-label fw-bold">
+                <i class='bx bxs-calendar-star text-warning icon-modern'></i> 
+                ปี ที่จ่าย <span style="color: red;">*</span>
+              </label>
+              <select class="form-select" id="name3" name="name3" required>
+                <option selected disabled value="">-- เลือกปี --</option>
+                <option value="2567">2567</option>
+                <option value="2568">2568</option>
+                <option value="2569">2569</option>
+                <option value="2570">2570</option>
+                <option value="2571">2571</option>
+              </select>
+            </div>
+        </div>
         
         <div class="col-md-12 mb-4">
             <label class="form-label fw-bold mb-2">
@@ -349,23 +366,6 @@
             </div>
             <div class="invalid-feedback" id="month-error" style="display:none; color: #dc3545; font-size: 0.875em; margin-top: 0.25rem;">
                 กรุณาเลือกอย่างน้อย 1 เดือน
-            </div>
-        </div>
-
-        <div class="row">
-            <div class="col-md-12 mb-3">
-              <label class="form-label fw-bold">
-                <i class='bx bxs-calendar-star text-warning icon-modern'></i> 
-                ปี ที่จ่าย <span style="color: red;">*</span>
-              </label>
-              <select class="form-select" id="name3" name="name3" required>
-                <option selected disabled value="">-- เลือกปี --</option>
-                <option value="2567">2567</option>
-                <option value="2568">2568</option>
-                <option value="2569">2569</option>
-                <option value="2570">2570</option>
-                <option value="2571">2571</option>
-              </select>
             </div>
         </div>
 
@@ -458,7 +458,7 @@
       </div>
       
       <div class="text-center mt-4 text-muted small">
-          9one © 2024 V.8 (Multi-Month Support)
+          9one © 2024 V.9 (Multi-Month & Block Paid Months)
       </div>
     </div>
   </div>
@@ -529,12 +529,13 @@
     // ตัวแปรสำหรับเรียกใช้งาน Supabase Client
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    // Global variables for LIFF profile
+    // Global variables
     let uid = ""; 
     let uname = ""; 
     let picture = ""; 
     let xos = ""; 
     let emailL = "";
+    let globalHousePaymentData = []; // เก็บข้อมูลที่ดึงมาจากฐานข้อมูลเพื่อเอาไว้บล็อกเดือน
 
     $(document).ready(function() {
       const liffId = "2000143615-yk0LA09G";
@@ -583,12 +584,10 @@
           withLoginOnExternalBrowser: true
         })
         .then(async () => {
-          // ตรวจสอบสถานะการ Login
           if (!liff.isInClient() && !liff.isLoggedIn()) {
              const destinationUrl = window.location.href;
              liff.login({ redirectUri: destinationUrl });
           } else {
-             // ดึง UID ทันทีจาก decoded token เพื่อความชัวร์ (ถ้าล็อกอินแล้ว)
              const idToken = liff.getDecodedIDToken();
              if (idToken) {
                  uid = idToken.sub;
@@ -599,7 +598,6 @@
           const urlParms = new URLSearchParams(window.location.search)
           id = urlParms.get('id')
 
-          // Logic การแสดงผล
           if (id) {
              await reloadData(id)
           } 
@@ -618,22 +616,80 @@
         });
     }
 
+    // --- Function อัปเดตสถานะปุ่มเดือน (ปิดเดือนที่จ่ายแล้ว) ---
+    function updateMonthStatus() {
+        const selectedYear = document.getElementById('name3').value;
+        const monthMap = [
+            { key: 'jan', id: 'm1', short: 'ม.ค.' },
+            { key: 'feb', id: 'm2', short: 'ก.พ.' },
+            { key: 'mar', id: 'm3', short: 'มี.ค.' },
+            { key: 'apr', id: 'm4', short: 'เม.ย.' },
+            { key: 'may', id: 'm5', short: 'พ.ค.' },
+            { key: 'jun', id: 'm6', short: 'มิ.ย.' },
+            { key: 'jul', id: 'm7', short: 'ก.ค.' },
+            { key: 'aug', id: 'm8', short: 'ส.ค.' },
+            { key: 'sep', id: 'm9', short: 'ก.ย.' },
+            { key: 'oct', id: 'm10', short: 'ต.ค.' },
+            { key: 'nov', id: 'm11', short: 'พ.ย.' },
+            { key: 'dec', id: 'm12', short: 'ธ.ค.' }
+        ];
+
+        // 1. รีเซ็ตทุกเดือนให้กลับมากดได้ปกติก่อน
+        monthMap.forEach(m => {
+            const cb = document.getElementById(m.id);
+            const label = document.querySelector(`label[for="${m.id}"]`);
+            cb.disabled = false;
+            label.classList.remove('btn-secondary', 'text-white');
+            label.classList.add('btn-outline-success');
+            label.innerHTML = m.short;
+            label.title = "";
+        });
+
+        if (!selectedYear || globalHousePaymentData.length === 0) return;
+
+        // 2. หาข้อมูลของปีที่ถูกเลือก
+        const yearData = globalHousePaymentData.find(row => String(row.year).trim() === selectedYear);
+
+        if (yearData) {
+            // 3. วนลูปเช็คสถานะแต่ละเดือน ถ้าจ่ายแล้วให้ล็อก
+            monthMap.forEach(m => {
+                const status = yearData[m.key] ? String(yearData[m.key]).trim() : '';
+                // ถ้ามีสถานะและ ไม่ใช่ค้างจ่าย/ยังไม่จ่าย/รอข้อมูล แสดงว่า "จ่ายแล้ว"
+                if (status && status !== 'ยังไม่จ่าย' && status !== 'ค้างจ่าย' && status !== 'รอข้อมูล') {
+                    const cb = document.getElementById(m.id);
+                    const label = document.querySelector(`label[for="${m.id}"]`);
+                    
+                    cb.disabled = true; // ล็อกไม่ให้กด
+                    cb.checked = false; // เอาติ๊กถูกออก (ถ้ามี)
+                    
+                    // เปลี่ยนหน้าตาให้เป็นสีเทาพร้อมเครื่องหมายถูก
+                    label.classList.remove('btn-outline-success');
+                    label.classList.add('btn-secondary', 'text-white');
+                    label.innerHTML = `<i class='bx bx-check'></i>`;
+                    label.title = "ชำระแล้ว";
+                }
+            });
+        }
+    }
+
     // --- Function เช็คสถานะค้างจ่าย (Supabase) และปิดปีที่จ่ายครบแล้ว ---
     async function checkUnpaidStatus(houseNumber) {
       const container = document.getElementById('unpaidStatusContainer');
       const tableBody = document.getElementById('unpaidStatusBody');
       const yearSelect = document.getElementById('name3');
       
-      // 1. รีเซ็ต Dropdown ปีให้กลับมาเลือกได้ปกติทั้งหมดก่อน (เผื่อมีการลบพิมพ์บ้านเลขที่ใหม่)
+      // รีเซ็ต Dropdown ปีให้กลับมาเลือกได้ปกติทั้งหมดก่อน
       Array.from(yearSelect.options).forEach(opt => {
           if (opt.value !== "") {
               opt.disabled = false;
-              opt.text = opt.value; // เอาคำว่า "(จ่ายครบแล้ว)" ออก
+              opt.text = opt.value;
           }
       });
 
       if(!houseNumber || houseNumber.length < 5) { // ต้องยาวกว่า "998/"
           container.style.display = 'none';
+          globalHousePaymentData = []; // ล้างข้อมูล
+          updateMonthStatus(); // รีเซ็ตเดือน
           return;
       }
 
@@ -655,6 +711,7 @@
         let totalUnpaidCount = 0;
         tableBody.innerHTML = ''; 
         let fullyPaidYears = []; // ตัวแปรเก็บ "ปีที่จ่ายครบแล้ว"
+        globalHousePaymentData = data || []; // บันทึกข้อมูลเข้าตัวแปรส่วนกลางเพื่อใช้บล็อกเดือน
 
         if (data && data.length > 0) {
             const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
@@ -677,12 +734,10 @@
 
                 months.forEach((monthKey, index) => {
                     const status = row[monthKey] ? String(row[monthKey]).trim() : '';
-                    // เช็คสถานะ "ยังไม่จ่าย", "ค้างจ่าย" หรือ "รอข้อมูล"
                     if (status && (status === 'ยังไม่จ่าย' || status === 'ค้างจ่าย' || status === 'รอข้อมูล')) {
-                        hasUnpaid = true; // พบว่ามีเดือนที่ยังจัดการไม่เสร็จสมบูรณ์ในปีนี้
+                        hasUnpaid = true; 
                         totalUnpaidCount++;
                         
-                        // ปรับสี Badge ให้ต่างกัน ถ้ารอข้อมูลให้เป็นสีเหลือง
                         let statusBadge = status === 'รอข้อมูล' ? 'bg-warning text-dark' : 'bg-danger';
                         
                         const rowHtml = `
@@ -707,39 +762,38 @@
             });
         }
 
-        // 2. นำ "ปีที่จ่ายครบแล้ว" มาปิดการเลือกใน Dropdown
+        // อัปเดตการแสดงผลปุ่มเดือน (เรียกใช้งานทันทีหลังดึงข้อมูลเผื่อมีการเลือกปีค้างไว้)
+        updateMonthStatus();
+
+        // นำ "ปีที่จ่ายครบแล้ว" มาปิดการเลือกใน Dropdown
         let currentSelectedDisabled = false;
         Array.from(yearSelect.options).forEach(opt => {
             if (opt.value !== "" && fullyPaidYears.includes(opt.value)) {
-                opt.disabled = true; // ปิดไม่ให้กด
-                opt.text = opt.value + " (จ่ายครบแล้ว)"; // เปลี่ยนข้อความให้รู้ว่าทำไมกดไม่ได้
+                opt.disabled = true;
+                opt.text = opt.value + " (จ่ายครบแล้ว)";
                 
-                // ถ้าบังเอิญระบบไปเลือกปีที่ถูกปิดไว้ ให้ล้างค่าที่เลือกออก
                 if (yearSelect.value === opt.value) {
                     currentSelectedDisabled = true;
                 }
             }
         });
         
-        // ถ้าปีที่เลือกไว้อยู่โดนล็อก ให้เคลียร์ช่องปีทิ้ง แล้วเช็คปุ่มบันทึกใหม่
         if (currentSelectedDisabled) {
             yearSelect.value = "";
+            updateMonthStatus();
             checkFormValidity();
         }
 
-        // 3. จัดการแสดงผลหน้าต่างค้างจ่าย (เหมือนเดิม)
+        // จัดการแสดงผลหน้าต่างค้างจ่าย
         if (totalUnpaidCount > 0) {
-            // อัปเดตข้อมูลบนหน้าเว็บ (ใน Container หลัก)
             document.getElementById('statusHouseNo').innerText = houseNumber;
             document.getElementById('totalCountBadge').innerText = totalUnpaidCount + " รายการ";
             container.style.display = 'block';
 
-            // อัปเดตข้อมูลใน Modal
             document.getElementById('modalHouseNo').innerText = houseNumber;
             document.getElementById('modalTotalCount').innerText = totalUnpaidCount + " รายการ";
             document.getElementById('modalUnpaidBody').innerHTML = tableBody.innerHTML;
 
-            // แสดง Modal แแจ้งเตือน
             const unpaidModalElement = document.getElementById('unpaidAlertModal');
             const modalInstance = bootstrap.Modal.getInstance(unpaidModalElement) || new bootstrap.Modal(unpaidModalElement);
             modalInstance.show();
@@ -756,13 +810,11 @@
     }
 
     function sendFlexMessage(uid, uname, picture, name, name1, name2_string, name3, uploadedImageUrl) {
-      // ตรวจสอบว่าเปิดใน LINE App หรือไม่
       if (!liff.isInClient()) {
          console.warn("sendFlexMessage: ไม่ได้เปิดใน LINE App (เปิดใน Browser) จึงไม่สามารถส่ง Flex Message หาตัวเองได้");
          return; 
       }
 
-      // ใช้รูปที่อัปโหลด (ถ้ามี) ถ้าไม่มีให้ใช้รูปโปรไฟล์ หรือ Default
       const displayImage = uploadedImageUrl || picture || "https://cdn-icons-png.flaticon.com/512/1571/1571031.png";
 
       const flexMessage = {
@@ -927,7 +979,7 @@
                     "contents": [
                       {
                         "type": "text",
-                        "text": "📆 เดือน : ",
+                        "text": "🗓 ปี : ",
                         "color": "#aaaaaa",
                         "size": "sm",
                         "wrap": true,
@@ -937,10 +989,9 @@
                       },
                       {
                         "type": "text",
-                        "text": "" + name2_string, // แสดงรายการเดือนทั้งหมด
+                        "text": "" + name3,
                         "wrap": true,
-                        "color": "#198754", // เปลี่ยนสีเน้นให้เห็นชัดเจน
-                        "weight": "bold",
+                        "color": "#666666",
                         "size": "sm",
                         "flex": 5,
                         "align": "end",
@@ -955,7 +1006,7 @@
                     "contents": [
                       {
                         "type": "text",
-                        "text": "🗓 ปี : ",
+                        "text": "📆 เดือน : ",
                         "color": "#aaaaaa",
                         "size": "sm",
                         "wrap": true,
@@ -965,9 +1016,10 @@
                       },
                       {
                         "type": "text",
-                        "text": "" + name3,
+                        "text": "" + name2_string, 
                         "wrap": true,
-                        "color": "#666666",
+                        "color": "#198754", 
+                        "weight": "bold",
                         "size": "sm",
                         "flex": 5,
                         "align": "end",
@@ -1146,7 +1198,6 @@
 
     /** Function บันทึกข้อมูลหลัก - ทำงานแบบ Loop ตามเดือนที่เลือก */
     async function getAllElmForm() {
-      // ตรวจสอบ UID ก่อนบันทึก
       if (!uid) {
          if(liff.isLoggedIn()){
              const idToken = liff.getDecodedIDToken();
@@ -1158,7 +1209,6 @@
       const name1 = document.getElementById("name1").value;
       const name3 = document.getElementById("name3").value;
       
-      // หาเดือนที่ถูกเลือกทั้งหมด
       const selectedMonthElements = document.querySelectorAll('.month-check:checked');
       const selectedMonths = Array.from(selectedMonthElements).map(el => el.value);
 
@@ -1169,10 +1219,8 @@
       }
       document.getElementById('month-error').style.display = 'none';
 
-      // เพิ่ม Event Listener เพื่อป้องกันการปิดหน้าต่าง/กดปุ่ม Back
       window.addEventListener('beforeunload', preventCloseHandler);
 
-      // Setup loading status (เพิ่มการป้องกันไม่ให้กดปิดกล่องข้อความได้ และซ่อนปุ่มทุกชนิด)
       Swal.fire({
         title: 'กำลังบันทึกข้อมูล',
         html: `<br>
@@ -1180,11 +1228,11 @@
                  <i class='bx bx-error-alt' style="font-size: 1.5rem; vertical-align: middle;"></i> ห้ามปิดหรือรีเฟรชหน้าจอ<br>จนกว่าจะบันทึกเสร็จ
                </div>
                กำลังเตรียมการบันทึก: <b>0 / ${selectedMonths.length}</b> เดือน`,
-        allowOutsideClick: false, // ป้องกันการกดพื้นที่ข้างนอกเพื่อปิด
-        allowEscapeKey: false,    // ป้องกันการกดปุ่ม ESC บนคอมพิวเตอร์เพื่อปิด
-        showConfirmButton: false, // ซ่อนปุ่ม "ตกลง" ถาวรระหว่างโหลด
-        showCancelButton: false,  // ซ่อนปุ่ม Cancel
-        showCloseButton: false,   // ซ่อนปุ่ม (X)
+        allowOutsideClick: false, 
+        allowEscapeKey: false,    
+        showConfirmButton: false, 
+        showCancelButton: false,  
+        showCloseButton: false,   
         didOpen: () => {
           Swal.showLoading()
         }
@@ -1196,16 +1244,13 @@
       let successCount = 0;
       let lastResponseUrl = "";
       
-      // ดึงข้อมูลพื้นฐานที่ใช้เหมือนกันทุกเดือน
       const payMethod = document.querySelector('input[name="name4"]:checked').value;
       const note = document.getElementById("name5").value;
       const imageFileSrc = document.getElementById("picdata").src;
 
-      // วนลูปบันทึกข้อมูลทีละเดือนตามที่เลือก
       for (let i = 0; i < selectedMonths.length; i++) {
           const currentMonth = selectedMonths[i];
           
-          // อัปเดตหน้าต่าง Loading ข้อความเปลี่ยนแต่ปุ่ม OK จะไม่โผล่ขึ้นมาแน่นอน
           Swal.update({ 
               html: `<br>
                      <div style="font-size: 1.15rem; color: #dc3545; font-weight: bold; background-color: #f8d7da; padding: 10px; border-radius: 8px; border: 1px solid #f5c2c7; margin-bottom: 15px;">
@@ -1214,11 +1259,10 @@
                      กำลังบันทึกเดือน ${currentMonth} <b>(${i + 1}/${selectedMonths.length})</b>...` 
           });
 
-          // สร้าง Object สำหรับส่งเข้า Google Sheet
           var obj = {
               name: name,
               name1: name1,
-              name2: currentMonth, // กำหนดเดือนตามลูปปัจจุบัน
+              name2: currentMonth, 
               name3: name3,
               name4: payMethod,
               name5: note,
@@ -1227,7 +1271,6 @@
           };
 
           const formData = JSON.stringify(obj);
-          console.log(`Saving Data for ${currentMonth}:`, formData);
 
           let config = {
             method: "post",
@@ -1238,14 +1281,12 @@
           };
 
           try {
-              // รอให้ API ทำงานเสร็จก่อนถึงจะไปเดือนต่อไป
               const response = await axios.request(config);
               const msgResponse = response.data;
               
               if ((msgResponse && msgResponse.msg == "SUCCESS") || (typeof msgResponse === 'string' && msgResponse.includes("SUCCESS"))) {
                   successCount++;
                   
-                  // เก็บ URL สลิปของรอบสุดท้ายไว้ส่ง Flex
                   let parsedResponse = msgResponse;
                   if(typeof msgResponse === 'string') {
                       try { parsedResponse = JSON.parse(msgResponse); } catch(e){}
@@ -1257,11 +1298,8 @@
               }
           } catch (err) {
               console.error(`Axios Error for month ${currentMonth}:`, err);
-              // นำ Event ป้องกันการปิดหน้าออก เนื่องจากเกิดข้อผิดพลาดและเสร็จสิ้นกระบวนการแล้ว
               window.removeEventListener('beforeunload', preventCloseHandler);
               
-              // หยุดการทำงานถ้าเกิด Error เพื่อป้องกันไม่ให้ส่งขยะเข้า Server
-              // ตรงนี้จะเปิดหน้าต่างใหม่ที่มีปุ่ม ตกลง โผล่ขึ้นมาให้กดปิดได้
               Swal.fire({
                  title: 'บันทึกไม่สำเร็จ',
                  text: `เกิดข้อผิดพลาดในการบันทึกเดือน ${currentMonth}: ${err.message}`,
@@ -1271,14 +1309,12 @@
               });
               $("#btn_2").hide();
               $("#btn_1").show();
-              return; // ออกจากฟังก์ชันเลย ไม่ทำเดือนที่เหลือ
+              return; 
           }
       }
 
-      // นำ Event ป้องกันการปิดหน้าออก เนื่องจากบันทึกสำเร็จเรียบร้อยแล้ว
       window.removeEventListener('beforeunload', preventCloseHandler);
 
-      // ถ้าบันทึกสำเร็จครบทุกเดือน
       if (successCount === selectedMonths.length) {
           $("#btn_2").hide();
           $("#btn_1").show();
@@ -1288,19 +1324,15 @@
           document.getElementById("user_form").reset();
           document.getElementsByClassName("needs-validation")[0].classList.remove("was-validated");
 
-          // ล้างสถานะปุ่มเดือน
           document.querySelectorAll('.month-check').forEach(cb => cb.checked = false);
-          // นำค่ากลับมาเป็น 998/ ค้างไว้
           document.getElementById('name1').value = "998/";
           checkFormValidity();
+          updateMonthStatus(); // อัปเดต UI เดือนกลับไปค่าเริ่มต้น
 
-          // นำเดือนทั้งหมดที่เลือกมาต่อเป็นข้อความเพื่อแสดงในใบเสร็จ
           const allMonthsString = selectedMonths.join(", ");
           
-          // ส่ง Flex Message แจ้งเตือนยอดรวม
           sendFlexMessage(uid, uname, picture, name, name1, allMonthsString, name3, lastResponseUrl);
 
-          // เมื่อบันทึกเสร็จ จะขึ้นหน้าต่างใหม่ที่มีปุ่มให้กด ตกลง
           Swal.fire({
             title: 'ขอบคุณที่จ่ายค่าส่วนกลาง',
             text: `บันทึกข้อมูลเรียบร้อยจำนวน ${successCount} เดือน`,
@@ -1406,38 +1438,39 @@
     // จัดการ Input บ้านเลขที่ (บังคับ 998/ ให้อยู่ในช่องเสมอ และป้องกันเว้นวรรค)
     // ==========================================
     document.getElementById('name1').addEventListener('input', function(e) {
-        let val = this.value.replace(/\s/g, ''); // ลบช่องว่างทั้งหมดแบบ Real-time
+        let val = this.value.replace(/\s/g, ''); 
         const prefix = '998/';
 
         if (val.startsWith(prefix)) {
             let suffix = val.substring(prefix.length);
-            // ป้องกันกรณีลูกบ้านพิมพ์ 998/ ซ้ำ (เช่น พิมพ์ต่อจนกลายเป็น 998/998/47)
             if (suffix.startsWith(prefix)) {
                 suffix = suffix.substring(prefix.length);
             }
             this.value = prefix + suffix;
         } else {
-            // กรณีลูกบ้านพยายามลบข้อความ 998/ ออก
             let suffix = val;
             if (val === '998' || val === '99' || val === '9' || val === '') {
-                suffix = ''; // ลบจนเหลือแค่นี้ ถือว่าว่างเปล่า ให้เหลือแต่ prefix
+                suffix = ''; 
             } else if (val.startsWith('998') && !val.startsWith('998/')) {
-                suffix = val.substring(3); // กรณีเผลอลบแค่เครื่องหมาย /
-            } else if (!val.startsWith('9')) { // ถ้าลบจนหมดแล้วเผลอพิมพ์เลขอื่น
+                suffix = val.substring(3); 
+            } else if (!val.startsWith('9')) { 
                 suffix = val;
             }
-            // บังคับประกอบร่าง 998/ กลับเข้าไปใหม่
             this.value = prefix + suffix;
         }
         checkFormValidity();
     });
 
-    document.getElementById('name3').addEventListener('change', checkFormValidity);
+    // เมื่อเปลี่ยนปี ให้เรียกฟังก์ชันตรวจสอบการบล็อกเดือนด้วย
+    document.getElementById('name3').addEventListener('change', function() {
+        updateMonthStatus();
+        checkFormValidity();
+    });
+    
     document.getElementById('file_image').addEventListener('change', checkFormValidity);
     document.querySelectorAll('input[name="name4"]').forEach(radio => {
       radio.addEventListener('change', checkFormValidity);
     });
-    // ตรวจจับการกดปุ่มเดือน
     document.querySelectorAll('.month-check').forEach(checkbox => {
         checkbox.addEventListener('change', checkFormValidity);
     });
@@ -1449,13 +1482,11 @@
         
         clearTimeout(debounceTimer);
         
-        // ให้ค้นหายอดค้างจ่าย ก็ต่อเมื่อมีความยาวมากกว่า 4 ตัวอักษร (หมายถึงมีตัวเลขต่อจาก 998/ แล้ว)
         if (houseNo.length > 4) {
             debounceTimer = setTimeout(() => {
                 checkUnpaidStatus(houseNo);
             }, 1000); 
         } else {
-            // ถ้าลบจนเหลือแค่ 998/ ให้ซ่อนตารางยอดค้างจ่าย
             document.getElementById('unpaidStatusContainer').style.display = 'none';
         }
     });
@@ -1470,10 +1501,8 @@
       if (savedName) document.getElementById('name').value = savedName;
       
       if (savedHouseNumber) {
-          // เคลียร์เว้นวรรคจากข้อมูลเก่า
           let cleanHouseNo = savedHouseNumber.replace(/\s/g, '');
           
-          // ตรวจสอบว่าข้อมูลเก่ามี 998/ นำหน้าอยู่แล้วหรือไม่ ถ้าไม่มีให้เติมเข้าไป
           if (!cleanHouseNo.startsWith('998/')) {
               cleanHouseNo = '998/' + cleanHouseNo.replace(/^998/, '');
           }
