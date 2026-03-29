@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel | ระบบค่าส่วนกลาง โกลเด้นแลนด์ ซีรีน</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {}
+            }
+        }
+    </script>
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
+
+    <!-- Import Map for React & Icons -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.300.0"
+      }
+    }
+    </script>
+
+    <style>
+        body { font-family: 'Kanit', sans-serif; background-color: #f8fafc; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Table Styles for Data Grid */
+        .admin-table th {
+            position: sticky;
+            top: 0;
+            background-color: #f1f5f9;
+            z-index: 10;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        .admin-table td, .admin-table th {
+            white-space: nowrap;
+        }
+        
+        .status-cell {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: 9999px;
+            text-align: center;
+        }
+        .status-paid { background-color: #dcfce7; color: #166534; }
+        .status-unpaid { background-color: #fee2e2; color: #991b1b; }
+        .status-pending-verification { background-color: #fef08a; color: #854d0e; cursor: pointer; border: 1px solid #facc15; box-shadow: 0 1px 2px rgba(0,0,0,0.05); } /* Yellow for รอตรวจสอบ */
+        .status-waiting-info { background-color: #ffedd5; color: #9a3412; } /* Orange for รอข้อมูล */
+        .status-advance { background-color: #dbeafe; color: #1e40af; }
+        .status-empty { background-color: #f1f5f9; color: #64748b; }
+
+        @keyframes popIn { 0% { transform: scale(0.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+        .animate-pop-in { animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-up { animation: fadeUp 0.5s ease-out forwards; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            Lock, LayoutDashboard, Users, FileText, Download, Search, 
+            RefreshCw, Filter, Bell, LogOut, CheckCircle, XCircle, AlertTriangle, 
+            Coins, Building, Database, Receipt, ShieldAlert, Mail, HelpCircle, Loader2,
+            X, ExternalLink, Clock, Image as ImageIcon, Calendar, Home, AlertCircle
+        } from 'lucide-react';
+
+        // --- Configuration ---
+        const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
+        const ADMIN_PIN = '9999'; 
+
+        // --- Main Admin App ---
+        const AdminApp = () => {
+            const monthMap = { 'มกราคม': 'jan', 'กุมภาพันธ์': 'feb', 'มีนาคม': 'mar', 'เมษายน': 'apr', 'พฤษภาคม': 'may', 'มิถุนายน': 'jun', 'กรกฎาคม': 'jul', 'สิงหาคม': 'aug', 'กันยายน': 'sep', 'ตุลาคม': 'oct', 'พฤศจิกายน': 'nov', 'ธันวาคม': 'dec' };
+            
+            const months = [ 
+                { key: 'jan', label: 'ม.ค.' }, { key: 'feb', label: 'ก.พ.' }, { key: 'mar', label: 'มี.ค.' }, 
+                { key: 'apr', label: 'เม.ย.' }, { key: 'may', label: 'พ.ค.' }, { key: 'jun', label: 'มิ.ย.' }, 
+                { key: 'jul', label: 'ก.ค.' }, { key: 'aug', label: 'ส.ค.' }, { key: 'sep', label: 'ก.ย.' }, 
+                { key: 'oct', label: 'ต.ค.' }, { key: 'nov', label: 'พ.ย.' }, { key: 'dec', label: 'ธ.ค.' } 
+            ];
+
+            const getStatusClass = (status) => {
+                if (!status || status.includes('ไม่เก็บ')) return 'status-empty';
+                if (status.includes('จ่ายแล้ว') || status.includes('ชำระแล้ว')) return 'status-paid';
+                if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) return 'status-unpaid';
+                if (status.includes('รอตรวจสอบ')) return 'status-pending-verification';
+                if (status.includes('รอข้อมูล')) return 'status-waiting-info';
+                if (status.includes('ล่วงหน้า')) return 'status-advance';
+                return 'status-empty';
+            };
+
+            const calculateHouseTotal = (house) => {
+                let paid = 0, unpaid = 0, waiting = 0;
+                months.forEach(m => {
+                    const s = house[m.key] || '';
+                    if (s.includes('จ่ายแล้ว') || s.includes('ชำระแล้ว') || s.includes('ล่วงหน้า')) paid += 300;
+                    else if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) unpaid += 300;
+                    else if (s.includes('รอตรวจสอบ') || s.includes('รอข้อมูล')) waiting += 300;
+                });
+                return { paid, unpaid, waiting };
+            };
+
+            const [isAuthenticated, setIsAuthenticated] = useState(false);
+            const [pin, setPin] = useState('');
+            const [pinError, setPinError] = useState('');
+
+            const [supabase, setSupabase] = useState(null);
+            const [data, setData] = useState([]);
+            const [pendingFees, setPendingFees] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            // View & Filters
+            const [currentView, setCurrentView] = useState('grid'); // 'grid' | 'pending' | 'overdue'
+            const [yearFilter, setYearFilter] = useState('all'); // Default to all
+            const [searchQuery, setSearchQuery] = useState('');
+            const [filterStatus, setFilterStatus] = useState('all'); // all, overdue, waiting
+
+            // Modal State
+            const [imageModalOpen, setImageModalOpen] = useState(false);
+            const [selectedImageUrl, setSelectedImageUrl] = useState(null);
+            const [isFetchingSlip, setIsFetchingSlip] = useState(false);
+
+            // Init Supabase
+            useEffect(() => {
+                const script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js';
+                script.async = true;
+                script.onload = () => { 
+                    if (window.supabase) {
+                        setSupabase(window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY));
+                    }
+                };
+                document.body.appendChild(script);
+                
+                // Check local storage for session
+                if (localStorage.getItem('admin_auth') === 'true') {
+                    setIsAuthenticated(true);
+                }
+                
+                return () => {
+                    if (document.body.contains(script)) {
+                        document.body.removeChild(script);
+                    }
+                };
+            }, []);
+
+            // Fetch Data
+            const fetchData = async () => {
+                if (!supabase) return;
+                setLoading(true);
+                try {
+                    // Fetch House Data
+                    const { data: houseData, error: houseError } = await supabase
+                        .from('house_payments')
+                        .select('*')
+                        .order('house_numbe', { ascending: true });
+                    
+                    if (houseError) throw houseError;
+                    setData(houseData || []);
+
+                    // Fetch Pending Fees directly from common_fees table
+                    const { data: feesData, error: feesError } = await supabase
+                        .from('common_fees')
+                        .select('*')
+                        .eq('status', 'รอตรวจสอบ')
+                        .order('reported_at', { ascending: false });
+                    
+                    if (!feesError) setPendingFees(feesData || []);
+
+                } catch (err) {
+                    console.error("Error fetching admin data:", err);
+                    alert("ไม่สามารถดึงข้อมูลได้");
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            useEffect(() => {
+                if (isAuthenticated && supabase) {
+                    fetchData();
+                }
+            }, [isAuthenticated, supabase]);
+
+            const handleLogin = (e) => {
+                e.preventDefault();
+                if (pin === ADMIN_PIN) {
+                    setIsAuthenticated(true);
+                    localStorage.setItem('admin_auth', 'true');
+                    setPinError('');
+                } else {
+                    setPinError('รหัส PIN ไม่ถูกต้อง');
+                }
+            };
+
+            const handleLogout = () => {
+                setIsAuthenticated(false);
+                localStorage.removeItem('admin_auth');
+                setPin('');
+            };
+
+            const availableYears = useMemo(() => [...new Set(data.map(d => d.year))].sort((a,b) => b-a), [data]);
+
+            // Fetch Slip Image Handler from Data Grid
+            const handleViewSlipFromGrid = async (houseNumber, year, monthKey) => {
+                if (!supabase) return;
+                
+                // แปลง monthKey (เช่น 'jan') กลับเป็นชื่อเดือนภาษาไทย (เช่น 'มกราคม')
+                const thaiMonth = Object.keys(monthMap).find(key => monthMap[key] === monthKey);
+                
+                if (!thaiMonth) {
+                    alert('เกิดข้อผิดพลาด: ไม่พบข้อมูลเดือนที่ตรงกัน');
+                    return;
+                }
+
+                setIsFetchingSlip(true);
+                try {
+                    const { data: slipData, error: slipError } = await supabase
+                        .from('common_fees')
+                        .select('image_url')
+                        .eq('house_number', houseNumber)
+                        .eq('year', year)
+                        .eq('month', thaiMonth)
+                        .order('reported_at', { ascending: false })
+                        .limit(1);
+
+                    if (slipError) throw slipError;
+
+                    if (slipData && slipData.length > 0 && slipData[0].image_url) {
+                        setSelectedImageUrl(slipData[0].image_url);
+                        setImageModalOpen(true);
+                    } else {
+                        alert('ไม่พบรูปสลิปในฐานข้อมูล หรือผู้ใช้ไม่ได้แนบรูปมาครับ');
+                    }
+                } catch (err) {
+                    console.error('Error fetching slip:', err);
+                    alert('เกิดข้อผิดพลาดในการดึงข้อมูลสลิป');
+                } finally {
+                    setIsFetchingSlip(false);
+                }
+            };
+
+            // Filter Logic for Data Grid
+            const filteredData = useMemo(() => {
+                let filtered = data;
+                
+                if (yearFilter && yearFilter !== 'all') {
+                    filtered = filtered.filter(item => item.year.toString() === yearFilter);
+                }
+
+                if (searchQuery) {
+                    const q = searchQuery.toLowerCase().trim();
+                    filtered = filtered.filter(item => 
+                        (item.house_numbe && item.house_numbe.toLowerCase() === q) || 
+                        (item.owner_name && item.owner_name.toLowerCase().includes(q)) ||
+                        (item.soi && item.soi.toLowerCase().includes(q))
+                    );
+                }
+
+                if (filterStatus !== 'all') {
+                    filtered = filtered.filter(item => {
+                        const totals = calculateHouseTotal(item);
+                        if (filterStatus === 'overdue') return totals.unpaid > 0;
+                        if (filterStatus === 'waiting') return totals.waiting > 0;
+                        return true;
+                    });
+                }
+
+                return filtered;
+            }, [data, yearFilter, searchQuery, filterStatus]);
+
+            // Calculate Total Overdue Months across all years per house
+            const overdueSummaryData = useMemo(() => {
+                const summaryMap = {};
+                
+                data.forEach(item => {
+                    let overdueCount = 0;
+                    months.forEach(m => {
+                        const status = item[m.key] || '';
+                        if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) {
+                            overdueCount++;
+                        }
+                    });
+
+                    if (overdueCount > 0) {
+                        if (!summaryMap[item.house_numbe]) {
+                            summaryMap[item.house_numbe] = {
+                                houseNo: item.house_numbe,
+                                ownerName: item.owner_name,
+                                soi: item.soi,
+                                totalOverdueMonths: 0,
+                                totalOverdueAmount: 0
+                            };
+                        }
+                        summaryMap[item.house_numbe].totalOverdueMonths += overdueCount;
+                        summaryMap[item.house_numbe].totalOverdueAmount += (overdueCount * 300);
+                    }
+                });
+
+                // Convert to array and sort by most overdue
+                return Object.values(summaryMap).sort((a, b) => b.totalOverdueMonths - a.totalOverdueMonths);
+            }, [data]);
+
+            // Aggregate Stats
+            const stats = useMemo(() => {
+                let totalPaid = 0, totalUnpaid = 0, totalWaiting = 0;
+                filteredData.forEach(item => {
+                    const t = calculateHouseTotal(item);
+                    totalPaid += t.paid;
+                    totalUnpaid += t.unpaid;
+                    totalWaiting += t.waiting;
+                });
+                return { totalPaid, totalUnpaid, totalWaiting, count: filteredData.length };
+            }, [filteredData]);
+
+            const exportCSV = () => {
+                let headers, rows, filename;
+
+                if (currentView === 'overdue') {
+                    headers = ["ลำดับ", "บ้านเลขที่", "ซอย", "ชื่อเจ้าของบ้าน", "จำนวนเดือนที่ค้างทั้งหมด", "ยอดค้างชำระทั้งหมด (บาท)"];
+                    rows = overdueSummaryData.map((item, idx) => [
+                        idx + 1,
+                        `"${item.houseNo || ''}"`,
+                        `"${item.soi || ''}"`,
+                        `"${item.ownerName || ''}"`,
+                        item.totalOverdueMonths,
+                        item.totalOverdueAmount
+                    ]);
+                    filename = `Overdue_Summary_Report_${new Date().toISOString().slice(0,10)}.csv`;
+                } else {
+                    headers = ["ลำดับ", "เลขที่บ้าน", "ซอย", "ชื่อเจ้าของบ้าน", "สถานะเริ่มต้น", ...months.map(m => m.label), "รวมจ่ายแล้ว", "รวมค้างชำระ"];
+                    rows = filteredData.map((item, idx) => {
+                        const t = calculateHouseTotal(item);
+                        return [
+                            idx + 1,
+                            `"${item.house_numbe || ''}"`,
+                            `"${item.soi || ''}"`,
+                            `"${item.owner_name || ''}"`,
+                            `"${item.status || ''}"`,
+                            ...months.map(m => `"${item[m.key] || ''}"`),
+                            t.paid,
+                            t.unpaid
+                        ];
+                    });
+                    filename = `Admin_Report_${yearFilter}_${new Date().toISOString().slice(0,10)}.csv`;
+                }
+
+                const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+                const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", filename);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+            if (!isAuthenticated) {
+                return (
+                    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+                        <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm animate-fade-up text-center">
+                            <div className="bg-indigo-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
+                                <Lock size={36} className="text-indigo-600" />
+                            </div>
+                            <h2 className="text-2xl font-bold text-slate-800 mb-2">Admin Security</h2>
+                            <p className="text-slate-500 mb-8 text-sm">กรุณาระบุรหัส PIN เพื่อเข้าสู่ระบบการจัดการ</p>
+                            
+                            <form onSubmit={handleLogin}>
+                                <input
+                                    type="password"
+                                    value={pin}
+                                    onChange={(e) => setPin(e.target.value)}
+                                    placeholder="••••"
+                                    maxLength="4"
+                                    className="w-full text-center text-3xl tracking-[1em] font-bold px-4 py-4 border border-slate-300 rounded-xl mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+                                    autoFocus
+                                />
+                                {pinError && <p className="text-red-500 text-sm mb-4 font-medium">{pinError}</p>}
+                                <button type="submit" className="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-indigo-700 transition-colors text-lg">
+                                    เข้าสู่ระบบ
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-slate-100 flex flex-col md:flex-row">
+                    
+                    {/* Sidebar */}
+                    <aside className="w-full md:w-64 bg-slate-900 text-white flex flex-col shadow-2xl z-20">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-3 text-indigo-400">
+                                <Database size={24} /> Admin Center
+                            </h1>
+                            <p className="text-xs text-slate-500 mt-2">หมู่บ้าน โกลเด้นแลนด์ ซีรีน</p>
+                        </div>
+                        
+                        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                            <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 mt-4 px-2">Menu</div>
+                            <button 
+                                onClick={() => { setCurrentView('grid'); window.scrollTo({top: 0, behavior: 'smooth'}); }}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'grid' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}
+                            >
+                                <LayoutDashboard size={20} /> Data Grid
+                            </button>
+                            <button 
+                                onClick={() => { setCurrentView('overdue'); window.scrollTo({top: 0, behavior: 'smooth'}); }}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'overdue' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}
+                            >
+                                <AlertTriangle size={20} /> สรุปยอดค้างชำระ
+                            </button>
+                            <button 
+                                onClick={() => { setCurrentView('pending'); window.scrollTo({top: 0, behavior: 'smooth'}); }} 
+                                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'pending' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}
+                            >
+                                <div className="flex items-center gap-3"><Receipt size={20} /> รอตรวจสอบ</div>
+                                {pendingFees.length > 0 && <span className="bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{pendingFees.length}</span>}
+                            </button>
+                        </div>
+
+                        <div className="p-4 border-t border-slate-800">
+                            <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-900/50 text-red-400 rounded-xl font-medium transition-colors">
+                                <LogOut size={20} /> ออกจากระบบ
+                            </button>
+                        </div>
+                    </aside>
+
+                    {/* Main Content */}
+                    <main className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50">
+                        
+                        {/* Topbar */}
+                        <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 z-10">
+                            <div className="flex flex-col">
+                                <h2 className="text-2xl font-bold text-slate-800">
+                                    {currentView === 'grid' ? 'ข้อมูลลูกบ้านทั้งหมด (Data Grid)' : 
+                                     currentView === 'pending' ? 'รายการแจ้งโอนรอตรวจสอบ' : 'สรุปจำนวนเดือนที่ค้างชำระทั้งหมด'}
+                                </h2>
+                                <span className="text-sm text-slate-500">
+                                    {currentView === 'grid' ? 'ดูและจัดการสถานะการชำระเงินในมุมมองแบบตาราง' : 
+                                     currentView === 'pending' ? 'ตรวจสอบสลิปการโอนเงินที่ลูกบ้านแจ้งเข้ามาใหม่' : 'แสดงยอดรวมเดือนที่ค้างชำระจากทุกปีของบ้านแต่ละหลัง'}
+                                </span>
+                            </div>
+                            
+                            <div className="flex items-center gap-3 w-full sm:w-auto">
+                                <button onClick={fetchData} className="p-2.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors" title="รีเฟรชข้อมูล">
+                                    <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
+                                </button>
+                                {(currentView === 'grid' || currentView === 'overdue') && (
+                                    <button onClick={exportCSV} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-emerald-600 text-white px-4 py-2.5 rounded-lg font-bold hover:bg-emerald-700 shadow-sm transition-colors text-sm">
+                                        <Download size={18} /> Export Excel
+                                    </button>
+                                )}
+                            </div>
+                        </header>
+
+                        {/* Content Area */}
+                        <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+                            
+                            {currentView === 'grid' ? (
+                                <>
+                                    {/* Summary Widgets */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                                        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+                                            <div className="bg-blue-100 p-3 rounded-xl text-blue-600"><Building size={24} /></div>
+                                            <div><p className="text-xs text-slate-500 font-bold uppercase">จำนวนบ้าน (ที่กรอง)</p><h4 className="text-2xl font-extrabold text-slate-800">{stats.count}</h4></div>
+                                        </div>
+                                        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+                                            <div className="bg-green-100 p-3 rounded-xl text-green-600"><Coins size={24} /></div>
+                                            <div><p className="text-xs text-slate-500 font-bold uppercase">รวมจ่ายแล้ว (ปี {yearFilter === 'all' ? 'ทั้งหมด' : yearFilter})</p><h4 className="text-2xl font-extrabold text-green-600">฿{stats.totalPaid.toLocaleString()}</h4></div>
+                                        </div>
+                                        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+                                            <div className="bg-red-100 p-3 rounded-xl text-red-600"><AlertTriangle size={24} /></div>
+                                            <div><p className="text-xs text-slate-500 font-bold uppercase">รวมค้างชำระ</p><h4 className="text-2xl font-extrabold text-red-600">฿{stats.totalUnpaid.toLocaleString()}</h4></div>
+                                        </div>
+                                        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+                                            <div className="bg-orange-100 p-3 rounded-xl text-orange-600"><Bell size={24} /></div>
+                                            <div><p className="text-xs text-slate-500 font-bold uppercase">สลิปใบเสร็จรอตรวจสอบ</p><h4 className="text-2xl font-extrabold text-orange-600">{pendingFees.length} รายการ</h4></div>
+                                        </div>
+                                    </div>
+
+                                    {/* Filters */}
+                                    <div className="bg-white p-4 rounded-t-2xl border border-slate-200 border-b-0 flex flex-col md:flex-row gap-4 justify-between items-center">
+                                        <div className="flex items-center gap-3 w-full md:w-auto">
+                                            <div className="relative flex-1 md:w-64">
+                                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="ค้นหาเลขที่บ้าน, ชื่อ..." 
+                                                    className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+                                                    value={searchQuery}
+                                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                                />
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
+                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1"><Filter size={14}/> ตัวกรอง:</span>
+                                            <select 
+                                                value={yearFilter} 
+                                                onChange={(e) => setYearFilter(e.target.value)}
+                                                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+                                            >
+                                                <option value="all">ทั้งหมด</option>
+                                                {availableYears.map(y => <option key={y} value={y}>ปี {y}</option>)}
+                                            </select>
+                                            
+                                            <select 
+                                                value={filterStatus} 
+                                                onChange={(e) => setFilterStatus(e.target.value)}
+                                                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+                                            >
+                                                <option value="all">สถานะทั้งหมด</option>
+                                                <option value="overdue">🔴 มีค้างชำระ</option>
+                                                <option value="waiting">⏳ รอตรวจสอบ/ข้อมูล</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    {/* Data Grid */}
+                                    <div className="bg-white border border-slate-200 rounded-b-2xl shadow-sm overflow-hidden flex flex-col">
+                                        {loading ? (
+                                            <div className="p-20 flex justify-center"><Loader2 size={40} className="animate-spin text-indigo-500" /></div>
+                                        ) : filteredData.length === 0 ? (
+                                            <div className="p-20 text-center text-slate-500">ไม่พบข้อมูลตามเงื่อนไขที่ค้นหา</div>
+                                        ) : (
+                                            <div className="overflow-x-auto admin-table max-h-[60vh]">
+                                                <table className="w-full text-left text-sm border-collapse">
+                                                    <thead>
+                                                        <tr className="text-slate-600 border-b-2 border-slate-200">
+                                                            <th className="px-4 py-3 font-bold bg-slate-50 sticky left-0 z-20 shadow-[1px_0_0_#e2e8f0]">บ้านเลขที่</th>
+                                                            <th className="px-4 py-3 font-bold bg-slate-50 border-r border-slate-200">ปี</th>
+                                                            <th className="px-4 py-3 font-bold">ชื่อเจ้าของบ้าน</th>
+                                                            <th className="px-4 py-3 font-bold text-center">ซอย</th>
+                                                            {months.map(m => (
+                                                                <th key={m.key} className="px-3 py-3 font-bold text-center text-xs uppercase tracking-wider">{m.label}</th>
+                                                            ))}
+                                                            <th className="px-4 py-3 font-bold text-right bg-green-50 text-green-700">ยอดจ่าย</th>
+                                                            <th className="px-4 py-3 font-bold text-right bg-red-50 text-red-700">ยอดค้าง</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-100">
+                                                        {filteredData.map((item, idx) => {
+                                                            const totals = calculateHouseTotal(item);
+                                                            return (
+                                                                <tr key={idx} className="hover:bg-slate-50 transition-colors group">
+                                                                    <td className="px-4 py-3 font-extrabold text-slate-800 bg-white group-hover:bg-slate-50 sticky left-0 z-10 shadow-[1px_0_0_#e2e8f0]">
+                                                                        {item.house_numbe}
+                                                                    </td>
+                                                                    <td className="px-4 py-3 font-bold text-indigo-600 bg-white group-hover:bg-slate-50 border-r border-slate-100">
+                                                                        {item.year}
+                                                                    </td>
+                                                                    <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate" title={item.owner_name}>
+                                                                        {item.owner_name || '-'}
+                                                                    </td>
+                                                                    <td className="px-4 py-3 text-center text-slate-500 font-medium">
+                                                                        {item.soi || '-'}
+                                                                    </td>
+                                                                    
+                                                                    {/* Month Columns */}
+                                                                    {months.map(m => {
+                                                                        const currentStatus = item[m.key];
+                                                                        const isPending = currentStatus?.includes('รอตรวจสอบ');
+                                                                        return (
+                                                                            <td key={m.key} className="px-2 py-3 text-center">
+                                                                                <div 
+                                                                                    className={`status-cell ${getStatusClass(currentStatus)} ${isPending ? 'hover:scale-105 transition-transform shadow-md' : ''}`}
+                                                                                    onClick={() => isPending ? handleViewSlipFromGrid(item.house_numbe, item.year, m.key) : null}
+                                                                                    title={isPending ? "คลิกเพื่อดูสลิป" : ""}
+                                                                                >
+                                                                                    {currentStatus || '-'}
+                                                                                </div>
+                                                                            </td>
+                                                                        );
+                                                                    })}
+                                                                    
+                                                                    {/* Totals */}
+                                                                    <td className="px-4 py-3 text-right font-bold text-green-600 bg-green-50/30 group-hover:bg-green-50/80">
+                                                                        {totals.paid > 0 ? `฿${totals.paid.toLocaleString()}` : '-'}
+                                                                    </td>
+                                                                    <td className="px-4 py-3 text-right font-bold text-red-600 bg-red-50/30 group-hover:bg-red-50/80">
+                                                                        {totals.unpaid > 0 ? `฿${totals.unpaid.toLocaleString()}` : '-'}
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="mt-4 text-xs text-slate-400 text-right">
+                                        อัปเดตข้อมูลล่าสุดเมื่อ: {new Date().toLocaleString('th-TH')}
+                                    </div>
+                                </>
+                            ) : currentView === 'overdue' ? (
+                                /* Overdue Summary View */
+                                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-up">
+                                    <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-red-50">
+                                        <h3 className="text-lg font-bold text-red-800 flex items-center gap-2">
+                                            <AlertTriangle className="text-red-500" />
+                                            สรุปจำนวนเดือนที่ค้างชำระทั้งหมด (ทุกปี)
+                                        </h3>
+                                        <span className="bg-red-500 text-white font-bold px-3 py-1 rounded-full text-sm">
+                                            มีบ้านค้างชำระ {overdueSummaryData.length} หลัง
+                                        </span>
+                                    </div>
+                                    <div className="p-0 bg-white min-h-[50vh]">
+                                        {loading ? (
+                                            <div className="flex justify-center py-20"><Loader2 size={40} className="animate-spin text-red-500" /></div>
+                                        ) : overdueSummaryData.length === 0 ? (
+                                            <div className="text-center py-20 text-slate-500 flex flex-col items-center gap-3">
+                                                <CheckCircle size={48} className="text-green-400" />
+                                                <p className="text-lg font-medium text-slate-600">ไม่มีบ้านที่มียอดค้างชำระ</p>
+                                            </div>
+                                        ) : (
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full text-left text-sm border-collapse">
+                                                    <thead>
+                                                        <tr className="text-slate-600 border-b-2 border-slate-200 bg-slate-50">
+                                                            <th className="px-6 py-4 font-bold text-center w-20">ลำดับ</th>
+                                                            <th className="px-6 py-4 font-bold">บ้านเลขที่</th>
+                                                            <th className="px-6 py-4 font-bold">ชื่อเจ้าของบ้าน</th>
+                                                            <th className="px-6 py-4 font-bold text-center">ซอย</th>
+                                                            <th className="px-6 py-4 font-bold text-center">จำนวนเดือนที่ค้างทั้งหมด</th>
+                                                            <th className="px-6 py-4 font-bold text-right">ยอดค้างชำระสะสม (บาท)</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-100">
+                                                        {overdueSummaryData.map((item, idx) => (
+                                                            <tr key={idx} className="hover:bg-red-50/30 transition-colors">
+                                                                <td className="px-6 py-4 text-center font-medium text-slate-500">{idx + 1}</td>
+                                                                <td className="px-6 py-4 font-bold text-slate-800 flex items-center gap-2">
+                                                                    <Home size={16} className="text-slate-400" /> {item.houseNo}
+                                                                </td>
+                                                                <td className="px-6 py-4 text-slate-600 font-medium">{item.ownerName || '-'}</td>
+                                                                <td className="px-6 py-4 text-center text-slate-500 font-medium">{item.soi || '-'}</td>
+                                                                <td className="px-6 py-4 text-center">
+                                                                    <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full font-bold">
+                                                                        {item.totalOverdueMonths} เดือน
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-6 py-4 text-right font-extrabold text-red-600 text-base">
+                                                                    ฿{item.totalOverdueAmount.toLocaleString()}
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ) : (
+                                /* Pending Verification View */
+                                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-up">
+                                    <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-orange-50">
+                                        <h3 className="text-lg font-bold text-orange-800 flex items-center gap-2">
+                                            <Receipt className="text-orange-500" />
+                                            รายการจากระบบ (สถานะ: รอตรวจสอบ)
+                                        </h3>
+                                        <span className="bg-orange-500 text-white font-bold px-3 py-1 rounded-full text-sm">
+                                            ทั้งหมด {pendingFees.length} รายการ
+                                        </span>
+                                    </div>
+                                    <div className="p-6 bg-slate-50 min-h-[50vh]">
+                                        {loading ? (
+                                            <div className="flex justify-center py-20"><Loader2 size={40} className="animate-spin text-orange-500" /></div>
+                                        ) : pendingFees.length === 0 ? (
+                                            <div className="text-center py-20 text-slate-500 flex flex-col items-center gap-3">
+                                                <CheckCircle size={48} className="text-green-400" />
+                                                <p className="text-lg font-medium text-slate-600">ไม่มีรายการรอตรวจสอบในขณะนี้</p>
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                                                {pendingFees.map(fee => (
+                                                    <div key={fee.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+                                                        {/* Card Header */}
+                                                        <div className="bg-gradient-to-r from-orange-400 to-orange-500 p-3 flex justify-between items-center text-white">
+                                                            <span className="font-bold flex items-center gap-2"><Home size={16}/> บ้านเลขที่ {fee.house_number}</span>
+                                                            <span className="text-xs bg-white/20 px-2 py-1 rounded-full font-semibold backdrop-blur-sm shadow-sm">ปี {fee.year}</span>
+                                                        </div>
+                                                        {/* Card Body */}
+                                                        <div className="p-5 space-y-3">
+                                                            <div className="flex justify-between items-center text-sm border-b border-slate-100 pb-2">
+                                                                <span className="text-slate-500 flex items-center gap-1.5"><Calendar size={14}/> รอบเดือน:</span>
+                                                                <span className="font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{fee.month}</span>
+                                                            </div>
+                                                            <div className="flex justify-between items-center text-sm border-b border-slate-100 pb-2">
+                                                                <span className="text-slate-500 flex items-center gap-1.5"><Coins size={14}/> ยอดชำระ:</span>
+                                                                <span className="font-extrabold text-green-600 text-base">฿{fee.amount?.toLocaleString() || '0'}</span>
+                                                            </div>
+                                                            <div className="flex justify-between items-center text-sm pb-1">
+                                                                <span className="text-slate-500 flex items-center gap-1.5"><Clock size={14}/> วันที่แจ้ง:</span>
+                                                                <span className="text-slate-600 font-medium text-xs">
+                                                                    {new Date(fee.reported_at).toLocaleDateString('th-TH', {day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute:'2-digit'})}
+                                                                </span>
+                                                            </div>
+                                                            {/* Image Thumbnail / Button */}
+                                                            <div className="pt-4 mt-2">
+                                                                {fee.image_url ? (
+                                                                    <button 
+                                                                        onClick={() => { setSelectedImageUrl(fee.image_url); setImageModalOpen(true); }}
+                                                                        className="w-full py-2.5 bg-indigo-50 text-indigo-600 font-bold rounded-lg hover:bg-indigo-600 hover:text-white transition-all duration-300 flex items-center justify-center gap-2 text-sm shadow-sm"
+                                                                    >
+                                                                        <ImageIcon size={18} /> กดเพื่อดูรูปสลิป
+                                                                    </button>
+                                                                ) : (
+                                                                    <div className="text-center text-xs text-slate-400 py-3 bg-slate-50 rounded-lg border border-dashed border-slate-200">
+                                                                        ไม่มีรูปสลิปแนบมา
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                        </div>
+                    </main>
+
+                    {/* Image Modal */}
+                    {imageModalOpen && selectedImageUrl && (
+                        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm" onClick={() => setImageModalOpen(false)}>
+                            <div className="relative w-full max-w-4xl h-full max-h-[90vh] flex flex-col items-center justify-center animate-in fade-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
+                            <button 
+                                onClick={() => setImageModalOpen(false)} 
+                                className="absolute -top-12 right-0 text-white/80 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors"
+                            >
+                                <X size={32} />
+                            </button>
+                            <img 
+                                src={selectedImageUrl} 
+                                alt="Payment Slip" 
+                                className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                            />
+                            <div className="absolute -bottom-12 left-0 right-0 flex justify-center gap-4">
+                                <a href={selectedImageUrl} target="_blank" rel="noreferrer" className="text-white/80 hover:text-white text-sm flex items-center gap-2 bg-white/10 px-4 py-2 rounded-full hover:bg-white/20 transition-colors">
+                                    <ExternalLink size={16} /> เปิดรูปต้นฉบับ
+                                </a>
+                            </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Loading Overlay for Fetching Slip */}
+                    {isFetchingSlip && (
+                        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/20 backdrop-blur-sm">
+                            <div className="bg-white p-4 rounded-xl shadow-lg flex items-center gap-3 animate-pop-in border-2 border-indigo-100">
+                                <Loader2 className="animate-spin text-indigo-600" size={24} />
+                                <span className="font-bold text-slate-700">กำลังโหลดรูปสลิป...</span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<AdminApp />);
+    </script>
+</body>
+</html>
