@@ -556,7 +556,7 @@
         }
     }
 
-    // --- ฟังก์ชัน Batch Run PDF ---
+    // --- ฟังก์ชัน Batch Run PDF (เวอร์ชันทำงานขนาน เร็วขึ้น) ---
     async function runSelectedPDFs() {
         // หา checkbox ที่ถูกเลือก
         let checkedBoxes = $('.rowCheckbox:checked');
@@ -587,44 +587,51 @@
 
         if (!confirm.isConfirmed) return;
 
-        // ดึงชื่อแอดมินที่ Login อยู่
         let adminName = localStorage.getItem('Name') || 'Admin';
+        let successCount = 0;
 
-        // เริ่มวนลูปสร้างทีละรายการ
         Swal.fire({
             title: 'กำลังดำเนินการ...',
-            html: 'กำลังเตรียมข้อมูล',
+            html: `กำลังสร้าง PDF...<br><b>สำเร็จ: 0 / ${selectedIds.length}</b>`,
             allowOutsideClick: false,
             didOpen: () => {
                 Swal.showLoading();
             }
         });
 
-        for (let i = 0; i < selectedIds.length; i++) {
-            let id = selectedIds[i];
+        // กำหนดจำนวนที่จะให้ GAS ประมวลผลพร้อมกัน (แนะนำ 3-5 ป้องกัน Limit)
+        const chunkSize = 5; 
+
+        // วนลูปทีละกลุ่ม (Chunk)
+        for (let i = 0; i < selectedIds.length; i += chunkSize) {
+            const chunk = selectedIds.slice(i, i + chunkSize);
             
-            // อัปเดตข้อความบน Swal
-            Swal.getHtmlContainer().textContent = `กำลังสร้าง PDF รายการที่ ${i + 1} จาก ${selectedIds.length} (ID: ${id})`;
-            
-            try {
-                // เรียก API ไปที่ GAS (เพิ่ม action: runPDF)
-                // ส่งชื่อแอดมินไปด้วย
-                await callApi('runPDF', { id: id, inspector: adminName });
-            } catch (error) {
-                console.error(`Error processing ID ${id}:`, error);
-                // อาจจะเก็บ error ไว้บอก user ทีหลัง แต่ให้ลูปทำงานต่อ
-            }
+            // สร้าง Array ของคำสั่ง API ที่จะยิงไปพร้อมกันในกลุ่มนี้
+            const promises = chunk.map(id => {
+                return callApi('runPDF', { id: id, inspector: adminName })
+                    .then(() => {
+                        successCount++;
+                        // อัปเดตหน้าจอเรียลไทม์เมื่อแต่ละไฟล์เสร็จ
+                        Swal.getHtmlContainer().innerHTML = `กำลังสร้าง PDF...<br><span class="text-success"><b>สำเร็จ: ${successCount} / ${selectedIds.length}</b></span>`;
+                    })
+                    .catch(error => {
+                        console.error(`Error processing ID ${id}:`, error);
+                    });
+            });
+
+            // สั่งรันชุดนี้พร้อมกัน และรอให้ชุดนี้ (เช่น 5 ไฟล์) เสร็จทั้งหมดก่อนค่อยไปชุดต่อไป
+            await Promise.all(promises);
         }
 
         // เสร็จสิ้น
         Swal.fire({
             icon: 'success',
             title: 'เสร็จสิ้น',
-            text: `ดำเนินการครบ ${selectedIds.length} รายการแล้ว`,
+            text: `ดำเนินการสร้าง PDF ครบ ${selectedIds.length} รายการแล้ว`,
             timer: 2000
         });
 
-        // โหลดข้อมูลใหม่เพื่อแสดงผลลัพธ์ (เช่น ปุ่ม PDF ขึ้นมา)
+        // โหลดข้อมูลใหม่เพื่อแสดงผลลัพธ์ปุ่ม PDF
         getData(admin);
     }
 
