@@ -61,8 +61,8 @@
         }
         .status-paid { background-color: #dcfce7; color: #166534; }
         .status-unpaid { background-color: #fee2e2; color: #991b1b; }
-        .status-pending-verification { background-color: #fef08a; color: #854d0e; cursor: pointer; border: 1px solid #facc15; box-shadow: 0 1px 2px rgba(0,0,0,0.05); } /* Yellow for รอตรวจสอบ */
-        .status-waiting-info { background-color: #ffedd5; color: #9a3412; } /* Orange for รอข้อมูล */
+        .status-pending-verification { background-color: #fef08a; color: #854d0e; cursor: pointer; border: 1px solid #facc15; box-shadow: 0 1px 2px rgba(0,0,0,0.05); } 
+        .status-waiting-info { background-color: #ffedd5; color: #9a3412; } 
         .status-advance { background-color: #dbeafe; color: #1e40af; }
         .status-empty { background-color: #f1f5f9; color: #64748b; }
 
@@ -71,7 +71,6 @@
         @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-up { animation: fadeUp 0.5s ease-out forwards; }
         
-        /* Bar Chart Animation */
         .bar-grow {
             animation: growUp 1s ease-out forwards;
             transform-origin: bottom;
@@ -94,7 +93,7 @@
             Coins, Building, Database, Receipt, ShieldAlert, Mail, HelpCircle, Loader2,
             X, ExternalLink, Clock, Image as ImageIcon, Calendar, Home, AlertCircle, ArrowRightLeft, Settings,
             PieChart, TrendingUp, MapPin, FilePlus, Globe, Info, Save, 
-            ListIcon, Edit, Trash2, Plus, UploadCloud // New Icons for Transactions
+            ListIcon
         } from 'lucide-react';
 
         // --- Configuration ---
@@ -102,10 +101,26 @@
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
         const ADMIN_PIN = '9999'; 
 
+        // --- GAS API Configuration ---
+        const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbxhRu8OqqvWyb5q7_kH4KZ3VEUZPGXJXTp2hr4kFawmgX95gBCtXS34_bbAC4mczvV8/exec';
+        
+        const callGasApi = async (action, data = {}) => {
+            const payload = { action, ...data };
+            const response = await fetch(GAS_API_URL, {
+                method: "POST",
+                mode: "cors",
+                body: JSON.stringify(payload),
+                headers: { "Content-Type": "text/plain;charset=utf-8" },
+                redirect: "follow"
+            });
+            const text = await response.text();
+            try { return JSON.parse(text); } 
+            catch (e) { throw new Error('เซิร์ฟเวอร์ GAS ตอบกลับข้อมูลที่ไม่ใช่รูปแบบ JSON'); }
+        };
+
         // --- Main Admin App ---
         const AdminApp = () => {
             const monthMap = { 'มกราคม': 'jan', 'กุมภาพันธ์': 'feb', 'มีนาคม': 'mar', 'เมษายน': 'apr', 'พฤษภาคม': 'may', 'มิถุนายน': 'jun', 'กรกฎาคม': 'jul', 'สิงหาคม': 'aug', 'กันยายน': 'sep', 'ตุลาคม': 'oct', 'พฤศจิกายน': 'nov', 'ธันวาคม': 'dec' };
-            
             const months = [ 
                 { key: 'jan', label: 'ม.ค.' }, { key: 'feb', label: 'ก.พ.' }, { key: 'mar', label: 'มี.ค.' }, 
                 { key: 'apr', label: 'เม.ย.' }, { key: 'may', label: 'พ.ค.' }, { key: 'jun', label: 'มิ.ย.' }, 
@@ -139,14 +154,14 @@
             const [pinError, setPinError] = useState('');
 
             const [supabase, setSupabase] = useState(null);
-            const [data, setData] = useState([]);
+            const [data, setData] = useState([]); // Supabase House Payments
             const [pendingFees, setPendingFees] = useState([]);
-            const [allTransactions, setAllTransactions] = useState([]); // State for all common_fees
+            const [allTransactions, setAllTransactions] = useState([]); // GAS Transactions
             const [loading, setLoading] = useState(true);
             const [isGlobalSyncing, setIsGlobalSyncing] = useState(false);
 
             // View & Filters
-            const [currentView, setCurrentView] = useState('grid'); // 'grid' | 'analytics' | 'pending' | 'overdue' | 'settings' | 'transactions'
+            const [currentView, setCurrentView] = useState('grid');
             const [yearFilter, setYearFilter] = useState('all'); 
             const [searchQuery, setSearchQuery] = useState('');
             const [filterStatus, setFilterStatus] = useState('all'); 
@@ -162,29 +177,18 @@
             // Modal State
             const [imageModalOpen, setImageModalOpen] = useState(false);
             const [selectedImageUrl, setSelectedImageUrl] = useState(null);
-            const [isFetchingSlip, setIsFetchingSlip] = useState(false);
-            const [resultModal, setResultModal] = useState({ isOpen: false, type: 'success', message: '' });
+            const [resultModal, setResultModal] = useState({ isOpen: false, type: 'success', message: '', isLoading: false });
 
-            // Transaction Modal State
-            const [transModal, setTransModal] = useState({ isOpen: false, mode: 'add', data: {} });
-            const [isTransSaving, setIsTransSaving] = useState(false);
-            const [previewImage, setPreviewImage] = useState('');
-
-            // Init Supabase & Default Values
             useEffect(() => {
                 const script = document.createElement('script');
                 script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js';
                 script.async = true;
                 script.onload = () => { 
-                    if (window.supabase) {
-                        setSupabase(window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY));
-                    }
+                    if (window.supabase) setSupabase(window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY));
                 };
                 document.body.appendChild(script);
                 
-                if (localStorage.getItem('admin_auth') === 'true') {
-                    setIsAuthenticated(true);
-                }
+                if (localStorage.getItem('admin_auth') === 'true') setIsAuthenticated(true);
                 
                 const currentYear = new Date().getFullYear() + 543;
                 setUpdateTargetYear(currentYear.toString());
@@ -192,83 +196,81 @@
                 setUpdateTargetMonth(months[currentMonthIdx].key);
                 setNewYearTarget((currentYear + 1).toString());
 
-                return () => {
-                    if (document.body.contains(script)) {
-                        document.body.removeChild(script);
-                    }
-                };
+                return () => { if (document.body.contains(script)) document.body.removeChild(script); };
             }, []);
 
-            // Fetch Settings Config
             const fetchConfig = async () => {
                 try {
-                    const { data, error } = await supabase
-                        .from('app_settings')
-                        .select('config')
-                        .eq('id', 1)
-                        .single();
-                    if (data && data.config) {
-                        setAppConfig(data.config);
-                        setLocalConfig(data.config);
-                    }
-                } catch (err) {
-                    console.error('Error fetching config from DB.', err);
-                }
+                    const { data, error } = await supabase.from('app_settings').select('config').eq('id', 1).single();
+                    if (data && data.config) { setAppConfig(data.config); setLocalConfig(data.config); }
+                } catch (err) { console.error('Error fetching config from DB.', err); }
             };
 
-            // Fetch Data Core
             const fetchData = async () => {
                 if (!supabase) return;
                 setLoading(true);
                 try {
-                    // Fetch House Payments
-                    let allHouseData = [];
-                    let page = 0;
-                    const pageSize = 1000;
-                    let hasMore = true;
-
-                    while (hasMore) {
-                        const { data: houseData, error: houseError } = await supabase
-                            .from('house_payments')
-                            .select('*')
-                            .order('house_numbe', { ascending: true })
-                            .order('year', { ascending: false })
-                            .range(page * pageSize, (page + 1) * pageSize - 1);
+                    // ปรับปรุงใหม่: ดึงข้อมูลจาก Supabase และ GAS พร้อมกัน (Parallel Fetching) เพื่อให้โหลดเร็วขึ้น
+                    const [supabaseResult, gasDataArray] = await Promise.all([
+                        // 1. ดึงข้อมูล House Payments (จาก Supabase)
+                        (async () => {
+                            let allHouseData = [];
+                            let page = 0; const pageSize = 1000; let hasMore = true;
+                            while (hasMore) {
+                                const { data: houseData, error: houseError } = await supabase
+                                    .from('house_payments').select('*').order('house_numbe', { ascending: true }).order('year', { ascending: false }).range(page * pageSize, (page + 1) * pageSize - 1);
+                                if (houseError) throw houseError;
+                                if (houseData && houseData.length > 0) {
+                                    allHouseData = [...allHouseData, ...houseData];
+                                    if (houseData.length < pageSize) hasMore = false;
+                                } else { hasMore = false; }
+                                page++;
+                            }
+                            return allHouseData;
+                        })(),
                         
-                        if (houseError) throw houseError;
+                        // 2. ดึงข้อมูล Common Fees Transactions (จาก GAS API) เพื่อนำมาประมวลผลการ Sync และหน้ารอตรวจสอบ
+                        callGasApi('getData', { admin: 'Admin' }).catch(err => {
+                            console.error("GAS Fetch Error:", err);
+                            return null;
+                        })
+                    ]);
+
+                    // นำข้อมูล Supabase มาใส่ State
+                    setData(supabaseResult);
+
+                    // นำข้อมูล GAS มาใส่ State (แม้ไม่ได้แสดงตารางนี้แล้ว แต่ยังต้องใช้นับจำนวนที่รอตรวจ และอ้างอิงรูปสลิป)
+                    if (gasDataArray) {
+                        const mappedFees = gasDataArray.map(row => ({
+                            id: row[0],
+                            name: row[3],
+                            house_number: row[4],
+                            month: row[5],
+                            year: row[6],
+                            payment_method: row[7],
+                            remark: row[8],
+                            amount: parseFloat(row[10] || 0),
+                            image_url: row[11],
+                            inspector: row[12],
+                            status: row[13],
+                            reported_at: row[14] || new Date().toISOString(),
+                            pdf_url: row[15],
+                            oldfile: row[11] 
+                        }));
                         
-                        if (houseData && houseData.length > 0) {
-                            allHouseData = [...allHouseData, ...houseData];
-                            if (houseData.length < pageSize) hasMore = false;
-                        } else {
-                            hasMore = false;
-                        }
-                        page++;
+                        mappedFees.sort((a,b) => parseInt(b.id) - parseInt(a.id)); 
+                        setAllTransactions(mappedFees);
+                        setPendingFees(mappedFees.filter(f => f.status === 'รอตรวจสอบ' || f.status === 'กำลังดำเนินการ'));
                     }
-                    setData(allHouseData);
-
-                    // Fetch All Common Fees (Transactions)
-                    const { data: feesData, error: feesError } = await supabase
-                        .from('common_fees')
-                        .select('*')
-                        .order('reported_at', { ascending: false });
-                    
-                    if (feesError) throw feesError;
-                    
-                    if (feesData) {
-                        setAllTransactions(feesData);
-                        setPendingFees(feesData.filter(f => f.status === 'รอตรวจสอบ'));
-                    }
-
                 } catch (err) {
                     console.error("Error fetching admin data:", err);
-                    alert("ไม่สามารถดึงข้อมูลได้");
+                    alert("เกิดข้อผิดพลาดในการดึงข้อมูล");
                 } finally {
                     setLoading(false);
                 }
             };
 
-            // Global Auto Sync Logic
+            // Global Auto Sync Logic (GAS -> Supabase)
             const handleGlobalSync = async (silent = false) => {
                 if (!supabase) return;
                 if (!silent) setIsGlobalSyncing(true);
@@ -292,46 +294,31 @@
                         
                         if (houseFees && houseFees.length > 0) {
                             houseFees.sort((a, b) => new Date(a.reported_at) - new Date(b.reported_at));
-                            
-                            let updates = {};
-                            let hasChange = false;
+                            let updates = {}; let hasChange = false;
 
                             houseFees.forEach(fee => {
                                 const monthCol = monthMap[fee.month];
                                 if (monthCol) {
                                     const currentStatus = house[monthCol];
-                                    const isPending = (fee.status.includes('รอ') || fee.status.includes('ตรวจสอบ') || fee.status.includes('แจ้งโอน')) && !fee.status.includes('แล้ว');
+                                    const isPending = (fee.status.includes('รอ') || fee.status.includes('ตรวจสอบ') || fee.status.includes('กำลังดำเนินการ')) && !fee.status.includes('แล้ว');
                                     const isPaid = fee.status.includes('ตรวจสอบแล้ว') || fee.status.includes('อนุมัติ') || fee.status.includes('ถูกต้อง');
 
                                     if (isPending && currentStatus !== 'รอตรวจสอบ') { 
-                                        updates[monthCol] = 'รอตรวจสอบ'; 
-                                        hasChange = true; 
+                                        updates[monthCol] = 'รอตรวจสอบ'; hasChange = true; 
                                     } else if (isPaid && currentStatus !== 'จ่ายแล้ว') { 
-                                        updates[monthCol] = 'จ่ายแล้ว'; 
-                                        hasChange = true; 
+                                        updates[monthCol] = 'จ่ายแล้ว'; hasChange = true; 
                                     }
                                 }
                             });
 
                             if (hasChange) {
-                                await supabase
-                                    .from('house_payments')
-                                    .update(updates)
-                                    .eq('house_numbe', house.house_numbe)
-                                    .eq('year', house.year);
+                                await supabase.from('house_payments').update(updates).eq('house_numbe', house.house_numbe).eq('year', house.year);
                                 updatedCount++;
                             }
                         }
                     }
                     
-                    if (!silent) {
-                        setResultModal({
-                            isOpen: true,
-                            type: 'success',
-                            message: `ซิงค์ข้อมูลเรียบร้อยแล้ว อัปเดตสถานะให้ตรงกับสลิปจำนวน ${updatedCount} รายการ`
-                        });
-                    }
-                    
+                    if (!silent) setResultModal({ isOpen: true, type: 'success', message: `ซิงค์ข้อมูลเรียบร้อยแล้ว อัปเดตสถานะให้ตรงกับสลิปจำนวน ${updatedCount} รายการ` });
                     if(updatedCount > 0) await fetchData();
 
                 } catch (err) {
@@ -342,165 +329,23 @@
                 }
             };
 
-            // Transaction CRUD Operations
-            const openTransactionModal = (mode, record = null) => {
-                const currentYear = new Date().getFullYear() + 543;
-                const defaultData = mode === 'add' ? {
-                    house_number: '',
-                    name: 'Admin',
-                    month: '',
-                    year: currentYear.toString(),
-                    payment_method: 'โอน',
-                    amount: 300,
-                    remark: '',
-                    status: 'ตรวจสอบแล้ว', // Admin normally adds verified payments
-                    inspector: 'Admin',
-                    image_url: ''
-                } : { ...record };
-                
-                setPreviewImage(defaultData.image_url || '');
-                setTransModal({ isOpen: true, mode, data: defaultData });
-            };
-
-            const closeTransactionModal = () => {
-                setTransModal({ isOpen: false, mode: 'add', data: {} });
-                setPreviewImage('');
-            };
-
-            // Base64 File Reader for Slip
-            const handleImageUpload = (e) => {
-                const file = e.target.files[0];
-                if (file) {
-                    if(file.size > 5 * 1024 * 1024) {
-                        alert('ขนาดไฟล์ต้องไม่เกิน 5 MB');
-                        e.target.value = "";
-                        return;
-                    }
-                    
-                    // Compress and convert to Base64 (to avoid massive strings)
-                    const reader = new FileReader();
-                    reader.onload = (event) => {
-                        const img = new Image();
-                        img.onload = () => {
-                            const canvas = document.createElement('canvas');
-                            const MAX_WIDTH = 800;
-                            const MAX_HEIGHT = 800;
-                            let width = img.width;
-                            let height = img.height;
-
-                            if (width > height) {
-                                if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
-                            } else {
-                                if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
-                            }
-
-                            canvas.width = width;
-                            canvas.height = height;
-                            const ctx = canvas.getContext('2d');
-                            ctx.drawImage(img, 0, 0, width, height);
-                            
-                            const dataUrl = canvas.toDataURL('image/jpeg', 0.7); // 70% quality JPEG
-                            setPreviewImage(dataUrl);
-                            setTransModal(prev => ({ ...prev, data: { ...prev.data, image_url: dataUrl } }));
-                        };
-                        img.src = event.target.result;
-                    };
-                    reader.readAsDataURL(file);
-                }
-            };
-
-            const saveTransaction = async (e) => {
-                e.preventDefault();
-                if (!supabase) return;
-                setIsTransSaving(true);
-                
-                try {
-                    const payload = {
-                        house_number: transModal.data.house_number.trim(),
-                        name: transModal.data.name,
-                        month: transModal.data.month,
-                        year: transModal.data.year,
-                        payment_method: transModal.data.payment_method,
-                        amount: transModal.data.amount,
-                        remark: transModal.data.remark,
-                        status: transModal.data.status,
-                        image_url: transModal.data.image_url,
-                        inspector: transModal.data.inspector || 'Admin',
-                        inspected_at: new Date().toISOString()
-                    };
-
-                    if (transModal.mode === 'add') {
-                        // Add reported_at for new records
-                        payload.reported_at = new Date().toISOString();
-                        const { error } = await supabase.from('common_fees').insert([payload]);
-                        if (error) throw error;
-                        setResultModal({ isOpen: true, type: 'success', message: 'เพิ่มรายการรับชำระเรียบร้อยแล้ว' });
-                    } else {
-                        const { error } = await supabase.from('common_fees').update(payload).eq('id', transModal.data.id);
-                        if (error) throw error;
-                        setResultModal({ isOpen: true, type: 'success', message: 'อัปเดตรายการเรียบร้อยแล้ว' });
-                    }
-
-                    closeTransactionModal();
-                    await fetchData(); // Refresh data
-                    // Auto sync to house_payments if status is "ตรวจสอบแล้ว"
-                    if(payload.status.includes('ตรวจสอบแล้ว') || payload.status.includes('อนุมัติ')){
-                        handleGlobalSync(true); 
-                    }
-
-                } catch (error) {
-                    console.error('Error saving transaction:', error);
-                    alert('เกิดข้อผิดพลาดในการบันทึก: ' + error.message);
-                } finally {
-                    setIsTransSaving(false);
-                }
-            };
-
-            const deleteTransaction = async (id) => {
-                if(!confirm("คุณแน่ใจหรือไม่ที่จะลบรายการนี้ ข้อมูลจะไม่สามารถกู้คืนได้?")) return;
-                
-                try {
-                    setLoading(true);
-                    const { error } = await supabase.from('common_fees').delete().eq('id', id);
-                    if(error) throw error;
-                    
-                    alert('ลบข้อมูลเรียบร้อยแล้ว');
-                    await fetchData();
-                    handleGlobalSync(true); // Re-sync to reflect deleted record
-                } catch(error) {
-                    console.error('Error deleting:', error);
-                    alert('ไม่สามารถลบได้: ' + error.message);
-                } finally {
-                    setLoading(false);
-                }
-            };
-
-            // Existing Logics (SaveConfig, BatchUpdate, NewYear, etc)...
+            // Existing Logics...
             const saveConfig = async () => {
                 if (!supabase) return;
                 setIsSaving(true);
                 try {
-                    const { error } = await supabase
-                        .from('app_settings')
-                        .upsert({ id: 1, config: localConfig });
+                    const { error } = await supabase.from('app_settings').upsert({ id: 1, config: localConfig });
                     if (error) throw error;
-                    
                     setAppConfig(localConfig);
                     setResultModal({ isOpen: true, type: 'success', message: 'บันทึกการตั้งค่าการแสดงผลหน้าบ้านสำเร็จ' });
                 } catch (err) {
-                    console.error('Error saving config:', err);
                     setResultModal({ isOpen: true, type: 'error', message: 'บันทึกการตั้งค่าไม่สำเร็จ: ' + err.message });
-                } finally {
-                    setIsSaving(false);
-                }
+                } finally { setIsSaving(false); }
             };
 
             const toggleYear = (yearStr) => {
                 const y = parseInt(yearStr);
-                const newManualYears = localConfig.manualYears?.includes(y)
-                    ? localConfig.manualYears.filter(item => item !== y)
-                    : [...(localConfig.manualYears || []), y];
-                
+                const newManualYears = localConfig.manualYears?.includes(y) ? localConfig.manualYears.filter(item => item !== y) : [...(localConfig.manualYears || []), y];
                 setLocalConfig({ ...localConfig, manualYears: newManualYears });
             };
 
@@ -508,229 +353,84 @@
                 if (!supabase || !updateTargetYear || !updateTargetMonth) return;
                 setIsSaving(true); 
                 try {
-                    let rowsToUpdate = [];
-                    let page = 0;
-                    const pageSize = 1000;
-                    let hasMore = true;
-
+                    let rowsToUpdate = []; let page = 0; const pageSize = 1000; let hasMore = true;
                     while (hasMore) {
-                        const { data: pageData, error: fetchError } = await supabase
-                            .from('house_payments')
-                            .select('*')
-                            .eq('year', updateTargetYear)
-                            .range(page * pageSize, (page + 1) * pageSize - 1);
-                        
+                        const { data: pageData, error: fetchError } = await supabase.from('house_payments').select('*').eq('year', updateTargetYear).range(page * pageSize, (page + 1) * pageSize - 1);
                         if (fetchError) throw fetchError;
-                        
-                        if (pageData && pageData.length > 0) {
-                            rowsToUpdate = [...rowsToUpdate, ...pageData];
-                            if (pageData.length < pageSize) hasMore = false;
-                        } else {
-                            hasMore = false;
-                        }
+                        if (pageData && pageData.length > 0) { rowsToUpdate = [...rowsToUpdate, ...pageData]; if (pageData.length < pageSize) hasMore = false; } else { hasMore = false; }
                         page++;
                     }
-                    
                     let updatedCount = 0;
                     for (const row of rowsToUpdate) {
                         const currentStatus = row[updateTargetMonth];
                         const statusToCheck = currentStatus ? String(currentStatus).trim() : '';
                         if (!statusToCheck || statusToCheck === 'รอข้อมูล' || statusToCheck === '-') {
-                            const { error: updateError } = await supabase
-                                .from('house_payments')
-                                .update({ [updateTargetMonth]: 'ยังไม่จ่าย' })
-                                .eq('house_numbe', row.house_numbe) 
-                                .eq('year', updateTargetYear);
+                            const { error: updateError } = await supabase.from('house_payments').update({ [updateTargetMonth]: 'ยังไม่จ่าย' }).eq('house_numbe', row.house_numbe).eq('year', updateTargetYear);
                             if (!updateError) updatedCount++;
-                            else console.error(`Failed to update ${row.house_numbe}:`, updateError);
                         }
                     }
-                    setResultModal({
-                        isOpen: true,
-                        type: 'success',
-                        message: `อัปเดตสถานะเรียบร้อยแล้ว จำนวน ${updatedCount} รายการ`
-                    });
-                    
+                    setResultModal({ isOpen: true, type: 'success', message: `อัปเดตสถานะเรียบร้อยแล้ว จำนวน ${updatedCount} รายการ` });
                     fetchData();
-                } catch (err) {
-                     console.error('Update status error:', err);
-                     setResultModal({
-                        isOpen: true,
-                        type: 'error',
-                        message: 'เกิดข้อผิดพลาด: ' + err.message
-                    });
-                } finally {
-                    setIsSaving(false);
-                }
+                } catch (err) { setResultModal({ isOpen: true, type: 'error', message: 'เกิดข้อผิดพลาด: ' + err.message }); } finally { setIsSaving(false); }
             };
 
             const handleGenerateNewYearData = async () => {
                 if (!supabase || !newYearTarget) return;
                 setIsSaving(true);
                 try {
-                    const { count, error: checkError } = await supabase
-                        .from('house_payments')
-                        .select('*', { count: 'exact', head: true })
-                        .eq('year', newYearTarget);
-
+                    const { count, error: checkError } = await supabase.from('house_payments').select('*', { count: 'exact', head: true }).eq('year', newYearTarget);
                     if (checkError) throw checkError;
-                    
-                    if (count > 0) {
-                        if(!confirm(`ปี ${newYearTarget} มีข้อมูลอยู่แล้ว ${count} รายการ การสร้างใหม่จะเพิ่มข้อมูลซ้อนทับกัน คุณแน่ใจหรือไม่? (แนะนำให้ยกเลิกหากสร้างไปแล้ว)`)) {
-                            setIsSaving(false);
-                            return;
-                        }
-                    }
-
-                    if (availableYears.length === 0) {
-                        throw new Error('ไม่พบข้อมูลปีใดๆ ในระบบเพื่อใช้เป็นต้นแบบ');
-                    }
+                    if (count > 0) { if(!confirm(`ปี ${newYearTarget} มีข้อมูลอยู่แล้ว ${count} รายการ ต้องการสร้างทับซ้อนหรือไม่?`)) { setIsSaving(false); return; } }
 
                     const maxYear = Math.max(...availableYears.map(Number)).toString();
-
-                    let baseHouses = [];
-                    let page = 0;
-                    const pageSize = 1000;
-                    let hasMore = true;
-
+                    let baseHouses = []; let page = 0; const pageSize = 1000; let hasMore = true;
                     while (hasMore) {
-                        const { data: pageData, error: fetchError } = await supabase
-                            .from('house_payments')
-                            .select('house_numbe, owner_name, soi')
-                            .eq('year', maxYear)
-                            .range(page * pageSize, (page + 1) * pageSize - 1);
-                        
+                        const { data: pageData, error: fetchError } = await supabase.from('house_payments').select('house_numbe, owner_name, soi').eq('year', maxYear).range(page * pageSize, (page + 1) * pageSize - 1);
                         if (fetchError) throw fetchError;
-                        
-                        if (pageData && pageData.length > 0) {
-                            baseHouses = [...baseHouses, ...pageData];
-                            if (pageData.length < pageSize) hasMore = false;
-                        } else {
-                            hasMore = false;
-                        }
+                        if (pageData && pageData.length > 0) { baseHouses = [...baseHouses, ...pageData]; if (pageData.length < pageSize) hasMore = false; } else { hasMore = false; }
                         page++;
                     }
 
-                    if (baseHouses.length === 0) {
-                        throw new Error(`ไม่พบข้อมูลบ้านต้นแบบจากปีล่าสุด (${maxYear})`);
-                    }
+                    const uniqueHouses = []; const houseSet = new Set();
+                    for (const h of baseHouses) { if (!houseSet.has(h.house_numbe)) { houseSet.add(h.house_numbe); uniqueHouses.push(h); } }
 
-                    const uniqueHouses = [];
-                    const houseSet = new Set();
-                    for (const h of baseHouses) {
-                        if (!houseSet.has(h.house_numbe)) {
-                            houseSet.add(h.house_numbe);
-                            uniqueHouses.push(h);
-                        }
-                    }
-
-                    const baseYear = 2566;
-                    const yearPrefix = parseInt(newYearTarget) > baseYear ? parseInt(newYearTarget) - baseYear : 1;
-
+                    const baseYear = 2566; const yearPrefix = parseInt(newYearTarget) > baseYear ? parseInt(newYearTarget) - baseYear : 1;
                     const newRecords = uniqueHouses.map((h, index) => {
-                        const runningNumber = String(index + 1).padStart(3, '0');
-                        const customSequence = `INV${yearPrefix}${runningNumber}`;
-
                         return {
-                            house_numbe: h.house_numbe,
-                            owner_name: h.owner_name,
-                            soi: h.soi,
-                            year: newYearTarget,
-                            sequence_no: customSequence,
-                            jan: 'รอข้อมูล', feb: 'รอข้อมูล', mar: 'รอข้อมูล', apr: 'รอข้อมูล',
-                            may: 'รอข้อมูล', jun: 'รอข้อมูล', jul: 'รอข้อมูล', aug: 'รอข้อมูล',
-                            sep: 'รอข้อมูล', oct: 'รอข้อมูล', nov: 'รอข้อมูล', dec: 'รอข้อมูล',
-                            status: 'รอข้อมูล'
+                            house_numbe: h.house_numbe, owner_name: h.owner_name, soi: h.soi, year: newYearTarget, sequence_no: `INV${yearPrefix}${String(index + 1).padStart(3, '0')}`,
+                            jan: 'รอข้อมูล', feb: 'รอข้อมูล', mar: 'รอข้อมูล', apr: 'รอข้อมูล', may: 'รอข้อมูล', jun: 'รอข้อมูล', jul: 'รอข้อมูล', aug: 'รอข้อมูล', sep: 'รอข้อมูล', oct: 'รอข้อมูล', nov: 'รอข้อมูล', dec: 'รอข้อมูล', status: 'รอข้อมูล'
                         };
                     });
-
-                    const { error: insertError } = await supabase
-                        .from('house_payments')
-                        .insert(newRecords);
-
+                    const { error: insertError } = await supabase.from('house_payments').insert(newRecords);
                     if (insertError) throw insertError;
-
-                    setResultModal({
-                        isOpen: true,
-                        type: 'success',
-                        message: `สร้างข้อมูลสำหรับปี ${newYearTarget} สำเร็จ จำนวน ${newRecords.length} หลัง`
-                    });
-
+                    setResultModal({ isOpen: true, type: 'success', message: `สร้างข้อมูลปี ${newYearTarget} สำเร็จ จำนวน ${newRecords.length} หลัง` });
                     await fetchData();
-
-                } catch (err) {
-                    console.error("Generate Year Error:", err);
-                    setResultModal({ isOpen: true, type: 'error', message: 'เกิดข้อผิดพลาด: ' + err.message });
-                } finally {
-                    setIsSaving(false);
-                }
+                } catch (err) { setResultModal({ isOpen: true, type: 'error', message: 'เกิดข้อผิดพลาด: ' + err.message }); } finally { setIsSaving(false); }
             };
 
-            // Setup Data and Auth on Mount
             useEffect(() => {
                 if (isAuthenticated && supabase) {
-                    const initData = async () => {
-                        setLoading(true);
-                        await fetchConfig(); 
-                        await fetchData();
-                    };
+                    const initData = async () => { setLoading(true); await fetchConfig(); await fetchData(); };
                     initData();
                 }
             }, [isAuthenticated, supabase]);
 
             const handleLogin = (e) => {
                 e.preventDefault();
-                if (pin === ADMIN_PIN) {
-                    setIsAuthenticated(true);
-                    localStorage.setItem('admin_auth', 'true');
-                    setPinError('');
-                } else {
-                    setPinError('รหัส PIN ไม่ถูกต้อง');
-                }
+                if (pin === ADMIN_PIN) { setIsAuthenticated(true); localStorage.setItem('admin_auth', 'true'); localStorage.setItem('adminName', 'Admin'); setPinError(''); } else { setPinError('รหัส PIN ไม่ถูกต้อง'); }
             };
-
-            const handleLogout = () => {
-                setIsAuthenticated(false);
-                localStorage.removeItem('admin_auth');
-                setPin('');
-            };
+            const handleLogout = () => { setIsAuthenticated(false); localStorage.removeItem('admin_auth'); setPin(''); };
 
             const availableYears = useMemo(() => [...new Set(data.map(d => d.year))].sort((a,b) => b-a), [data]);
 
-            const handleViewSlipFromGrid = async (houseNumber, year, monthKey) => {
-                if (!supabase) return;
-                
+            const handleViewSlipFromGrid = (houseNumber, year, monthKey) => {
                 const thaiMonth = Object.keys(monthMap).find(key => monthMap[key] === monthKey);
-                if (!thaiMonth) {
-                    alert('เกิดข้อผิดพลาด: ไม่พบข้อมูลเดือนที่ตรงกัน');
-                    return;
-                }
+                if (!thaiMonth) return alert('เกิดข้อผิดพลาด: ไม่พบข้อมูลเดือนที่ตรงกัน');
 
-                setIsFetchingSlip(true);
-                try {
-                    const { data: slipData, error: slipError } = await supabase
-                        .from('common_fees')
-                        .select('image_url')
-                        .eq('house_number', houseNumber)
-                        .eq('year', year)
-                        .eq('month', thaiMonth)
-                        .order('reported_at', { ascending: false })
-                        .limit(1);
-
-                    if (slipError) throw slipError;
-
-                    if (slipData && slipData.length > 0 && slipData[0].image_url) {
-                        setSelectedImageUrl(slipData[0].image_url);
-                        setImageModalOpen(true);
-                    } else {
-                        alert('ไม่พบรูปสลิปในฐานข้อมูล หรือผู้ใช้ไม่ได้แนบรูปมาครับ');
-                    }
-                } catch (err) {
-                    console.error('Error fetching slip:', err);
-                    alert('เกิดข้อผิดพลาดในการดึงข้อมูลสลิป');
-                } finally {
-                    setIsFetchingSlip(false);
-                }
+                // Search in GAS memory array directly
+                const slipRecord = allTransactions.find(f => f.house_number === houseNumber && f.year.toString() === year.toString() && f.month === thaiMonth && f.image_url);
+                if (slipRecord) { setSelectedImageUrl(slipRecord.image_url); setImageModalOpen(true); } 
+                else { alert('ไม่พบรูปสลิปในระบบ หรือผู้ใช้ไม่ได้แนบรูปมาครับ'); }
             };
 
             // Filter Logics
@@ -739,94 +439,48 @@
                 if (yearFilter && yearFilter !== 'all') filtered = filtered.filter(item => item.year.toString() === yearFilter);
                 if (searchQuery) {
                     const q = searchQuery.toLowerCase().trim();
-                    filtered = filtered.filter(item => 
-                        (item.house_numbe && item.house_numbe.toLowerCase() === q) || 
-                        (item.owner_name && item.owner_name.toLowerCase().includes(q)) ||
-                        (item.soi && item.soi.toLowerCase().includes(q))
-                    );
+                    filtered = filtered.filter(item => (item.house_numbe && item.house_numbe.toLowerCase() === q) || (item.owner_name && item.owner_name.toLowerCase().includes(q)) || (item.soi && item.soi.toLowerCase().includes(q)));
                 }
                 if (filterStatus !== 'all') {
-                    filtered = filtered.filter(item => {
-                        const totals = calculateHouseTotal(item);
-                        if (filterStatus === 'overdue') return totals.unpaid > 0;
-                        if (filterStatus === 'waiting') return totals.waiting > 0;
-                        return true;
-                    });
+                    filtered = filtered.filter(item => { const totals = calculateHouseTotal(item); if (filterStatus === 'overdue') return totals.unpaid > 0; if (filterStatus === 'waiting') return totals.waiting > 0; return true; });
                 }
                 filtered.sort((a, b) => {
-                    const houseA = String(a.house_numbe || '');
-                    const houseB = String(b.house_numbe || '');
-                    const houseCompare = houseA.localeCompare(houseB, 'th', { numeric: true });
+                    const houseCompare = String(a.house_numbe || '').localeCompare(String(b.house_numbe || ''), 'th', { numeric: true });
                     if (houseCompare !== 0) return houseCompare;
                     return parseInt(b.year || 0) - parseInt(a.year || 0);
                 });
                 return filtered;
             }, [data, yearFilter, searchQuery, filterStatus]);
 
-            const filteredTransactions = useMemo(() => {
-                let filtered = [...allTransactions];
-                if (yearFilter && yearFilter !== 'all') filtered = filtered.filter(item => item.year.toString() === yearFilter);
-                if (searchQuery) {
-                    const q = searchQuery.toLowerCase().trim();
-                    filtered = filtered.filter(item => 
-                        (item.house_number && item.house_number.toLowerCase().includes(q)) || 
-                        (item.name && item.name.toLowerCase().includes(q))
-                    );
-                }
-                return filtered;
-            }, [allTransactions, yearFilter, searchQuery]);
-
-
-            // --- Analytics Calculations ---
+            // Analytics
             const analyticsData = useMemo(() => {
                 const monthlyData = months.map(m => ({ label: m.label, key: m.key, paid: 0, unpaid: 0, waiting: 0 }));
-                let totalPaidOverall = 0; let totalUnpaidOverall = 0; let totalWaitingOverall = 0;
-                const soiMap = {};
-
+                let totalPaidOverall = 0; let totalUnpaidOverall = 0; let totalWaitingOverall = 0; const soiMap = {};
                 filteredData.forEach(item => {
                     months.forEach((m, idx) => {
                         const status = item[m.key] || '';
-                        if (status.includes('จ่ายแล้ว') || status.includes('ชำระแล้ว') || status.includes('ล่วงหน้า')) {
-                            monthlyData[idx].paid += 300; totalPaidOverall += 300;
-                        } else if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) {
-                            monthlyData[idx].unpaid += 300; totalUnpaidOverall += 300;
-                            const soiName = item.soi ? item.soi.trim() : 'ไม่ระบุซอย';
-                            if (!soiMap[soiName]) soiMap[soiName] = 0;
-                            soiMap[soiName] += 300;
-                        } else if (status.includes('รอตรวจสอบ') || status.includes('รอข้อมูล')) {
-                            monthlyData[idx].waiting += 300; totalWaitingOverall += 300;
-                        }
+                        if (status.includes('จ่ายแล้ว') || status.includes('ชำระแล้ว') || status.includes('ล่วงหน้า')) { monthlyData[idx].paid += 300; totalPaidOverall += 300; } 
+                        else if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) { monthlyData[idx].unpaid += 300; totalUnpaidOverall += 300; const soiName = item.soi ? item.soi.trim() : 'ไม่ระบุซอย'; if (!soiMap[soiName]) soiMap[soiName] = 0; soiMap[soiName] += 300; } 
+                        else if (status.includes('รอตรวจสอบ') || status.includes('รอข้อมูล')) { monthlyData[idx].waiting += 300; totalWaitingOverall += 300; }
                     });
                 });
-
-                const maxMonthlyAmount = Math.max(...monthlyData.map(d => d.paid + d.unpaid + d.waiting), 1);
-                const soiRanking = Object.entries(soiMap).map(([name, amount]) => ({ name, amount })).sort((a, b) => b.amount - a.amount).slice(0, 10);
-
-                return { monthlyData, maxMonthlyAmount, totalPaidOverall, totalUnpaidOverall, totalWaitingOverall, totalOverall: totalPaidOverall + totalUnpaidOverall + totalWaitingOverall, soiRanking };
+                return { monthlyData, maxMonthlyAmount: Math.max(...monthlyData.map(d => d.paid + d.unpaid + d.waiting), 1), totalPaidOverall, totalUnpaidOverall, totalWaitingOverall, totalOverall: totalPaidOverall + totalUnpaidOverall + totalWaitingOverall, soiRanking: Object.entries(soiMap).map(([name, amount]) => ({ name, amount })).sort((a, b) => b.amount - a.amount).slice(0, 10) };
             }, [filteredData]);
 
             const overdueSummaryData = useMemo(() => {
                 const summaryMap = {};
                 data.forEach(item => {
                     let overdueCount = 0;
-                    months.forEach(m => {
-                        const status = item[m.key] || '';
-                        if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) overdueCount++;
-                    });
+                    months.forEach(m => { if ((item[m.key] || '').includes('ยังไม่จ่าย') || (item[m.key] || '').includes('ค้าง')) overdueCount++; });
                     if (overdueCount > 0) {
-                        if (!summaryMap[item.house_numbe]) {
-                            summaryMap[item.house_numbe] = { houseNo: item.house_numbe, ownerName: item.owner_name, soi: item.soi, totalOverdueMonths: 0, totalOverdueAmount: 0 };
-                        }
-                        summaryMap[item.house_numbe].totalOverdueMonths += overdueCount;
-                        summaryMap[item.house_numbe].totalOverdueAmount += (overdueCount * 300);
+                        if (!summaryMap[item.house_numbe]) summaryMap[item.house_numbe] = { houseNo: item.house_numbe, ownerName: item.owner_name, soi: item.soi, totalOverdueMonths: 0, totalOverdueAmount: 0 };
+                        summaryMap[item.house_numbe].totalOverdueMonths += overdueCount; summaryMap[item.house_numbe].totalOverdueAmount += (overdueCount * 300);
                     }
                 });
                 return Object.values(summaryMap).sort((a, b) => b.totalOverdueMonths - a.totalOverdueMonths);
             }, [data]);
 
-            const stats = useMemo(() => {
-                return { totalPaid: analyticsData.totalPaidOverall, totalUnpaid: analyticsData.totalUnpaidOverall, totalWaiting: analyticsData.totalWaitingOverall, count: filteredData.length };
-            }, [filteredData, analyticsData]);
+            const stats = useMemo(() => ({ totalPaid: analyticsData.totalPaidOverall, totalUnpaid: analyticsData.totalUnpaidOverall, count: filteredData.length }), [filteredData, analyticsData]);
 
             const exportCSV = () => {
                 let headers, rows, filename;
@@ -834,19 +488,11 @@
                     headers = ["ลำดับ", "บ้านเลขที่", "ซอย", "ชื่อเจ้าของบ้าน", "จำนวนเดือนที่ค้างทั้งหมด", "ยอดค้างชำระทั้งหมด (บาท)"];
                     rows = overdueSummaryData.map((item, idx) => [idx + 1, `"${item.houseNo || ''}"`, `"${item.soi || ''}"`, `"${item.ownerName || ''}"`, item.totalOverdueMonths, item.totalOverdueAmount]);
                     filename = `Overdue_Summary_Report_${new Date().toISOString().slice(0,10)}.csv`;
-                } else if (currentView === 'transactions') {
-                    headers = ["ID", "บ้านเลขที่", "เดือน/ปี", "ยอดชำระ", "รูปแบบ", "สถานะ", "วันที่บันทึก", "ผู้ตรวจสอบ"];
-                    rows = filteredTransactions.map(item => [item.id, `"${item.house_number}"`, `"${item.month} ${item.year}"`, item.amount, `"${item.payment_method}"`, `"${item.status}"`, `"${new Date(item.reported_at).toLocaleDateString('th-TH')}"`, `"${item.inspector || item.name}"`]);
-                    filename = `Transactions_Report_${new Date().toISOString().slice(0,10)}.csv`;
                 } else {
                     headers = ["ลำดับ", "เลขที่บ้าน", "ซอย", "ชื่อเจ้าของบ้าน", "สถานะเริ่มต้น", ...months.map(m => m.label), "รวมจ่ายแล้ว", "รวมค้างชำระ"];
-                    rows = filteredData.map((item, idx) => {
-                        const t = calculateHouseTotal(item);
-                        return [idx + 1, `"${item.house_numbe || ''}"`, `"${item.soi || ''}"`, `"${item.owner_name || ''}"`, `"${item.status || ''}"`, ...months.map(m => `"${item[m.key] || ''}"`), t.paid, t.unpaid];
-                    });
+                    rows = filteredData.map((item, idx) => { const t = calculateHouseTotal(item); return [idx + 1, `"${item.house_numbe || ''}"`, `"${item.soi || ''}"`, `"${item.owner_name || ''}"`, `"${item.status || ''}"`, ...months.map(m => `"${item[m.key] || ''}"`), t.paid, t.unpaid]; });
                     filename = `Admin_Report_${yearFilter}_${new Date().toISOString().slice(0,10)}.csv`;
                 }
-
                 const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
                 const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csvContent);
                 const link = document.createElement("a"); link.setAttribute("href", encodedUri); link.setAttribute("download", filename);
@@ -884,51 +530,21 @@
                         
                         <div className="flex-1 overflow-y-auto p-4 space-y-2">
                             <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 mt-4 px-2">Menu</div>
-                            <button 
-                                onClick={() => { setCurrentView('grid'); window.scrollTo({top: 0, behavior: 'smooth'}); }}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'grid' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}
-                            >
-                                <LayoutDashboard size={20} /> ภาพรวมประจำปี
-                            </button>
-                            <button 
-                                onClick={() => { setCurrentView('transactions'); window.scrollTo({top: 0, behavior: 'smooth'}); }}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'transactions' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}
-                            >
-                                <ListIcon size={20} /> บันทึกรับชำระ
-                            </button>
-                            <button 
-                                onClick={() => { setCurrentView('analytics'); window.scrollTo({top: 0, behavior: 'smooth'}); }}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'analytics' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}
-                            >
-                                <PieChart size={20} /> วิเคราะห์แนวโน้ม
-                            </button>
-                            <button 
-                                onClick={() => { setCurrentView('overdue'); window.scrollTo({top: 0, behavior: 'smooth'}); }}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'overdue' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}
-                            >
-                                <AlertTriangle size={20} /> สรุปยอดค้างชำระ
-                            </button>
-                            <button 
-                                onClick={() => { setCurrentView('pending'); window.scrollTo({top: 0, behavior: 'smooth'}); }} 
-                                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'pending' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}
-                            >
+                            <button onClick={() => { setCurrentView('grid'); window.scrollTo({top: 0, behavior: 'smooth'}); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'grid' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}><LayoutDashboard size={20} /> ภาพรวมประจำปี</button>
+                            <button onClick={() => { setCurrentView('transactions'); window.scrollTo({top: 0, behavior: 'smooth'}); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'transactions' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}><ListIcon size={20} /> บันทึกรับชำระ</button>
+                            <button onClick={() => { setCurrentView('analytics'); window.scrollTo({top: 0, behavior: 'smooth'}); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'analytics' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}><PieChart size={20} /> วิเคราะห์แนวโน้ม</button>
+                            <button onClick={() => { setCurrentView('overdue'); window.scrollTo({top: 0, behavior: 'smooth'}); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'overdue' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}><AlertTriangle size={20} /> สรุปยอดค้างชำระ</button>
+                            <button onClick={() => { setCurrentView('pending'); window.scrollTo({top: 0, behavior: 'smooth'}); }} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'pending' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}>
                                 <div className="flex items-center gap-3"><Receipt size={20} /> รอตรวจสอบ</div>
                                 {pendingFees.length > 0 && <span className="bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{pendingFees.length}</span>}
                             </button>
                             
                             <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 mt-6 px-2">System</div>
-                            <button 
-                                onClick={() => { setCurrentView('settings'); window.scrollTo({top: 0, behavior: 'smooth'}); }}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'settings' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}
-                            >
-                                <Settings size={20} /> ตั้งค่าระบบ / อัปเดต
-                            </button>
+                            <button onClick={() => { setCurrentView('settings'); window.scrollTo({top: 0, behavior: 'smooth'}); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'settings' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}><Settings size={20} /> ตั้งค่าระบบ / อัปเดต</button>
                         </div>
 
                         <div className="p-4 border-t border-slate-800">
-                            <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-900/50 text-red-400 rounded-xl font-medium transition-colors">
-                                <LogOut size={20} /> ออกจากระบบ
-                            </button>
+                            <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-900/50 text-red-400 rounded-xl font-medium transition-colors"><LogOut size={20} /> ออกจากระบบ</button>
                         </div>
                     </aside>
 
@@ -940,53 +556,34 @@
                             <div className="flex flex-col">
                                 <h2 className="text-2xl font-bold text-slate-800">
                                     {currentView === 'grid' ? 'ข้อมูลลูกบ้าน (ภาพรวมประจำปี)' : 
-                                     currentView === 'transactions' ? 'จัดการข้อมูลรับชำระเงิน (ประวัติการโอนทั้งหมด)' :
-                                     currentView === 'analytics' ? 'กราฟวิเคราะห์แนวโน้ม (Visual Analytics)' :
+                                     currentView === 'transactions' ? 'จัดการข้อมูลรับชำระเงิน' :
+                                     currentView === 'analytics' ? 'กราฟวิเคราะห์แนวโน้ม' :
                                      currentView === 'pending' ? 'รายการแจ้งโอนรอตรวจสอบ' : 
-                                     currentView === 'overdue' ? 'สรุปจำนวนเดือนที่ค้างชำระทั้งหมด' : 'ตั้งค่าระบบ / อัปเดตสถานะแบบกลุ่ม'}
+                                     currentView === 'overdue' ? 'สรุปยอดค้างชำระทั้งหมด' : 'ตั้งค่าระบบ / อัปเดตสถานะแบบกลุ่ม'}
                                 </h2>
                                 <span className="text-sm text-slate-500">
-                                    {currentView === 'grid' ? 'ดูสถานะการชำระเงินของแต่ละบ้านในมุมมองรายปี' : 
-                                     currentView === 'transactions' ? 'เพิ่ม แก้ไข ลบ รายการแจ้งชำระเงิน/สลิปโอนเงิน (Data Entry)' :
-                                     currentView === 'analytics' ? 'วิเคราะห์สัดส่วนและแนวโน้มการชำระเงินของโครงการ' :
-                                     currentView === 'pending' ? 'ตรวจสอบสลิปการโอนเงินที่ลูกบ้านแจ้งเข้ามาใหม่' : 
-                                     currentView === 'overdue' ? 'แสดงยอดรวมเดือนที่ค้างชำระจากทุกปีของบ้านแต่ละหลัง' : 'ตั้งค่าหน้าบ้าน และอัปเดตสถานะเดือนที่ไม่ชำระเงินพร้อมกันทั้งโครงการ'}
+                                    {currentView === 'transactions' ? 'เปิดใช้งานผ่านเว็บแอปพลิเคชันภายนอก (Iframe)' : 'ระบบแอดมิน โกลเด้นแลนด์ ซีรีน'}
                                 </span>
                             </div>
                             
-                            <div className="flex items-center gap-3 w-full sm:w-auto overflow-x-auto pb-2 sm:pb-0">
-                                {currentView === 'transactions' && (
-                                    <button 
-                                        onClick={() => openTransactionModal('add')} 
-                                        className="flex-shrink-0 flex items-center gap-2 bg-indigo-600 text-white px-4 py-2.5 rounded-lg font-bold hover:bg-indigo-700 shadow-sm transition-colors text-sm"
-                                    >
-                                        <Plus size={18} /> เพิ่มรายการใหม่
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto pb-2 sm:pb-0">
+                                <div className="flex gap-2 w-full sm:w-auto">
+                                    <button onClick={() => handleGlobalSync(false)} disabled={isGlobalSyncing || loading} className="flex-1 sm:flex-none flex justify-center items-center gap-2 bg-blue-600 text-white px-4 py-2.5 rounded-lg font-bold hover:bg-blue-700 shadow-sm transition-colors text-sm disabled:opacity-50">
+                                        {isGlobalSyncing ? <Loader2 size={18} className="animate-spin" /> : <ArrowRightLeft size={18} />} <span className="hidden lg:inline">{isGlobalSyncing ? 'กำลังซิงค์...' : 'Sync สถานะ'}</span>
                                     </button>
-                                )}
-                                <button 
-                                    onClick={() => handleGlobalSync(false)} 
-                                    disabled={isGlobalSyncing || loading}
-                                    className="flex-shrink-0 flex items-center gap-2 bg-blue-600 text-white px-4 py-2.5 rounded-lg font-bold hover:bg-blue-700 shadow-sm transition-colors text-sm disabled:opacity-50"
-                                    title="ดึงข้อมูลจากประวัติการโอนล่าสุดเพื่ออัปเดตตารางสรุป"
-                                >
-                                    {isGlobalSyncing ? <Loader2 size={18} className="animate-spin" /> : <ArrowRightLeft size={18} />} 
-                                    <span className="hidden sm:inline">{isGlobalSyncing ? 'กำลังซิงค์...' : 'Sync สถานะ'}</span>
-                                </button>
-                                <button onClick={fetchData} className="flex-shrink-0 p-2.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors" title="รีเฟรชข้อมูล">
-                                    <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
-                                </button>
-                                {['grid', 'overdue', 'transactions'].includes(currentView) && (
-                                    <button onClick={exportCSV} className="flex-shrink-0 flex items-center justify-center gap-2 bg-emerald-600 text-white px-4 py-2.5 rounded-lg font-bold hover:bg-emerald-700 shadow-sm transition-colors text-sm">
-                                        <Download size={18} /> Export
-                                    </button>
-                                )}
+                                    <button onClick={fetchData} className="flex-shrink-0 p-2.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors"><RefreshCw size={20} className={loading ? "animate-spin" : ""} /></button>
+                                    {['grid', 'overdue'].includes(currentView) && (
+                                        <button onClick={exportCSV} className="flex-shrink-0 flex items-center justify-center gap-2 bg-emerald-600 text-white px-4 py-2.5 rounded-lg font-bold hover:bg-emerald-700 shadow-sm transition-colors text-sm"><Download size={18} /></button>
+                                    )}
+                                </div>
                             </div>
                         </header>
 
                         {/* Content Area */}
-                        <div className="flex-1 overflow-y-auto p-4 sm:p-6 relative">
+                        <div className="flex-1 overflow-y-auto p-4 sm:p-6 relative flex flex-col">
                             
                             {currentView === 'grid' ? (
+                                /* --- Grid View (Supabase) --- */
                                 <>
                                     {/* Summary Widgets */}
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -1004,7 +601,7 @@
                                         </div>
                                         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
                                             <div className="bg-orange-100 p-3 rounded-xl text-orange-600"><Bell size={24} /></div>
-                                            <div><p className="text-xs text-slate-500 font-bold uppercase">สลิปใบเสร็จรอตรวจสอบ</p><h4 className="text-2xl font-extrabold text-orange-600">{pendingFees.length} รายการ</h4></div>
+                                            <div><p className="text-xs text-slate-500 font-bold uppercase">สลิปรอตรวจสอบ (GAS)</p><h4 className="text-2xl font-extrabold text-orange-600">{pendingFees.length} รายการ</h4></div>
                                         </div>
                                     </div>
 
@@ -1014,34 +611,18 @@
                                             <div className="flex w-full gap-2">
                                                 <div className="relative flex-1 md:w-64">
                                                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                                                    <input 
-                                                        type="text" 
-                                                        placeholder="ค้นหาเลขที่บ้าน, ชื่อ..." 
-                                                        className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
-                                                        value={searchQuery}
-                                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                                        onKeyDown={(e) => { if (e.key === 'Enter') handleGlobalSync(true); }}
-                                                    />
+                                                    <input type="text" placeholder="ค้นหาเลขที่บ้าน, ชื่อ..." className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleGlobalSync(true); }} />
                                                 </div>
                                             </div>
                                         </div>
                                         
                                         <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
                                             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1"><Filter size={14}/> ตัวกรอง:</span>
-                                            <select 
-                                                value={yearFilter} 
-                                                onChange={(e) => setYearFilter(e.target.value)}
-                                                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
-                                            >
+                                            <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50">
                                                 <option value="all">ทั้งหมด</option>
                                                 {availableYears.map(y => <option key={y} value={y}>ปี {y}</option>)}
                                             </select>
-                                            
-                                            <select 
-                                                value={filterStatus} 
-                                                onChange={(e) => setFilterStatus(e.target.value)}
-                                                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
-                                            >
+                                            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50">
                                                 <option value="all">สถานะทั้งหมด</option>
                                                 <option value="overdue">🔴 มีค้างชำระ</option>
                                                 <option value="waiting">⏳ รอตรวจสอบ/ข้อมูล</option>
@@ -1079,20 +660,10 @@
                                                             const totals = calculateHouseTotal(item);
                                                             return (
                                                                 <tr key={idx} className="hover:bg-slate-50 transition-colors group">
-                                                                    <td className="px-4 py-3 font-extrabold text-slate-800 bg-white group-hover:bg-slate-50 sticky left-0 z-10 shadow-[1px_0_0_#e2e8f0]">
-                                                                        {item.house_numbe}
-                                                                    </td>
-                                                                    <td className="px-4 py-3 font-bold text-indigo-600 bg-white group-hover:bg-slate-50 border-r border-slate-100">
-                                                                        {item.year}
-                                                                    </td>
-                                                                    <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate" title={item.owner_name}>
-                                                                        {item.owner_name || '-'}
-                                                                    </td>
-                                                                    <td className="px-4 py-3 text-center text-slate-500 font-medium">
-                                                                        {item.soi || '-'}
-                                                                    </td>
-                                                                    
-                                                                    {/* Month Columns */}
+                                                                    <td className="px-4 py-3 font-extrabold text-slate-800 bg-white group-hover:bg-slate-50 sticky left-0 z-10 shadow-[1px_0_0_#e2e8f0]">{item.house_numbe}</td>
+                                                                    <td className="px-4 py-3 font-bold text-indigo-600 bg-white group-hover:bg-slate-50 border-r border-slate-100">{item.year}</td>
+                                                                    <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate" title={item.owner_name}>{item.owner_name || '-'}</td>
+                                                                    <td className="px-4 py-3 text-center text-slate-500 font-medium">{item.soi || '-'}</td>
                                                                     {months.map(m => {
                                                                         const currentStatus = item[m.key];
                                                                         const isPending = currentStatus?.includes('รอตรวจสอบ');
@@ -1108,14 +679,8 @@
                                                                             </td>
                                                                         );
                                                                     })}
-                                                                    
-                                                                    {/* Totals */}
-                                                                    <td className="px-4 py-3 text-right font-bold text-green-600 bg-green-50/30 group-hover:bg-green-50/80">
-                                                                        {totals.paid > 0 ? `฿${totals.paid.toLocaleString()}` : '-'}
-                                                                    </td>
-                                                                    <td className="px-4 py-3 text-right font-bold text-red-600 bg-red-50/30 group-hover:bg-red-50/80">
-                                                                        {totals.unpaid > 0 ? `฿${totals.unpaid.toLocaleString()}` : '-'}
-                                                                    </td>
+                                                                    <td className="px-4 py-3 text-right font-bold text-green-600 bg-green-50/30 group-hover:bg-green-50/80">{totals.paid > 0 ? `฿${totals.paid.toLocaleString()}` : '-'}</td>
+                                                                    <td className="px-4 py-3 text-right font-bold text-red-600 bg-red-50/30 group-hover:bg-red-50/80">{totals.unpaid > 0 ? `฿${totals.unpaid.toLocaleString()}` : '-'}</td>
                                                                 </tr>
                                                             );
                                                         })}
@@ -1125,114 +690,23 @@
                                         )}
                                     </div>
                                     <div className="mt-4 text-xs text-slate-400 text-right">
-                                        ข้อมูลชุดนี้เป็นสรุปภาพรวมรายปี หากต้องการเพิ่มแก้ไขการชำระเงิน กรุณาไปที่เมนู "บันทึกรับชำระ"
+                                        ข้อมูลชุดนี้เป็นสรุปภาพรวมรายปี หากต้องการเพิ่ม/แก้ไข/ลบ การชำระเงิน กรุณาไปที่เมนู "บันทึกรับชำระ"
                                     </div>
                                 </>
                             ) : currentView === 'transactions' ? (
-                                /* --- Transactions Data Entry View --- */
-                                <div className="space-y-4 animate-fade-up">
-                                    <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 justify-between items-center">
-                                        <div className="flex items-center gap-3 w-full md:w-auto">
-                                            <div className="relative flex-1 md:w-64">
-                                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                                                <input 
-                                                    type="text" 
-                                                    placeholder="ค้นหาบ้านเลขที่ หรือ ชื่อ..." 
-                                                    className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
-                                                    value={searchQuery}
-                                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-3 w-full md:w-auto">
-                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1"><Filter size={14}/> ตัวกรองปี:</span>
-                                            <select 
-                                                value={yearFilter} 
-                                                onChange={(e) => setYearFilter(e.target.value)}
-                                                className="border border-slate-300 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
-                                            >
-                                                <option value="all">ดูทุกปี</option>
-                                                {availableYears.map(y => <option key={y} value={y}>ปี {y}</option>)}
-                                            </select>
-                                        </div>
-                                    </div>
-
-                                    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
-                                        {loading ? (
-                                            <div className="p-20 flex justify-center"><Loader2 size={40} className="animate-spin text-indigo-500" /></div>
-                                        ) : filteredTransactions.length === 0 ? (
-                                            <div className="p-20 text-center text-slate-500">ไม่พบรายการรับชำระในระบบ</div>
-                                        ) : (
-                                            <div className="overflow-x-auto admin-table max-h-[65vh]">
-                                                <table className="w-full text-left text-sm border-collapse">
-                                                    <thead>
-                                                        <tr className="text-slate-600 border-b-2 border-slate-200 bg-slate-50">
-                                                            <th className="px-4 py-3 font-bold">วันที่บันทึก</th>
-                                                            <th className="px-4 py-3 font-bold">บ้านเลขที่</th>
-                                                            <th className="px-4 py-3 font-bold">ชื่อผู้แจ้ง</th>
-                                                            <th className="px-4 py-3 font-bold">เดือน</th>
-                                                            <th className="px-4 py-3 font-bold">ปี</th>
-                                                            <th className="px-4 py-3 font-bold text-right">ยอดเงิน</th>
-                                                            <th className="px-4 py-3 font-bold text-center">วิธีจ่าย</th>
-                                                            <th className="px-4 py-3 font-bold text-center">สถานะ</th>
-                                                            <th className="px-4 py-3 font-bold text-center">สลิป</th>
-                                                            <th className="px-4 py-3 font-bold text-center">จัดการ</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-slate-100">
-                                                        {filteredTransactions.map((item, idx) => (
-                                                            <tr key={item.id || idx} className="hover:bg-slate-50 transition-colors">
-                                                                <td className="px-4 py-3 text-slate-500 text-xs">
-                                                                    {new Date(item.reported_at).toLocaleDateString('th-TH', {day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute:'2-digit'})}
-                                                                </td>
-                                                                <td className="px-4 py-3 font-extrabold text-slate-800">{item.house_number}</td>
-                                                                <td className="px-4 py-3 text-slate-600">{item.name || '-'}</td>
-                                                                <td className="px-4 py-3 font-medium text-slate-700">{item.month}</td>
-                                                                <td className="px-4 py-3 font-bold text-indigo-600">{item.year}</td>
-                                                                <td className="px-4 py-3 text-right font-bold text-green-600">฿{item.amount?.toLocaleString()}</td>
-                                                                <td className="px-4 py-3 text-center">
-                                                                    <span className={`px-2 py-1 rounded text-[10px] font-bold ${item.payment_method === 'โอน' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                                                                        {item.payment_method}
-                                                                    </span>
-                                                                </td>
-                                                                <td className="px-4 py-3 text-center">
-                                                                    {item.status?.includes('ตรวจสอบแล้ว') || item.status?.includes('อนุมัติ') ? (
-                                                                        <span className="text-green-600 font-bold text-xs"><CheckCircle size={14} className="inline mr-1"/> ผ่าน</span>
-                                                                    ) : item.status?.includes('รอ') ? (
-                                                                        <span className="text-orange-500 font-bold text-xs"><Clock size={14} className="inline mr-1"/> รอ</span>
-                                                                    ) : (
-                                                                        <span className="text-red-500 font-bold text-xs"><XCircle size={14} className="inline mr-1"/> ยกเลิก</span>
-                                                                    )}
-                                                                </td>
-                                                                <td className="px-4 py-3 text-center">
-                                                                    {item.image_url ? (
-                                                                        <button onClick={() => { setSelectedImageUrl(item.image_url); setImageModalOpen(true); }} className="text-indigo-500 hover:text-indigo-700 mx-auto block">
-                                                                            <ImageIcon size={18} />
-                                                                        </button>
-                                                                    ) : '-'}
-                                                                </td>
-                                                                <td className="px-4 py-3">
-                                                                    <div className="flex justify-center gap-2">
-                                                                        <button onClick={() => openTransactionModal('edit', item)} className="p-1.5 bg-amber-100 text-amber-700 rounded hover:bg-amber-200 transition-colors" title="แก้ไข">
-                                                                            <Edit size={16} />
-                                                                        </button>
-                                                                        <button onClick={() => deleteTransaction(item.id)} className="p-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors" title="ลบ">
-                                                                            <Trash2 size={16} />
-                                                                        </button>
-                                                                    </div>
-                                                                </td>
-                                                            </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        )}
-                                    </div>
+                                /* --- Embedded External Webpage (Iframe) --- */
+                                <div className="w-full h-full min-h-[75vh] bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in flex flex-col relative">
+                                    {/* เราใช้ Iframe เพื่อดึงหน้าเว็บต้นฉบับที่คุณต้องการมาแสดงในกรอบนี้ */}
+                                    <iframe 
+                                        src="https://serene-2025.github.io/serene/commonfees.html" 
+                                        className="w-full h-full flex-1 border-0 absolute inset-0"
+                                        title="ระบบบันทึกรับชำระ"
+                                        allow="camera"
+                                    ></iframe>
                                 </div>
                             ) : currentView === 'analytics' ? (
                                 /* --- Analytics View --- */
                                 <div className="space-y-6 animate-fade-up">
-                                    {/* Analytics Filter */}
                                     <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-4 justify-between items-center">
                                         <div className="flex items-center gap-2">
                                             <TrendingUp className="text-indigo-600" size={24} />
@@ -1240,11 +714,7 @@
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <span className="text-sm font-bold text-slate-500">วิเคราะห์ผลสำหรับ:</span>
-                                            <select 
-                                                value={yearFilter} 
-                                                onChange={(e) => setYearFilter(e.target.value)}
-                                                className="border border-slate-300 rounded-lg px-4 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-indigo-700"
-                                            >
+                                            <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} className="border border-slate-300 rounded-lg px-4 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-indigo-700">
                                                 <option value="all">ทุกปีทั้งหมด</option>
                                                 {availableYears.map(y => <option key={y} value={y}>ปี {y}</option>)}
                                             </select>
@@ -1256,28 +726,17 @@
                                     ) : (
                                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                                             
-                                            {/* Donut Chart - Payment Status */}
+                                            {/* Donut Chart */}
                                             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm lg:col-span-1 flex flex-col">
-                                                <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2">
-                                                    <PieChart size={18} className="text-indigo-500"/> โครงสร้างสถานะการชำระเงิน
-                                                </h4>
-                                                
+                                                <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2"><PieChart size={18} className="text-indigo-500"/> โครงสร้างสถานะการชำระเงิน</h4>
                                                 <div className="flex-1 flex flex-col items-center justify-center">
                                                     {analyticsData.totalOverall > 0 ? (
                                                         <>
                                                             <div className="relative w-48 h-48 rounded-full shadow-inner mb-6" 
-                                                                 style={{ 
-                                                                     background: `conic-gradient(
-                                                                         #22c55e 0% ${(analyticsData.totalPaidOverall / analyticsData.totalOverall) * 100}%, 
-                                                                         #ef4444 ${(analyticsData.totalPaidOverall / analyticsData.totalOverall) * 100}% ${((analyticsData.totalPaidOverall + analyticsData.totalUnpaidOverall) / analyticsData.totalOverall) * 100}%, 
-                                                                         #f59e0b ${((analyticsData.totalPaidOverall + analyticsData.totalUnpaidOverall) / analyticsData.totalOverall) * 100}% 100%
-                                                                     )` 
-                                                                 }}>
+                                                                 style={{ background: `conic-gradient(#22c55e 0% ${(analyticsData.totalPaidOverall / analyticsData.totalOverall) * 100}%, #ef4444 ${(analyticsData.totalPaidOverall / analyticsData.totalOverall) * 100}% ${((analyticsData.totalPaidOverall + analyticsData.totalUnpaidOverall) / analyticsData.totalOverall) * 100}%, #f59e0b ${((analyticsData.totalPaidOverall + analyticsData.totalUnpaidOverall) / analyticsData.totalOverall) * 100}% 100%)` }}>
                                                                 <div className="absolute inset-4 bg-white rounded-full flex flex-col items-center justify-center shadow-sm">
                                                                     <span className="text-xs font-bold text-slate-400">เก็บได้แล้ว</span>
-                                                                    <span className="text-2xl font-extrabold text-slate-800">
-                                                                        {Math.round((analyticsData.totalPaidOverall / analyticsData.totalOverall) * 100)}%
-                                                                    </span>
+                                                                    <span className="text-2xl font-extrabold text-slate-800">{Math.round((analyticsData.totalPaidOverall / analyticsData.totalOverall) * 100)}%</span>
                                                                 </div>
                                                             </div>
                                                             <div className="w-full space-y-3">
@@ -1295,38 +754,27 @@
                                                                 </div>
                                                             </div>
                                                         </>
-                                                    ) : (
-                                                        <div className="text-slate-400 flex flex-col items-center"><PieChart size={48} className="opacity-20 mb-2"/>ไม่มีข้อมูล</div>
-                                                    )}
+                                                    ) : (<div className="text-slate-400 flex flex-col items-center"><PieChart size={48} className="opacity-20 mb-2"/>ไม่มีข้อมูล</div>)}
                                                 </div>
                                             </div>
 
-                                            {/* Bar Chart - Monthly Trend */}
+                                            {/* Bar Chart */}
                                             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm lg:col-span-2 flex flex-col">
-                                                <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2">
-                                                    <TrendingUp size={18} className="text-indigo-500"/> แนวโน้มการจัดเก็บแยกตามเดือน
-                                                </h4>
-                                                
+                                                <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2"><TrendingUp size={18} className="text-indigo-500"/> แนวโน้มการจัดเก็บแยกตามเดือน</h4>
                                                 <div className="flex-1 flex items-end gap-2 sm:gap-4 h-64 pt-4 border-b border-slate-200 relative">
-                                                    {/* Y-Axis lines */}
                                                     <div className="absolute left-0 right-0 bottom-1/2 border-t border-dashed border-slate-200 z-0"></div>
                                                     <div className="absolute left-0 right-0 top-4 border-t border-dashed border-slate-200 z-0"></div>
-                                                    
                                                     {analyticsData.monthlyData.map((m, idx) => {
                                                         const totalForMonth = m.paid + m.unpaid + m.waiting;
                                                         const hPaid = totalForMonth ? (m.paid / analyticsData.maxMonthlyAmount) * 100 : 0;
                                                         const hUnpaid = totalForMonth ? (m.unpaid / analyticsData.maxMonthlyAmount) * 100 : 0;
-                                                        
                                                         return (
                                                             <div key={idx} className="flex-1 flex flex-col items-center justify-end h-full z-10 group relative min-w-[20px]">
-                                                                {/* Tooltip */}
                                                                 <div className="absolute bottom-full mb-2 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
                                                                     <div className="font-bold text-center border-b border-slate-600 pb-1 mb-1">{m.label}</div>
                                                                     <div className="text-green-400">จ่าย: ฿{m.paid.toLocaleString()}</div>
                                                                     <div className="text-red-400">ค้าง: ฿{m.unpaid.toLocaleString()}</div>
                                                                 </div>
-                                                                
-                                                                {/* Bars */}
                                                                 <div className="w-full flex flex-col justify-end h-full bar-grow" style={{ animationDelay: `${idx * 0.05}s` }}>
                                                                     <div className="w-full bg-red-400 hover:bg-red-500 transition-colors rounded-t-sm" style={{ height: `${hUnpaid}%` }}></div>
                                                                     <div className="w-full bg-green-500 hover:bg-green-600 transition-colors rounded-b-sm" style={{ height: `${hPaid}%` }}></div>
@@ -1342,11 +790,9 @@
                                                 </div>
                                             </div>
 
-                                            {/* Top 10 Overdue by Soi */}
+                                            {/* Top 10 Overdue */}
                                             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm lg:col-span-3">
-                                                <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2">
-                                                    <MapPin size={18} className="text-orange-500"/> 10 อันดับซอยที่มียอดค้างชำระสูงสุด
-                                                </h4>
+                                                <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2"><MapPin size={18} className="text-orange-500"/> 10 อันดับซอยที่มียอดค้างชำระสูงสุด</h4>
                                                 {analyticsData.soiRanking.length > 0 ? (
                                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-4">
                                                         {analyticsData.soiRanking.map((soi, index) => {
@@ -1359,43 +805,29 @@
                                                                         <span className="font-extrabold text-red-600">฿{soi.amount.toLocaleString()}</span>
                                                                     </div>
                                                                     <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                                                                        <div 
-                                                                            className="h-full bg-gradient-to-r from-orange-400 to-red-500 rounded-full"
-                                                                            style={{ width: `${pct}%` }}
-                                                                        ></div>
+                                                                        <div className="h-full bg-gradient-to-r from-orange-400 to-red-500 rounded-full" style={{ width: `${pct}%` }}></div>
                                                                     </div>
                                                                 </div>
                                                             );
                                                         })}
                                                     </div>
-                                                ) : (
-                                                    <div className="text-center py-10 text-slate-400">ไม่มีข้อมูลยอดค้างชำระ</div>
-                                                )}
+                                                ) : (<div className="text-center py-10 text-slate-400">ไม่มีข้อมูลยอดค้างชำระ</div>)}
                                             </div>
-
                                         </div>
                                     )}
                                 </div>
                             ) : currentView === 'overdue' ? (
-                                /* Overdue Summary View */
+                                /* --- Overdue View --- */
                                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-up">
                                     <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-red-50">
-                                        <h3 className="text-lg font-bold text-red-800 flex items-center gap-2">
-                                            <AlertTriangle className="text-red-500" />
-                                            สรุปจำนวนเดือนที่ค้างชำระทั้งหมด (ทุกปี)
-                                        </h3>
-                                        <span className="bg-red-500 text-white font-bold px-3 py-1 rounded-full text-sm">
-                                            มีบ้านค้างชำระ {overdueSummaryData.length} หลัง
-                                        </span>
+                                        <h3 className="text-lg font-bold text-red-800 flex items-center gap-2"><AlertTriangle className="text-red-500" /> สรุปจำนวนเดือนที่ค้างชำระทั้งหมด (ทุกปี)</h3>
+                                        <span className="bg-red-500 text-white font-bold px-3 py-1 rounded-full text-sm">มีบ้านค้างชำระ {overdueSummaryData.length} หลัง</span>
                                     </div>
                                     <div className="p-0 bg-white min-h-[50vh]">
                                         {loading || isGlobalSyncing ? (
                                             <div className="flex justify-center py-20"><Loader2 size={40} className="animate-spin text-red-500" /></div>
                                         ) : overdueSummaryData.length === 0 ? (
-                                            <div className="text-center py-20 text-slate-500 flex flex-col items-center gap-3">
-                                                <CheckCircle size={48} className="text-green-400" />
-                                                <p className="text-lg font-medium text-slate-600">ไม่มีบ้านที่มียอดค้างชำระ</p>
-                                            </div>
+                                            <div className="text-center py-20 text-slate-500 flex flex-col items-center gap-3"><CheckCircle size={48} className="text-green-400" /><p className="text-lg font-medium text-slate-600">ไม่มีบ้านที่มียอดค้างชำระ</p></div>
                                         ) : (
                                             <div className="overflow-x-auto">
                                                 <table className="w-full text-left text-sm border-collapse">
@@ -1413,19 +845,11 @@
                                                         {overdueSummaryData.map((item, idx) => (
                                                             <tr key={idx} className="hover:bg-red-50/30 transition-colors">
                                                                 <td className="px-6 py-4 text-center font-medium text-slate-500">{idx + 1}</td>
-                                                                <td className="px-6 py-4 font-bold text-slate-800 flex items-center gap-2">
-                                                                    <Home size={16} className="text-slate-400" /> {item.houseNo}
-                                                                </td>
+                                                                <td className="px-6 py-4 font-bold text-slate-800 flex items-center gap-2"><Home size={16} className="text-slate-400" /> {item.houseNo}</td>
                                                                 <td className="px-6 py-4 text-slate-600 font-medium">{item.ownerName || '-'}</td>
                                                                 <td className="px-6 py-4 text-center text-slate-500 font-medium">{item.soi || '-'}</td>
-                                                                <td className="px-6 py-4 text-center">
-                                                                    <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full font-bold">
-                                                                        {item.totalOverdueMonths} เดือน
-                                                                    </span>
-                                                                </td>
-                                                                <td className="px-6 py-4 text-right font-extrabold text-red-600 text-base">
-                                                                    ฿{item.totalOverdueAmount.toLocaleString()}
-                                                                </td>
+                                                                <td className="px-6 py-4 text-center"><span className="bg-red-100 text-red-700 px-3 py-1 rounded-full font-bold">{item.totalOverdueMonths} เดือน</span></td>
+                                                                <td className="px-6 py-4 text-right font-extrabold text-red-600 text-base">฿{item.totalOverdueAmount.toLocaleString()}</td>
                                                             </tr>
                                                         ))}
                                                     </tbody>
@@ -1435,51 +859,29 @@
                                     </div>
                                 </div>
                             ) : currentView === 'settings' ? (
-                                /* Settings / Batch Update View */
+                                /* --- Settings View --- */
                                 <div className="space-y-6 animate-fade-up max-w-4xl mx-auto">
-                                    
-                                    {/* Display Settings Box */}
                                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                                         <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center">
-                                            <div>
-                                                <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
-                                                    <Globe size={20} className="text-blue-600" /> ตั้งค่าการแสดงผลหน้าบ้าน (Public View)
-                                                </h3>
-                                                <p className="text-slate-500 text-sm mt-1">กำหนดปี พ.ศ. ที่ต้องการให้ลูกบ้านสามารถค้นหาและมองเห็นได้ในหน้าระบบค้นหา</p>
-                                            </div>
+                                            <div><h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><Globe size={20} className="text-blue-600" /> ตั้งค่าการแสดงผลหน้าบ้าน</h3><p className="text-slate-500 text-sm mt-1">กำหนดปี พ.ศ. ที่ต้องการให้ลูกบ้านเห็นในหน้าระบบค้นหา</p></div>
                                         </div>
                                         <div className="p-6">
                                             <div className="mb-6">
                                                 <label className="flex items-center justify-between p-4 rounded-xl border border-slate-200 cursor-pointer hover:bg-slate-50 transition-colors">
-                                                    <div>
-                                                        <span className="font-bold text-slate-700 block">โหมดกำหนดเอง (Manual Mode)</span>
-                                                        <span className="text-xs text-slate-500">เลือกเปิด-ปิดปีที่ต้องการแสดงผลด้วยตัวเอง</span>
-                                                    </div>
-                                                    <div className={`w-12 h-6 rounded-full p-1 transition-colors ${localConfig.useManual ? 'bg-indigo-600' : 'bg-slate-300'}`}>
-                                                        <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${localConfig.useManual ? 'translate-x-6' : ''}`}></div>
-                                                    </div>
-                                                    <input 
-                                                        type="checkbox" 
-                                                        className="hidden" 
-                                                        checked={localConfig.useManual || false} 
-                                                        onChange={(e) => setLocalConfig({...localConfig, useManual: e.target.checked})} 
-                                                    />
+                                                    <div><span className="font-bold text-slate-700 block">โหมดกำหนดเอง (Manual Mode)</span><span className="text-xs text-slate-500">เลือกเปิด-ปิดปีที่ต้องการแสดงผลด้วยตัวเอง</span></div>
+                                                    <div className={`w-12 h-6 rounded-full p-1 transition-colors ${localConfig.useManual ? 'bg-indigo-600' : 'bg-slate-300'}`}><div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${localConfig.useManual ? 'translate-x-6' : ''}`}></div></div>
+                                                    <input type="checkbox" className="hidden" checked={localConfig.useManual || false} onChange={(e) => setLocalConfig({...localConfig, useManual: e.target.checked})} />
                                                 </label>
                                             </div>
-
                                             {localConfig.useManual ? (
                                                 <div className="space-y-3">
-                                                    <h4 className="font-bold text-slate-600 text-sm mb-2 flex items-center gap-2">
-                                                        เลือกปีที่อนุญาตให้แสดงผล:
-                                                    </h4>
+                                                    <h4 className="font-bold text-slate-600 text-sm mb-2 flex items-center gap-2">เลือกปีที่อนุญาตให้แสดงผล:</h4>
                                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                                                         {availableYears.map(year => {
                                                             const isChecked = localConfig.manualYears?.includes(parseInt(year));
                                                             return (
                                                                 <label key={year} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${isChecked ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
-                                                                    <div className={`w-5 h-5 rounded flex items-center justify-center border ${isChecked ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-slate-300'}`}>
-                                                                        {isChecked && <CheckCircle size={14} className="text-white" />}
-                                                                    </div>
+                                                                    <div className={`w-5 h-5 rounded flex items-center justify-center border ${isChecked ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-slate-300'}`}>{isChecked && <CheckCircle size={14} className="text-white" />}</div>
                                                                     <span className="font-bold">ปี {year}</span>
                                                                     <input type="checkbox" className="hidden" checked={isChecked} onChange={() => toggleYear(year)} />
                                                                 </label>
@@ -1488,171 +890,70 @@
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 text-blue-800 text-sm flex items-start gap-3">
-                                                    <Info size={20} className="shrink-0 mt-0.5" />
-                                                    <div>
-                                                        <strong>โหมดอัตโนมัติ:</strong> ระบบจะแสดงข้อมูลปีปัจจุบันและปีก่อนหน้าทั้งหมด <br/>
-                                                        (ปีอนาคต จะถูกซ่อนอัตโนมัติ)
-                                                    </div>
-                                                </div>
+                                                <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 text-blue-800 text-sm flex items-start gap-3"><Info size={20} className="shrink-0 mt-0.5" /><div><strong>โหมดอัตโนมัติ:</strong> ระบบจะแสดงข้อมูลปีปัจจุบันและปีก่อนหน้าทั้งหมด <br/>(ปีอนาคต จะถูกซ่อนอัตโนมัติ)</div></div>
                                             )}
                                         </div>
                                         <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
-                                            <button 
-                                                onClick={() => setLocalConfig(appConfig)} 
-                                                disabled={isSaving} 
-                                                className="px-6 py-2 rounded-lg text-slate-600 font-bold hover:bg-slate-200 transition-colors disabled:opacity-50"
-                                            >
-                                                รีเซ็ต
-                                            </button>
-                                            <button 
-                                                onClick={saveConfig} 
-                                                disabled={isSaving} 
-                                                className="px-6 py-2 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 shadow-md transition-colors flex items-center gap-2 disabled:opacity-50"
-                                            >
-                                                {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />} บันทึกการตั้งค่า
-                                            </button>
+                                            <button onClick={() => setLocalConfig(appConfig)} disabled={isSaving} className="px-6 py-2 rounded-lg text-slate-600 font-bold hover:bg-slate-200 transition-colors disabled:opacity-50">รีเซ็ต</button>
+                                            <button onClick={saveConfig} disabled={isSaving} className="px-6 py-2 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 shadow-md transition-colors flex items-center gap-2 disabled:opacity-50">{isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />} บันทึกการตั้งค่า</button>
                                         </div>
                                     </div>
 
                                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                                         <div className="bg-slate-50 px-6 py-4 border-b border-slate-200">
-                                            <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
-                                                <Database size={20} className="text-indigo-600" /> อัปเดตสถานะรายเดือนแบบกลุ่ม (Batch Update)
-                                            </h3>
-                                            <p className="text-slate-500 text-sm mt-1">
-                                                เปลี่ยนสถานะ "รอข้อมูล", "ค่าว่าง" หรือ "-" ให้กลายเป็น <span className="font-bold text-red-500">"ยังไม่จ่าย"</span> พร้อมกันทั้งโครงการ สำหรับปีและเดือนที่เลือก
-                                            </p>
+                                            <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><Database size={20} className="text-indigo-600" /> อัปเดตสถานะรายเดือนแบบกลุ่ม (Batch Update)</h3>
+                                            <p className="text-slate-500 text-sm mt-1">เปลี่ยนสถานะ "รอข้อมูล" ให้กลายเป็น <span className="font-bold text-red-500">"ยังไม่จ่าย"</span> พร้อมกันทั้งโครงการ สำหรับปีและเดือนที่เลือก</p>
                                         </div>
                                         <div className="p-6">
                                             <div className="flex flex-col md:flex-row gap-4 items-end">
-                                                <div className="w-full md:w-1/3">
-                                                    <label className="block text-sm font-bold text-slate-700 mb-2">เลือกปี</label>
-                                                    <select 
-                                                        value={updateTargetYear} 
-                                                        onChange={(e) => setUpdateTargetYear(e.target.value)} 
-                                                        className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-                                                    >
-                                                        {availableYears.map(y => <option key={y} value={y}>ปี {y}</option>)}
-                                                    </select>
-                                                </div>
-                                                <div className="w-full md:w-1/3">
-                                                    <label className="block text-sm font-bold text-slate-700 mb-2">เลือกเดือน</label>
-                                                    <select 
-                                                        value={updateTargetMonth} 
-                                                        onChange={(e) => setUpdateTargetMonth(e.target.value)} 
-                                                        className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-                                                    >
-                                                        {months.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-                                                    </select>
-                                                </div>
-                                                <div className="w-full md:w-1/3">
-                                                    <button 
-                                                        onClick={handleAdminUpdateStatus} 
-                                                        disabled={isSaving} 
-                                                        className="w-full px-6 py-2.5 rounded-lg bg-orange-600 text-white font-bold hover:bg-orange-700 shadow-md transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                                                    >
-                                                        {isSaving ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />} เริ่มอัปเดต
-                                                    </button>
-                                                </div>
+                                                <div className="w-full md:w-1/3"><label className="block text-sm font-bold text-slate-700 mb-2">เลือกปี</label><select value={updateTargetYear} onChange={(e) => setUpdateTargetYear(e.target.value)} className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">{availableYears.map(y => <option key={y} value={y}>ปี {y}</option>)}</select></div>
+                                                <div className="w-full md:w-1/3"><label className="block text-sm font-bold text-slate-700 mb-2">เลือกเดือน</label><select value={updateTargetMonth} onChange={(e) => setUpdateTargetMonth(e.target.value)} className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">{months.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}</select></div>
+                                                <div className="w-full md:w-1/3"><button onClick={handleAdminUpdateStatus} disabled={isSaving} className="w-full px-6 py-2.5 rounded-lg bg-orange-600 text-white font-bold hover:bg-orange-700 shadow-md transition-colors flex items-center justify-center gap-2 disabled:opacity-50">{isSaving ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />} เริ่มอัปเดต</button></div>
                                             </div>
                                         </div>
                                     </div>
                                     
-                                    {/* New Year Generation Box */}
                                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                                         <div className="bg-slate-50 px-6 py-4 border-b border-slate-200">
-                                            <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
-                                                <FilePlus size={20} className="text-emerald-600" /> สร้างข้อมูลสำหรับปีใหม่ (Rollover Data)
-                                            </h3>
-                                            <p className="text-slate-500 text-sm mt-1">
-                                                คัดลอกรายชื่อบ้านทั้งหมดจากปีล่าสุด เพื่อสร้างฐานข้อมูลสำหรับปีใหม่ โดยจะตั้งค่าสถานะรายเดือนเริ่มต้นเป็น <span className="font-bold text-yellow-600">"รอข้อมูล"</span>
-                                            </p>
+                                            <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><FilePlus size={20} className="text-emerald-600" /> สร้างข้อมูลสำหรับปีใหม่ (Rollover Data)</h3>
+                                            <p className="text-slate-500 text-sm mt-1">คัดลอกรายชื่อบ้านทั้งหมดจากปีล่าสุด เพื่อสร้างฐานข้อมูลสำหรับปีใหม่</p>
                                         </div>
                                         <div className="p-6">
                                             <div className="flex flex-col md:flex-row gap-4 items-end">
-                                                <div className="w-full md:w-2/3">
-                                                    <label className="block text-sm font-bold text-slate-700 mb-2">ระบุปี พ.ศ. ที่ต้องการสร้าง</label>
-                                                    <input 
-                                                        type="number" 
-                                                        value={newYearTarget} 
-                                                        onChange={(e) => setNewYearTarget(e.target.value)} 
-                                                        className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
-                                                        placeholder="เช่น 2570"
-                                                    />
-                                                </div>
-                                                <div className="w-full md:w-1/3">
-                                                    <button 
-                                                        onClick={handleGenerateNewYearData} 
-                                                        disabled={isSaving || !newYearTarget} 
-                                                        className="w-full px-6 py-2.5 rounded-lg bg-emerald-600 text-white font-bold hover:bg-emerald-700 shadow-md transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                                                    >
-                                                        {isSaving ? <Loader2 size={18} className="animate-spin" /> : <FilePlus size={18} />} สร้างข้อมูล
-                                                    </button>
-                                                </div>
+                                                <div className="w-full md:w-2/3"><label className="block text-sm font-bold text-slate-700 mb-2">ระบุปี พ.ศ. ที่ต้องการสร้าง</label><input type="number" value={newYearTarget} onChange={(e) => setNewYearTarget(e.target.value)} className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white" placeholder="เช่น 2570" /></div>
+                                                <div className="w-full md:w-1/3"><button onClick={handleGenerateNewYearData} disabled={isSaving || !newYearTarget} className="w-full px-6 py-2.5 rounded-lg bg-emerald-600 text-white font-bold hover:bg-emerald-700 shadow-md transition-colors flex items-center justify-center gap-2 disabled:opacity-50">{isSaving ? <Loader2 size={18} className="animate-spin" /> : <FilePlus size={18} />} สร้างข้อมูล</button></div>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
                             ) : (
-                                /* Pending Verification View */
+                                /* --- Pending Fees View (GAS) --- */
                                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-up">
                                     <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-orange-50">
-                                        <h3 className="text-lg font-bold text-orange-800 flex items-center gap-2">
-                                            <Receipt className="text-orange-500" />
-                                            รายการจากระบบ (สถานะ: รอตรวจสอบ)
-                                        </h3>
-                                        <span className="bg-orange-500 text-white font-bold px-3 py-1 rounded-full text-sm">
-                                            ทั้งหมด {pendingFees.length} รายการ
-                                        </span>
+                                        <h3 className="text-lg font-bold text-orange-800 flex items-center gap-2"><Receipt className="text-orange-500" />รายการจากระบบ (สถานะ: รอตรวจสอบ)</h3>
+                                        <span className="bg-orange-500 text-white font-bold px-3 py-1 rounded-full text-sm">ทั้งหมด {pendingFees.length} รายการ</span>
                                     </div>
                                     <div className="p-6 bg-slate-50 min-h-[50vh]">
                                         {loading || isGlobalSyncing ? (
                                             <div className="flex justify-center py-20"><Loader2 size={40} className="animate-spin text-orange-500" /></div>
                                         ) : pendingFees.length === 0 ? (
-                                            <div className="text-center py-20 text-slate-500 flex flex-col items-center gap-3">
-                                                <CheckCircle size={48} className="text-green-400" />
-                                                <p className="text-lg font-medium text-slate-600">ไม่มีรายการรอตรวจสอบในขณะนี้</p>
-                                            </div>
+                                            <div className="text-center py-20 text-slate-500 flex flex-col items-center gap-3"><CheckCircle size={48} className="text-green-400" /><p className="text-lg font-medium text-slate-600">ไม่มีรายการรอตรวจสอบในขณะนี้</p></div>
                                         ) : (
                                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                                                 {pendingFees.map(fee => (
                                                     <div key={fee.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                                                        {/* Card Header */}
                                                         <div className="bg-gradient-to-r from-orange-400 to-orange-500 p-3 flex justify-between items-center text-white">
                                                             <span className="font-bold flex items-center gap-2"><Home size={16}/> บ้านเลขที่ {fee.house_number}</span>
                                                             <span className="text-xs bg-white/20 px-2 py-1 rounded-full font-semibold backdrop-blur-sm shadow-sm">ปี {fee.year}</span>
                                                         </div>
-                                                        {/* Card Body */}
                                                         <div className="p-5 space-y-3">
-                                                            <div className="flex justify-between items-center text-sm border-b border-slate-100 pb-2">
-                                                                <span className="text-slate-500 flex items-center gap-1.5"><Calendar size={14}/> รอบเดือน:</span>
-                                                                <span className="font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{fee.month}</span>
-                                                            </div>
-                                                            <div className="flex justify-between items-center text-sm border-b border-slate-100 pb-2">
-                                                                <span className="text-slate-500 flex items-center gap-1.5"><Coins size={14}/> ยอดชำระ:</span>
-                                                                <span className="font-extrabold text-green-600 text-base">฿{fee.amount?.toLocaleString() || '0'}</span>
-                                                            </div>
-                                                            <div className="flex justify-between items-center text-sm pb-1">
-                                                                <span className="text-slate-500 flex items-center gap-1.5"><Clock size={14}/> วันที่แจ้ง:</span>
-                                                                <span className="text-slate-600 font-medium text-xs">
-                                                                    {new Date(fee.reported_at).toLocaleDateString('th-TH', {day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute:'2-digit'})}
-                                                                </span>
-                                                            </div>
-                                                            {/* Image Thumbnail / Button */}
+                                                            <div className="flex justify-between items-center text-sm border-b border-slate-100 pb-2"><span className="text-slate-500 flex items-center gap-1.5"><Calendar size={14}/> รอบเดือน:</span><span className="font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{fee.month}</span></div>
+                                                            <div className="flex justify-between items-center text-sm border-b border-slate-100 pb-2"><span className="text-slate-500 flex items-center gap-1.5"><Coins size={14}/> ยอดชำระ:</span><span className="font-extrabold text-green-600 text-base">฿{fee.amount?.toLocaleString() || '0'}</span></div>
+                                                            <div className="flex justify-between items-center text-sm pb-1"><span className="text-slate-500 flex items-center gap-1.5"><Clock size={14}/> วันที่แจ้ง:</span><span className="text-slate-600 font-medium text-xs">{(fee.reported_at && fee.reported_at !== '-') ? new Date(fee.reported_at).toLocaleDateString('th-TH') : '-'}</span></div>
                                                             <div className="pt-4 mt-2">
                                                                 {fee.image_url ? (
-                                                                    <button 
-                                                                        onClick={() => { setSelectedImageUrl(fee.image_url); setImageModalOpen(true); }}
-                                                                        className="w-full py-2.5 bg-indigo-50 text-indigo-600 font-bold rounded-lg hover:bg-indigo-600 hover:text-white transition-all duration-300 flex items-center justify-center gap-2 text-sm shadow-sm"
-                                                                    >
-                                                                        <ImageIcon size={18} /> กดเพื่อดูรูปสลิป
-                                                                    </button>
-                                                                ) : (
-                                                                    <div className="text-center text-xs text-slate-400 py-3 bg-slate-50 rounded-lg border border-dashed border-slate-200">
-                                                                        ไม่มีรูปสลิปแนบมา
-                                                                    </div>
-                                                                )}
+                                                                    <button onClick={() => { setSelectedImageUrl(fee.image_url); setImageModalOpen(true); }} className="w-full py-2.5 bg-indigo-50 text-indigo-600 font-bold rounded-lg hover:bg-indigo-600 hover:text-white transition-all duration-300 flex items-center justify-center gap-2 text-sm shadow-sm"><ImageIcon size={18} /> กดเพื่อดูรูปสลิป</button>
+                                                                ) : (<div className="text-center text-xs text-slate-400 py-3 bg-slate-50 rounded-lg border border-dashed border-slate-200">ไม่มีรูปสลิปแนบมา</div>)}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -1666,209 +967,42 @@
                         </div>
                     </main>
 
-                    {/* Transaction Add/Edit Modal */}
-                    {transModal.isOpen && (
-                        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
-                            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={closeTransactionModal}></div>
-                            <div className="relative bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl animate-in fade-in zoom-in-95 duration-200 overflow-hidden">
-                                <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
-                                    <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
-                                        <ListIcon className="text-indigo-600" /> 
-                                        {transModal.mode === 'add' ? 'เพิ่มรายการรับชำระใหม่' : 'แก้ไขข้อมูลรับชำระ'}
-                                    </h3>
-                                    <button onClick={closeTransactionModal} className="text-slate-400 hover:text-slate-600 transition-colors"><X size={24} /></button>
-                                </div>
-                                
-                                <div className="p-6 overflow-y-auto flex-1 bg-white">
-                                    <form id="transForm" onSubmit={saveTransaction} className="space-y-4">
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                            <div>
-                                                <label className="block text-sm font-bold text-slate-700 mb-1">ชื่อผู้บันทึก/ผู้แจ้ง <span className="text-red-500">*</span></label>
-                                                <input type="text" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" 
-                                                    value={transModal.data.name || ''} 
-                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, name: e.target.value}}))} 
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-bold text-slate-700 mb-1">บ้านเลขที่ <span className="text-red-500">*</span></label>
-                                                <input type="text" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" 
-                                                    value={transModal.data.house_number || ''} 
-                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, house_number: e.target.value}}))} 
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-bold text-slate-700 mb-1">เดือนที่ชำระ <span className="text-red-500">*</span></label>
-                                                <select required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                                                    value={transModal.data.month || ''} 
-                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, month: e.target.value}}))} 
-                                                >
-                                                    <option value="" disabled>--- เลือกเดือน ---</option>
-                                                    {Object.keys(monthMap).map(m => <option key={m} value={m}>{m}</option>)}
-                                                </select>
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-bold text-slate-700 mb-1">ปี พ.ศ. <span className="text-red-500">*</span></label>
-                                                <select required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                                                    value={transModal.data.year || ''} 
-                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, year: e.target.value}}))} 
-                                                >
-                                                    <option value="" disabled>--- เลือกปี ---</option>
-                                                    {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
-                                                    {/* เผื่อกรณีเพิ่มปีใหม่ที่ยังไม่มีใน list */}
-                                                    {!availableYears.includes(new Date().getFullYear() + 543) && <option value={new Date().getFullYear() + 543}>{new Date().getFullYear() + 543}</option>}
-                                                </select>
-                                            </div>
-                                        </div>
-
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-100 pt-4">
-                                            <div>
-                                                <label className="block text-sm font-bold text-slate-700 mb-2">วิธีชำระเงิน <span className="text-red-500">*</span></label>
-                                                <div className="flex gap-4">
-                                                    <label className="flex items-center gap-2 cursor-pointer">
-                                                        <input type="radio" name="payment_method" value="โอน" className="w-4 h-4 text-indigo-600" required
-                                                            checked={transModal.data.payment_method === 'โอน'}
-                                                            onChange={e => setTransModal(p => ({...p, data: {...p.data, payment_method: e.target.value}}))} 
-                                                        /> โอน
-                                                    </label>
-                                                    <label className="flex items-center gap-2 cursor-pointer">
-                                                        <input type="radio" name="payment_method" value="จ่ายสด" className="w-4 h-4 text-indigo-600" required
-                                                            checked={transModal.data.payment_method === 'จ่ายสด'}
-                                                            onChange={e => setTransModal(p => ({...p, data: {...p.data, payment_method: e.target.value}}))} 
-                                                        /> จ่ายสด
-                                                    </label>
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-bold text-slate-700 mb-1">จำนวนเงิน (บาท) <span className="text-red-500">*</span></label>
-                                                <input type="number" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" 
-                                                    value={transModal.data.amount || 300} 
-                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, amount: parseFloat(e.target.value)}}))} 
-                                                />
-                                            </div>
-                                        </div>
-
-                                        <div className="border-t border-slate-100 pt-4">
-                                            <label className="block text-sm font-bold text-slate-700 mb-2">ภาพสลิปหลักฐาน (บันทึกเป็น Base64)</label>
-                                            <div className="flex flex-col items-center gap-4">
-                                                {previewImage ? (
-                                                    <div className="relative group">
-                                                        <img src={previewImage} alt="Preview" className="h-40 object-contain rounded-lg border border-slate-200 shadow-sm" />
-                                                        <button type="button" onClick={() => {setPreviewImage(''); setTransModal(p => ({...p, data: {...p.data, image_url: ''}}))}} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity shadow-md">
-                                                            <X size={14}/>
-                                                        </button>
-                                                    </div>
-                                                ) : (
-                                                    <label className="w-full flex flex-col items-center justify-center h-32 border-2 border-slate-300 border-dashed rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100 transition-colors">
-                                                        <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                                                            <UploadCloud className="w-8 h-8 text-slate-400 mb-2" />
-                                                            <p className="text-sm text-slate-500"><span className="font-semibold text-indigo-600">คลิกเพื่ออัปโหลด</span> หรือลากไฟล์มาวาง</p>
-                                                            <p className="text-xs text-slate-400 mt-1">PNG, JPG ไม่เกิน 5MB</p>
-                                                        </div>
-                                                        <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
-                                                    </label>
-                                                )}
-                                            </div>
-                                        </div>
-
-                                        <div className="border-t border-slate-100 pt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                                            <div>
-                                                <label className="block text-sm font-bold text-slate-700 mb-1">สถานะ <span className="text-red-500">*</span></label>
-                                                <select required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-indigo-700"
-                                                    value={transModal.data.status || 'ตรวจสอบแล้ว'} 
-                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, status: e.target.value}}))} 
-                                                >
-                                                    <option value="ตรวจสอบแล้ว">ตรวจสอบแล้ว (อนุมัติ)</option>
-                                                    <option value="รอตรวจสอบ">รอตรวจสอบ</option>
-                                                    <option value="กำลังดำเนินการ">กำลังดำเนินการ</option>
-                                                    <option value="รอข้อมูล">รอข้อมูล</option>
-                                                    <option value="จ่ายผิด">จ่ายผิด</option>
-                                                    <option value="ยกเลิก">ยกเลิก</option>
-                                                    <option value="โอนคืน">โอนคืน</option>
-                                                    <option value="ให้ติดต่อแอดมิน">ให้ติดต่อแอดมิน</option>
-                                                </select>
-                                                <p className="text-[10px] text-slate-400 mt-1">หากเลือก "ตรวจสอบแล้ว" ระบบจะปรับสถานะในหน้าตารางสรุปเป็น "จ่ายแล้ว" ทันทีเมื่อบันทึก</p>
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-bold text-slate-700 mb-1">ผู้ตรวจสอบ</label>
-                                                <input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50" 
-                                                    value={transModal.data.inspector || 'Admin'} 
-                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, inspector: e.target.value}}))} 
-                                                />
-                                            </div>
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-sm font-bold text-slate-700 mb-1">หมายเหตุ</label>
-                                            <textarea rows="2" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" 
-                                                placeholder="เช่น จ่ายล่วงหน้า, แนบสลิปรวม..."
-                                                value={transModal.data.remark || ''} 
-                                                onChange={e => setTransModal(p => ({...p, data: {...p.data, remark: e.target.value}}))} 
-                                            ></textarea>
-                                        </div>
-
-                                    </form>
-                                </div>
-                                <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3 shrink-0">
-                                    <button type="button" onClick={closeTransactionModal} disabled={isTransSaving} className="px-6 py-2 rounded-lg text-slate-600 font-bold hover:bg-slate-200 transition-colors disabled:opacity-50">ยกเลิก</button>
-                                    <button type="submit" form="transForm" disabled={isTransSaving} className="px-6 py-2 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 shadow-md transition-colors flex items-center gap-2 disabled:opacity-50">
-                                        {isTransSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />} บันทึกข้อมูล
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
                     {/* Image Modal */}
                     {imageModalOpen && selectedImageUrl && (
                         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm" onClick={() => setImageModalOpen(false)}>
                             <div className="relative w-full max-w-4xl h-full max-h-[90vh] flex flex-col items-center justify-center animate-in fade-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
-                            <button 
-                                onClick={() => setImageModalOpen(false)} 
-                                className="absolute -top-12 right-0 text-white/80 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors"
-                            >
-                                <X size={32} />
-                            </button>
-                            <img 
-                                src={selectedImageUrl} 
-                                alt="Payment Slip" 
-                                className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-                            />
+                            <button onClick={() => setImageModalOpen(false)} className="absolute -top-12 right-0 text-white/80 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors"><X size={32} /></button>
+                            <img src={selectedImageUrl} alt="Payment Slip" className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"/>
                             <div className="absolute -bottom-12 left-0 right-0 flex justify-center gap-4">
-                                <a href={selectedImageUrl} target="_blank" rel="noreferrer" className="text-white/80 hover:text-white text-sm flex items-center gap-2 bg-white/10 px-4 py-2 rounded-full hover:bg-white/20 transition-colors">
-                                    <ExternalLink size={16} /> เปิดรูปต้นฉบับ
-                                </a>
+                                <a href={selectedImageUrl} target="_blank" rel="noreferrer" className="text-white/80 hover:text-white text-sm flex items-center gap-2 bg-white/10 px-4 py-2 rounded-full hover:bg-white/20 transition-colors"><ExternalLink size={16} /> เปิดรูปต้นฉบับ</a>
                             </div>
                             </div>
                         </div>
                     )}
 
-                    {/* Loading Overlay for Fetching Slip */}
-                    {isFetchingSlip && (
-                        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/20 backdrop-blur-sm">
-                            <div className="bg-white p-4 rounded-xl shadow-lg flex items-center gap-3 animate-pop-in border-2 border-indigo-100">
-                                <Loader2 className="animate-spin text-indigo-600" size={24} />
-                                <span className="font-bold text-slate-700">กำลังโหลดรูปสลิป...</span>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Result Alert Modal for Batch Update & Sync */}
+                    {/* Enhanced Result Alert Modal (รองรับ Loading Progress) */}
                     {resultModal.isOpen && (
                         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-200">
-                            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setResultModal({ isOpen: false, type: '', message: '' })}></div>
-                            <div className={`relative bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border-2 ${resultModal.type === 'success' ? 'border-green-100' : 'border-red-100'}`}>
+                            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !resultModal.isLoading && setResultModal({ isOpen: false, type: '', message: '', isLoading: false })}></div>
+                            <div className={`relative bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border-2 ${resultModal.type === 'success' ? 'border-green-100' : resultModal.type === 'info' ? 'border-blue-100' : 'border-red-100'}`}>
                                 <div className="text-center">
-                                    <div className={`mx-auto flex items-center justify-center h-16 w-16 rounded-full mb-4 ${resultModal.type === 'success' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
-                                        {resultModal.type === 'success' ? <CheckCircle size={32} /> : <AlertTriangle size={32} />}
+                                    <div className={`mx-auto flex items-center justify-center h-16 w-16 rounded-full mb-4 ${resultModal.type === 'success' ? 'bg-green-100 text-green-600' : resultModal.type === 'info' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-600'}`}>
+                                        {resultModal.isLoading ? <Loader2 size={32} className="animate-spin" /> : 
+                                         resultModal.type === 'success' ? <CheckCircle size={32} /> : 
+                                         resultModal.type === 'info' ? <Info size={32} /> : <AlertTriangle size={32} />}
                                     </div>
-                                    <h3 className="text-lg font-bold text-slate-800 mb-2">{resultModal.type === 'success' ? 'สำเร็จ' : 'แจ้งเตือน'}</h3>
-                                    <p className="text-slate-500 text-sm mb-6">{resultModal.message}</p>
-                                    <button 
-                                        onClick={() => setResultModal({ isOpen: false, type: '', message: '' })}
-                                        className={`px-6 py-2 rounded-lg font-medium shadow-md transition-colors text-white ${resultModal.type === 'success' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
-                                    >
-                                        ตกลง
-                                    </button>
+                                    <h3 className="text-lg font-bold text-slate-800 mb-2">
+                                        {resultModal.isLoading ? 'กำลังดำเนินการ...' : resultModal.type === 'success' ? 'สำเร็จ' : resultModal.type === 'info' ? 'ข้อมูลระบบ' : 'แจ้งเตือน'}
+                                    </h3>
+                                    <p className="text-slate-500 text-sm mb-6 font-medium">{resultModal.message}</p>
+                                    {!resultModal.isLoading && (
+                                        <button 
+                                            onClick={() => setResultModal({ isOpen: false, type: '', message: '', isLoading: false })}
+                                            className={`px-6 py-2 rounded-lg font-bold shadow-md transition-colors text-white w-full ${resultModal.type === 'success' ? 'bg-green-600 hover:bg-green-700' : resultModal.type === 'info' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700'}`}
+                                        >
+                                            ตกลง
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         </div>
