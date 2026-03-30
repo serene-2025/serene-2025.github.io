@@ -93,7 +93,8 @@
             RefreshCw, Filter, Bell, LogOut, CheckCircle, XCircle, AlertTriangle, 
             Coins, Building, Database, Receipt, ShieldAlert, Mail, HelpCircle, Loader2,
             X, ExternalLink, Clock, Image as ImageIcon, Calendar, Home, AlertCircle, ArrowRightLeft, Settings,
-            PieChart, TrendingUp, MapPin, FilePlus, Globe, Info, Save
+            PieChart, TrendingUp, MapPin, FilePlus, Globe, Info, Save, 
+            ListIcon, Edit, Trash2, Plus, UploadCloud // New Icons for Transactions
         } from 'lucide-react';
 
         // --- Configuration ---
@@ -140,14 +141,15 @@
             const [supabase, setSupabase] = useState(null);
             const [data, setData] = useState([]);
             const [pendingFees, setPendingFees] = useState([]);
+            const [allTransactions, setAllTransactions] = useState([]); // State for all common_fees
             const [loading, setLoading] = useState(true);
             const [isGlobalSyncing, setIsGlobalSyncing] = useState(false);
 
             // View & Filters
-            const [currentView, setCurrentView] = useState('grid'); // 'grid' | 'analytics' | 'pending' | 'overdue' | 'settings'
-            const [yearFilter, setYearFilter] = useState('all'); // Default to all
+            const [currentView, setCurrentView] = useState('grid'); // 'grid' | 'analytics' | 'pending' | 'overdue' | 'settings' | 'transactions'
+            const [yearFilter, setYearFilter] = useState('all'); 
             const [searchQuery, setSearchQuery] = useState('');
-            const [filterStatus, setFilterStatus] = useState('all'); // all, overdue, waiting
+            const [filterStatus, setFilterStatus] = useState('all'); 
 
             // Settings State
             const [appConfig, setAppConfig] = useState({ useManual: false, manualYears: [] });
@@ -162,6 +164,11 @@
             const [selectedImageUrl, setSelectedImageUrl] = useState(null);
             const [isFetchingSlip, setIsFetchingSlip] = useState(false);
             const [resultModal, setResultModal] = useState({ isOpen: false, type: 'success', message: '' });
+
+            // Transaction Modal State
+            const [transModal, setTransModal] = useState({ isOpen: false, mode: 'add', data: {} });
+            const [isTransSaving, setIsTransSaving] = useState(false);
+            const [previewImage, setPreviewImage] = useState('');
 
             // Init Supabase & Default Values
             useEffect(() => {
@@ -214,6 +221,7 @@
                 if (!supabase) return;
                 setLoading(true);
                 try {
+                    // Fetch House Payments
                     let allHouseData = [];
                     let page = 0;
                     const pageSize = 1000;
@@ -231,9 +239,7 @@
                         
                         if (houseData && houseData.length > 0) {
                             allHouseData = [...allHouseData, ...houseData];
-                            if (houseData.length < pageSize) {
-                                hasMore = false;
-                            }
+                            if (houseData.length < pageSize) hasMore = false;
                         } else {
                             hasMore = false;
                         }
@@ -241,13 +247,18 @@
                     }
                     setData(allHouseData);
 
+                    // Fetch All Common Fees (Transactions)
                     const { data: feesData, error: feesError } = await supabase
                         .from('common_fees')
                         .select('*')
-                        .eq('status', 'รอตรวจสอบ')
                         .order('reported_at', { ascending: false });
                     
-                    if (!feesError) setPendingFees(feesData || []);
+                    if (feesError) throw feesError;
+                    
+                    if (feesData) {
+                        setAllTransactions(feesData);
+                        setPendingFees(feesData.filter(f => f.status === 'รอตรวจสอบ'));
+                    }
 
                 } catch (err) {
                     console.error("Error fetching admin data:", err);
@@ -257,36 +268,15 @@
                 }
             };
 
-            // Global Auto Sync Logic (ใช้คู่กับการค้นหาด้วย)
+            // Global Auto Sync Logic
             const handleGlobalSync = async (silent = false) => {
                 if (!supabase) return;
                 if (!silent) setIsGlobalSyncing(true);
                 try {
-                    let allHouseData = [];
-                    let page = 0;
-                    const pageSize = 1000;
-                    let hasMore = true;
+                    let allHouseData = [...data];
+                    if(allHouseData.length === 0) return;
 
-                    while (hasMore) {
-                        const { data: houseData, error: houseError } = await supabase
-                            .from('house_payments')
-                            .select('*')
-                            .order('house_numbe', { ascending: true })
-                            .order('year', { ascending: false })
-                            .range(page * pageSize, (page + 1) * pageSize - 1);
-                        if (houseError) throw houseError;
-                        if (houseData && houseData.length > 0) {
-                            allHouseData = [...allHouseData, ...houseData];
-                            if (houseData.length < pageSize) hasMore = false;
-                        } else {
-                            hasMore = false;
-                        }
-                        page++;
-                    }
-
-                    const { data: fees, error: feeError } = await supabase.from('common_fees').select('*');
-                    if (feeError) throw feeError;
-
+                    const fees = allTransactions;
                     let updatedCount = 0;
                     const feesMap = {};
                     
@@ -342,7 +332,7 @@
                         });
                     }
                     
-                    await fetchData();
+                    if(updatedCount > 0) await fetchData();
 
                 } catch (err) {
                     console.error("Global Sync Error:", err);
@@ -352,7 +342,140 @@
                 }
             };
 
-            // Save Display Settings Logic
+            // Transaction CRUD Operations
+            const openTransactionModal = (mode, record = null) => {
+                const currentYear = new Date().getFullYear() + 543;
+                const defaultData = mode === 'add' ? {
+                    house_number: '',
+                    name: 'Admin',
+                    month: '',
+                    year: currentYear.toString(),
+                    payment_method: 'โอน',
+                    amount: 300,
+                    remark: '',
+                    status: 'ตรวจสอบแล้ว', // Admin normally adds verified payments
+                    inspector: 'Admin',
+                    image_url: ''
+                } : { ...record };
+                
+                setPreviewImage(defaultData.image_url || '');
+                setTransModal({ isOpen: true, mode, data: defaultData });
+            };
+
+            const closeTransactionModal = () => {
+                setTransModal({ isOpen: false, mode: 'add', data: {} });
+                setPreviewImage('');
+            };
+
+            // Base64 File Reader for Slip
+            const handleImageUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    if(file.size > 5 * 1024 * 1024) {
+                        alert('ขนาดไฟล์ต้องไม่เกิน 5 MB');
+                        e.target.value = "";
+                        return;
+                    }
+                    
+                    // Compress and convert to Base64 (to avoid massive strings)
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            const MAX_WIDTH = 800;
+                            const MAX_HEIGHT = 800;
+                            let width = img.width;
+                            let height = img.height;
+
+                            if (width > height) {
+                                if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+                            } else {
+                                if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
+                            }
+
+                            canvas.width = width;
+                            canvas.height = height;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, width, height);
+                            
+                            const dataUrl = canvas.toDataURL('image/jpeg', 0.7); // 70% quality JPEG
+                            setPreviewImage(dataUrl);
+                            setTransModal(prev => ({ ...prev, data: { ...prev.data, image_url: dataUrl } }));
+                        };
+                        img.src = event.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const saveTransaction = async (e) => {
+                e.preventDefault();
+                if (!supabase) return;
+                setIsTransSaving(true);
+                
+                try {
+                    const payload = {
+                        house_number: transModal.data.house_number.trim(),
+                        name: transModal.data.name,
+                        month: transModal.data.month,
+                        year: transModal.data.year,
+                        payment_method: transModal.data.payment_method,
+                        amount: transModal.data.amount,
+                        remark: transModal.data.remark,
+                        status: transModal.data.status,
+                        image_url: transModal.data.image_url,
+                        inspector: transModal.data.inspector || 'Admin',
+                        inspected_at: new Date().toISOString()
+                    };
+
+                    if (transModal.mode === 'add') {
+                        // Add reported_at for new records
+                        payload.reported_at = new Date().toISOString();
+                        const { error } = await supabase.from('common_fees').insert([payload]);
+                        if (error) throw error;
+                        setResultModal({ isOpen: true, type: 'success', message: 'เพิ่มรายการรับชำระเรียบร้อยแล้ว' });
+                    } else {
+                        const { error } = await supabase.from('common_fees').update(payload).eq('id', transModal.data.id);
+                        if (error) throw error;
+                        setResultModal({ isOpen: true, type: 'success', message: 'อัปเดตรายการเรียบร้อยแล้ว' });
+                    }
+
+                    closeTransactionModal();
+                    await fetchData(); // Refresh data
+                    // Auto sync to house_payments if status is "ตรวจสอบแล้ว"
+                    if(payload.status.includes('ตรวจสอบแล้ว') || payload.status.includes('อนุมัติ')){
+                        handleGlobalSync(true); 
+                    }
+
+                } catch (error) {
+                    console.error('Error saving transaction:', error);
+                    alert('เกิดข้อผิดพลาดในการบันทึก: ' + error.message);
+                } finally {
+                    setIsTransSaving(false);
+                }
+            };
+
+            const deleteTransaction = async (id) => {
+                if(!confirm("คุณแน่ใจหรือไม่ที่จะลบรายการนี้ ข้อมูลจะไม่สามารถกู้คืนได้?")) return;
+                
+                try {
+                    setLoading(true);
+                    const { error } = await supabase.from('common_fees').delete().eq('id', id);
+                    if(error) throw error;
+                    
+                    alert('ลบข้อมูลเรียบร้อยแล้ว');
+                    await fetchData();
+                    handleGlobalSync(true); // Re-sync to reflect deleted record
+                } catch(error) {
+                    console.error('Error deleting:', error);
+                    alert('ไม่สามารถลบได้: ' + error.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            // Existing Logics (SaveConfig, BatchUpdate, NewYear, etc)...
             const saveConfig = async () => {
                 if (!supabase) return;
                 setIsSaving(true);
@@ -381,7 +504,6 @@
                 setLocalConfig({ ...localConfig, manualYears: newManualYears });
             };
 
-            // Batch Update Logic
             const handleAdminUpdateStatus = async () => {
                 if (!supabase || !updateTargetYear || !updateTargetMonth) return;
                 setIsSaving(true); 
@@ -442,7 +564,6 @@
                 }
             };
 
-            // Generate New Year Data
             const handleGenerateNewYearData = async () => {
                 if (!supabase || !newYearTarget) return;
                 setIsSaving(true);
@@ -545,12 +666,13 @@
                 }
             };
 
+            // Setup Data and Auth on Mount
             useEffect(() => {
                 if (isAuthenticated && supabase) {
                     const initData = async () => {
                         setLoading(true);
-                        await fetchConfig(); // Load config first
-                        await handleGlobalSync(true); 
+                        await fetchConfig(); 
+                        await fetchData();
                     };
                     initData();
                 }
@@ -611,13 +733,10 @@
                 }
             };
 
+            // Filter Logics
             const filteredData = useMemo(() => {
                 let filtered = [...data];
-                
-                if (yearFilter && yearFilter !== 'all') {
-                    filtered = filtered.filter(item => item.year.toString() === yearFilter);
-                }
-
+                if (yearFilter && yearFilter !== 'all') filtered = filtered.filter(item => item.year.toString() === yearFilter);
                 if (searchQuery) {
                     const q = searchQuery.toLowerCase().trim();
                     filtered = filtered.filter(item => 
@@ -626,7 +745,6 @@
                         (item.soi && item.soi.toLowerCase().includes(q))
                     );
                 }
-
                 if (filterStatus !== 'all') {
                     filtered = filtered.filter(item => {
                         const totals = calculateHouseTotal(item);
@@ -635,180 +753,117 @@
                         return true;
                     });
                 }
-
-                // จัดเรียงข้อมูล: เรียงบ้านเลขที่ (น้อยไปมาก) แล้วตามด้วยปี (ใหม่ไปเก่า)
                 filtered.sort((a, b) => {
                     const houseA = String(a.house_numbe || '');
                     const houseB = String(b.house_numbe || '');
                     const houseCompare = houseA.localeCompare(houseB, 'th', { numeric: true });
-                    
-                    if (houseCompare !== 0) {
-                        return houseCompare;
-                    }
-                    
+                    if (houseCompare !== 0) return houseCompare;
                     return parseInt(b.year || 0) - parseInt(a.year || 0);
                 });
-
                 return filtered;
             }, [data, yearFilter, searchQuery, filterStatus]);
+
+            const filteredTransactions = useMemo(() => {
+                let filtered = [...allTransactions];
+                if (yearFilter && yearFilter !== 'all') filtered = filtered.filter(item => item.year.toString() === yearFilter);
+                if (searchQuery) {
+                    const q = searchQuery.toLowerCase().trim();
+                    filtered = filtered.filter(item => 
+                        (item.house_number && item.house_number.toLowerCase().includes(q)) || 
+                        (item.name && item.name.toLowerCase().includes(q))
+                    );
+                }
+                return filtered;
+            }, [allTransactions, yearFilter, searchQuery]);
+
 
             // --- Analytics Calculations ---
             const analyticsData = useMemo(() => {
                 const monthlyData = months.map(m => ({ label: m.label, key: m.key, paid: 0, unpaid: 0, waiting: 0 }));
-                let totalPaidOverall = 0;
-                let totalUnpaidOverall = 0;
-                let totalWaitingOverall = 0;
-
+                let totalPaidOverall = 0; let totalUnpaidOverall = 0; let totalWaitingOverall = 0;
                 const soiMap = {};
 
                 filteredData.forEach(item => {
                     months.forEach((m, idx) => {
                         const status = item[m.key] || '';
                         if (status.includes('จ่ายแล้ว') || status.includes('ชำระแล้ว') || status.includes('ล่วงหน้า')) {
-                            monthlyData[idx].paid += 300;
-                            totalPaidOverall += 300;
+                            monthlyData[idx].paid += 300; totalPaidOverall += 300;
                         } else if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) {
-                            monthlyData[idx].unpaid += 300;
-                            totalUnpaidOverall += 300;
-                            
-                            // Soi tracking (Only track unpaid for Soi ranking)
+                            monthlyData[idx].unpaid += 300; totalUnpaidOverall += 300;
                             const soiName = item.soi ? item.soi.trim() : 'ไม่ระบุซอย';
                             if (!soiMap[soiName]) soiMap[soiName] = 0;
                             soiMap[soiName] += 300;
-
                         } else if (status.includes('รอตรวจสอบ') || status.includes('รอข้อมูล')) {
-                            monthlyData[idx].waiting += 300;
-                            totalWaitingOverall += 300;
+                            monthlyData[idx].waiting += 300; totalWaitingOverall += 300;
                         }
                     });
                 });
 
-                // Find max for bar chart scaling
                 const maxMonthlyAmount = Math.max(...monthlyData.map(d => d.paid + d.unpaid + d.waiting), 1);
+                const soiRanking = Object.entries(soiMap).map(([name, amount]) => ({ name, amount })).sort((a, b) => b.amount - a.amount).slice(0, 10);
 
-                // Sort Soi ranking
-                const soiRanking = Object.entries(soiMap)
-                    .map(([name, amount]) => ({ name, amount }))
-                    .sort((a, b) => b.amount - a.amount)
-                    .slice(0, 10); // Top 10
-
-                return { 
-                    monthlyData, 
-                    maxMonthlyAmount, 
-                    totalPaidOverall, 
-                    totalUnpaidOverall, 
-                    totalWaitingOverall,
-                    totalOverall: totalPaidOverall + totalUnpaidOverall + totalWaitingOverall,
-                    soiRanking
-                };
+                return { monthlyData, maxMonthlyAmount, totalPaidOverall, totalUnpaidOverall, totalWaitingOverall, totalOverall: totalPaidOverall + totalUnpaidOverall + totalWaitingOverall, soiRanking };
             }, [filteredData]);
 
-            // Calculate Total Overdue Months across all years per house (For Overdue View)
             const overdueSummaryData = useMemo(() => {
                 const summaryMap = {};
-                
                 data.forEach(item => {
                     let overdueCount = 0;
                     months.forEach(m => {
                         const status = item[m.key] || '';
-                        if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) {
-                            overdueCount++;
-                        }
+                        if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) overdueCount++;
                     });
-
                     if (overdueCount > 0) {
                         if (!summaryMap[item.house_numbe]) {
-                            summaryMap[item.house_numbe] = {
-                                houseNo: item.house_numbe,
-                                ownerName: item.owner_name,
-                                soi: item.soi,
-                                totalOverdueMonths: 0,
-                                totalOverdueAmount: 0
-                            };
+                            summaryMap[item.house_numbe] = { houseNo: item.house_numbe, ownerName: item.owner_name, soi: item.soi, totalOverdueMonths: 0, totalOverdueAmount: 0 };
                         }
                         summaryMap[item.house_numbe].totalOverdueMonths += overdueCount;
                         summaryMap[item.house_numbe].totalOverdueAmount += (overdueCount * 300);
                     }
                 });
-
                 return Object.values(summaryMap).sort((a, b) => b.totalOverdueMonths - a.totalOverdueMonths);
             }, [data]);
 
             const stats = useMemo(() => {
-                return { 
-                    totalPaid: analyticsData.totalPaidOverall, 
-                    totalUnpaid: analyticsData.totalUnpaidOverall, 
-                    totalWaiting: analyticsData.totalWaitingOverall, 
-                    count: filteredData.length 
-                };
+                return { totalPaid: analyticsData.totalPaidOverall, totalUnpaid: analyticsData.totalUnpaidOverall, totalWaiting: analyticsData.totalWaitingOverall, count: filteredData.length };
             }, [filteredData, analyticsData]);
 
             const exportCSV = () => {
                 let headers, rows, filename;
-
                 if (currentView === 'overdue') {
                     headers = ["ลำดับ", "บ้านเลขที่", "ซอย", "ชื่อเจ้าของบ้าน", "จำนวนเดือนที่ค้างทั้งหมด", "ยอดค้างชำระทั้งหมด (บาท)"];
-                    rows = overdueSummaryData.map((item, idx) => [
-                        idx + 1,
-                        `"${item.houseNo || ''}"`,
-                        `"${item.soi || ''}"`,
-                        `"${item.ownerName || ''}"`,
-                        item.totalOverdueMonths,
-                        item.totalOverdueAmount
-                    ]);
+                    rows = overdueSummaryData.map((item, idx) => [idx + 1, `"${item.houseNo || ''}"`, `"${item.soi || ''}"`, `"${item.ownerName || ''}"`, item.totalOverdueMonths, item.totalOverdueAmount]);
                     filename = `Overdue_Summary_Report_${new Date().toISOString().slice(0,10)}.csv`;
+                } else if (currentView === 'transactions') {
+                    headers = ["ID", "บ้านเลขที่", "เดือน/ปี", "ยอดชำระ", "รูปแบบ", "สถานะ", "วันที่บันทึก", "ผู้ตรวจสอบ"];
+                    rows = filteredTransactions.map(item => [item.id, `"${item.house_number}"`, `"${item.month} ${item.year}"`, item.amount, `"${item.payment_method}"`, `"${item.status}"`, `"${new Date(item.reported_at).toLocaleDateString('th-TH')}"`, `"${item.inspector || item.name}"`]);
+                    filename = `Transactions_Report_${new Date().toISOString().slice(0,10)}.csv`;
                 } else {
                     headers = ["ลำดับ", "เลขที่บ้าน", "ซอย", "ชื่อเจ้าของบ้าน", "สถานะเริ่มต้น", ...months.map(m => m.label), "รวมจ่ายแล้ว", "รวมค้างชำระ"];
                     rows = filteredData.map((item, idx) => {
                         const t = calculateHouseTotal(item);
-                        return [
-                            idx + 1,
-                            `"${item.house_numbe || ''}"`,
-                            `"${item.soi || ''}"`,
-                            `"${item.owner_name || ''}"`,
-                            `"${item.status || ''}"`,
-                            ...months.map(m => `"${item[m.key] || ''}"`),
-                            t.paid,
-                            t.unpaid
-                        ];
+                        return [idx + 1, `"${item.house_numbe || ''}"`, `"${item.soi || ''}"`, `"${item.owner_name || ''}"`, `"${item.status || ''}"`, ...months.map(m => `"${item[m.key] || ''}"`), t.paid, t.unpaid];
                     });
                     filename = `Admin_Report_${yearFilter}_${new Date().toISOString().slice(0,10)}.csv`;
                 }
 
                 const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
                 const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csvContent);
-                const link = document.createElement("a");
-                link.setAttribute("href", encodedUri);
-                link.setAttribute("download", filename);
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+                const link = document.createElement("a"); link.setAttribute("href", encodedUri); link.setAttribute("download", filename);
+                document.body.appendChild(link); link.click(); document.body.removeChild(link);
             };
 
             if (!isAuthenticated) {
                 return (
                     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
                         <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm animate-fade-up text-center">
-                            <div className="bg-indigo-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
-                                <Lock size={36} className="text-indigo-600" />
-                            </div>
+                            <div className="bg-indigo-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"><Lock size={36} className="text-indigo-600" /></div>
                             <h2 className="text-2xl font-bold text-slate-800 mb-2">Admin Security</h2>
                             <p className="text-slate-500 mb-8 text-sm">กรุณาระบุรหัส PIN เพื่อเข้าสู่ระบบการจัดการ</p>
-                            
                             <form onSubmit={handleLogin}>
-                                <input
-                                    type="password"
-                                    value={pin}
-                                    onChange={(e) => setPin(e.target.value)}
-                                    placeholder="••••"
-                                    maxLength="4"
-                                    className="w-full text-center text-3xl tracking-[1em] font-bold px-4 py-4 border border-slate-300 rounded-xl mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
-                                    autoFocus
-                                />
+                                <input type="password" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="••••" maxLength="4" className="w-full text-center text-3xl tracking-[1em] font-bold px-4 py-4 border border-slate-300 rounded-xl mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50" autoFocus />
                                 {pinError && <p className="text-red-500 text-sm mb-4 font-medium">{pinError}</p>}
-                                <button type="submit" className="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-indigo-700 transition-colors text-lg">
-                                    เข้าสู่ระบบ
-                                </button>
+                                <button type="submit" className="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-indigo-700 transition-colors text-lg">เข้าสู่ระบบ</button>
                             </form>
                         </div>
                     </div>
@@ -819,7 +874,7 @@
                 <div className="min-h-screen bg-slate-100 flex flex-col md:flex-row">
                     
                     {/* Sidebar */}
-                    <aside className="w-full md:w-64 bg-slate-900 text-white flex flex-col shadow-2xl z-20">
+                    <aside className="w-full md:w-64 bg-slate-900 text-white flex flex-col shadow-2xl z-20 shrink-0">
                         <div className="p-6 border-b border-slate-800">
                             <h1 className="text-xl font-bold flex items-center gap-3 text-indigo-400">
                                 <Database size={24} /> Admin Center
@@ -833,7 +888,13 @@
                                 onClick={() => { setCurrentView('grid'); window.scrollTo({top: 0, behavior: 'smooth'}); }}
                                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'grid' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}
                             >
-                                <LayoutDashboard size={20} /> Data Grid
+                                <LayoutDashboard size={20} /> ภาพรวมประจำปี
+                            </button>
+                            <button 
+                                onClick={() => { setCurrentView('transactions'); window.scrollTo({top: 0, behavior: 'smooth'}); }}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${currentView === 'transactions' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}
+                            >
+                                <ListIcon size={20} /> บันทึกรับชำระ
                             </button>
                             <button 
                                 onClick={() => { setCurrentView('analytics'); window.scrollTo({top: 0, behavior: 'smooth'}); }}
@@ -875,45 +936,55 @@
                     <main className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50">
                         
                         {/* Topbar */}
-                        <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 z-10">
+                        <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 z-10 shrink-0">
                             <div className="flex flex-col">
                                 <h2 className="text-2xl font-bold text-slate-800">
-                                    {currentView === 'grid' ? 'ข้อมูลลูกบ้านทั้งหมด (Data Grid)' : 
+                                    {currentView === 'grid' ? 'ข้อมูลลูกบ้าน (ภาพรวมประจำปี)' : 
+                                     currentView === 'transactions' ? 'จัดการข้อมูลรับชำระเงิน (ประวัติการโอนทั้งหมด)' :
                                      currentView === 'analytics' ? 'กราฟวิเคราะห์แนวโน้ม (Visual Analytics)' :
                                      currentView === 'pending' ? 'รายการแจ้งโอนรอตรวจสอบ' : 
                                      currentView === 'overdue' ? 'สรุปจำนวนเดือนที่ค้างชำระทั้งหมด' : 'ตั้งค่าระบบ / อัปเดตสถานะแบบกลุ่ม'}
                                 </h2>
                                 <span className="text-sm text-slate-500">
-                                    {currentView === 'grid' ? 'ดูและจัดการสถานะการชำระเงินในมุมมองแบบตาราง' : 
+                                    {currentView === 'grid' ? 'ดูสถานะการชำระเงินของแต่ละบ้านในมุมมองรายปี' : 
+                                     currentView === 'transactions' ? 'เพิ่ม แก้ไข ลบ รายการแจ้งชำระเงิน/สลิปโอนเงิน (Data Entry)' :
                                      currentView === 'analytics' ? 'วิเคราะห์สัดส่วนและแนวโน้มการชำระเงินของโครงการ' :
                                      currentView === 'pending' ? 'ตรวจสอบสลิปการโอนเงินที่ลูกบ้านแจ้งเข้ามาใหม่' : 
                                      currentView === 'overdue' ? 'แสดงยอดรวมเดือนที่ค้างชำระจากทุกปีของบ้านแต่ละหลัง' : 'ตั้งค่าหน้าบ้าน และอัปเดตสถานะเดือนที่ไม่ชำระเงินพร้อมกันทั้งโครงการ'}
                                 </span>
                             </div>
                             
-                            <div className="flex items-center gap-3 w-full sm:w-auto">
+                            <div className="flex items-center gap-3 w-full sm:w-auto overflow-x-auto pb-2 sm:pb-0">
+                                {currentView === 'transactions' && (
+                                    <button 
+                                        onClick={() => openTransactionModal('add')} 
+                                        className="flex-shrink-0 flex items-center gap-2 bg-indigo-600 text-white px-4 py-2.5 rounded-lg font-bold hover:bg-indigo-700 shadow-sm transition-colors text-sm"
+                                    >
+                                        <Plus size={18} /> เพิ่มรายการใหม่
+                                    </button>
+                                )}
                                 <button 
                                     onClick={() => handleGlobalSync(false)} 
                                     disabled={isGlobalSyncing || loading}
-                                    className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2.5 rounded-lg font-bold hover:bg-indigo-700 shadow-sm transition-colors text-sm disabled:opacity-50"
-                                    title="ดึงข้อมูลจากประวัติการโอนล่าสุดเพื่ออัปเดตตาราง"
+                                    className="flex-shrink-0 flex items-center gap-2 bg-blue-600 text-white px-4 py-2.5 rounded-lg font-bold hover:bg-blue-700 shadow-sm transition-colors text-sm disabled:opacity-50"
+                                    title="ดึงข้อมูลจากประวัติการโอนล่าสุดเพื่ออัปเดตตารางสรุป"
                                 >
                                     {isGlobalSyncing ? <Loader2 size={18} className="animate-spin" /> : <ArrowRightLeft size={18} />} 
-                                    <span className="hidden sm:inline">{isGlobalSyncing ? 'กำลังซิงค์...' : 'ซิงค์ข้อมูลล่าสุด'}</span>
+                                    <span className="hidden sm:inline">{isGlobalSyncing ? 'กำลังซิงค์...' : 'Sync สถานะ'}</span>
                                 </button>
-                                <button onClick={fetchData} className="p-2.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors" title="รีเฟรชข้อมูล">
+                                <button onClick={fetchData} className="flex-shrink-0 p-2.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors" title="รีเฟรชข้อมูล">
                                     <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
                                 </button>
-                                {(currentView === 'grid' || currentView === 'overdue') && (
-                                    <button onClick={exportCSV} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-emerald-600 text-white px-4 py-2.5 rounded-lg font-bold hover:bg-emerald-700 shadow-sm transition-colors text-sm">
-                                        <Download size={18} /> Export Excel
+                                {['grid', 'overdue', 'transactions'].includes(currentView) && (
+                                    <button onClick={exportCSV} className="flex-shrink-0 flex items-center justify-center gap-2 bg-emerald-600 text-white px-4 py-2.5 rounded-lg font-bold hover:bg-emerald-700 shadow-sm transition-colors text-sm">
+                                        <Download size={18} /> Export
                                     </button>
                                 )}
                             </div>
                         </header>
 
                         {/* Content Area */}
-                        <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+                        <div className="flex-1 overflow-y-auto p-4 sm:p-6 relative">
                             
                             {currentView === 'grid' ? (
                                 <>
@@ -952,15 +1023,6 @@
                                                         onKeyDown={(e) => { if (e.key === 'Enter') handleGlobalSync(true); }}
                                                     />
                                                 </div>
-                                                <button 
-                                                    onClick={() => handleGlobalSync(true)} 
-                                                    disabled={isGlobalSyncing || loading}
-                                                    className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-indigo-700 transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50"
-                                                    title="ค้นหาพร้อมอัปเดตข้อมูลล่าสุด"
-                                                >
-                                                    {isGlobalSyncing ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-                                                    <span className="hidden sm:inline">ค้นหา</span>
-                                                </button>
                                             </div>
                                         </div>
                                         
@@ -992,7 +1054,7 @@
                                         {loading || isGlobalSyncing ? (
                                             <div className="p-20 flex flex-col items-center justify-center text-indigo-500">
                                                 <Loader2 size={40} className="animate-spin mb-4" />
-                                                <span className="font-bold">{isGlobalSyncing ? 'กำลังซิงค์และอัปเดตข้อมูลให้ตรงกับประวัติการแจ้งโอนล่าสุด...' : 'กำลังโหลดข้อมูล...'}</span>
+                                                <span className="font-bold">{isGlobalSyncing ? 'กำลังประมวลผลข้อมูล...' : 'กำลังโหลดข้อมูล...'}</span>
                                             </div>
                                         ) : filteredData.length === 0 ? (
                                             <div className="p-20 text-center text-slate-500">ไม่พบข้อมูลตามเงื่อนไขที่ค้นหา</div>
@@ -1063,9 +1125,110 @@
                                         )}
                                     </div>
                                     <div className="mt-4 text-xs text-slate-400 text-right">
-                                        อัปเดตข้อมูลล่าสุดเมื่อ: {new Date().toLocaleString('th-TH')}
+                                        ข้อมูลชุดนี้เป็นสรุปภาพรวมรายปี หากต้องการเพิ่มแก้ไขการชำระเงิน กรุณาไปที่เมนู "บันทึกรับชำระ"
                                     </div>
                                 </>
+                            ) : currentView === 'transactions' ? (
+                                /* --- Transactions Data Entry View --- */
+                                <div className="space-y-4 animate-fade-up">
+                                    <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 justify-between items-center">
+                                        <div className="flex items-center gap-3 w-full md:w-auto">
+                                            <div className="relative flex-1 md:w-64">
+                                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="ค้นหาบ้านเลขที่ หรือ ชื่อ..." 
+                                                    className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+                                                    value={searchQuery}
+                                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-3 w-full md:w-auto">
+                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1"><Filter size={14}/> ตัวกรองปี:</span>
+                                            <select 
+                                                value={yearFilter} 
+                                                onChange={(e) => setYearFilter(e.target.value)}
+                                                className="border border-slate-300 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+                                            >
+                                                <option value="all">ดูทุกปี</option>
+                                                {availableYears.map(y => <option key={y} value={y}>ปี {y}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+                                        {loading ? (
+                                            <div className="p-20 flex justify-center"><Loader2 size={40} className="animate-spin text-indigo-500" /></div>
+                                        ) : filteredTransactions.length === 0 ? (
+                                            <div className="p-20 text-center text-slate-500">ไม่พบรายการรับชำระในระบบ</div>
+                                        ) : (
+                                            <div className="overflow-x-auto admin-table max-h-[65vh]">
+                                                <table className="w-full text-left text-sm border-collapse">
+                                                    <thead>
+                                                        <tr className="text-slate-600 border-b-2 border-slate-200 bg-slate-50">
+                                                            <th className="px-4 py-3 font-bold">วันที่บันทึก</th>
+                                                            <th className="px-4 py-3 font-bold">บ้านเลขที่</th>
+                                                            <th className="px-4 py-3 font-bold">ชื่อผู้แจ้ง</th>
+                                                            <th className="px-4 py-3 font-bold">เดือน</th>
+                                                            <th className="px-4 py-3 font-bold">ปี</th>
+                                                            <th className="px-4 py-3 font-bold text-right">ยอดเงิน</th>
+                                                            <th className="px-4 py-3 font-bold text-center">วิธีจ่าย</th>
+                                                            <th className="px-4 py-3 font-bold text-center">สถานะ</th>
+                                                            <th className="px-4 py-3 font-bold text-center">สลิป</th>
+                                                            <th className="px-4 py-3 font-bold text-center">จัดการ</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-100">
+                                                        {filteredTransactions.map((item, idx) => (
+                                                            <tr key={item.id || idx} className="hover:bg-slate-50 transition-colors">
+                                                                <td className="px-4 py-3 text-slate-500 text-xs">
+                                                                    {new Date(item.reported_at).toLocaleDateString('th-TH', {day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute:'2-digit'})}
+                                                                </td>
+                                                                <td className="px-4 py-3 font-extrabold text-slate-800">{item.house_number}</td>
+                                                                <td className="px-4 py-3 text-slate-600">{item.name || '-'}</td>
+                                                                <td className="px-4 py-3 font-medium text-slate-700">{item.month}</td>
+                                                                <td className="px-4 py-3 font-bold text-indigo-600">{item.year}</td>
+                                                                <td className="px-4 py-3 text-right font-bold text-green-600">฿{item.amount?.toLocaleString()}</td>
+                                                                <td className="px-4 py-3 text-center">
+                                                                    <span className={`px-2 py-1 rounded text-[10px] font-bold ${item.payment_method === 'โอน' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                                                        {item.payment_method}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-4 py-3 text-center">
+                                                                    {item.status?.includes('ตรวจสอบแล้ว') || item.status?.includes('อนุมัติ') ? (
+                                                                        <span className="text-green-600 font-bold text-xs"><CheckCircle size={14} className="inline mr-1"/> ผ่าน</span>
+                                                                    ) : item.status?.includes('รอ') ? (
+                                                                        <span className="text-orange-500 font-bold text-xs"><Clock size={14} className="inline mr-1"/> รอ</span>
+                                                                    ) : (
+                                                                        <span className="text-red-500 font-bold text-xs"><XCircle size={14} className="inline mr-1"/> ยกเลิก</span>
+                                                                    )}
+                                                                </td>
+                                                                <td className="px-4 py-3 text-center">
+                                                                    {item.image_url ? (
+                                                                        <button onClick={() => { setSelectedImageUrl(item.image_url); setImageModalOpen(true); }} className="text-indigo-500 hover:text-indigo-700 mx-auto block">
+                                                                            <ImageIcon size={18} />
+                                                                        </button>
+                                                                    ) : '-'}
+                                                                </td>
+                                                                <td className="px-4 py-3">
+                                                                    <div className="flex justify-center gap-2">
+                                                                        <button onClick={() => openTransactionModal('edit', item)} className="p-1.5 bg-amber-100 text-amber-700 rounded hover:bg-amber-200 transition-colors" title="แก้ไข">
+                                                                            <Edit size={16} />
+                                                                        </button>
+                                                                        <button onClick={() => deleteTransaction(item.id)} className="p-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors" title="ลบ">
+                                                                            <Trash2 size={16} />
+                                                                        </button>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
                             ) : currentView === 'analytics' ? (
                                 /* --- Analytics View --- */
                                 <div className="space-y-6 animate-fade-up">
@@ -1502,6 +1665,158 @@
 
                         </div>
                     </main>
+
+                    {/* Transaction Add/Edit Modal */}
+                    {transModal.isOpen && (
+                        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
+                            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={closeTransactionModal}></div>
+                            <div className="relative bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl animate-in fade-in zoom-in-95 duration-200 overflow-hidden">
+                                <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
+                                    <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                                        <ListIcon className="text-indigo-600" /> 
+                                        {transModal.mode === 'add' ? 'เพิ่มรายการรับชำระใหม่' : 'แก้ไขข้อมูลรับชำระ'}
+                                    </h3>
+                                    <button onClick={closeTransactionModal} className="text-slate-400 hover:text-slate-600 transition-colors"><X size={24} /></button>
+                                </div>
+                                
+                                <div className="p-6 overflow-y-auto flex-1 bg-white">
+                                    <form id="transForm" onSubmit={saveTransaction} className="space-y-4">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-bold text-slate-700 mb-1">ชื่อผู้บันทึก/ผู้แจ้ง <span className="text-red-500">*</span></label>
+                                                <input type="text" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" 
+                                                    value={transModal.data.name || ''} 
+                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, name: e.target.value}}))} 
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-bold text-slate-700 mb-1">บ้านเลขที่ <span className="text-red-500">*</span></label>
+                                                <input type="text" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" 
+                                                    value={transModal.data.house_number || ''} 
+                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, house_number: e.target.value}}))} 
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-bold text-slate-700 mb-1">เดือนที่ชำระ <span className="text-red-500">*</span></label>
+                                                <select required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                                                    value={transModal.data.month || ''} 
+                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, month: e.target.value}}))} 
+                                                >
+                                                    <option value="" disabled>--- เลือกเดือน ---</option>
+                                                    {Object.keys(monthMap).map(m => <option key={m} value={m}>{m}</option>)}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-bold text-slate-700 mb-1">ปี พ.ศ. <span className="text-red-500">*</span></label>
+                                                <select required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                                                    value={transModal.data.year || ''} 
+                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, year: e.target.value}}))} 
+                                                >
+                                                    <option value="" disabled>--- เลือกปี ---</option>
+                                                    {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
+                                                    {/* เผื่อกรณีเพิ่มปีใหม่ที่ยังไม่มีใน list */}
+                                                    {!availableYears.includes(new Date().getFullYear() + 543) && <option value={new Date().getFullYear() + 543}>{new Date().getFullYear() + 543}</option>}
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-100 pt-4">
+                                            <div>
+                                                <label className="block text-sm font-bold text-slate-700 mb-2">วิธีชำระเงิน <span className="text-red-500">*</span></label>
+                                                <div className="flex gap-4">
+                                                    <label className="flex items-center gap-2 cursor-pointer">
+                                                        <input type="radio" name="payment_method" value="โอน" className="w-4 h-4 text-indigo-600" required
+                                                            checked={transModal.data.payment_method === 'โอน'}
+                                                            onChange={e => setTransModal(p => ({...p, data: {...p.data, payment_method: e.target.value}}))} 
+                                                        /> โอน
+                                                    </label>
+                                                    <label className="flex items-center gap-2 cursor-pointer">
+                                                        <input type="radio" name="payment_method" value="จ่ายสด" className="w-4 h-4 text-indigo-600" required
+                                                            checked={transModal.data.payment_method === 'จ่ายสด'}
+                                                            onChange={e => setTransModal(p => ({...p, data: {...p.data, payment_method: e.target.value}}))} 
+                                                        /> จ่ายสด
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-bold text-slate-700 mb-1">จำนวนเงิน (บาท) <span className="text-red-500">*</span></label>
+                                                <input type="number" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" 
+                                                    value={transModal.data.amount || 300} 
+                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, amount: parseFloat(e.target.value)}}))} 
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="border-t border-slate-100 pt-4">
+                                            <label className="block text-sm font-bold text-slate-700 mb-2">ภาพสลิปหลักฐาน (บันทึกเป็น Base64)</label>
+                                            <div className="flex flex-col items-center gap-4">
+                                                {previewImage ? (
+                                                    <div className="relative group">
+                                                        <img src={previewImage} alt="Preview" className="h-40 object-contain rounded-lg border border-slate-200 shadow-sm" />
+                                                        <button type="button" onClick={() => {setPreviewImage(''); setTransModal(p => ({...p, data: {...p.data, image_url: ''}}))}} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity shadow-md">
+                                                            <X size={14}/>
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <label className="w-full flex flex-col items-center justify-center h-32 border-2 border-slate-300 border-dashed rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100 transition-colors">
+                                                        <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                                                            <UploadCloud className="w-8 h-8 text-slate-400 mb-2" />
+                                                            <p className="text-sm text-slate-500"><span className="font-semibold text-indigo-600">คลิกเพื่ออัปโหลด</span> หรือลากไฟล์มาวาง</p>
+                                                            <p className="text-xs text-slate-400 mt-1">PNG, JPG ไม่เกิน 5MB</p>
+                                                        </div>
+                                                        <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
+                                                    </label>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="border-t border-slate-100 pt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-bold text-slate-700 mb-1">สถานะ <span className="text-red-500">*</span></label>
+                                                <select required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-indigo-700"
+                                                    value={transModal.data.status || 'ตรวจสอบแล้ว'} 
+                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, status: e.target.value}}))} 
+                                                >
+                                                    <option value="ตรวจสอบแล้ว">ตรวจสอบแล้ว (อนุมัติ)</option>
+                                                    <option value="รอตรวจสอบ">รอตรวจสอบ</option>
+                                                    <option value="กำลังดำเนินการ">กำลังดำเนินการ</option>
+                                                    <option value="รอข้อมูล">รอข้อมูล</option>
+                                                    <option value="จ่ายผิด">จ่ายผิด</option>
+                                                    <option value="ยกเลิก">ยกเลิก</option>
+                                                    <option value="โอนคืน">โอนคืน</option>
+                                                    <option value="ให้ติดต่อแอดมิน">ให้ติดต่อแอดมิน</option>
+                                                </select>
+                                                <p className="text-[10px] text-slate-400 mt-1">หากเลือก "ตรวจสอบแล้ว" ระบบจะปรับสถานะในหน้าตารางสรุปเป็น "จ่ายแล้ว" ทันทีเมื่อบันทึก</p>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-bold text-slate-700 mb-1">ผู้ตรวจสอบ</label>
+                                                <input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50" 
+                                                    value={transModal.data.inspector || 'Admin'} 
+                                                    onChange={e => setTransModal(p => ({...p, data: {...p.data, inspector: e.target.value}}))} 
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-700 mb-1">หมายเหตุ</label>
+                                            <textarea rows="2" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" 
+                                                placeholder="เช่น จ่ายล่วงหน้า, แนบสลิปรวม..."
+                                                value={transModal.data.remark || ''} 
+                                                onChange={e => setTransModal(p => ({...p, data: {...p.data, remark: e.target.value}}))} 
+                                            ></textarea>
+                                        </div>
+
+                                    </form>
+                                </div>
+                                <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3 shrink-0">
+                                    <button type="button" onClick={closeTransactionModal} disabled={isTransSaving} className="px-6 py-2 rounded-lg text-slate-600 font-bold hover:bg-slate-200 transition-colors disabled:opacity-50">ยกเลิก</button>
+                                    <button type="submit" form="transForm" disabled={isTransSaving} className="px-6 py-2 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 shadow-md transition-colors flex items-center gap-2 disabled:opacity-50">
+                                        {isTransSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />} บันทึกข้อมูล
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Image Modal */}
                     {imageModalOpen && selectedImageUrl && (
