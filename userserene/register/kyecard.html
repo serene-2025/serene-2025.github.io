@@ -92,7 +92,7 @@
     <!-- หน้าจอโหลดดิ้ง (Loading Screen) -->
     <div id="loadingScreen" class="fixed inset-0 z-[100] bg-[#fffbeb] flex flex-col items-center justify-center transition-opacity duration-500">
         <div class="w-16 h-16 border-4 border-golden-200 border-t-golden-500 rounded-full animate-spin mb-4"></div>
-        <p id="loadingText" class="text-golden-700 font-medium animate-pulse">กำลังโหลดข้อมูลจากฐานข้อมูล...</p>
+        <p id="loadingText" class="text-golden-700 font-medium animate-pulse text-center px-4">กำลังดึงข้อมูลจากระบบ...</p>
     </div>
 
     <!-- หน้าจอแจ้งเตือนข้อผิดพลาด (Error Screen) -->
@@ -267,27 +267,23 @@
         let currentCapturedPhoto = null; 
 
         // ==========================================
-        // ฟังก์ชันจัดรูปแบบหมายเลขคีย์การ์ดตามโครงสร้างใหม่
+        // ฟังก์ชันจัดรูปแบบหมายเลขคีย์การ์ดตามตาราง card
         // ==========================================
-        function formatKeycardNumber(frontNumber, backNumber) {
-            if (!frontNumber) return "ไม่พบข้อมูลบัตร";
-            let part2 = backNumber || '';
-            // ถ้า backNumber มีความยาวมากกว่า 5 ให้ใส่ลูกน้ำ
-            if (part2.length > 5) {
-                part2 = part2.slice(0, -5) + ',' + part2.slice(-5);
+        function formatKeycardNumber(rfidCol, cardNumCol) {
+            if (!cardNumCol) return "ไม่พบข้อมูลบัตร";
+            const part1 = String(cardNumCol).padStart(10, '0');
+            if (!rfidCol) return part1; 
+            
+            let part2_raw = String(rfidCol).replace(part1, '');
+            let part2 = part2_raw;
+            if (part2_raw.length > 5) {
+                part2 = part2_raw.slice(0, -5) + ',' + part2_raw.slice(-5);
             }
-            return part2 ? `${frontNumber} ${part2}` : frontNumber;
-        }
-
-        // ฟังก์ชันจัดรูปแบบวันที่ให้เป็นภาษาไทย (เพื่อให้แสดงผลได้สวยงาม)
-        function formatDateThai(dateString) {
-            if (!dateString) return "-";
-            const date = new Date(dateString);
-            return date.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+            return part2 ? `${part1} ${part2}` : part1;
         }
 
         // ==========================================
-        // ฟังก์ชันดึงข้อมูลจาก Supabase (รองรับโครงสร้างตาราง rfid)
+        // ฟังก์ชันดึงข้อมูลจาก Supabase (ตาราง userhome และ card)
         // ==========================================
         async function fetchHouseDataFromSupabase(lineUid) {
             // 1. ค้นหาข้อมูลผู้ใช้และบ้านจากตาราง userhome
@@ -299,45 +295,52 @@
 
             if (userError) {
                 console.error("Supabase userhome Error:", userError);
-                throw new Error("DB_ERROR_USERHOME: " + userError.message);
+                throw new Error("เกิดข้อผิดพลาดจากฐานข้อมูล userhome: " + userError.message);
             }
 
+            // ถ้าไม่มี UID นี้ในระบบ ให้โยน Error ไปเข้าเงื่อนไข Redirect หน้าลงทะเบียน
             if (!userRecord || !userRecord.house_no) {
                 throw "USER_NOT_FOUND";
             }
 
-            const houseNo = userRecord.house_no;
+            // 2. แยกบ้านเลขที่ เช่น "998/392" => name = "998", house = "392" เพื่อไปค้นในตาราง card
+            const houseParts = userRecord.house_no.split('/');
+            const prefixName = houseParts[0] ? houseParts[0].trim() : '';
+            const suffixHouse = houseParts[1] ? houseParts[1].trim() : '';
 
-            // 2. ค้นหาคีย์การ์ดของบ้านนั้นจากตาราง rfid แทน
+            // 3. ค้นหาคีย์การ์ดของบ้านนั้นจากตาราง card
             const { data: cardsRecord, error: cardsError } = await supabaseClient
-                .from('rfid')
+                .from('card')
                 .select('*')
-                .eq('house_number', houseNo)
-                .order('created_at', { ascending: false }); // เรียงจากบัตรใหม่ล่าสุด
+                .eq('name', prefixName)
+                .eq('house', suffixHouse);
 
             if (cardsError) {
-                console.error("Supabase rfid Error:", cardsError);
-                throw new Error("DB_ERROR_RFID: " + cardsError.message);
+                console.error("Supabase card Error:", cardsError);
+                throw new Error("เกิดข้อผิดพลาดในการดึงข้อมูลคีย์การ์ด: " + cardsError.message);
             }
 
-            // 3. จัดเตรียมข้อมูลส่งกลับให้หน้าเว็บแสดงผล
+            // 4. จัดเตรียมข้อมูลส่งกลับให้หน้าเว็บแสดงผล
             const houseData = {
-                house_number: houseNo,
+                house_number: userRecord.house_no,
                 owner_name: userRecord.fullname || '-',
                 phone: userRecord.phone || '-',
                 members_count: userRecord.member_count || 1
             };
 
             const mappedCards = (cardsRecord || []).map(c => {
+                // แปลงสถานะจากชื่อแผนกในตาราง card ให้ระบบเข้าใจ
+                let status = 'pending';
+                if (c.department === 'ลูกบ้าน ปกติ') status = 'active';
+                else if (c.department === 'ค้างค่าส่วนกลาง') status = 'suspended';
+
                 return {
                     id: c.id,          
-                    front_number: c.front_number,      
-                    back_number: c.back_number,      
-                    holder_name: c.holder_name || 'สมาชิกบ้าน', 
-                    status: c.status || 'pending',
-                    img: c.img,
-                    start_date: c.start_date,
-                    expire_date: c.expire_date
+                    rfid: c.rfid,      
+                    card: c.card,      
+                    holder_name: 'สมาชิกบ้าน', 
+                    status: status,
+                    img: c.img         
                 };
             });
 
@@ -345,37 +348,28 @@
         }
 
         // ==========================================
-        // การเริ่มต้นระบบ (LINE LIFF & Fetch Data)
+        // การเริ่มต้นระบบ (เชื่อมข้อมูลจริง 100%)
         // ==========================================
         async function initializeApp() {
             try {
                 const liffId = "2009673010-dVamuq1v"; 
-                let isLiffReady = false;
                 
-                if (liffId && liffId.trim() !== "") {
-                    try {
-                        await liff.init({ liffId: liffId });
-                        isLiffReady = true;
-                    } catch (liffErr) {
-                        console.warn("ข้ามการเชื่อมต่อ LIFF เนื่องจากเกิดข้อผิดพลาด:", liffErr);
-                    }
+                // 1. ตรวจสอบและบังคับให้ผู้ใช้ล็อกอินผ่าน LINE
+                await liff.init({ liffId: liffId });
+                
+                if (!liff.isLoggedIn()) {
+                    liff.login(); // บังคับล็อกอินถ้ายังไม่ได้ล็อกอิน
+                    return; // หยุดการทำงานรอการ Redirect กลับมา
                 }
                 
-                if (isLiffReady && liff.isLoggedIn()) {
-                    try {
-                        const profile = await liff.getProfile();
-                        loggedInLineUid = profile.userId;
-                    } catch (e) {
-                        console.error("ไม่สามารถดึงโปรไฟล์ LINE ได้:", e);
-                    }
-                } 
-
-                if (!loggedInLineUid) {
-                    loggedInLineUid = "U0153f436349a5d5087ee0b3806566abd"; // ทดสอบ
-                }
+                // 2. ดึง UID ผู้ใช้งานจาก LINE
+                const profile = await liff.getProfile();
+                loggedInLineUid = profile.userId;
                 
+                // 3. ดึงข้อมูลจากฐานข้อมูล Supabase โดยใช้ UID จริง
                 const data = await fetchHouseDataFromSupabase(loggedInLineUid);
                 
+                // 4. เตรียมข้อมูลแสดงผล
                 currentHouseData = data.house;
                 currentKeycards = data.keycards;
                 
@@ -386,6 +380,7 @@
             } catch (err) {
                 console.error("App Initialization Error:", err);
                 
+                // หาก UID ผู้ใช้นี้ยังไม่มีในฐานข้อมูล userhome จะย้ายไปหน้าลงทะเบียน
                 if (err === "USER_NOT_FOUND") {
                     document.getElementById('loadingText').textContent = "ไม่พบข้อมูลของท่าน กำลังพาไปหน้าลงทะเบียน...";
                     document.getElementById('loadingScreen').style.display = 'flex';
@@ -393,10 +388,10 @@
                     
                     setTimeout(() => {
                         window.location.replace("https://liff.line.me/2000143615-Y8AQVAaq");
-                    }, 800);
+                    }, 500);
                 } else {
                     let errorMsg = err.message || JSON.stringify(err) || "ไม่สามารถเชื่อมต่อได้";
-                    showError("ข้อผิดพลาด: " + errorMsg);
+                    showError(errorMsg);
                 }
             }
         }
@@ -456,19 +451,8 @@
                 else if(card.status === 'pending') statusConfig = { text: 'รอการยืนยัน', badgeClass: 'bg-golden-100 text-golden-700 animate-pulse', icon: 'clock' };
                 else statusConfig = { text: 'ระงับการใช้งาน', badgeClass: 'bg-red-100 text-red-600', icon: 'ban' };
                 
-                const displayCardId = formatKeycardNumber(card.front_number, card.back_number);
+                const displayCardId = formatKeycardNumber(card.rfid, card.card);
                 const backImgSrc = card.img ? card.img : "https://lh3.googleusercontent.com/d/1W7zkZILECqtfY73b1fEawCSoA4CVkp54";
-
-                // จัดการแสดงผลวันที่ เริ่มและหมดอายุ
-                let dateInfoHTML = '';
-                if (card.start_date || card.expire_date) {
-                    dateInfoHTML = `
-                        <div class="mt-2 text-[10px] text-gray-500 bg-gray-50 px-2 py-1.5 rounded-md border border-gray-100 flex gap-2">
-                            <span><i data-lucide="calendar" class="w-3 h-3 inline mr-1 text-gray-400"></i>เริ่ม: ${formatDateThai(card.start_date)}</span>
-                            <span><i data-lucide="calendar-clock" class="w-3 h-3 inline mr-1 text-gray-400"></i>หมดอายุ: ${formatDateThai(card.expire_date)}</span>
-                        </div>
-                    `;
-                }
 
                 let cardHTML = `
                     <div class="glass-card rounded-[24px] p-4 shadow-sm border border-gray-100 relative overflow-hidden transition-all duration-300 hover:shadow-md hover:border-golden-200">
@@ -516,9 +500,7 @@
                     </div>`;
                 }
                 
-                cardHTML += dateInfoHTML; // แทรกวันที่ใช้/หมดอายุ
                 cardHTML += `</div></div>`;
-                
                 container.innerHTML += cardHTML;
             });
             lucide.createIcons();
@@ -621,11 +603,11 @@
                     .getPublicUrl(fileName);
                 const imageUrl = publicUrlData.publicUrl;
 
-                // 4. Update สถานะและรูปภาพในตาราง rfid แทน
+                // 4. Update สถานะและรูปภาพในตาราง card
                 const { error: updateError } = await supabaseClient
-                    .from('rfid')
+                    .from('card')
                     .update({ 
-                        status: 'active', // อัปเดตตามโครงสร้างฐานข้อมูล rfid ใหม่
+                        department: 'ลูกบ้าน ปกติ', // แปลงกลับไปเก็บใน DB เป็น ลูกบ้าน ปกติ
                         img: imageUrl 
                     })
                     .eq('id', targetCardIdToConfirm);
