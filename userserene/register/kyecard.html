@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="th">
 <head>
@@ -92,7 +91,7 @@
     <!-- หน้าจอโหลดดิ้ง (Loading Screen) -->
     <div id="loadingScreen" class="fixed inset-0 z-[100] bg-[#fffbeb] flex flex-col items-center justify-center transition-opacity duration-500">
         <div class="w-16 h-16 border-4 border-golden-200 border-t-golden-500 rounded-full animate-spin mb-4"></div>
-        <p id="loadingText" class="text-golden-700 font-medium animate-pulse text-center px-4">กำลังดึงข้อมูลจากระบบ...</p>
+        <p id="loadingText" class="text-golden-700 font-medium animate-pulse text-center px-4">กำลังดึงข้อมูลส่วนตัวของคุณ...</p>
     </div>
 
     <!-- หน้าจอแจ้งเตือนข้อผิดพลาด (Error Screen) -->
@@ -100,8 +99,8 @@
         <div class="w-20 h-20 bg-red-100 text-red-500 rounded-full flex items-center justify-center mb-4 shadow-inner">
             <i data-lucide="alert-circle" class="w-10 h-10"></i>
         </div>
-        <h2 class="text-xl font-bold text-gray-800 mb-2">ไม่พบข้อมูล</h2>
-        <p class="text-gray-600 mb-6 text-sm break-words w-full" id="errorMessage">เกิดข้อผิดพลาดในการโหลดข้อมูล</p>
+        <h2 class="text-xl font-bold text-gray-800 mb-2">เกิดข้อผิดพลาด</h2>
+        <p class="text-gray-600 mb-6 text-sm break-words w-full" id="errorMessage">ไม่สามารถเชื่อมต่อฐานข้อมูลได้</p>
         <button onclick="window.location.reload()" class="px-6 py-3 bg-gray-900 text-white rounded-xl font-bold hover:bg-black transition-colors shadow-md">ลองใหม่อีกครั้ง</button>
     </div>
 
@@ -119,7 +118,8 @@
                     <p class="text-white text-xs mt-1 bg-black/10 inline-block px-2 py-0.5 rounded-full border border-white/20">โกลเด้นแลนด์ ซีรีน</p>
                 </div>
                 <div class="bg-white/20 backdrop-blur-sm p-3 rounded-2xl border border-white/30 shadow-inner">
-                    <i data-lucide="user" class="w-6 h-6 text-white"></i>
+                    <img id="profileImage" src="" alt="Profile" class="w-8 h-8 rounded-full hidden">
+                    <i id="defaultProfileIcon" data-lucide="user" class="w-6 h-6 text-white"></i>
                 </div>
             </div>
         </header>
@@ -295,19 +295,22 @@
         }
 
         // ==========================================
-        // ฟังก์ชันดึงข้อมูลจาก Supabase
+        // ฟังก์ชันดึงข้อมูลจาก Supabase (ตาราง userhome และ rfid)
         // ==========================================
         async function fetchHouseDataFromSupabase(lineUid) {
-            const { data: userRecord, error: userError } = await supabaseClient
+            // 1. ค้นหาข้อมูลผู้ใช้ (ใช้ .limit(1) เพื่อป้องกัน error กรณียิงเจอบ้านซ้ำ)
+            const { data: userRecords, error: userError } = await supabaseClient
                 .from('userhome')
                 .select('*')
                 .eq('uid', lineUid)
-                .maybeSingle(); 
+                .limit(1);
 
             if (userError) {
                 console.error("Supabase userhome Error:", userError);
-                throw new Error("เกิดข้อผิดพลาดจากฐานข้อมูล userhome: " + userError.message);
+                throw new Error("ฐานข้อมูล userhome: " + userError.message);
             }
+
+            const userRecord = userRecords && userRecords.length > 0 ? userRecords[0] : null;
 
             if (!userRecord || !userRecord.house_no) {
                 throw "USER_NOT_FOUND";
@@ -315,6 +318,7 @@
 
             const houseNo = userRecord.house_no.trim();
 
+            // 2. ค้นหาคีย์การ์ดของบ้านนั้นจากตาราง rfid
             const { data: cardsRecord, error: cardsError } = await supabaseClient
                 .from('rfid')
                 .select('*')
@@ -323,9 +327,10 @@
 
             if (cardsError) {
                 console.error("Supabase rfid Error:", cardsError);
-                throw new Error("เกิดข้อผิดพลาดในการดึงข้อมูลคีย์การ์ด: " + cardsError.message);
+                throw new Error("ฐานข้อมูล rfid: " + cardsError.message);
             }
 
+            // จัดเตรียมข้อมูลส่งกลับ
             const houseData = {
                 house_number: userRecord.house_no,
                 owner_name: userRecord.fullname || '-',
@@ -350,7 +355,7 @@
         }
 
         // ==========================================
-        // การเริ่มต้นระบบ
+        // การเริ่มต้นระบบ (เชื่อมข้อมูลจริง 100% ไม่มีระบบทดสอบ)
         // ==========================================
         async function initializeApp() {
             try {
@@ -358,6 +363,7 @@
                 
                 await liff.init({ liffId: liffId });
                 
+                // บังคับให้ล็อกอินเข้า LINE เท่านั้น (ไม่มี Mock Data)
                 if (!liff.isLoggedIn()) {
                     liff.login(); 
                     return; 
@@ -365,6 +371,14 @@
                 
                 const profile = await liff.getProfile();
                 loggedInLineUid = profile.userId;
+
+                // ดึงรูปโปรไฟล์มาโชว์ที่ Header
+                if (profile.pictureUrl) {
+                    const profileImg = document.getElementById('profileImage');
+                    profileImg.src = profile.pictureUrl;
+                    profileImg.classList.remove('hidden');
+                    document.getElementById('defaultProfileIcon').classList.add('hidden');
+                }
                 
                 const data = await fetchHouseDataFromSupabase(loggedInLineUid);
                 
@@ -388,7 +402,7 @@
                     }, 500);
                 } else {
                     let errorMsg = err.message || JSON.stringify(err) || "ไม่สามารถเชื่อมต่อได้";
-                    showError(errorMsg);
+                    showError("สาเหตุ: " + errorMsg);
                 }
             }
         }
@@ -717,6 +731,7 @@
         // ==========================================
         function openEditInfoModal() {
             document.getElementById('inputOwnerName').value = currentHouseData.owner_name;
+            // ตอนกดแก้ไขให้แสดงเบอร์ที่อาจจะไม่มี 0 ก็ได้ แต่ตอนเซฟระบบจะไม่สนใจ ถือว่าแก้ตามที่ผู้ใช้พิมพ์
             document.getElementById('inputPhone').value = currentHouseData.phone;
             document.getElementById('inputMembers').value = currentHouseData.members_count;
             toggleModal('editInfoModal', 'editModalContent', true);
