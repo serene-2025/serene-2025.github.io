@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ข้อมูลบ้าน - โกลเด้นแลนด์ ซีรีน</title>
+    <!-- โหลด Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- โหลด Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- ฟอนต์ภาษาไทย Noto Sans Thai -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- โหลด LINE LIFF SDK -->
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    
+    <!-- โหลด Supabase SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <!-- กำหนดสี Custom Theme สำหรับ Tailwind -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    keyframes: {
+                        shake: {
+                            '0%, 100%': { transform: 'translateX(0)' },
+                            '25%': { transform: 'translateX(-5px)' },
+                            '75%': { transform: 'translateX(5px)' }
+                        }
+                    },
+                    colors: {
+                        golden: {
+                            50: '#fffbeb',
+                            100: '#fef3c7',
+                            400: '#fbbf24',
+                            500: '#f59e0b',
+                            600: '#d97706',
+                            700: '#b45309',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Noto Sans Thai', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #fffbeb;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* อนิเมชันสำหรับ Modal */
+        .modal-enter { opacity: 0; transform: scale(0.95) translateY(10px); }
+        .modal-enter-active { opacity: 1; transform: scale(1) translateY(0); transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1); }
+        .modal-exit { opacity: 1; transform: scale(1) translateY(0); }
+        .modal-exit-active { opacity: 0; transform: scale(0.95) translateY(10px); transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1); }
+
+        /* ลูกเล่นพลิกบัตร 3 มิติ (3D Flip) */
+        .flip-card { perspective: 1000px; }
+        .flip-inner {
+            transition: transform 0.7s cubic-bezier(0.4, 0.2, 0.2, 1);
+            transform-style: preserve-3d;
+            width: 100%; height: 100%;
+        }
+        .flip-card.flipped .flip-inner { transform: rotateY(180deg); }
+        .flip-front, .flip-back {
+            backface-visibility: hidden;
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            border-radius: 14px;
+        }
+        .flip-back { transform: rotateY(180deg); }
+
+        /* สไตล์ Glassmorphism */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+        }
+    </style>
+</head>
+<body class="text-gray-800 antialiased selection:bg-golden-400 selection:text-white">
+
+    <!-- หน้าจอโหลดดิ้ง (Loading Screen) -->
+    <div id="loadingScreen" class="fixed inset-0 z-[100] bg-[#fffbeb] flex flex-col items-center justify-center transition-opacity duration-500">
+        <div class="w-16 h-16 border-4 border-golden-200 border-t-golden-500 rounded-full animate-spin mb-4"></div>
+        <p id="loadingText" class="text-golden-700 font-medium animate-pulse">กำลังโหลดข้อมูลจากฐานข้อมูล...</p>
+    </div>
+
+    <!-- หน้าจอแจ้งเตือนข้อผิดพลาด (Error Screen) -->
+    <div id="errorScreen" class="fixed inset-0 z-[90] bg-[#fffbeb] hidden flex-col items-center justify-center p-6 text-center">
+        <div class="w-20 h-20 bg-red-100 text-red-500 rounded-full flex items-center justify-center mb-4 shadow-inner">
+            <i data-lucide="alert-circle" class="w-10 h-10"></i>
+        </div>
+        <h2 class="text-xl font-bold text-gray-800 mb-2">ไม่พบข้อมูล</h2>
+        <p class="text-gray-600 mb-6" id="errorMessage">เกิดข้อผิดพลาดในการโหลดข้อมูล</p>
+        <button onclick="window.location.reload()" class="px-6 py-3 bg-gray-900 text-white rounded-xl font-bold hover:bg-black transition-colors shadow-md">โหลดหน้าใหม่</button>
+    </div>
+
+    <main id="mainApp" class="max-w-md mx-auto min-h-screen relative shadow-2xl bg-[#fdfaf6] overflow-hidden hidden opacity-0 transition-opacity duration-500">
+        
+        <!-- ส่วนหัว -->
+        <header class="bg-gradient-to-br from-yellow-400 via-orange-400 to-orange-500 pt-10 pb-20 px-6 rounded-b-[40px] relative overflow-hidden shadow-lg shadow-orange-500/30">
+            <div class="absolute top-0 right-0 w-48 h-48 bg-white opacity-10 rounded-full blur-3xl transform translate-x-10 -translate-y-10"></div>
+            <div class="absolute bottom-0 left-0 w-32 h-32 bg-yellow-200 opacity-20 rounded-full blur-2xl transform -translate-x-10 translate-y-10"></div>
+            
+            <div class="relative z-10 flex justify-between items-start">
+                <div>
+                    <p class="text-white/80 text-sm font-medium mb-1">ยินดีต้อนรับกลับบ้าน</p>
+                    <h1 class="text-2xl font-bold text-white tracking-wide drop-shadow-sm" id="headerHouseNumber">...</h1>
+                    <p class="text-white text-xs mt-1 bg-black/10 inline-block px-2 py-0.5 rounded-full border border-white/20">โกลเด้นแลนด์ ซีรีน</p>
+                </div>
+                <div class="bg-white/20 backdrop-blur-sm p-3 rounded-2xl border border-white/30 shadow-inner">
+                    <i data-lucide="user" class="w-6 h-6 text-white"></i>
+                </div>
+            </div>
+        </header>
+
+        <!-- เนื้อหาหลัก -->
+        <div class="px-5 -mt-12 relative z-20 pb-24 h-full">
+            
+            <!-- การ์ดข้อมูลส่วนบุคคล (House Info Card) -->
+            <section class="glass-card rounded-3xl p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] mb-6">
+                <div class="flex justify-between items-center mb-4 border-b border-gray-100 pb-3">
+                    <h2 class="text-lg font-bold text-gray-800 flex items-center">
+                        <i data-lucide="contact-2" class="w-5 h-5 text-golden-500 mr-2"></i>
+                        ข้อมูลเจ้าบ้าน
+                    </h2>
+                    <button onclick="openEditInfoModal()" class="text-golden-600 hover:bg-golden-50 p-1.5 rounded-lg transition-colors flex items-center text-sm font-medium">
+                        <i data-lucide="edit-3" class="w-4 h-4 mr-1"></i> แก้ไข
+                    </button>
+                </div>
+                
+                <div class="space-y-3" id="houseInfoDisplay">
+                    <!-- ข้อมูลจะถูกเติมด้วย JavaScript -->
+                </div>
+            </section>
+
+            <!-- ส่วนคีย์การ์ด -->
+            <section>
+                <div class="flex justify-between items-end mb-4 px-1">
+                    <h2 class="text-lg font-bold text-gray-800 flex items-center">
+                        <i data-lucide="credit-card" class="w-5 h-5 text-golden-500 mr-2"></i>
+                        คีย์การ์ดของท่าน
+                    </h2>
+                    <span class="text-xs font-medium text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full" id="keycardCount">0 ใบ</span>
+                </div>
+
+                <div id="keycardContainer" class="space-y-5">
+                    <!-- รายการคีย์การ์ดจะถูกสร้างด้วย JavaScript -->
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Modal ยืนยันสิทธิ์ พร้อมถ่ายภาพ -->
+    <div id="confirmModal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-gray-900/60 backdrop-blur-sm px-4 transition-opacity duration-300">
+        <div id="modalContent" class="bg-white rounded-[28px] w-full max-w-sm overflow-hidden shadow-2xl modal-enter border border-white max-h-[90vh] overflow-y-auto no-scrollbar">
+            <div class="p-6 relative">
+                <button onclick="closeConfirmModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 bg-gray-50 p-1 rounded-full">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+                <div class="w-16 h-16 bg-golden-100 text-golden-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-inner">
+                    <i data-lucide="shield-check" class="w-8 h-8"></i>
+                </div>
+                <h3 class="text-xl font-bold text-center text-gray-900 mb-2">ยืนยันการใช้งานคีย์การ์ด</h3>
+                <p class="text-center text-gray-600 mb-6 text-sm leading-relaxed">
+                    กรุณายืนยันสิทธิ์สำหรับคีย์การ์ดหมายเลข<br>
+                    <span id="modalCardId" class="font-mono font-bold text-gray-900 text-base bg-gray-100 px-2 py-0.5 rounded mt-1 inline-block"></span><br>
+                    ผู้ถือบัตร: <span id="modalCardHolder" class="font-medium text-golden-600"></span>
+                </p>
+
+                <!-- ส่วนถ่ายภาพยืนยันคีย์การ์ด -->
+                <div class="mb-6">
+                    <input type="file" id="keycardPhotoInput" accept="image/*" capture="environment" class="hidden" onchange="previewKeycardPhoto(event)">
+                    
+                    <div id="photoPreviewContainer" class="hidden relative rounded-xl overflow-hidden border-2 border-golden-300 bg-gray-50 mb-2 shadow-sm">
+                        <img id="photoPreview" src="" alt="ภาพถ่ายคีย์การ์ด" class="w-full h-40 object-cover">
+                        <div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                            <button onclick="document.getElementById('keycardPhotoInput').click()" class="bg-white/90 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium flex items-center shadow-sm hover:bg-white transition-colors">
+                                <i data-lucide="refresh-cw" class="w-4 h-4 mr-2"></i> ถ่ายภาพใหม่
+                            </button>
+                        </div>
+                    </div>
+
+                    <button id="btnTakePhoto" onclick="document.getElementById('keycardPhotoInput').click()" class="w-full flex flex-col items-center justify-center py-6 bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-golden-600 rounded-xl text-sm font-medium transition-colors border-2 border-gray-200 border-dashed group">
+                        <div class="bg-white p-3 rounded-full shadow-sm mb-2 group-hover:scale-110 transition-transform">
+                            <i data-lucide="camera" class="w-6 h-6 text-golden-500"></i>
+                        </div>
+                        <span>แตะเพื่อถ่ายภาพคีย์การ์ด</span>
+                    </button>
+                    
+                    <p id="photoErrorMsg" class="text-red-500 text-xs text-center mt-2 hidden">
+                        <i data-lucide="alert-circle" class="w-3 h-3 inline mr-1"></i>กรุณาถ่ายภาพคีย์การ์ดเพื่อยืนยันสิทธิ์
+                    </p>
+                </div>
+                
+                <button id="btnConfirmCard" onclick="confirmVerification()" class="w-full bg-gradient-to-r from-yellow-500 to-orange-500 text-white font-bold py-3.5 px-4 rounded-xl hover:shadow-lg hover:shadow-orange-500/30 active:scale-[0.98] transition-all duration-200">
+                    ยืนยันสิทธิ์ทันที
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal แก้ไขข้อมูล -->
+    <div id="editInfoModal" class="fixed inset-0 z-50 hidden flex flex-col justify-end sm:items-center sm:justify-center bg-gray-900/60 backdrop-blur-sm transition-opacity duration-300">
+        <div id="editModalContent" class="bg-white w-full max-w-md rounded-t-[32px] sm:rounded-[28px] overflow-hidden shadow-2xl modal-enter transform transition-transform">
+            <div class="px-6 pt-6 pb-2 flex justify-between items-center border-b border-gray-100">
+                <h3 class="text-lg font-bold text-gray-900 flex items-center">
+                    <i data-lucide="edit" class="w-5 h-5 text-golden-500 mr-2"></i>
+                    แก้ไขข้อมูลบ้าน
+                </h3>
+                <button onclick="closeEditInfoModal()" class="text-gray-400 hover:text-gray-600 bg-gray-100 p-1.5 rounded-full transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            
+            <div class="p-6 overflow-y-auto max-h-[70vh]">
+                <form id="editInfoForm" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">ชื่อ-นามสกุล เจ้าบ้าน</label>
+                        <input type="text" id="inputOwnerName" class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-golden-400 focus:ring-2 focus:ring-golden-100 outline-none transition-all text-gray-800">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">เบอร์โทรศัพท์ติดต่อ</label>
+                        <input type="tel" id="inputPhone" class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-golden-400 focus:ring-2 focus:ring-golden-100 outline-none transition-all text-gray-800">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">จำนวนสมาชิกในบ้าน (คน)</label>
+                        <input type="number" id="inputMembers" min="1" class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-golden-400 focus:ring-2 focus:ring-golden-100 outline-none transition-all text-gray-800">
+                    </div>
+                    <div class="pt-2">
+                        <button type="button" id="btnSaveHouse" onclick="saveHouseInfo()" class="w-full bg-gray-900 text-white font-bold py-3.5 px-4 rounded-xl hover:bg-black active:scale-[0.98] transition-all duration-200 shadow-md">
+                            บันทึกข้อมูล
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- โค้ด JavaScript จัดการ Supabase -->
+    <script>
+        // ==========================================
+        // ตั้งค่าการเชื่อมต่อ Supabase ของจริง
+        // ==========================================
+        const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
+        
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        // ตัวแปร State เก็บข้อมูล
+        let loggedInLineUid = null;
+        let currentHouseData = null;
+        let currentKeycards = [];
+        
+        // สำหรับหน้ายืนยัน
+        let targetCardIdToConfirm = null; 
+        let currentCapturedPhoto = null; 
+
+        // ==========================================
+        // ฟังก์ชันจัดรูปแบบหมายเลขคีย์การ์ด
+        // ==========================================
+        function formatKeycardNumber(rfidCol, cardNumCol) {
+            if (!cardNumCol) return "ไม่พบข้อมูลบัตร";
+            
+            // 1. หมายเลขบัตรชุดหน้า เพิ่มเลข 0 ให้ครบ 10 หลัก
+            const part1 = String(cardNumCol).padStart(10, '0');
+            if (!rfidCol) return part1; // ถ้าไม่มีรหัสยาว ส่งแค่รหัสสั้น
+            
+            // 2. ดึงชุดหลังจากช่อง rfid (โดยตัด part1 ที่ซ้ำกันด้านหน้าออก)
+            let part2_raw = String(rfidCol).replace(part1, '');
+            
+            // 3. ใส่ลูกน้ำ (,)
+            let part2 = part2_raw;
+            if (part2_raw.length > 5) {
+                part2 = part2_raw.slice(0, -5) + ',' + part2_raw.slice(-5);
+            }
+            return part2 ? `${part1} ${part2}` : part1;
+        }
+
+        // ==========================================
+        // ฟังก์ชันดึงข้อมูลจาก Supabase
+        // ==========================================
+        async function fetchHouseDataFromSupabase(lineUid) {
+            // 1. ค้นหาข้อมูลผู้ใช้และบ้านจากตาราง userhome
+            const { data: userRecord, error: userError } = await supabaseClient
+                .from('userhome')
+                .select('*')
+                .eq('uid', lineUid)
+                .single();
+
+            if (userError || !userRecord || !userRecord.house_no) {
+                throw "USER_NOT_FOUND";
+            }
+
+            // แยกบ้านเลขที่ เช่น "998/392" => name = "998", house = "392"
+            const houseParts = userRecord.house_no.split('/');
+            const prefixName = houseParts[0];
+            const suffixHouse = houseParts[1];
+
+            // 2. ค้นหาคีย์การ์ดของบ้านนั้นจากตาราง card
+            const { data: cardsRecord, error: cardsError } = await supabaseClient
+                .from('card')
+                .select('*')
+                .eq('name', prefixName)
+                .eq('house', suffixHouse);
+
+            if (cardsError) {
+                console.error("Cards fetch error:", cardsError);
+            }
+
+            // 3. จัดเตรียมข้อมูลส่งกลับให้หน้าเว็บแสดงผล
+            const houseData = {
+                house_number: userRecord.house_no,
+                owner_name: userRecord.fullname || '-',
+                phone: userRecord.phone || '-',
+                members_count: userRecord.member_count || 1
+            };
+
+            const mappedCards = (cardsRecord || []).map(c => {
+                // แปลงสถานะจากชื่อแผนกในไฟล์ CSV
+                let status = 'pending';
+                if (c.department === 'ลูกบ้าน ปกติ') status = 'active';
+                else if (c.department === 'ค้างค่าส่วนกลาง') status = 'suspended';
+
+                return {
+                    id: c.id,          // Primary Key ใน DB
+                    rfid: c.rfid,      // รหัสยาว
+                    card: c.card,      // รหัสสั้น
+                    holder_name: 'สมาชิกบ้าน', 
+                    status: status,
+                    img: c.img         // URL รูปภาพ
+                };
+            });
+
+            return { house: houseData, keycards: mappedCards };
+        }
+
+        // ==========================================
+        // การเริ่มต้นระบบ (LINE LIFF & Fetch Data)
+        // ==========================================
+        async function initializeApp() {
+            try {
+                const liffId = "2009673010-dVamuq1v"; // เปลี่ยนเป็น LIFF ID ของคุณเมื่อพร้อมใช้งานจริง
+                
+                // 1. ดักจับข้อผิดพลาด LIFF กรณีที่ยังไม่มี LIFF ID หรือ LIFF ID ไม่ถูกต้อง
+                try {
+                    if (liffId !== "2009673010-dVamuq1v") {
+                        await liff.init({ liffId: liffId }); 
+                    } else {
+                        console.warn("ยังไม่ได้ระบุ LIFF ID ระบบจะข้ามการเริ่มต้น LINE LIFF เพื่อทดสอบระบบฐานข้อมูลแทน");
+                    }
+                } catch (liffErr) {
+                    console.warn("ข้ามการเชื่อมต่อ LIFF เนื่องจากเกิดข้อผิดพลาด (Channel not found หรือยังไม่ได้ระบุ):", liffErr);
+                }
+                
+                // 2. ตรวจสอบสถานะล็อกอิน หรือใช้ Mock UID แทนหากไม่ได้เชื่อมต่อ LIFF
+                let isLoggedIn = false;
+                try {
+                    isLoggedIn = liff.isLoggedIn();
+                } catch(e) { /* ละเว้น error หาก liff ยังไม่พร้อม */ }
+
+                // ถ้ายืนยันตัวตนไม่ได้ ใช้ UID ของคุณสุเมธ จันทะรัตน์ (998/392) เพื่อดึงข้อมูลทดสอบจาก Supabase แทน
+                loggedInLineUid = isLoggedIn ? (await liff.getProfile()).userId : "U0153f436349a5d5087ee0b3806566abd"; 
+                
+                // 3. ดึงข้อมูลจากฐานข้อมูลตาม UID
+                const data = await fetchHouseDataFromSupabase(loggedInLineUid);
+                
+                currentHouseData = data.house;
+                currentKeycards = data.keycards;
+                
+                renderHouseInfo();
+                renderKeycards();
+                showMainApp();
+
+            } catch (err) {
+                console.error(err);
+                if (err === "USER_NOT_FOUND") {
+                    showError("บัญชี LINE ของท่านยังไม่ได้ผูกกับฐานข้อมูลระบบ");
+                } else {
+                    showError("เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล");
+                }
+            }
+        }
+
+        // ==========================================
+        // UI & Render Functions
+        // ==========================================
+        function showMainApp() {
+            document.getElementById('loadingScreen').style.opacity = '0';
+            setTimeout(() => {
+                document.getElementById('loadingScreen').style.display = 'none';
+                const mainApp = document.getElementById('mainApp');
+                mainApp.classList.remove('hidden');
+                mainApp.style.opacity = '1';
+            }, 500);
+        }
+
+        function showError(msg) {
+            document.getElementById('loadingScreen').style.display = 'none';
+            document.getElementById('errorMessage').textContent = msg;
+            document.getElementById('errorScreen').style.display = 'flex';
+            lucide.createIcons();
+        }
+
+        function renderHouseInfo() {
+            document.getElementById('headerHouseNumber').textContent = `บ้านเลขที่ ${currentHouseData.house_number}`;
+            
+            const infoContainer = document.getElementById('houseInfoDisplay');
+            infoContainer.innerHTML = `
+                <div class="flex items-center">
+                    <div class="w-8 flex justify-center"><i data-lucide="user" class="w-4 h-4 text-gray-400"></i></div>
+                    <div class="flex-1 text-sm text-gray-600">เจ้าบ้าน:</div>
+                    <div class="font-semibold text-gray-900">${currentHouseData.owner_name}</div>
+                </div>
+                <div class="flex items-center">
+                    <div class="w-8 flex justify-center"><i data-lucide="phone" class="w-4 h-4 text-gray-400"></i></div>
+                    <div class="flex-1 text-sm text-gray-600">เบอร์โทร:</div>
+                    <div class="font-semibold text-gray-900">${currentHouseData.phone || '-'}</div>
+                </div>
+                <div class="flex items-center">
+                    <div class="w-8 flex justify-center"><i data-lucide="users" class="w-4 h-4 text-gray-400"></i></div>
+                    <div class="flex-1 text-sm text-gray-600">สมาชิก:</div>
+                    <div class="font-semibold text-gray-900">${currentHouseData.members_count} ท่าน</div>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        function renderKeycards() {
+            const container = document.getElementById('keycardContainer');
+            document.getElementById('keycardCount').textContent = `${currentKeycards.length} ใบ`;
+            container.innerHTML = '';
+
+            currentKeycards.forEach((card) => {
+                let statusConfig;
+                if(card.status === 'active') statusConfig = { text: 'ใช้งานปกติ', badgeClass: 'bg-green-100 text-green-700', icon: 'check-circle-2' };
+                else if(card.status === 'pending') statusConfig = { text: 'รอการยืนยัน', badgeClass: 'bg-golden-100 text-golden-700 animate-pulse', icon: 'clock' };
+                else statusConfig = { text: 'ระงับการใช้งาน', badgeClass: 'bg-red-100 text-red-600', icon: 'ban' };
+                
+                const displayCardId = formatKeycardNumber(card.rfid, card.card);
+                
+                // ใช้รูปภาพคีย์การ์ดจาก DB ถ้ามี ถ้าไม่มีใช้ภาพโครงการ
+                const backImgSrc = card.img ? card.img : "https://lh3.googleusercontent.com/d/1W7zkZILECqtfY73b1fEawCSoA4CVkp54";
+
+                let cardHTML = `
+                    <div class="glass-card rounded-[24px] p-4 shadow-sm border border-gray-100 relative overflow-hidden transition-all duration-300 hover:shadow-md hover:border-golden-200">
+                        <div class="flip-card mx-auto mb-5 w-full max-w-[320px] aspect-[85/54] cursor-pointer group/card" onclick="this.classList.toggle('flipped')">
+                            <div class="flip-inner relative w-full h-full shadow-[0_8px_16px_rgba(0,0,0,0.06)] rounded-[14px] transition-transform duration-500">
+                                <!-- Front -->
+                                <div class="flip-front bg-gradient-to-br from-[#ffffff] to-[#f4f5f7] border border-gray-200 overflow-hidden">
+                                    <div class="absolute top-3 right-3 bg-white/80 backdrop-blur rounded-full p-1.5 shadow-sm text-gray-400 group-hover/card:text-golden-500 transition-colors z-10">
+                                        <i data-lucide="rotate-cw" class="w-4 h-4"></i>
+                                    </div>
+                                    <div class="absolute left-3 top-1/2 -translate-y-1/2 w-2.5 h-12 bg-gray-100/80 rounded-full shadow-[inset_0_2px_4px_rgba(0,0,0,0.1)] border border-gray-200"></div>
+                                    <div class="absolute top-4 left-8 text-golden-600/20 font-bold text-lg tracking-wider">SERENE</div>
+                                    <div class="absolute bottom-4 right-4 text-gray-700 font-semibold tracking-widest text-[13px] sm:text-sm drop-shadow-sm opacity-90" style="font-family: 'Courier New', Courier, monospace; letter-spacing: 0.15em;">
+                                        ${displayCardId}
+                                    </div>
+                                </div>
+                                <!-- Back -->
+                                <div class="flip-back border border-gray-200 overflow-hidden bg-white shadow-inner">
+                                    <img src="${backImgSrc}" alt="ด้านหลังบัตร" class="w-full h-full object-cover">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-gray-100 pt-3 px-1">
+                            <div>
+                                <div class="text-[11px] text-gray-400 uppercase tracking-wider mb-0.5">ผู้ถือบัตร / Card Holder</div>
+                                <div class="font-bold text-gray-900 text-base flex items-center gap-2">${card.holder_name}</div>
+                            </div>
+                `;
+
+                if (card.status === 'pending') {
+                    cardHTML += `
+                        <button onclick="openConfirmModal('${card.id}', '${displayCardId}', '${card.holder_name}')" class="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-golden-50 text-golden-600 hover:bg-golden-500 hover:text-white rounded-xl text-sm font-bold transition-colors duration-300 border border-golden-200 hover:border-transparent">
+                            <i data-lucide="shield-alert" class="w-4 h-4 mr-1.5"></i>ยืนยันสิทธิ์
+                        </button>
+                    `;
+                } else {
+                    cardHTML += `
+                        <div class="flex flex-col items-start sm:items-end">
+                            <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold ${statusConfig.badgeClass}">
+                                <i data-lucide="${statusConfig.icon}" class="w-3.5 h-3.5 mr-1.5"></i>${statusConfig.text}
+                            </span>
+                        </div>
+                    `;
+                }
+
+                cardHTML += `</div></div>`;
+                container.innerHTML += cardHTML;
+            });
+            lucide.createIcons();
+        }
+
+        // ==========================================
+        // ระบบบีบอัดรูปภาพและอัปโหลด (Supabase Storage)
+        // ==========================================
+        async function compressImage(file, maxWidth = 800, quality = 0.7) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.src = event.target.result;
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const scaleSize = maxWidth / img.width;
+                        canvas.width = maxWidth;
+                        canvas.height = img.height * scaleSize;
+
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                        
+                        canvas.toBlob((blob) => {
+                            resolve(new File([blob], file.name, { type: 'image/jpeg' }));
+                        }, 'image/jpeg', quality);
+                    };
+                };
+            });
+        }
+
+        function openConfirmModal(cardDbId, displayCardId, holderName) {
+            targetCardIdToConfirm = cardDbId; 
+            document.getElementById('modalCardId').textContent = displayCardId; 
+            document.getElementById('modalCardHolder').textContent = holderName;
+            
+            // รีเซ็ตฟอร์มกล้อง
+            currentCapturedPhoto = null;
+            document.getElementById('keycardPhotoInput').value = '';
+            document.getElementById('photoPreviewContainer').classList.add('hidden');
+            document.getElementById('btnTakePhoto').classList.remove('hidden');
+            document.getElementById('photoErrorMsg').classList.add('hidden');
+            
+            toggleModal('confirmModal', 'modalContent', true);
+        }
+
+        function closeConfirmModal() {
+            toggleModal('confirmModal', 'modalContent', false);
+            targetCardIdToConfirm = null;
+            currentCapturedPhoto = null;
+        }
+
+        function previewKeycardPhoto(event) {
+            const file = event.target.files[0];
+            if (file) {
+                currentCapturedPhoto = file;
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    document.getElementById('photoPreview').src = e.target.result;
+                    document.getElementById('photoPreviewContainer').classList.remove('hidden');
+                    document.getElementById('btnTakePhoto').classList.add('hidden');
+                    document.getElementById('photoErrorMsg').classList.add('hidden');
+                    lucide.createIcons(); 
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        async function confirmVerification() {
+            if (!targetCardIdToConfirm) return;
+
+            if (!currentCapturedPhoto) {
+                document.getElementById('photoErrorMsg').classList.remove('hidden');
+                const modalContent = document.getElementById('modalContent');
+                modalContent.classList.add('animate-[shake_0.4s_ease-in-out]');
+                setTimeout(() => modalContent.classList.remove('animate-[shake_0.4s_ease-in-out]'), 400);
+                return;
+            }
+
+            const btn = document.getElementById('btnConfirmCard');
+            btn.innerHTML = '<div class="flex items-center justify-center"><div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>อัปโหลดและยืนยัน...</div>';
+            btn.classList.add('pointer-events-none');
+
+            try {
+                // 1. บีบอัดรูปภาพด้วย Canvas
+                const compressedFile = await compressImage(currentCapturedPhoto, 800, 0.7);
+
+                // 2. โยนไฟล์ขึ้น Storage ของ Supabase (ตรวจสอบให้แน่ใจว่าสร้าง Bucket ชื่อ 'keycard_images' แล้ว)
+                const fileName = `keycard_${targetCardIdToConfirm}_${Date.now()}.jpg`;
+                const { data: uploadData, error: uploadError } = await supabaseClient.storage
+                    .from('keycard_images')
+                    .upload(fileName, compressedFile);
+
+                if (uploadError) throw uploadError;
+
+                // 3. ดึงลิงก์ URL รูปภาพแบบ Public
+                const { data: publicUrlData } = supabaseClient.storage
+                    .from('keycard_images')
+                    .getPublicUrl(fileName);
+                const imageUrl = publicUrlData.publicUrl;
+
+                // 4. Update สถานะในตาราง card
+                const { error: updateError } = await supabaseClient
+                    .from('card')
+                    .update({ 
+                        department: 'ลูกบ้าน ปกติ', // แปลงเป็น active ในหน้าจอ
+                        img: imageUrl 
+                    })
+                    .eq('id', targetCardIdToConfirm);
+
+                if (updateError) throw updateError;
+
+                // อัปเดตข้อมูลบนหน้าจอ
+                const cardIndex = currentKeycards.findIndex(c => c.id === targetCardIdToConfirm);
+                if(cardIndex !== -1) {
+                    currentKeycards[cardIndex].status = 'active';
+                    currentKeycards[cardIndex].img = imageUrl;
+                }
+
+                closeConfirmModal();
+                renderKeycards();
+
+            } catch (error) {
+                console.error('Confirm Verification Error:', error);
+                alert("เกิดข้อผิดพลาดในการยืนยันสิทธิ์ หรืออัปโหลดรูปภาพ กรุณาลองใหม่");
+            } finally {
+                btn.innerHTML = 'ยืนยันสิทธิ์ทันที';
+                btn.classList.remove('pointer-events-none');
+            }
+        }
+
+        // ==========================================
+        // ระบบ Update ข้อมูลบ้าน (userhome)
+        // ==========================================
+        function openEditInfoModal() {
+            document.getElementById('inputOwnerName').value = currentHouseData.owner_name;
+            document.getElementById('inputPhone').value = currentHouseData.phone;
+            document.getElementById('inputMembers').value = currentHouseData.members_count;
+            toggleModal('editInfoModal', 'editModalContent', true);
+        }
+
+        function closeEditInfoModal() {
+            toggleModal('editInfoModal', 'editModalContent', false);
+        }
+
+        async function saveHouseInfo() {
+            const btn = document.getElementById('btnSaveHouse');
+            btn.innerHTML = '<div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto"></div>';
+
+            const newName = document.getElementById('inputOwnerName').value || '-';
+            const newPhone = document.getElementById('inputPhone').value || '-';
+            const newCount = document.getElementById('inputMembers').value || 1;
+
+            try {
+                // อัปเดตตาราง userhome จริงใน Supabase
+                const { error } = await supabaseClient
+                    .from('userhome')
+                    .update({
+                        fullname: newName,
+                        phone: newPhone,
+                        member_count: newCount
+                    })
+                    .eq('uid', loggedInLineUid);
+
+                if (error) throw error;
+
+                // อัปเดตข้อมูลบนหน้าจอ
+                currentHouseData.owner_name = newName;
+                currentHouseData.phone = newPhone;
+                currentHouseData.members_count = newCount;
+                
+                closeEditInfoModal();
+                renderHouseInfo();
+
+            } catch (error) {
+                console.error("Save House Info Error:", error);
+                alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่");
+            } finally {
+                btn.innerHTML = 'บันทึกข้อมูล';
+            }
+        }
+
+        function toggleModal(modalId, contentId, isShow) {
+            const modal = document.getElementById(modalId);
+            const content = document.getElementById(contentId);
+            if (isShow) {
+                modal.classList.remove('hidden');
+                setTimeout(() => { content.classList.remove('modal-enter'); content.classList.add('modal-enter-active'); }, 10);
+            } else {
+                content.classList.remove('modal-enter-active'); content.classList.add('modal-exit-active');
+                setTimeout(() => { modal.classList.add('hidden'); content.classList.remove('modal-exit-active'); content.classList.add('modal-enter'); }, 200);
+            }
+        }
+
+        // เริ่มต้นการทำงาน
+        window.onload = () => {
+            lucide.createIcons();
+            initializeApp();
+        };
+    </script>
+</body>
+</html>
