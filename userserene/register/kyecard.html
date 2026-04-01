@@ -177,8 +177,8 @@
         <div class="w-24 h-24 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/20 text-red-500 dark:text-red-400 rounded-full flex items-center justify-center mb-6 shadow-lg dark:shadow-[0_0_30px_rgba(239,68,68,0.2)]">
             <i data-lucide="alert-triangle" class="w-12 h-12"></i>
         </div>
-        <h2 class="text-2xl font-bold text-slate-800 dark:text-white mb-2">เกิดข้อผิดพลาด 🚫</h2>
-        <p class="text-slate-500 dark:text-slate-400 mb-8 text-sm break-words w-full max-w-sm" id="errorMessage">ไม่สามารถเชื่อมต่อฐานข้อมูลได้</p>
+        <h2 class="text-2xl font-bold text-slate-800 dark:text-white mb-2" id="errorTitle">เกิดข้อผิดพลาด 🚫</h2>
+        <p class="text-slate-500 dark:text-slate-400 mb-8 text-sm break-words w-full max-w-sm whitespace-pre-line" id="errorMessage">ไม่สามารถเชื่อมต่อฐานข้อมูลได้</p>
         <button onclick="window.location.reload()" class="px-8 py-3.5 bg-gradient-to-r from-slate-700 to-slate-800 border border-slate-600 text-white rounded-xl font-bold hover:from-slate-600 hover:to-slate-700 transition-all shadow-lg active:scale-95 flex items-center">
             <i data-lucide="refresh-cw" class="w-5 h-5 mr-2"></i> ลองใหม่อีกครั้ง
         </button>
@@ -434,48 +434,60 @@
         }
 
         // ==========================================
-        // อัปเดตตารางกลับไปใช้ userhome และ rfid ตามเดิม
+        // ดึงข้อมูลจากฐานข้อมูล
         // ==========================================
         async function fetchHouseDataFromSupabase(lineUid) {
+            // ตามข้อมูลล่าสุด ต้องตรวจสอบจากตาราง line_users ก่อนเพื่อหาบ้านเลขที่
             const { data: userRecords, error: userError } = await supabaseClient
-                .from('userhome') // กลับมาใช้ตาราง userhome ที่มีอยู่แล้ว
-                .select('*')
-                .eq('uid', lineUid)
+                .from('line_users') 
+                .select('house_number')
+                .eq('line_uid', lineUid)
                 .limit(1);
 
-            if (userError) throw new Error("ฐานข้อมูล userhome: " + userError.message);
+            if (userError) throw new Error("ฐานข้อมูล line_users: " + userError.message);
 
             const userRecord = userRecords && userRecords.length > 0 ? userRecords[0] : null;
 
-            if (!userRecord || !userRecord.house_no) throw "USER_NOT_FOUND";
+            if (!userRecord || !userRecord.house_number) throw "USER_NOT_FOUND";
 
-            const houseNo = userRecord.house_no.trim();
+            const houseNo = userRecord.house_number.trim();
 
+            // ดึงข้อมูลบ้านจากตาราง houses
+            const { data: houseRecords, error: houseError } = await supabaseClient
+                .from('houses')
+                .select('*')
+                .eq('house_number', houseNo)
+                .limit(1);
+
+            if (houseError) throw new Error("ฐานข้อมูล houses: " + houseError.message);
+            const houseInfo = houseRecords && houseRecords.length > 0 ? houseRecords[0] : { owner_name: '-', phone: '-', members_count: 1 };
+
+            // ดึงข้อมูลคีย์การ์ดจากตาราง keycards
             const { data: cardsRecord, error: cardsError } = await supabaseClient
-                .from('rfid') // กลับมาใช้ตาราง rfid ตามที่มีข้อมูล
+                .from('keycards') 
                 .select('*')
                 .eq('house_number', houseNo)
                 .order('created_at', { ascending: false });
 
-            if (cardsError) throw new Error("ฐานข้อมูล rfid: " + cardsError.message);
+            if (cardsError) throw new Error("ฐานข้อมูล keycards: " + cardsError.message);
 
             const houseData = {
-                house_number: userRecord.house_no,
-                owner_name: userRecord.fullname || '-',
-                phone: userRecord.phone || '-',
-                members_count: userRecord.member_count || 1
+                house_number: houseNo,
+                owner_name: houseInfo.owner_name || '-',
+                phone: houseInfo.phone || '-',
+                members_count: houseInfo.members_count || 1
             };
 
             const mappedCards = (cardsRecord || []).map(c => {
                 return {
                     id: c.id,          
-                    front_number: c.front_number,      
-                    back_number: c.back_number,      
+                    front_number: c.phone_col,      
+                    back_number: c.card_num_col,      
                     holder_name: c.holder_name || 'สมาชิกในบ้าน', 
                     status: c.status || 'pending',
                     img: c.img,
-                    start_date: c.start_date,
-                    expire_date: c.expire_date
+                    start_date: c.start_date, // ถ้ามีใน schema
+                    expire_date: c.expire_date // ถ้ามีใน schema
                 };
             });
 
@@ -483,6 +495,10 @@
         }
 
         async function initializeApp() {
+            // เรียกดูธีมที่ตั้งไว้
+            const isDark = document.documentElement.classList.contains('dark');
+            updateThemeIcon(isDark);
+
             try {
                 const liffId = "2009673010-dVamuq1v"; 
                 await liff.init({ liffId: liffId });
@@ -511,19 +527,27 @@
                 renderKeycards();
                 showMainApp();
 
-                // เรียกดูธีมที่ตั้งไว้ และอัปเดตไอคอน/การ์ด
-                const isDark = document.documentElement.classList.contains('dark');
-                updateThemeIcon(isDark);
+                // อัปเดตไอคอน/การ์ดอีกครั้งหลังจาก render
+                updateThemeIcon(document.documentElement.classList.contains('dark'));
 
             } catch (err) {
                 console.error("App Initialization Error:", err);
+                
+                let errorMsg = err.message || JSON.stringify(err) || "ไม่สามารถเชื่อมต่อได้";
+                
+                // ดักจับ Error กรณีใช้งานใน Open Chat
+                if (errorMsg.toLowerCase().includes("open-chat")) {
+                    document.getElementById('errorTitle').innerHTML = "ไม่รองรับ Open Chat 🚫";
+                    showError("ระบบไม่สามารถทำงานผ่าน LINE Open Chat ได้\n\nกรุณากดปุ่ม 3 จุด มุมขวาบน\nแล้วเลือก \"เปิดด้วยเบราว์เซอร์อื่น\"");
+                    return;
+                }
+
                 if (err === "USER_NOT_FOUND") {
                     document.getElementById('loadingText').textContent = "ไม่พบข้อมูลของท่าน กำลังพาไปหน้าลงทะเบียน... 🚀";
                     document.getElementById('loadingScreen').style.display = 'flex';
                     document.getElementById('errorScreen').style.display = 'none';
                     setTimeout(() => window.location.replace("https://liff.line.me/2000143615-Y8AQVAaq"), 500);
                 } else {
-                    let errorMsg = err.message || JSON.stringify(err) || "ไม่สามารถเชื่อมต่อได้";
                     showError("สาเหตุ: " + errorMsg);
                 }
             }
@@ -598,7 +622,7 @@
             const cardFrontClass = isDark ? 'card-front-dark' : 'card-front-light';
             const textShadowClass = isDark ? 'drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]' : 'drop-shadow-sm text-slate-800';
             const iconColorClass = isDark ? 'text-slate-600' : 'text-slate-300';
-            const cardTitleColorClass = isDark ? 'text-golden-400/20' : 'text-slate-200';
+            const cardTitleColorClass = isDark ? 'text-golden-400/20' : 'text-slate-300';
 
             currentKeycards.forEach((card) => {
                 let statusConfig;
@@ -833,9 +857,9 @@
 
                 const selectedRole = document.getElementById('selectCardHolder').value;
 
-                // กลับมาบันทึกลงในตาราง rfid
+                // อัปเดตตาราง keycards
                 const { error: updateError } = await supabaseClient
-                    .from('rfid')
+                    .from('keycards')
                     .update({ 
                         status: 'reviewing',
                         holder_name: selectedRole,
@@ -866,7 +890,7 @@
         }
 
         // ==========================================
-        // ระบบ Update ข้อมูลบ้าน (userhome)
+        // ระบบ Update ข้อมูลบ้าน (houses)
         // ==========================================
         function openEditInfoModal() {
             document.getElementById('inputOwnerName').value = currentHouseData.owner_name;
@@ -889,15 +913,15 @@
             const newCount = document.getElementById('inputMembers').value || 1;
 
             try {
-                // กลับไปอัปเดตตาราง userhome ตามเดิม
+                // อัปเดตตาราง houses
                 const { error } = await supabaseClient
-                    .from('userhome')
+                    .from('houses')
                     .update({
-                        fullname: newName,
+                        owner_name: newName,
                         phone: newPhone,
-                        member_count: newCount
+                        members_count: newCount
                     })
-                    .eq('uid', loggedInLineUid);
+                    .eq('house_number', currentHouseData.house_number);
 
                 if (error) {
                     console.error("Save House Info DB Error: ", error);
