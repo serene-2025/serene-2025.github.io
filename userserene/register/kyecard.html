@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="th" class="dark">
 <head>
@@ -189,7 +188,7 @@
                         <i id="themeIcon" data-lucide="moon" class="w-5 h-5 text-slate-600 dark:text-golden-400 transition-colors"></i>
                     </button>
 
-                    <!-- รูปโปรไฟล์ (ขนาดใหญ่ขึ้น) -->
+                    <!-- รูปโปรไฟล์ -->
                     <div class="bg-white/80 dark:bg-white/5 backdrop-blur-md p-1.5 rounded-full border border-slate-200 dark:border-white/10 shadow-md">
                         <img id="profileImage" src="" alt="Profile" class="w-14 h-14 rounded-full object-cover hidden border border-slate-100 dark:border-slate-700">
                         <div id="defaultProfileIcon" class="w-14 h-14 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center border border-slate-200 dark:border-slate-700">
@@ -217,7 +216,7 @@
                     </button>
                 </div>
                 
-                <!-- ข้อมูลบ้านแบบคนละฝั่ง (เหมือนเดิม) -->
+                <!-- ข้อมูลบ้านแบบคนละฝั่ง -->
                 <div class="flex flex-col" id="houseInfoDisplay">
                     <!-- ข้อมูลจะถูกเติมด้วย JavaScript -->
                 </div>
@@ -401,56 +400,48 @@
             return date.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
         }
 
+        // ==========================================
+        // อัปเดตตารางกลับไปใช้ userhome และ rfid ตามเดิม
+        // ==========================================
         async function fetchHouseDataFromSupabase(lineUid) {
             const { data: userRecords, error: userError } = await supabaseClient
-                .from('line_users') // อัปเดตใช้ line_users ตาม schema ใหม่ล่าสุดที่ให้มา
-                .select('house_number')
-                .eq('line_uid', lineUid)
+                .from('userhome') // กลับมาใช้ตาราง userhome ที่มีอยู่แล้ว
+                .select('*')
+                .eq('uid', lineUid)
                 .limit(1);
 
-            if (userError) throw new Error("ฐานข้อมูล line_users: " + userError.message);
+            if (userError) throw new Error("ฐานข้อมูล userhome: " + userError.message);
 
             const userRecord = userRecords && userRecords.length > 0 ? userRecords[0] : null;
 
-            if (!userRecord || !userRecord.house_number) throw "USER_NOT_FOUND";
+            if (!userRecord || !userRecord.house_no) throw "USER_NOT_FOUND";
 
-            const houseNo = userRecord.house_number.trim();
+            const houseNo = userRecord.house_no.trim();
 
-            // ดึงข้อมูลบ้าน
-            const { data: houseRecords, error: houseError } = await supabaseClient
-                .from('houses')
-                .select('*')
-                .eq('house_number', houseNo)
-                .limit(1);
-
-            if (houseError) throw new Error("ฐานข้อมูล houses: " + houseError.message);
-            const houseInfo = houseRecords && houseRecords.length > 0 ? houseRecords[0] : { owner_name: '-', phone: '-', members_count: 1 };
-
-            // ดึงข้อมูลคีย์การ์ด (จากตาราง keycards ตาม schema ล่าสุด)
             const { data: cardsRecord, error: cardsError } = await supabaseClient
-                .from('keycards')
+                .from('rfid') // กลับมาใช้ตาราง rfid ตามที่มีข้อมูล
                 .select('*')
                 .eq('house_number', houseNo)
                 .order('created_at', { ascending: false });
 
-            if (cardsError) throw new Error("ฐานข้อมูล keycards: " + cardsError.message);
+            if (cardsError) throw new Error("ฐานข้อมูล rfid: " + cardsError.message);
 
             const houseData = {
-                house_number: houseNo,
-                owner_name: houseInfo.owner_name || '-',
-                phone: houseInfo.phone || '-',
-                members_count: houseInfo.members_count || 1
+                house_number: userRecord.house_no,
+                owner_name: userRecord.fullname || '-',
+                phone: userRecord.phone || '-',
+                members_count: userRecord.member_count || 1
             };
 
             const mappedCards = (cardsRecord || []).map(c => {
                 return {
                     id: c.id,          
-                    front_number: c.phone_col, // ตอนนี้ใช้ phone_col เก็บรหัสหน้า
-                    back_number: c.card_num_col, // ใช้ card_num_col เก็บรหัสหลัง
+                    front_number: c.front_number,      
+                    back_number: c.back_number,      
                     holder_name: c.holder_name || 'สมาชิกในบ้าน', 
                     status: c.status || 'pending',
                     img: c.img,
-                    start_date: c.start_date, // อาจจะไม่มีใน schema แต่เผื่อดึงไว้ถ้าในตารางมี
+                    start_date: c.start_date,
                     expire_date: c.expire_date
                 };
             });
@@ -803,9 +794,9 @@
 
                 const selectedRole = document.getElementById('selectCardHolder').value;
 
-                // ตอนนี้บันทึกลงตาราง keycards ตาม schema ล่าสุด
+                // กลับมาบันทึกลงในตาราง rfid
                 const { error: updateError } = await supabaseClient
-                    .from('keycards')
+                    .from('rfid')
                     .update({ 
                         status: 'reviewing',
                         holder_name: selectedRole,
@@ -836,7 +827,7 @@
         }
 
         // ==========================================
-        // ระบบ Update ข้อมูลบ้าน (houses)
+        // ระบบ Update ข้อมูลบ้าน (userhome)
         // ==========================================
         function openEditInfoModal() {
             document.getElementById('inputOwnerName').value = currentHouseData.owner_name;
@@ -859,15 +850,15 @@
             const newCount = document.getElementById('inputMembers').value || 1;
 
             try {
-                // อัปเดตตาราง houses (ไม่ได้ใช้ userhome แล้ว)
+                // กลับไปอัปเดตตาราง userhome ตามเดิม
                 const { error } = await supabaseClient
-                    .from('houses')
+                    .from('userhome')
                     .update({
-                        owner_name: newName,
+                        fullname: newName,
                         phone: newPhone,
-                        members_count: newCount
+                        member_count: newCount
                     })
-                    .eq('house_number', currentHouseData.house_number);
+                    .eq('uid', loggedInLineUid);
 
                 if (error) {
                     console.error("Save House Info DB Error: ", error);
