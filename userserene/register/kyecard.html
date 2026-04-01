@@ -349,27 +349,28 @@
         // ==========================================
         async function initializeApp() {
             try {
-                const liffId = "2009673010-dVamuq1v"; // เปลี่ยนเป็น LIFF ID ของคุณเมื่อพร้อมใช้งานจริง
+                // อัปเดตข้อมูล LIFF ID ใหม่
+                const liffId = "2009673010-dVamuq1v"; 
+                let isLiffReady = false;
                 
-                // 1. ดักจับข้อผิดพลาด LIFF กรณีที่ยังไม่มี LIFF ID หรือ LIFF ID ไม่ถูกต้อง
-                try {
-                    if (liffId !== "2009673010-dVamuq1v") {
-                        await liff.init({ liffId: liffId }); 
-                    } else {
-                        console.warn("ยังไม่ได้ระบุ LIFF ID ระบบจะข้ามการเริ่มต้น LINE LIFF เพื่อทดสอบระบบฐานข้อมูลแทน");
+                // 1. ป้องกัน Error จาก LIFF SDK 
+                if (liffId && liffId.trim() !== "") {
+                    try {
+                        await liff.init({ liffId: liffId });
+                        isLiffReady = true;
+                    } catch (liffErr) {
+                        console.warn("ข้ามการเชื่อมต่อ LIFF เนื่องจากเกิดข้อผิดพลาด:", liffErr);
                     }
-                } catch (liffErr) {
-                    console.warn("ข้ามการเชื่อมต่อ LIFF เนื่องจากเกิดข้อผิดพลาด (Channel not found หรือยังไม่ได้ระบุ):", liffErr);
                 }
                 
-                // 2. ตรวจสอบสถานะล็อกอิน หรือใช้ Mock UID แทนหากไม่ได้เชื่อมต่อ LIFF
-                let isLoggedIn = false;
-                try {
-                    isLoggedIn = liff.isLoggedIn();
-                } catch(e) { /* ละเว้น error หาก liff ยังไม่พร้อม */ }
-
-                // ถ้ายืนยันตัวตนไม่ได้ ใช้ UID ของคุณสุเมธ จันทะรัตน์ (998/392) เพื่อดึงข้อมูลทดสอบจาก Supabase แทน
-                loggedInLineUid = isLoggedIn ? (await liff.getProfile()).userId : "U0153f436349a5d5087ee0b3806566abd"; 
+                // 2. ตรวจสอบสถานะล็อกอิน หรือใช้ Mock UID แทนหากไม่ได้เชื่อมต่อ LIFF หรือทดสอบในเบราว์เซอร์
+                if (isLiffReady && liff.isLoggedIn()) {
+                    loggedInLineUid = (await liff.getProfile()).userId;
+                } else {
+                    // ถ้ายืนยันตัวตนไม่ได้ (ไม่ได้เปิดจากในแอป LINE) ใช้ UID แบบสุ่มหรือเพื่อใช้ทดสอบได้
+                    // แต่ถ้าใช้งานจริงใน LINE แล้วยังไม่ขึ้น ระบบจะรีไดเรกต์ตามเงื่อนไขค้นหาไม่เจอ
+                    loggedInLineUid = "U0153f436349a5d5087ee0b3806566abd"; // ทดสอบ
+                }
                 
                 // 3. ดึงข้อมูลจากฐานข้อมูลตาม UID
                 const data = await fetchHouseDataFromSupabase(loggedInLineUid);
@@ -382,9 +383,15 @@
                 showMainApp();
 
             } catch (err) {
-                console.error(err);
+                console.error("App Initialization Error:", err);
+                // ตรวจสอบข้อมูลไม่พบ -> ยิงไปยังหน้าลงทะเบียน
                 if (err === "USER_NOT_FOUND") {
-                    showError("บัญชี LINE ของท่านยังไม่ได้ผูกกับฐานข้อมูลระบบ");
+                    document.getElementById('loadingText').textContent = "กำลังพาไปหน้าลงทะเบียน...";
+                    document.getElementById('loadingScreen').style.display = 'flex';
+                    document.getElementById('errorScreen').style.display = 'none';
+                    
+                    // รีไดเรกต์ไปที่หน้าลงทะเบียน
+                    window.location.replace("https://liff.line.me/2000143615-Y8AQVAaq");
                 } else {
                     showError("เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล");
                 }
