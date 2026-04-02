@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="th" class="bg-slate-50">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - จัดการคีย์การ์ด</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Supabase SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- PapaParse สำหรับจัดการไฟล์ CSV -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Noto Sans Thai', 'sans-serif'] },
+                    colors: {
+                        golden: { 400: '#fbbf24', 500: '#f59e0b', 600: '#d97706' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { -webkit-tap-highlight-color: transparent; }
+        .glass-header {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        }
+    </style>
+</head>
+<body class="text-slate-800 antialiased min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="glass-header sticky top-0 z-40 w-full shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl flex items-center justify-center shadow-md text-golden-400">
+                        <i data-lucide="shield" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-bold text-slate-800">Admin Dashboard</h1>
+                        <p class="text-xs text-slate-500 font-medium">ระบบจัดการคีย์การ์ด - โกลเด้นแลนด์ ซีรีน</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-4">
+                    <div class="text-right hidden sm:block">
+                        <p class="text-sm font-bold text-slate-700">Administrator</p>
+                        <p class="text-xs text-green-500 font-medium">● Online</p>
+                    </div>
+                    <div class="w-10 h-10 bg-slate-200 rounded-full flex items-center justify-center border border-slate-300">
+                        <i data-lucide="user-cog" class="w-5 h-5 text-slate-600"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- หน้าจอโหลดดิ้ง (Loading Screen) -->
+    <div id="loadingScreen" class="fixed inset-0 z-[100] bg-white/90 backdrop-blur-sm hidden flex-col items-center justify-center transition-opacity duration-300">
+        <i data-lucide="loader-2" class="w-12 h-12 text-blue-500 animate-spin mb-4"></i>
+        <p id="loadingText" class="text-slate-700 font-bold text-lg animate-pulse">กำลังโหลดข้อมูล...</p>
+    </div>
+
+    <!-- Main Content -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-blue-50 text-blue-500 flex items-center justify-center">
+                    <i data-lucide="credit-card" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <p class="text-sm text-slate-500 font-medium">บัตรทั้งหมด</p>
+                    <h3 class="text-2xl font-bold text-slate-800" id="statTotal">0</h3>
+                </div>
+            </div>
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex items-center gap-4 relative overflow-hidden">
+                <div class="absolute top-0 right-0 w-2 h-full bg-orange-400"></div>
+                <div class="w-12 h-12 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center">
+                    <i data-lucide="search" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <p class="text-sm text-slate-500 font-medium">รอตรวจสอบ</p>
+                    <h3 class="text-2xl font-bold text-slate-800" id="statReviewing">0</h3>
+                </div>
+            </div>
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-green-50 text-green-500 flex items-center justify-center">
+                    <i data-lucide="check-circle" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <p class="text-sm text-slate-500 font-medium">ใช้งานปกติ</p>
+                    <h3 class="text-2xl font-bold text-slate-800" id="statActive">0</h3>
+                </div>
+            </div>
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-red-50 text-red-500 flex items-center justify-center">
+                    <i data-lucide="ban" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <p class="text-sm text-slate-500 font-medium">ระงับการใช้งาน</p>
+                    <h3 class="text-2xl font-bold text-slate-800" id="statSuspended">0</h3>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls Toolbar -->
+        <div class="bg-white rounded-t-2xl border border-slate-200 border-b-0 p-4 flex flex-col md:flex-row justify-between items-center gap-4">
+            <!-- Search & Filter -->
+            <div class="flex flex-col sm:flex-row w-full md:w-auto gap-3">
+                <div class="relative w-full sm:w-64">
+                    <i data-lucide="search" class="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4"></i>
+                    <input type="text" id="searchInput" placeholder="ค้นหา บ้านเลขที่, เลขบัตร..." class="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition-all" oninput="filterTable()">
+                </div>
+                <select id="statusFilter" class="w-full sm:w-48 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition-all cursor-pointer" onchange="filterTable()">
+                    <option value="all">ทุกสถานะ</option>
+                    <option value="reviewing">รอแอดมินตรวจสอบ</option>
+                    <option value="pending">รอเจ้าบ้านยืนยัน</option>
+                    <option value="active">ใช้งานปกติ</option>
+                    <option value="mismatch">ข้อมูลไม่ตรง</option>
+                    <option value="return_check">ส่งคืนตรวจสอบ</option>
+                    <option value="suspended">ระงับการใช้งาน</option>
+                </select>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex w-full md:w-auto gap-2">
+                <input type="file" id="csvFileInput" accept=".csv" class="hidden" onchange="handleImportCSV(event)">
+                <button onclick="document.getElementById('csvFileInput').click()" class="flex-1 sm:flex-none flex items-center justify-center px-4 py-2 bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-sm font-bold hover:bg-slate-200 transition-colors">
+                    <i data-lucide="upload-cloud" class="w-4 h-4 mr-2"></i> นำเข้าข้อมูล
+                </button>
+                <button onclick="exportCSV()" class="flex-1 sm:flex-none flex items-center justify-center px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-bold hover:bg-slate-700 transition-colors shadow-sm">
+                    <i data-lucide="download" class="w-4 h-4 mr-2"></i> ส่งออกข้อมูล
+                </button>
+            </div>
+        </div>
+
+        <!-- Data Table -->
+        <div class="bg-white border border-slate-200 rounded-b-2xl overflow-x-auto shadow-sm">
+            <table class="w-full text-left border-collapse min-w-[800px]">
+                <thead>
+                    <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                        <th class="px-6 py-4 font-bold">บ้านเลขที่</th>
+                        <th class="px-6 py-4 font-bold">หมายเลขบัตร</th>
+                        <th class="px-6 py-4 font-bold">ผู้ถือบัตร</th>
+                        <th class="px-6 py-4 font-bold">สถานะ</th>
+                        <th class="px-6 py-4 font-bold text-center">รูปถ่าย</th>
+                        <th class="px-6 py-4 font-bold text-center">จัดการ</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody" class="text-sm divide-y divide-slate-100">
+                    <!-- ข้อมูลแถวตารางจะถูกสร้างที่นี่ -->
+                    <tr>
+                        <td colspan="6" class="px-6 py-10 text-center text-slate-400">
+                            <i data-lucide="loader-2" class="w-6 h-6 animate-spin mx-auto mb-2 text-blue-500"></i>
+                            กำลังโหลดข้อมูล...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <!-- Modal: ดูรูปภาพ / อนุมัติ -->
+    <div id="imageModal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-slate-900/80 backdrop-blur-sm px-4">
+        <div id="imageModalContent" class="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl transform scale-95 opacity-0 transition-all duration-300">
+            <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <h3 class="text-lg font-bold text-slate-800">ตรวจสอบข้อมูลรูปภาพ</h3>
+                <button onclick="closeImageModal()" class="text-slate-400 hover:text-slate-600 bg-white border border-slate-200 p-1.5 rounded-full transition-colors">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+            <div class="p-6">
+                <div class="mb-4">
+                    <p class="text-sm text-slate-500 mb-1">บ้านเลขที่: <span id="modalHouseNo" class="font-bold text-slate-800"></span></p>
+                    <p class="text-sm text-slate-500">หมายเลขบัตร: <span id="modalCardNo" class="font-mono text-blue-600 bg-blue-50 px-2 py-0.5 rounded font-bold tracking-wider"></span></p>
+                </div>
+                
+                <div class="bg-slate-100 rounded-xl overflow-hidden border border-slate-200 mb-6 flex items-center justify-center h-64 relative">
+                    <img id="previewModalImage" src="" alt="Card Image" class="max-w-full max-h-full object-contain">
+                    <div id="noImageText" class="text-slate-400 hidden flex-col items-center">
+                        <i data-lucide="image-off" class="w-10 h-10 mb-2"></i>
+                        <p class="text-sm font-medium">ไม่พบรูปภาพ</p>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex gap-3">
+                    <button onclick="updateStatusFromModal('active')" class="flex-1 bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-600 flex items-center justify-center transition-colors">
+                        <i data-lucide="check-circle" class="w-5 h-5 mr-2"></i> อนุมัติ (ผ่าน)
+                    </button>
+                    <button onclick="updateStatusFromModal('mismatch')" class="flex-1 bg-orange-500 text-white font-bold py-3 rounded-xl hover:bg-orange-600 flex items-center justify-center transition-colors">
+                        <i data-lucide="x-circle" class="w-5 h-5 mr-2"></i> ไม่ผ่าน (รูปไม่ตรง)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- โค้ดส่วน Logic (JavaScript) -->
+    <script>
+        // ==========================================
+        // การเชื่อมต่อ Supabase
+        // ==========================================
+        const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        let allData = [];
+        let currentModalCardId = null;
+
+        // จัดรูปแบบหมายเลขบัตร
+        function formatCardNo(front, back) {
+            let part2 = back || '';
+            if (part2.length > 5) part2 = part2.slice(0, -5) + ',' + part2.slice(-5);
+            return `${front || '-'} ${part2}`;
+        }
+
+        // ดึงข้อมูลทั้งหมดจากตาราง rfid
+        async function fetchAllData() {
+            try {
+                const { data, error } = await supabaseClient
+                    .from('rfid') // ใช้ตาราง rfid 
+                    .select('*')
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+                
+                // แมปข้อมูลให้ตรงกับตาราง rfid ตามชื่อคอลัมน์จริง (front_number, back_number)
+                allData = (data || []).map(c => ({
+                    id: c.id,
+                    house_number: c.house_number,
+                    front_number: c.front_number || c.phone_col || '',      
+                    back_number: c.back_number || c.card_num_col || '',    
+                    holder_name: c.holder_name || 'สมาชิกบ้าน',
+                    status: c.status || 'pending',
+                    img: c.img, 
+                    created_at: c.created_at,
+                    updated_at: c.updated_at
+                }));
+                
+                updateStats();
+                filterTable();
+            } catch (err) {
+                console.error("Error fetching data:", err);
+                alert("เกิดข้อผิดพลาดในการดึงข้อมูล: " + err.message);
+            }
+        }
+
+        // อัปเดตสถิติ
+        function updateStats() {
+            const total = allData.length;
+            const reviewing = allData.filter(c => c.status === 'reviewing').length;
+            const active = allData.filter(c => c.status === 'active').length;
+            const suspended = allData.filter(c => c.status === 'suspended').length;
+
+            document.getElementById('statTotal').textContent = total;
+            document.getElementById('statReviewing').textContent = reviewing;
+            document.getElementById('statActive').textContent = active;
+            document.getElementById('statSuspended').textContent = suspended;
+        }
+
+        // กรองข้อมูลและแสดงผลตาราง
+        function filterTable() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const statusFilter = document.getElementById('statusFilter').value;
+
+            const filteredData = allData.filter(card => {
+                const matchSearch = (card.house_number || '').toLowerCase().includes(searchTerm) || 
+                                    (card.front_number || '').toLowerCase().includes(searchTerm) ||
+                                    (card.back_number || '').toLowerCase().includes(searchTerm);
+                
+                const matchStatus = statusFilter === 'all' || card.status === statusFilter;
+
+                return matchSearch && matchStatus;
+            });
+
+            renderTable(filteredData);
+        }
+
+        function getStatusBadge(status) {
+            const statusMap = {
+                'active': { text: 'ใช้งานปกติ', css: 'bg-green-100 text-green-700 border-green-200' },
+                'pending': { text: 'รอเจ้าบ้านยืนยัน', css: 'bg-amber-100 text-amber-700 border-amber-200' },
+                'reviewing': { text: 'รอแอดมินตรวจสอบ', css: 'bg-blue-100 text-blue-700 border-blue-200 font-bold animate-pulse' },
+                'mismatch': { text: 'ข้อมูลไม่ตรง', css: 'bg-orange-100 text-orange-700 border-orange-200' },
+                'return_check': { text: 'ส่งคืนตรวจสอบ', css: 'bg-yellow-100 text-yellow-700 border-yellow-200' },
+                'not_found': { text: 'ไม่มีในระบบ', css: 'bg-slate-200 text-slate-700 border-slate-300' },
+                'suspended': { text: 'ระงับการใช้งาน', css: 'bg-red-100 text-red-700 border-red-200' }
+            };
+            const s = statusMap[status] || { text: status || 'Unknown', css: 'bg-slate-100 text-slate-600' };
+            return `<span class="px-2.5 py-1 text-xs font-semibold rounded-md border ${s.css}">${s.text}</span>`;
+        }
+
+        function renderTable(dataArray) {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+
+            if (dataArray.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="px-6 py-8 text-center text-slate-500">ไม่พบข้อมูลที่ค้นหา</td></tr>`;
+                lucide.createIcons();
+                return;
+            }
+
+            dataArray.forEach(card => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-50/50 transition-colors group';
+
+                const displayCardNo = formatCardNo(card.front_number, card.back_number);
+                
+                // รูปภาพ
+                let imgHtml = '-';
+                if (card.img) {
+                    imgHtml = `
+                        <button onclick="viewImage('${card.id}')" class="text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg transition-colors" title="ดูรูปภาพ">
+                            <i data-lucide="image" class="w-4 h-4"></i>
+                        </button>
+                    `;
+                }
+
+                tr.innerHTML = `
+                    <td class="px-6 py-4 font-bold text-slate-800">${card.house_number || '-'}</td>
+                    <td class="px-6 py-4 font-mono text-slate-600">${displayCardNo}</td>
+                    <td class="px-6 py-4">
+                        <div class="flex items-center">
+                            <div class="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center mr-2 border border-slate-200">
+                                <i data-lucide="user" class="w-3 h-3 text-slate-400"></i>
+                            </div>
+                            <span class="font-medium text-slate-700">${card.holder_name || '-'}</span>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4">${getStatusBadge(card.status)}</td>
+                    <td class="px-6 py-4 text-center">${imgHtml}</td>
+                    <td class="px-6 py-4 text-center">
+                        <select onchange="updateStatusInline('${card.id}', this.value)" class="text-sm border border-slate-300 rounded-md px-2 py-1.5 text-slate-600 bg-white focus:ring-1 focus:ring-blue-400 outline-none cursor-pointer">
+                            <option value="" disabled selected>เปลี่ยนสถานะ...</option>
+                            <option value="active">✅ อนุมัติ (Active)</option>
+                            <option value="pending">⏳ รีเซ็ตเป็น รอเจ้าบ้าน</option>
+                            <option value="mismatch">❌ ข้อมูลรูปไม่ตรง</option>
+                            <option value="suspended">🚫 ระงับการใช้งาน</option>
+                        </select>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            lucide.createIcons();
+        }
+
+        // ==========================================
+        // การจัดการสถานะและรูปภาพ
+        // ==========================================
+        function viewImage(id) {
+            const card = allData.find(c => c.id === id);
+            if (!card) return;
+
+            currentModalCardId = id;
+            document.getElementById('modalHouseNo').textContent = card.house_number || '-';
+            document.getElementById('modalCardNo').textContent = formatCardNo(card.front_number, card.back_number);
+            
+            const imgEl = document.getElementById('previewModalImage');
+            const noImgEl = document.getElementById('noImageText');
+
+            if (card.img) {
+                imgEl.src = card.img;
+                imgEl.classList.remove('hidden');
+                noImgEl.classList.add('hidden');
+            } else {
+                imgEl.classList.add('hidden');
+                noImgEl.classList.remove('hidden');
+            }
+
+            const modal = document.getElementById('imageModal');
+            const content = document.getElementById('imageModalContent');
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                content.classList.remove('scale-95', 'opacity-0');
+                content.classList.add('scale-100', 'opacity-100');
+            }, 10);
+        }
+
+        function closeImageModal() {
+            const modal = document.getElementById('imageModal');
+            const content = document.getElementById('imageModalContent');
+            content.classList.remove('scale-100', 'opacity-100');
+            content.classList.add('scale-95', 'opacity-0');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                currentModalCardId = null;
+            }, 300);
+        }
+
+        async function updateStatusFromModal(newStatus) {
+            if(!currentModalCardId) return;
+            await updateStatusInDB(currentModalCardId, newStatus);
+            closeImageModal();
+        }
+
+        async function updateStatusInline(id, newStatus) {
+            if(!newStatus) return;
+            if(confirm(`ยืนยันการเปลี่ยนสถานะบัตรเป็น ${newStatus} หรือไม่?`)) {
+                await updateStatusInDB(id, newStatus);
+            } else {
+                filterTable(); // Reset dropdown visually
+            }
+        }
+
+        async function updateStatusInDB(id, status) {
+            try {
+                // บันทึกสถานะกลับไปยังตาราง rfid
+                const { error } = await supabaseClient
+                    .from('rfid')
+                    .update({ status: status })
+                    .eq('id', id);
+
+                if (error) throw error;
+
+                // อัปเดตใน Array ที่แสดงผล
+                const idx = allData.findIndex(c => c.id === id);
+                if(idx !== -1) {
+                    allData[idx].status = status;
+                }
+
+                updateStats();
+                filterTable();
+                
+            } catch (err) {
+                console.error("Update Status Error:", err);
+                alert("อัปเดตสถานะไม่สำเร็จ: " + err.message);
+            }
+        }
+
+        // ==========================================
+        // การ Import / Export CSV
+        // ==========================================
+        function exportCSV() {
+            if (allData.length === 0) {
+                alert("ไม่มีข้อมูลสำหรับส่งออก");
+                return;
+            }
+
+            // ส่งออกข้อมูลในรูปแบบมาตรฐานเพื่อง่ายต่อการนำกลับเข้า
+            const csvData = allData.map(c => ({
+                'house_number': c.house_number || '',
+                'front_number': c.front_number || '',
+                'back_number': c.back_number || '',
+                'holder_name': c.holder_name || '',
+                'status': c.status || '',
+                'updated_at': c.updated_at ? new Date(c.updated_at).toLocaleString('th-TH') : ''
+            }));
+
+            const csv = Papa.unparse(csvData, { quotes: true });
+            
+            // ใส่ BOM เพื่อให้ Excel เปิดภาษาไทยได้ถูกต้อง
+            const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `Keycards_Export_${new Date().toISOString().slice(0,10)}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function handleImportCSV(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            if(!confirm("การนำเข้าข้อมูลจะทำการเพิ่ม/อัปเดตข้อมูลในระบบ คุณต้องการดำเนินการต่อหรือไม่?")) {
+                event.target.value = '';
+                return;
+            }
+
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: async function(results) {
+                    const data = results.data;
+                    let successCount = 0;
+                    let errorCount = 0;
+                    let lastErrorMsg = "";
+
+                    // แสดงหน้าจอ Loading
+                    document.getElementById('loadingText').textContent = "กำลังอัปโหลดข้อมูล " + data.length + " รายการ...";
+                    document.getElementById('loadingScreen').style.display = 'flex';
+
+                    for (let i = 0; i < data.length; i++) {
+                        const row = data[i];
+                        
+                        // ดึงข้อมูล (รองรับทั้งภาษาไทยและอังกฤษ)
+                        const houseNo = row.house_number || row['บ้านเลขที่'] || null;
+                        const frontVal = row.front_number || row.phone_col || row['เลขชุดหน้า'] || '';
+                        const backVal = row.back_number || row.card_num_col || row['เลขชุดหลัง'] || '';
+                        const holderName = row.holder_name || row['ผู้ถือบัตร'] || 'สมาชิกบ้าน';
+                        const status = row.status || row['สถานะ'] || 'pending';
+
+                        // ปรับปรุง: ถ้ายอมให้มีข้อมูลแค่ตัวใดตัวหนึ่งได้ (แต่ถ้าไม่มีเลยทั้งคู่ ให้ข้ามบรรทัดนี้)
+                        if (!frontVal && !backVal) {
+                            errorCount++;
+                            continue;
+                        }
+
+                        // กำหนดโครงสร้างข้อมูลส่งขึ้นตาราง rfid (ใช้คอลัมน์ front_number, back_number ตามตารางจริง)
+                        const payload = {
+                            house_number: houseNo,
+                            front_number: frontVal,     
+                            back_number: backVal,   
+                            status: status,
+                            holder_name: holderName
+                        };
+
+                        try {
+                            // ตรวจสอบว่าบัตรนี้มีในระบบหรือยัง โดยเทียบจากรหัสบัตร
+                            const { data: existing, error: selectErr } = await supabaseClient
+                                .from('rfid')
+                                .select('id')
+                                .eq('front_number', frontVal)
+                                .eq('back_number', backVal)
+                                .limit(1);
+                                
+                            if (selectErr) throw selectErr;
+
+                            if (existing && existing.length > 0) {
+                                // ถ้ามีแล้วให้ Update
+                                const { error: updErr } = await supabaseClient.from('rfid').update(payload).eq('id', existing[0].id);
+                                if (updErr) throw updErr;
+                            } else {
+                                // ถ้ายังไม่มีให้ Insert ใหม่
+                                const { error: insErr } = await supabaseClient.from('rfid').insert([payload]);
+                                if (insErr) throw insErr;
+                            }
+                            successCount++;
+                        } catch (e) {
+                            console.error("Error importing row:", e);
+                            lastErrorMsg = e.message || JSON.stringify(e);
+                            errorCount++;
+                        }
+                    }
+
+                    // ปิดหน้าจอ Loading
+                    document.getElementById('loadingScreen').style.display = 'none';
+
+                    let resultAlert = `นำเข้าข้อมูลสำเร็จ!\nสำเร็จ: ${successCount} รายการ\nไม่สามารถนำเข้าได้: ${errorCount} รายการ`;
+                    if (errorCount > 0 && lastErrorMsg) {
+                        resultAlert += `\n\nข้อผิดพลาดล่าสุด: ${lastErrorMsg}`;
+                    }
+                    
+                    alert(resultAlert);
+                    event.target.value = ''; // รีเซ็ต input
+                    fetchAllData(); // โหลดข้อมูลมาแสดงใหม่
+                },
+                error: function(err) {
+                    alert("ไม่สามารถอ่านไฟล์ CSV ได้");
+                    console.error(err);
+                }
+            });
+        }
+
+        // เริ่มต้นการทำงานเมื่อเปิดหน้าเว็บ
+        window.onload = () => {
+            lucide.createIcons();
+            fetchAllData();
+        };
+    </script>
+</body>
+</html>
