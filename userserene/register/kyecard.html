@@ -437,57 +437,47 @@
         // ดึงข้อมูลจากฐานข้อมูล
         // ==========================================
         async function fetchHouseDataFromSupabase(lineUid) {
-            // ตามข้อมูลล่าสุด ต้องตรวจสอบจากตาราง line_users ก่อนเพื่อหาบ้านเลขที่
+            // 1. ค้นหาข้อมูลผู้ใช้จากตาราง userhome ตามที่ถูกต้อง
             const { data: userRecords, error: userError } = await supabaseClient
-                .from('line_users') 
-                .select('house_number')
-                .eq('line_uid', lineUid)
+                .from('userhome') 
+                .select('*')
+                .eq('uid', lineUid)
                 .limit(1);
 
-            if (userError) throw new Error("ฐานข้อมูล line_users: " + userError.message);
+            if (userError) throw new Error("ฐานข้อมูล userhome: " + userError.message);
 
             const userRecord = userRecords && userRecords.length > 0 ? userRecords[0] : null;
 
-            if (!userRecord || !userRecord.house_number) throw "USER_NOT_FOUND";
+            if (!userRecord || !userRecord.house_no) throw "USER_NOT_FOUND";
 
-            const houseNo = userRecord.house_number.trim();
+            const houseNo = userRecord.house_no.trim();
 
-            // ดึงข้อมูลบ้านจากตาราง houses
-            const { data: houseRecords, error: houseError } = await supabaseClient
-                .from('houses')
-                .select('*')
-                .eq('house_number', houseNo)
-                .limit(1);
-
-            if (houseError) throw new Error("ฐานข้อมูล houses: " + houseError.message);
-            const houseInfo = houseRecords && houseRecords.length > 0 ? houseRecords[0] : { owner_name: '-', phone: '-', members_count: 1 };
-
-            // ดึงข้อมูลคีย์การ์ดจากตาราง keycards
+            // 2. ดึงข้อมูลคีย์การ์ดจากตาราง rfid 
             const { data: cardsRecord, error: cardsError } = await supabaseClient
-                .from('keycards') 
+                .from('rfid') 
                 .select('*')
                 .eq('house_number', houseNo)
                 .order('created_at', { ascending: false });
 
-            if (cardsError) throw new Error("ฐานข้อมูล keycards: " + cardsError.message);
+            if (cardsError) throw new Error("ฐานข้อมูล rfid: " + cardsError.message);
 
             const houseData = {
                 house_number: houseNo,
-                owner_name: houseInfo.owner_name || '-',
-                phone: houseInfo.phone || '-',
-                members_count: houseInfo.members_count || 1
+                owner_name: userRecord.fullname || '-',
+                phone: userRecord.phone || '-',
+                members_count: userRecord.member_count || 1
             };
 
             const mappedCards = (cardsRecord || []).map(c => {
                 return {
                     id: c.id,          
-                    front_number: c.phone_col,      
-                    back_number: c.card_num_col,      
+                    front_number: c.front_number,      
+                    back_number: c.back_number,      
                     holder_name: c.holder_name || 'สมาชิกในบ้าน', 
                     status: c.status || 'pending',
                     img: c.img,
-                    start_date: c.start_date, // ถ้ามีใน schema
-                    expire_date: c.expire_date // ถ้ามีใน schema
+                    start_date: c.start_date, 
+                    expire_date: c.expire_date 
                 };
             });
 
@@ -857,9 +847,9 @@
 
                 const selectedRole = document.getElementById('selectCardHolder').value;
 
-                // อัปเดตตาราง keycards
+                // อัปเดตตาราง rfid
                 const { error: updateError } = await supabaseClient
-                    .from('keycards')
+                    .from('rfid')
                     .update({ 
                         status: 'reviewing',
                         holder_name: selectedRole,
@@ -890,7 +880,7 @@
         }
 
         // ==========================================
-        // ระบบ Update ข้อมูลบ้าน (houses)
+        // ระบบ Update ข้อมูลบ้าน (userhome)
         // ==========================================
         function openEditInfoModal() {
             document.getElementById('inputOwnerName').value = currentHouseData.owner_name;
@@ -913,15 +903,15 @@
             const newCount = document.getElementById('inputMembers').value || 1;
 
             try {
-                // อัปเดตตาราง houses
+                // อัปเดตตาราง userhome
                 const { error } = await supabaseClient
-                    .from('houses')
+                    .from('userhome')
                     .update({
-                        owner_name: newName,
+                        fullname: newName,
                         phone: newPhone,
-                        members_count: newCount
+                        member_count: newCount
                     })
-                    .eq('house_number', currentHouseData.house_number);
+                    .eq('uid', loggedInLineUid);
 
                 if (error) {
                     console.error("Save House Info DB Error: ", error);
