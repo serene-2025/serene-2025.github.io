@@ -53,6 +53,14 @@
             body { background: white; -webkit-print-color-adjust: exact; }
             .print-container { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
         }
+        /* Custom Input Autofill fix */
+        input:-webkit-autofill {
+            -webkit-box-shadow: 0 0 0 30px white inset !important;
+        }
+        .dark input:-webkit-autofill {
+            -webkit-box-shadow: 0 0 0 30px #1e293b inset !important;
+            -webkit-text-fill-color: white !important;
+        }
     </style>
 </head>
 <body class="bg-slate-50 dark:bg-slate-900 transition-colors duration-300">
@@ -67,7 +75,7 @@
             Eye, EyeOff, FileText, Receipt, Calendar, ChevronRight, Image as ImageIcon, 
             ExternalLink, UserCheck, Banknote, MessageSquare, Hash, Fingerprint, Type, 
             CalendarCheck, BadgeCheck, Bell, ZoomIn, RefreshCw, Loader2, Sparkles, ThumbsUp, Printer, ArrowUp,
-            LayoutDashboard, BarChart3, Filter, CalendarCheck2, Info, MapPin, Hourglass, Settings, Lock, Save, Globe, Database, Download, Moon, Sun, ArrowRightLeft
+            LayoutDashboard, BarChart3, Filter, CalendarCheck2, Info, MapPin, Hourglass, Settings, Lock, Save, Globe, Database, Download, Moon, Sun, ArrowRightLeft, LogOut, ChevronDown, ChevronUp
         } from 'lucide-react';
 
         // --- Configuration ---
@@ -75,7 +83,6 @@
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
         const TELEGRAM_TOKEN = '7708637309:AAHU2swP8U67XVWITdjsxjQoqiXIL9KbBJs'; 
         const TELEGRAM_CHAT_ID = '7585120244';
-        const ADMIN_PIN = '9999'; 
 
         // --- Helpers ---
         const monthMap = { 'มกราคม': 'jan', 'กุมภาพันธ์': 'feb', 'มีนาคม': 'mar', 'เมษายน': 'apr', 'พฤษภาคม': 'may', 'มิถุนายน': 'jun', 'กรกฎาคม': 'jul', 'สิงหาคม': 'aug', 'กันยายน': 'sep', 'ตุลาคม': 'oct', 'พฤศจิกายน': 'nov', 'ธันวาคม': 'dec' };
@@ -201,11 +208,11 @@
             );
         };
 
-        const AdminPanel = ({ config, onSave, onCancel, isSaving, onUpdateStatus, onGlobalSync }) => {
+        const AdminPanel = ({ config, onSave, onCancel, isSaving, onUpdateStatus, onGlobalSync, syncProgress, supabase, isAdmin, setIsAdmin, onLogout }) => {
             const [localConfig, setLocalConfig] = useState(config);
             const [pin, setPin] = useState('');
-            const [isAuthenticated, setIsAuthenticated] = useState(false);
             const [error, setError] = useState('');
+            const [isCheckingPin, setIsCheckingPin] = useState(false);
             const [allYears, setAllYears] = useState([]);
             
             // State for status update
@@ -223,13 +230,32 @@
                 setUpdateTargetMonth(months[new Date().getMonth()].key);
             }, []);
 
-            const handleLogin = (e) => {
+            const handleLogin = async (e) => {
                 e.preventDefault();
-                if (pin === ADMIN_PIN) {
-                    setIsAuthenticated(true);
-                    setError('');
-                } else {
-                    setError('รหัสผ่านไม่ถูกต้อง');
+                if (!supabase) return;
+                setIsCheckingPin(true);
+                setError('');
+                
+                try {
+                    // ดึงรหัสผ่านจากฐานข้อมูล ตาราง app_settings
+                    const { data, error: fetchError } = await supabase
+                        .from('app_settings')
+                        .select('admin_pin')
+                        .eq('id', 1)
+                        .single();
+                        
+                    if (fetchError) throw fetchError;
+                    
+                    if (data && data.admin_pin === pin) {
+                        setIsAdmin(true);
+                    } else {
+                        setError('รหัสผ่านไม่ถูกต้อง');
+                    }
+                } catch (err) {
+                    console.error('Login Error:', err);
+                    setError('ไม่สามารถตรวจสอบรหัสผ่านได้ กรุณาลองใหม่');
+                } finally {
+                    setIsCheckingPin(false);
                 }
             };
 
@@ -241,7 +267,7 @@
                 setLocalConfig({ ...localConfig, manualYears: newManualYears });
             };
 
-            if (!isAuthenticated) {
+            if (!isAdmin) {
                 return (
                     <div className="min-h-[60vh] flex items-center justify-center px-4 animate-fade-up">
                         <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-8 w-full max-w-sm border border-slate-100 dark:border-slate-700">
@@ -260,11 +286,14 @@
                                     placeholder="รหัสผ่าน (PIN)"
                                     className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-center text-lg tracking-widest"
                                     autoFocus
+                                    disabled={isCheckingPin}
                                 />
                                 {error && <p className="text-red-500 text-xs text-center mb-4">{error}</p>}
                                 <div className="flex gap-3">
-                                    <button type="button" onClick={onCancel} className="flex-1 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">ยกเลิก</button>
-                                    <button type="submit" className="flex-1 py-2.5 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition-colors">เข้าสู่ระบบ</button>
+                                    <button type="button" onClick={onCancel} disabled={isCheckingPin} className="flex-1 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors disabled:opacity-50">ยกเลิก</button>
+                                    <button type="submit" disabled={isCheckingPin} className="flex-1 py-2.5 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50 flex justify-center items-center gap-2">
+                                        {isCheckingPin ? <Loader2 size={18} className="animate-spin" /> : 'เข้าสู่ระบบ'}
+                                    </button>
                                 </div>
                             </form>
                         </div>
@@ -277,7 +306,12 @@
                     <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-100 dark:border-slate-700 overflow-hidden mb-6">
                         <div className="bg-slate-50 dark:bg-slate-700 px-6 py-4 border-b border-slate-100 dark:border-slate-600 flex justify-between items-center">
                             <h3 className="font-bold text-lg text-slate-800 dark:text-white flex items-center gap-2"><Settings size={20} /> ตั้งค่าการแสดงผล</h3>
-                            <button onClick={onCancel} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={24} /></button>
+                            <div className="flex items-center gap-3">
+                                <button onClick={onLogout} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/40 dark:text-red-400 dark:hover:bg-red-900/60 rounded-lg text-sm font-bold transition-colors">
+                                    <LogOut size={16} /> ออกจากระบบ
+                                </button>
+                                <button onClick={onCancel} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={24} /></button>
+                            </div>
                         </div>
                         <div className="p-6">
                             <div className="mb-6">
@@ -363,20 +397,42 @@
                     {/* Section: Global Sync (Sync All Pending) */}
                     <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-100 dark:border-slate-700 overflow-hidden">
                          <div className="bg-slate-50 dark:bg-slate-700 px-6 py-4 border-b border-slate-100 dark:border-slate-600">
-                            <h3 className="font-bold text-lg text-slate-800 dark:text-white flex items-center gap-2"><ArrowRightLeft size={20} /> ดึงข้อมูลการชำระเงิน (Sync Data)</h3>
-                            <p className="text-slate-500 dark:text-slate-400 text-xs mt-1">อัพเดทสถานะบ้านทุกหลัง โดยอ้างอิงจากประวัติการโอน (common_fees) ทั้งหมด</p>
+                            <h3 className="font-bold text-lg text-slate-800 dark:text-white flex items-center gap-2"><ArrowRightLeft size={20} /> ดึงข้อมูลการชำระเงิน (Sync Data สมบูรณ์แบบ)</h3>
+                            <p className="text-slate-500 dark:text-slate-400 text-xs mt-1">ตรวจสอบประวัติทั้งหมด หากพบข้อมูลถูกลบ ระบบจะปรับสถานะกลับเป็น 'ยังไม่จ่าย' อัตโนมัติ</p>
                         </div>
-                        <div className="p-6 flex items-center justify-between">
-                            <div className="text-sm text-slate-600 dark:text-slate-400">
-                                กดปุ่มนี้เมื่อต้องการให้ข้อมูลในหน้าหลักตรงกับประวัติการโอนล่าสุด
+                        <div className="p-6">
+                            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                                <div className="text-sm text-slate-600 dark:text-slate-400">
+                                    กดปุ่มนี้เมื่อต้องการให้ข้อมูลในหน้าหลักตรงกับประวัติการโอนล่าสุด 100% (รวมถึงกรณีที่มีการลบประวัติ)
+                                </div>
+                                <button 
+                                    onClick={() => onGlobalSync(false)}
+                                    disabled={isSaving || syncProgress?.isSyncing} 
+                                    className="w-full md:w-auto px-6 py-2.5 rounded-lg bg-green-600 text-white font-bold hover:bg-green-700 shadow-md transition-colors flex items-center justify-center gap-2 disabled:opacity-50 shrink-0"
+                                >
+                                    {(isSaving || syncProgress?.isSyncing) ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />} 
+                                    {syncProgress?.isSyncing ? 'กำลังประมวลผล...' : 'เริ่ม Sync'}
+                                </button>
                             </div>
-                            <button 
-                                onClick={onGlobalSync}
-                                disabled={isSaving} 
-                                className="px-6 py-2.5 rounded-lg bg-green-600 text-white font-bold hover:bg-green-700 shadow-md transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                            >
-                                {isSaving ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />} เริ่ม Sync
-                            </button>
+
+                            {/* Progress Bar */}
+                            {syncProgress?.isSyncing && (
+                                <div className="mt-6 bg-slate-50 dark:bg-slate-700/50 p-4 rounded-xl border border-slate-200 dark:border-slate-600 animate-fade-up">
+                                    <div className="flex justify-between text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">
+                                        <span className="flex items-center gap-2">
+                                            <Loader2 size={14} className="animate-spin text-green-600" />
+                                            {syncProgress.message}
+                                        </span>
+                                        <span className="text-green-600 dark:text-green-400">{syncProgress.percent}% ({syncProgress.current}/{syncProgress.total})</span>
+                                    </div>
+                                    <div className="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-2.5 overflow-hidden">
+                                        <div 
+                                            className="bg-gradient-to-r from-green-500 to-emerald-600 h-2.5 rounded-full transition-all duration-300 ease-out" 
+                                            style={{ width: `${syncProgress.percent}%` }}
+                                        ></div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -384,7 +440,6 @@
         };
 
         const Dashboard = ({ supabase, appConfig }) => {
-            // ... (Dashboard Logic - same as before) ...
             const [rawData, setRawData] = useState([]);
             const [loading, setLoading] = useState(true);
             const [yearFilter, setYearFilter] = useState('all');
@@ -664,12 +719,54 @@
             );
         };
 
-        const HomeContent = ({ payments, loading, error, supabase, openDetailModal, handleSyncStatus, handlePrint, toggleNameVisibility, visibleNames, syncingId, allPendingFees }) => {
+        const HomeContent = ({ payments, loading, error, supabase, openDetailModal, handleSyncStatus, handlePrint, toggleNameVisibility, visibleNames, syncingId, allPendingFees, isAdmin, openQuickEditModal }) => {
+            const [showCompleted, setShowCompleted] = useState(false);
+
+            // รีเซ็ตการซ่อนเมื่อมีการค้นหาใหม่
+            useEffect(() => {
+                setShowCompleted(false);
+            }, [payments]);
+
+            // คำนวณสรุป และคัดแยกการ์ดที่ยังไม่เสร็จ (Active) กับการ์ดที่ชำระครบแล้ว (Completed)
+            // ย้ายมาด้านบนสุดก่อนเกิด Early Returns
+            const { summary, activeCards, completedCards } = useMemo(() => {
+                let totalPaid = 0, totalOverdue = 0, totalWaiting = 0, totalFuture = 0;
+                const active = [];
+                const completed = [];
+                
+                const validPayments = Array.isArray(payments) ? payments : [];
+
+                validPayments.forEach(item => {
+                    const fin = calculateFinancials(item);
+                    totalPaid += fin.paid;
+                    totalOverdue += fin.overdue;
+                    totalWaiting += fin.waiting;
+                    totalFuture += fin.future;
+
+                    // เงื่อนไขการชำระครบ: ไม่มียอดค้างชำระ (overdue) และไม่มียอดรอตรวจสอบ (waiting)
+                    if (fin.overdueMonths === 0 && fin.waitingMonths === 0) {
+                        completed.push({ item, fin });
+                    } else {
+                        active.push({ item, fin });
+                    }
+                });
+
+                return {
+                    summary: {
+                        paid: totalPaid,
+                        overdue: totalOverdue,
+                        waiting: totalWaiting + totalFuture // เอารอข้อมูลรวมไปกับรอตรวจสอบเพื่อสรุปง่ายๆ
+                    },
+                    activeCards: active,
+                    completedCards: completed
+                };
+            }, [payments]);
+
             if (!supabase) return <div className="text-center py-20 no-print"><div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-white/30 border-t-white mb-4"></div><p className="text-white/80 animate-pulse">กำลังเชื่อมต่อระบบฐานข้อมูล...</p></div>;
             if (loading) return <div className="text-center py-20 flex flex-col items-center no-print"><div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-white/30 border-t-white mb-4"></div><p className="text-white/80 animate-pulse font-medium">กำลังตรวจสอบและอัปเดตข้อมูลล่าสุด...</p></div>;
             if (error) return <div className="max-w-md mx-auto bg-red-500/10 backdrop-blur border border-red-500/30 p-4 rounded-xl text-center text-white no-print"><AlertCircle className="mx-auto mb-2 text-red-300" size={32} /><p>{error}</p></div>;
             
-            if (payments.length === 0) {
+            if (!payments || payments.length === 0) {
                  return (
                     <div className="py-12 px-4 no-print animate-fade-up">
                         <div className="max-w-4xl mx-auto bg-white/10 dark:bg-slate-800/50 backdrop-blur-lg rounded-3xl border border-white/20 p-8 md:p-12 shadow-2xl">
@@ -690,102 +787,163 @@
                 );
             }
 
-            return (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {payments.map((item, index) => {
-                        const financials = calculateFinancials(item);
-                        const headerStyle = getHeaderStyle(financials);
-                        const itemKey = getItemKey(item);
-                        const isNameVisible = visibleNames[itemKey];
-                        const isSyncing = syncingId === itemKey;
-                        
-                        // --- Duplicate Logic Here ---
-                        const housePendingFees = allPendingFees.filter(f => (f.house_number || '').trim() === (item.house_numbe || '').trim());
-                        const pendingTotal = housePendingFees.reduce((sum, f) => sum + (f.amount || 0), 0);
-                        
-                        // Count duplicates (month + year)
-                        const feeCounts = housePendingFees.reduce((acc, fee) => {
-                            const key = `${fee.month} ${fee.year}`;
-                            acc[key] = (acc[key] || 0) + 1;
-                            return acc;
-                        }, {});
+            // Helper function สำหรับวาดการ์ด เพื่อไม่ให้โค้ดซ้ำซ้อน
+            const renderHouseCard = (dataObj, idx) => {
+                const { item, fin: financials } = dataObj;
+                const headerStyle = getHeaderStyle(financials);
+                const itemKey = getItemKey(item);
+                const isNameVisible = visibleNames[itemKey];
+                const isSyncing = syncingId === itemKey;
+                
+                const housePendingFees = allPendingFees.filter(f => (f.house_number || '').trim() === (item.house_numbe || '').trim());
+                const pendingTotal = housePendingFees.reduce((sum, f) => sum + (f.amount || 0), 0);
+                
+                const feeCounts = housePendingFees.reduce((acc, fee) => {
+                    const key = `${fee.month} ${fee.year}`;
+                    acc[key] = (acc[key] || 0) + 1;
+                    return acc;
+                }, {});
 
-                        const yearBadgeStyle = getYearBadgeStyle(item.year);
+                const yearBadgeStyle = getYearBadgeStyle(item.year);
 
-                        return (
-                            <div key={itemKey} className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl overflow-hidden hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 border border-slate-100 dark:border-slate-700 flex flex-col print-container animate-fade-up" style={{ animationDelay: `${index * 100}ms` }}>
-                                <div className={`${headerStyle.bg} px-5 py-4 border-b ${headerStyle.border} flex justify-between items-start transition-colors duration-300`}>
-                                    <div><h3 className={`text-2xl font-bold flex items-center gap-2 ${headerStyle.text}`}><Home className={headerStyle.text} size={24} /> {item.house_numbe}</h3>
-                                    {/* --- Updated Year Badge --- */}
-                                    <div className={`text-base mt-2 font-bold px-4 py-1.5 rounded-full w-fit backdrop-blur-md border border-white/30 shadow-md ${yearBadgeStyle}`}>
-                                        ปี {item.year}
+                return (
+                    <div key={itemKey} className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl overflow-hidden hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 border border-slate-100 dark:border-slate-700 flex flex-col print-container animate-fade-up" style={{ animationDelay: `${idx * 100}ms` }}>
+                        <div className={`${headerStyle.bg} px-5 py-4 border-b ${headerStyle.border} flex justify-between items-start transition-colors duration-300`}>
+                            <div><h3 className={`text-2xl font-bold flex items-center gap-2 ${headerStyle.text}`}><Home className={headerStyle.text} size={24} /> {item.house_numbe}</h3>
+                            <div className={`text-base mt-2 font-bold px-4 py-1.5 rounded-full w-fit backdrop-blur-md border border-white/30 shadow-md ${yearBadgeStyle}`}>
+                                ปี {item.year}
+                            </div>
+                            </div>
+                            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg whitespace-nowrap bg-white text-slate-800`}>{React.cloneElement(headerStyle.icon, { className: 'text-slate-700' })} <span className="text-slate-700">{headerStyle.statusText}</span></div>
+                        </div>
+                        <div className="p-5 bg-white dark:bg-slate-800 flex-1 flex flex-col">
+                            {housePendingFees.length > 0 && (
+                                <div className="mb-5 border border-orange-200 dark:border-orange-800 rounded-xl overflow-hidden shadow-sm">
+                                    <div className="bg-orange-50 dark:bg-orange-900/30 px-4 py-3 border-b border-orange-100 dark:border-orange-800 flex justify-between items-center cursor-pointer hover:bg-orange-100 dark:hover:bg-orange-900/50 transition-colors" onClick={() => openDetailModal(item)}>
+                                        <h5 className="text-sm font-bold text-orange-800 dark:text-orange-300 flex items-center gap-2">
+                                            <Bell size={18} className="animate-pulse" /> แจ้งโอนใหม่ ({housePendingFees.length})
+                                        </h5>
+                                        <span className="text-xs font-bold text-orange-600 dark:text-orange-400 bg-white/50 dark:bg-black/20 px-2 py-1 rounded-lg">รวม ฿{pendingTotal.toLocaleString()}</span>
                                     </div>
-                                    </div>
-                                    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg whitespace-nowrap bg-white text-slate-800`}>{React.cloneElement(headerStyle.icon, { className: 'text-slate-700' })} <span className="text-slate-700">{headerStyle.statusText}</span></div>
-                                </div>
-                                <div className="p-5 bg-white dark:bg-slate-800 flex-1 flex flex-col">
-                                    {housePendingFees.length > 0 && (
-                                        <div className="mb-5 border border-orange-200 dark:border-orange-800 rounded-xl overflow-hidden shadow-sm">
-                                            <div className="bg-orange-50 dark:bg-orange-900/30 px-4 py-3 border-b border-orange-100 dark:border-orange-800 flex justify-between items-center cursor-pointer hover:bg-orange-100 dark:hover:bg-orange-900/50 transition-colors" onClick={() => openDetailModal(item)}>
-                                                <h5 className="text-sm font-bold text-orange-800 dark:text-orange-300 flex items-center gap-2">
-                                                    <Bell size={18} className="animate-pulse" /> แจ้งโอนใหม่ ({housePendingFees.length})
-                                                </h5>
-                                                <span className="text-xs font-bold text-orange-600 dark:text-orange-400 bg-white/50 dark:bg-black/20 px-2 py-1 rounded-lg">รวม ฿{pendingTotal.toLocaleString()}</span>
-                                            </div>
-                                            <div className="bg-white dark:bg-slate-800 divide-y divide-orange-50 dark:divide-slate-700 max-h-40 overflow-y-auto custom-scrollbar">
-                                                {housePendingFees.map((fee, idx) => {
-                                                    const key = `${fee.month} ${fee.year}`;
-                                                    const isDuplicate = feeCounts[key] > 1;
-                                                    return (
-                                                        <div key={idx} onClick={() => openDetailModal(item)} className="p-3 flex justify-between items-center hover:bg-orange-50 dark:hover:bg-slate-700 cursor-pointer transition-colors text-xs group">
-                                                            <div className="flex flex-col">
-                                                                <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                                                                    {fee.month} {fee.year}
-                                                                    {isDuplicate && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-extrabold border border-red-200">ซ้ำ</span>}
-                                                                </span>
-                                                                <span className="text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-1"><Clock size={10}/> {new Date(fee.reported_at).toLocaleDateString('th-TH', {day: '2-digit', month:'short', hour:'2-digit', minute:'2-digit'})}</span>
-                                                            </div>
-                                                            <span className="font-bold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded border border-green-100 dark:border-green-800 group-hover:bg-white dark:group-hover:bg-slate-600 transition-colors">฿{fee.amount.toLocaleString()}</span>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    )}
-                                    <SummaryChart financials={financials} />
-                                    <div className="mb-5 pb-4 border-b border-slate-100 dark:border-slate-700 space-y-2">
-                                        <div className="flex items-center justify-between gap-2 font-bold text-lg text-slate-800 dark:text-white"><div className="flex items-center gap-2"><User size={18} className="text-blue-500" /><span>{isNameVisible ? item.owner_name : maskName(item.owner_name)}</span></div><button onClick={() => toggleNameVisibility(itemKey)} className="text-slate-400 hover:text-blue-600 dark:text-slate-500 dark:hover:text-blue-400 transition-colors p-1 rounded-full hover:bg-blue-50 dark:hover:bg-slate-700 no-print" title={isNameVisible ? "ซ่อนชื่อ" : "แสดงชื่อเต็ม"}>{isNameVisible ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
-                                        <div className="grid grid-cols-1 gap-1.5 text-sm">
-                                            <div className="flex justify-between items-center"><span className="text-slate-500 dark:text-slate-400">🏠 บ้านเลขที่ :</span><span className="font-medium text-slate-700 dark:text-slate-300">{item.house_numbe}</span></div>
-                                            <div className="flex justify-between items-center"><span className="text-slate-500 dark:text-slate-400">📍 ซอย :</span><span className="font-medium text-slate-700 dark:text-slate-300">{item.soi || '-'}</span></div>
-                                            <div className="flex justify-between items-center"><span className="text-slate-500 dark:text-slate-400">📅 วันโอน :</span><span className="font-medium text-slate-700 dark:text-slate-300">{item.transfer_date || '-'}</span></div>
-                                            <div className="flex justify-between items-center"><span className="text-slate-500 dark:text-slate-400">📊 สถานะเริ่มต้น :</span><span className={`font-medium text-slate-700 dark:text-slate-300`}>{item.status || '-'}</span></div>
-                                        </div>
-                                    </div>
-                                    <div className="flex gap-2 mb-4 no-print"><button onClick={() => openDetailModal(item)} className="flex-1 py-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 font-bold text-sm flex items-center justify-center gap-2 transition-colors duration-200 border border-indigo-100 dark:border-indigo-800 shadow-sm"><FileText size={18} /><span>ดูรายละเอียดการแจ้งโอน</span></button><button onClick={handlePrint} className="flex-none px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 font-bold text-sm flex items-center justify-center gap-2 transition-colors border border-slate-200 dark:border-slate-600" title="พิมพ์รายงาน"><Printer size={18} /></button></div>
-                                    <div className="mb-3 font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
-                                        <div className="flex items-center gap-2"><Clock size={16} className="text-blue-500" /> สถานะรายเดือน ({item.year})</div>
-                                        {/* Button removed */}
-                                    </div>
-                                    <div className="grid grid-cols-4 gap-2 mb-4">
-                                        {months.map((month) => {
-                                            const status = item[month.key];
-                                            const colorClass = getStatusColor(status);
-                                            return (<div key={month.key} className={`flex flex-col items-center justify-center p-2 rounded-lg border ${colorClass} min-h-[50px]`}><span className="text-[10px] font-bold uppercase opacity-60 mb-1">{month.label}</span><span className="text-[11px] font-semibold text-center leading-tight break-words w-full">{status || '-'}</span></div>);
+                                    <div className="bg-white dark:bg-slate-800 divide-y divide-orange-50 dark:divide-slate-700 max-h-40 overflow-y-auto custom-scrollbar">
+                                        {housePendingFees.map((fee, feeIdx) => {
+                                            const key = `${fee.month} ${fee.year}`;
+                                            const isDuplicate = feeCounts[key] > 1;
+                                            return (
+                                                <div key={feeIdx} onClick={() => openDetailModal(item)} className="p-3 flex justify-between items-center hover:bg-orange-50 dark:hover:bg-slate-700 cursor-pointer transition-colors text-xs group">
+                                                    <div className="flex flex-col">
+                                                        <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                                                            {fee.month} {fee.year}
+                                                            {isDuplicate && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-extrabold border border-red-200">ซ้ำ</span>}
+                                                        </span>
+                                                        <span className="text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-1"><Clock size={10}/> {new Date(fee.reported_at).toLocaleDateString('th-TH', {day: '2-digit', month:'short', hour:'2-digit', minute:'2-digit'})}</span>
+                                                    </div>
+                                                    <span className="font-bold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded border border-green-100 dark:border-green-800 group-hover:bg-white dark:group-hover:bg-slate-600 transition-colors">฿{fee.amount.toLocaleString()}</span>
+                                                </div>
+                                            );
                                         })}
                                     </div>
-                                    <div className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-700 mb-0 mt-auto">
-                                        <div className="flex items-center gap-1 text-xs font-bold text-slate-400 dark:text-slate-500 mb-2"><Coins size={12} />สรุปยอดเงิน (300 บ./เดือน)</div>
-                                        <div className="flex justify-between items-center text-xs">
-                                            <div className="flex flex-col items-center flex-1 border-r border-slate-200 dark:border-slate-600"><span className="text-green-600 dark:text-green-400 font-bold text-sm">฿{financials.paid.toLocaleString()}</span><span className="text-slate-400 dark:text-slate-500">จ่ายแล้ว</span></div>
-                                            <div className="flex flex-col items-center flex-1 border-r border-slate-200 dark:border-slate-600"><span className="text-red-500 dark:text-red-400 font-bold text-sm">฿{financials.overdue.toLocaleString()}</span><span className="text-slate-400 dark:text-slate-500">ค้างชำระ</span></div>
-                                            <div className="flex flex-col items-center flex-1"><span className="text-yellow-600 dark:text-yellow-400 font-bold text-sm">฿{financials.future.toLocaleString()}</span><span className="text-slate-400 dark:text-slate-500">รอข้อมูล</span></div>
-                                        </div>
-                                    </div>
+                                </div>
+                            )}
+                            <SummaryChart financials={financials} />
+                            <div className="mb-5 pb-4 border-b border-slate-100 dark:border-slate-700 space-y-2">
+                                <div className="flex items-center justify-between gap-2 font-bold text-lg text-slate-800 dark:text-white"><div className="flex items-center gap-2"><User size={18} className="text-blue-500" /><span>{isNameVisible ? item.owner_name : maskName(item.owner_name)}</span></div><button onClick={() => toggleNameVisibility(itemKey)} className="text-slate-400 hover:text-blue-600 dark:text-slate-500 dark:hover:text-blue-400 transition-colors p-1 rounded-full hover:bg-blue-50 dark:hover:bg-slate-700 no-print" title={isNameVisible ? "ซ่อนชื่อ" : "แสดงชื่อเต็ม"}>{isNameVisible ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
+                                <div className="grid grid-cols-1 gap-1.5 text-sm">
+                                    <div className="flex justify-between items-center"><span className="text-slate-500 dark:text-slate-400">🏠 บ้านเลขที่ :</span><span className="font-medium text-slate-700 dark:text-slate-300">{item.house_numbe}</span></div>
+                                    <div className="flex justify-between items-center"><span className="text-slate-500 dark:text-slate-400">📍 ซอย :</span><span className="font-medium text-slate-700 dark:text-slate-300">{item.soi || '-'}</span></div>
+                                    <div className="flex justify-between items-center"><span className="text-slate-500 dark:text-slate-400">📅 วันโอน :</span><span className="font-medium text-slate-700 dark:text-slate-300">{item.transfer_date || '-'}</span></div>
+                                    <div className="flex justify-between items-center"><span className="text-slate-500 dark:text-slate-400">📊 สถานะเริ่มต้น :</span><span className={`font-medium text-slate-700 dark:text-slate-300`}>{item.status || '-'}</span></div>
                                 </div>
                             </div>
-                        );
-                    })}
+                            <div className="flex gap-2 mb-4 no-print"><button onClick={() => openDetailModal(item)} className="flex-1 py-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 font-bold text-sm flex items-center justify-center gap-2 transition-colors duration-200 border border-indigo-100 dark:border-indigo-800 shadow-sm"><FileText size={18} /><span>ดูรายละเอียดการแจ้งโอน</span></button><button onClick={handlePrint} className="flex-none px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 font-bold text-sm flex items-center justify-center gap-2 transition-colors border border-slate-200 dark:border-slate-600" title="พิมพ์รายงาน"><Printer size={18} /></button></div>
+                            <div className="mb-3 font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                                <div className="flex items-center gap-2"><Clock size={16} className="text-blue-500" /> สถานะรายเดือน ({item.year})</div>
+                            </div>
+                            <div className="grid grid-cols-4 gap-2 mb-4">
+                                {months.map((month) => {
+                                    const status = item[month.key];
+                                    const colorClass = getStatusColor(status);
+                                    return (
+                                        <div 
+                                            key={month.key} 
+                                            onClick={() => isAdmin ? openQuickEditModal(item, month.key, status) : null}
+                                            className={`flex flex-col items-center justify-center p-2 rounded-lg border ${colorClass} min-h-[50px] ${isAdmin ? 'cursor-pointer hover:ring-2 hover:ring-indigo-400 hover:-translate-y-1 transition-all shadow-sm' : ''}`}
+                                            title={isAdmin ? "คลิกเพื่อแก้ไขสถานะ" : ""}
+                                        >
+                                            <span className="text-[10px] font-bold uppercase opacity-60 mb-1">{month.label}</span>
+                                            <span className="text-[11px] font-semibold text-center leading-tight break-words w-full">{status || '-'}</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-700 mb-0 mt-auto">
+                                <div className="flex items-center gap-1 text-xs font-bold text-slate-400 dark:text-slate-500 mb-2"><Coins size={12} />สรุปยอดเงิน (300 บ./เดือน)</div>
+                                <div className="flex justify-between items-center text-xs">
+                                    <div className="flex flex-col items-center flex-1 border-r border-slate-200 dark:border-slate-600"><span className="text-green-600 dark:text-green-400 font-bold text-sm">฿{financials.paid.toLocaleString()}</span><span className="text-slate-400 dark:text-slate-500">จ่ายแล้ว</span></div>
+                                    <div className="flex flex-col items-center flex-1 border-r border-slate-200 dark:border-slate-600"><span className="text-red-500 dark:text-red-400 font-bold text-sm">฿{financials.overdue.toLocaleString()}</span><span className="text-slate-400 dark:text-slate-500">ค้างชำระ</span></div>
+                                    <div className="flex flex-col items-center flex-1"><span className="text-yellow-600 dark:text-yellow-400 font-bold text-sm">฿{financials.future.toLocaleString()}</span><span className="text-slate-400 dark:text-slate-500">รอข้อมูล</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="animate-fade-up">
+                    {/* บล็อกสรุปข้อมูลเวลาค้นหา */}
+                    <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 md:p-6 mb-8 border border-white/20 shadow-lg no-print">
+                        <h3 className="text-white font-bold mb-4 flex items-center gap-2"><BarChart3 size={20}/> สรุปยอดรวมผลการค้นหา ({payments.length} รายการ)</h3>
+                        <div className="grid grid-cols-3 gap-3 md:gap-6">
+                            <div className="bg-white/90 dark:bg-slate-800/90 rounded-xl p-3 md:p-4 text-center shadow-md">
+                                <span className="text-xs md:text-sm font-bold text-green-600 dark:text-green-400 block mb-1">✅ จัดเก็บแล้ว</span>
+                                <span className="text-lg md:text-2xl font-extrabold text-slate-800 dark:text-white">฿{summary.paid.toLocaleString()}</span>
+                            </div>
+                            <div className="bg-white/90 dark:bg-slate-800/90 rounded-xl p-3 md:p-4 text-center shadow-md">
+                                <span className="text-xs md:text-sm font-bold text-red-600 dark:text-red-400 block mb-1">❌ ค้างชำระ</span>
+                                <span className="text-lg md:text-2xl font-extrabold text-slate-800 dark:text-white">฿{summary.overdue.toLocaleString()}</span>
+                            </div>
+                            <div className="bg-white/90 dark:bg-slate-800/90 rounded-xl p-3 md:p-4 text-center shadow-md">
+                                <span className="text-xs md:text-sm font-bold text-yellow-600 dark:text-yellow-400 block mb-1">⏳ รอข้อมูล/ตรวจสอบ</span>
+                                <span className="text-lg md:text-2xl font-extrabold text-slate-800 dark:text-white">฿{summary.waiting.toLocaleString()}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* แสดงการ์ดที่ยังไม่เสร็จสิ้นก่อน (มียอดค้าง หรือรอข้อมูล) */}
+                    {activeCards.length > 0 ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
+                            {activeCards.map((dataObj, idx) => renderHouseCard(dataObj, idx))}
+                        </div>
+                    ) : (
+                        completedCards.length === 0 && (
+                            <div className="text-center py-10 bg-white/10 backdrop-blur rounded-2xl border border-white/20 text-white">ไม่พบข้อมูลที่ต้องการ</div>
+                        )
+                    )}
+
+                    {/* ปุ่มสำหรับกางดูประวัติการ์ดที่ชำระครบแล้ว */}
+                    {completedCards.length > 0 && (
+                        <div className="mb-8">
+                            <div className="flex items-center gap-4 mb-6">
+                                <div className="h-px bg-white/30 flex-1"></div>
+                                <button 
+                                    onClick={() => setShowCompleted(!showCompleted)}
+                                    className="px-6 py-2 rounded-full bg-white/20 hover:bg-white/30 text-white text-sm font-bold backdrop-blur border border-white/40 flex items-center gap-2 transition-all shadow-lg"
+                                >
+                                    {showCompleted ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                                    {showCompleted ? 'ซ่อนประวัติปีที่ชำระครบแล้ว' : `แสดงประวัติปีที่ชำระครบแล้ว (${completedCards.length} รายการ)`}
+                                </button>
+                                <div className="h-px bg-white/30 flex-1"></div>
+                            </div>
+                            
+                            {/* แสดงการ์ดที่ชำระครบแล้วแบบจางๆ */}
+                            {showCompleted && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-6 opacity-90 transition-opacity duration-500 animate-in fade-in slide-in-from-top-4">
+                                    {completedCards.map((dataObj, idx) => renderHouseCard(dataObj, activeCards.length + idx))}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             );
         };
@@ -793,6 +951,10 @@
         const App = () => {
             const [currentPage, setCurrentPage] = useState('home');
             const [searchTerm, setSearchTerm] = useState('');
+            // เพิ่ม State สำหรับ Search Prefix/Suffix และ History
+            const [searchSuffix, setSearchSuffix] = useState('');
+            const [searchHistory, setSearchHistory] = useState([]);
+
             const [payments, setPayments] = useState([]);
             const [loading, setLoading] = useState(false);
             const [error, setError] = useState(null);
@@ -819,8 +981,11 @@
                 manualYears: []
             });
             const [showAdminPanel, setShowAdminPanel] = useState(false);
+            const [isAdmin, setIsAdmin] = useState(false); 
             const [isSaving, setIsSaving] = useState(false);
             const [resultModal, setResultModal] = useState({ isOpen: false, type: 'success', message: '' });
+            const [syncProgress, setSyncProgress] = useState({ isSyncing: false, current: 0, total: 0, percent: 0, message: '' });
+            const [quickEditModal, setQuickEditModal] = useState({ isOpen: false, house: null, monthKey: null, currentStatus: '' });
 
             useEffect(() => {
                 const script = document.createElement('script');
@@ -836,6 +1001,15 @@
                 document.body.appendChild(script);
                 const handleScroll = () => setShowScrollTop(window.scrollY > 300);
                 window.addEventListener('scroll', handleScroll);
+
+                // โหลดประวัติการค้นหาเมื่อเปิดหน้าเว็บ
+                const savedHistory = localStorage.getItem('houseSearchHistory');
+                if (savedHistory) {
+                    try {
+                        setSearchHistory(JSON.parse(savedHistory));
+                    } catch (e) { console.error("Error parsing history"); }
+                }
+
                 return () => {
                     if (document.body.contains(script)) document.body.removeChild(script);
                     window.removeEventListener('scroll', handleScroll);
@@ -944,19 +1118,29 @@
 
             const handleGlobalSync = async (silent = false) => {
                 if (!supabase) return;
-                if (!silent) setIsSaving(true);
+                
+                if (!silent) {
+                    setIsSaving(true);
+                    setSyncProgress({ isSyncing: true, current: 0, total: 0, percent: 0, message: 'กำลังเตรียมข้อมูลจากฐานข้อมูล...' });
+                }
+
                 try {
                     const currentYear = new Date().getFullYear() + 543; 
                     const { data: houses, error: houseError } = await supabase.from('house_payments').select('*');
                     if (houseError) throw houseError;
 
-                    // Fetch ALL common_fees to ensure complete history check
+                    if (!silent) setSyncProgress(prev => ({ ...prev, message: 'กำลังดึงประวัติการชำระเงิน...' }));
+
                     const { data: fees, error: feeError } = await supabase.from('common_fees').select('*');
                     if (feeError) throw feeError;
 
                     let updatedCount = 0;
+                    const totalHouses = houses.length;
 
-                    // Group fees by house_number + year for O(1) lookup
+                    if (!silent) {
+                        setSyncProgress(prev => ({ ...prev, total: totalHouses, message: 'กำลังเปรียบเทียบและอัพเดทสถานะ...' }));
+                    }
+
                     const feesMap = {};
                     fees.forEach(fee => {
                         const key = `${fee.house_number}-${fee.year}`;
@@ -964,69 +1148,82 @@
                         feesMap[key].push(fee);
                     });
 
-                    // Iterate each house record in house_payments
-                    for (const house of houses) {
+                    for (let i = 0; i < totalHouses; i++) {
+                        const house = houses[i];
                         const key = `${house.house_numbe}-${house.year}`;
-                        const houseFees = feesMap[key];
+                        const houseFees = feesMap[key] || []; 
                         
-                        if (houseFees && houseFees.length > 0) {
-                            // Sort by date to get latest status
-                            houseFees.sort((a, b) => new Date(a.reported_at) - new Date(b.reported_at));
+                        let updates = {};
+                        let hasChange = false;
+                        
+                        const expectedStatuses = {};
+                        houseFees.forEach(fee => {
+                            const monthCol = monthMap[fee.month];
+                            if (monthCol) {
+                                const isPaid = fee.status.includes('ตรวจสอบแล้ว') || fee.status.includes('อนุมัติ') || fee.status.includes('ถูกต้อง');
+                                const isPending = (fee.status.includes('รอ') || fee.status.includes('ตรวจสอบ') || fee.status.includes('แจ้งโอน')) && !isPaid;
 
-                            let updates = {};
-                            let hasChange = false;
-
-                            houseFees.forEach(fee => {
-                                const monthCol = monthMap[fee.month];
-                                if (monthCol) {
-                                    const currentStatus = house[monthCol]; // Current in house_payments
-                                    const isPending = (fee.status.includes('รอ') || fee.status.includes('ตรวจสอบ') || fee.status.includes('แจ้งโอน')) && !fee.status.includes('แล้ว');
-                                    const isPaid = fee.status.includes('ตรวจสอบแล้ว') || fee.status.includes('อนุมัติ') || fee.status.includes('ถูกต้อง');
-
-                                    if (isPending && currentStatus !== 'รอตรวจสอบ') { 
-                                        updates[monthCol] = 'รอตรวจสอบ'; 
-                                        hasChange = true; 
-                                    } else if (isPaid && currentStatus !== 'จ่ายแล้ว') { 
-                                        updates[monthCol] = 'จ่ายแล้ว'; 
-                                        hasChange = true; 
-                                    }
-                                }
-                            });
-
-                            if (hasChange) {
-                                const { error: updateError } = await supabase
-                                    .from('house_payments')
-                                    .update(updates)
-                                    .eq('house_numbe', house.house_numbe)
-                                    .eq('year', house.year);
-                                
-                                if (!updateError) updatedCount++;
-                                else console.error(`Failed to sync ${house.house_numbe}:`, updateError);
+                                if (isPaid) expectedStatuses[monthCol] = 'จ่ายแล้ว';
+                                else if (isPending && expectedStatuses[monthCol] !== 'จ่ายแล้ว') expectedStatuses[monthCol] = 'รอตรวจสอบ';
                             }
+                        });
+
+                        months.forEach(m => {
+                            const monthCol = m.key;
+                            const currentStatus = house[monthCol] || '';
+                            const expected = expectedStatuses[monthCol];
+
+                            if (expected) {
+                                if (currentStatus !== expected) {
+                                    updates[monthCol] = expected;
+                                    hasChange = true;
+                                }
+                            } else {
+                                if (currentStatus === 'จ่ายแล้ว' || currentStatus === 'ชำระแล้ว' || currentStatus === 'รอตรวจสอบ') {
+                                    updates[monthCol] = 'ยังไม่จ่าย';
+                                    hasChange = true;
+                                }
+                            }
+                        });
+
+                        if (hasChange) {
+                            const { error: updateError } = await supabase
+                                .from('house_payments')
+                                .update(updates)
+                                .eq('house_numbe', house.house_numbe)
+                                .eq('year', house.year);
+                            
+                            if (!updateError) updatedCount++;
+                            else console.error(`Failed to sync ${house.house_numbe}:`, updateError);
+                        }
+
+                        if (!silent) {
+                            const current = i + 1;
+                            const percent = Math.round((current / totalHouses) * 100);
+                            setSyncProgress(prev => ({ ...prev, current, percent }));
+                            if (i % 10 === 0) await new Promise(resolve => setTimeout(resolve, 10));
                         }
                     }
 
                     if (!silent) {
+                        setSyncProgress({ isSyncing: false, current: 0, total: 0, percent: 0, message: '' });
                         setResultModal({
                             isOpen: true,
                             type: 'success',
-                            message: `ดึงข้อมูลเรียบร้อยแล้ว อัพเดท ${updatedCount} รายการ`
+                            message: `ดึงข้อมูลเรียบร้อยแล้ว อัพเดท/กู้คืนสถานะ ${updatedCount} รายการ`
                         });
                     }
 
-                    // Refresh Dashboard if active
                      if (currentPage === 'dashboard') {
-                        // Force re-fetch by toggling a key or just relying on state update if data changed. 
-                        // Since we don't hold 'house_payments' in parent state (except for HomeContent), 
-                        // Dashboard component will need a refresh signal. 
-                        // Simple way: reload window or pass a refresh trigger. 
-                        // For this snippet, reload is safest to see new data immediately.
                         window.location.reload(); 
                     }
 
                 } catch (err) {
                     console.error("Global Sync Error:", err);
-                    if (!silent) setResultModal({ isOpen: true, type: 'error', message: 'เกิดข้อผิดพลาดในการดึงข้อมูล: ' + err.message });
+                    if (!silent) {
+                        setSyncProgress({ isSyncing: false, current: 0, total: 0, percent: 0, message: '' });
+                        setResultModal({ isOpen: true, type: 'error', message: 'เกิดข้อผิดพลาดในการดึงข้อมูล: ' + err.message });
+                    }
                 } finally {
                     if (!silent) setIsSaving(false);
                 }
@@ -1095,20 +1292,36 @@
                 try {
                     const { data: feeHistory, error: feeError } = await supabase.from('common_fees').select('*').eq('house_number', item.house_numbe).eq('year', item.year).order('reported_at', { ascending: true });
                     if (feeError) throw feeError;
-                    if (feeHistory && feeHistory.length > 0) {
-                        let updates = {}, hasUpdates = false;
-                        feeHistory.forEach(fee => {
-                            const monthCol = monthMap[fee.month];
-                            if (monthCol) {
-                                const currentStatus = item[monthCol];
-                                const isPending = (fee.status.includes('รอ') || fee.status.includes('ตรวจสอบ') || fee.status.includes('แจ้งโอน')) && !fee.status.includes('แล้ว');
-                                const isPaid = fee.status.includes('ตรวจสอบแล้ว') || fee.status.includes('อนุมัติ') || fee.status.includes('ถูกต้อง');
-                                if (isPending && currentStatus !== 'รอตรวจสอบ') { updates[monthCol] = 'รอตรวจสอบ'; hasUpdates = true; }
-                                else if (isPaid && currentStatus !== 'จ่ายแล้ว') { updates[monthCol] = 'จ่ายแล้ว'; hasUpdates = true; }
+                    
+                    let updates = {}, hasUpdates = false;
+                    
+                    const expectedStatuses = {};
+                    (feeHistory || []).forEach(fee => {
+                        const monthCol = monthMap[fee.month];
+                        if (monthCol) {
+                            const isPaid = fee.status.includes('ตรวจสอบแล้ว') || fee.status.includes('อนุมัติ') || fee.status.includes('ถูกต้อง');
+                            const isPending = (fee.status.includes('รอ') || fee.status.includes('ตรวจสอบ') || fee.status.includes('แจ้งโอน')) && !isPaid;
+                            if (isPaid) expectedStatuses[monthCol] = 'จ่ายแล้ว';
+                            else if (isPending && expectedStatuses[monthCol] !== 'จ่ายแล้ว') expectedStatuses[monthCol] = 'รอตรวจสอบ';
+                        }
+                    });
+
+                    months.forEach(m => {
+                        const monthCol = m.key;
+                        const currentStatus = item[monthCol] || '';
+                        const expected = expectedStatuses[monthCol];
+
+                        if (expected) {
+                            if (currentStatus !== expected) { updates[monthCol] = expected; hasUpdates = true; }
+                        } else {
+                            if (currentStatus === 'จ่ายแล้ว' || currentStatus === 'ชำระแล้ว' || currentStatus === 'รอตรวจสอบ') {
+                                updates[monthCol] = 'ยังไม่จ่าย';
+                                hasUpdates = true;
                             }
-                        });
-                        if (hasUpdates) { await supabase.from('house_payments').update(updates).eq('house_numbe', item.house_numbe).eq('year', item.year); return true; }
-                    }
+                        }
+                    });
+
+                    if (hasUpdates) { await supabase.from('house_payments').update(updates).eq('house_numbe', item.house_numbe).eq('year', item.year); return true; }
                     return false;
                 } catch (err) { console.error(err); return false; }
             };
@@ -1185,15 +1398,37 @@
             const handleKeyDown = (e) => { if (e.key === 'Enter') handleSearchClick(); };
             const toggleNameVisibility = (key) => setVisibleNames(prev => ({ ...prev, [key]: !prev[key] }));
 
+            // ฟังก์ชันการค้นหา ปรับปรุงใหม่ให้ประกอบร่าง "998/" อัตโนมัติ
             const handleSearchClick = async () => {
-                setLoading(true);
-                if (searchTerm.trim()) { saveSearchLog(searchTerm.trim()); }
+                let cleanSuffix = searchSuffix.trim();
+                // ถ้าเผลอพิมพ์ 998/ มาด้วย ให้ตัดออกก่อน
+                if (cleanSuffix.startsWith('998/')) {
+                    cleanSuffix = cleanSuffix.replace('998/', '');
+                }
+
+                if (!cleanSuffix) {
+                    setResultModal({ isOpen: true, type: 'error', message: 'กรุณาระบุเลขที่บ้าน (ส่วนท้าย)' });
+                    return;
+                }
+
+                const fullSearchTerm = `998/${cleanSuffix}`;
+                setSearchTerm(fullSearchTerm); // บันทึกคำค้นหาเต็มรูปแบบลง State
                 
-                // Add Global Sync before search
+                // บันทึกประวัติการค้นหาลง Local Storage (เฉพาะเลขท้าย)
+                const newHistory = [cleanSuffix, ...searchHistory.filter(h => h !== cleanSuffix)].slice(0, 5); // เก็บ 5 รายการล่าสุด
+                setSearchHistory(newHistory);
+                localStorage.setItem('houseSearchHistory', JSON.stringify(newHistory));
+
+                setLoading(true);
+                
+                // ไม่บันทึกประวัติลง Database หากเป็น Admin
+                if (!isAdmin) { saveSearchLog(fullSearchTerm); }
+                
                 await handleGlobalSync(true); // silent sync
 
-                const results = await fetchPayments(searchTerm, true);
+                const results = await fetchPayments(fullSearchTerm, true);
                 await fetchAllPendingFees();
+
                 if (results && results.length > 0) {
                     const now = new Date();
                     const currentYear = now.getFullYear();
@@ -1213,7 +1448,43 @@
                     if (hasIssue) { setShowOverdueModal(true); setTimeout(() => setShowOverdueModal(false), 3000); }
                     else { setShowThankYouModal(true); if (window.confetti) { window.confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } }); } setTimeout(() => setShowThankYouModal(false), 3000); }
                 }
-                if (searchTerm.trim()) sendTelegramNotification(searchTerm, results);
+                
+                if (!isAdmin) sendTelegramNotification(fullSearchTerm, results);
+            };
+
+            const handleQuickEditSave = async (newStatus) => {
+                if (!supabase || !quickEditModal.house || !quickEditModal.monthKey) return;
+                setIsSaving(true);
+                try {
+                    const { house, monthKey } = quickEditModal;
+                    
+                    const { error } = await supabase
+                        .from('house_payments')
+                        .update({ [monthKey]: newStatus })
+                        .eq('house_numbe', house.house_numbe)
+                        .eq('year', house.year);
+                        
+                    if (error) throw error;
+
+                    setPayments(prevPayments => 
+                        prevPayments.map(p => {
+                            if (p.house_numbe === house.house_numbe && p.year === house.year) {
+                                return { ...p, [monthKey]: newStatus };
+                            }
+                            return p;
+                        })
+                    );
+
+                    setResultModal({ isOpen: true, type: 'success', message: 'แก้ไขสถานะสำเร็จ' });
+                    setQuickEditModal({ isOpen: false, house: null, monthKey: null, currentStatus: '' });
+                    
+                    fetchAllPendingFees();
+                } catch (err) {
+                    console.error("Quick Edit Error:", err);
+                    setResultModal({ isOpen: true, type: 'error', message: 'แก้ไขสถานะไม่สำเร็จ: ' + err.message });
+                } finally {
+                    setIsSaving(false);
+                }
             };
 
             return (
@@ -1229,7 +1500,7 @@
                                     <button onClick={() => setCurrentPage('home')} className={`px-4 py-2 rounded-full font-medium transition-all ${currentPage === 'home' ? 'bg-white text-indigo-600 shadow-md' : 'text-white/80 hover:bg-white/10'}`}><div className="flex items-center gap-2"><Search size={18} /> ค้นหา</div></button>
                                     <button onClick={() => setCurrentPage('dashboard')} className={`px-4 py-2 rounded-full font-medium transition-all ${currentPage === 'dashboard' ? 'bg-white text-indigo-600 shadow-md' : 'text-white/80 hover:bg-white/10'}`}><div className="flex items-center gap-2"><LayoutDashboard size={18} /> สรุปภาพรวม</div></button>
                                     <button onClick={toggleDarkMode} className="p-2 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition-colors" title="สลับโหมดมืด">{darkMode ? <Sun size={20} /> : <Moon size={20} />}</button>
-                                    <button onClick={() => setShowAdminPanel(true)} className="p-2 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition-colors" title="ตั้งค่าระบบ"><Settings size={20} /></button>
+                                    <button onClick={() => setShowAdminPanel(true)} className={`p-2 rounded-full transition-colors ${isAdmin ? 'text-green-400 hover:text-green-300' : 'text-white/70 hover:text-white hover:bg-white/10'}`} title="ตั้งค่าระบบ"><Settings size={20} /></button>
                                 </div>
                                 <div className="md:hidden flex gap-2">
                                     <button onClick={toggleDarkMode} className="text-white p-2 hover:bg-white/10 rounded-lg">{darkMode ? <Sun size={24} /> : <Moon size={24} />}</button>
@@ -1246,7 +1517,27 @@
                                     <button onClick={() => { setShowAdminPanel(true); setIsMenuOpen(false); }} className={`p-3 rounded-lg text-left font-medium flex items-center gap-3 text-white hover:bg-white/10`}><Settings size={20} /> ตั้งค่าระบบ</button>
                                 </div>
                                 {currentPage === 'home' && (
-                                    <div className="flex gap-2"><div className="relative flex-1"><input type="text" placeholder="พิมพ์เลขที่บ้าน (เช่น 998/1)" className="w-full pl-10 pr-4 py-2 bg-white/90 rounded-lg text-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} onKeyDown={handleKeyDown} /><Search className="absolute left-3 top-2.5 text-slate-400" size={18} /></div><button onClick={handleSearchClick} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-sm flex items-center gap-2">{isAutoSyncing ? <Loader2 size={18} className="animate-spin"/> : 'ค้นหา'}</button></div>
+                                    <div className="flex gap-2">
+                                        <div className="relative flex-1 flex items-center bg-white/90 rounded-lg overflow-hidden border focus-within:border-blue-400">
+                                            <Search className="ml-3 text-slate-400" size={18} />
+                                            <span className="pl-2 pr-0.5 text-slate-500 font-bold">998/</span>
+                                            <input 
+                                                type="text" 
+                                                placeholder="เช่น 1 หรือ 12" 
+                                                className="w-full py-2 pr-3 text-slate-900 bg-transparent focus:outline-none" 
+                                                value={searchSuffix} 
+                                                onChange={(e) => setSearchSuffix(e.target.value)} 
+                                                onKeyDown={handleKeyDown} 
+                                                list="mobile-search-history"
+                                            />
+                                            <datalist id="mobile-search-history">
+                                                {searchHistory.map(h => <option key={h} value={h} />)}
+                                            </datalist>
+                                        </div>
+                                        <button onClick={handleSearchClick} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-sm flex items-center gap-2">
+                                            {isAutoSyncing ? <Loader2 size={18} className="animate-spin"/> : 'ค้นหา'}
+                                        </button>
+                                    </div>
                                 )}
                             </div>
                         )}
@@ -1254,7 +1545,7 @@
 
                     <main>
                         {showAdminPanel ? (
-                            <AdminPanel config={appConfig} onSave={saveConfig} onCancel={() => setShowAdminPanel(false)} isSaving={isSaving} onUpdateStatus={handleAdminUpdateStatus} onGlobalSync={handleGlobalSync} />
+                            <AdminPanel config={appConfig} onSave={saveConfig} onCancel={() => setShowAdminPanel(false)} isSaving={isSaving} onUpdateStatus={handleAdminUpdateStatus} onGlobalSync={handleGlobalSync} syncProgress={syncProgress} supabase={supabase} isAdmin={isAdmin} setIsAdmin={setIsAdmin} onLogout={() => { setIsAdmin(false); setShowAdminPanel(false); }} />
                         ) : currentPage === 'dashboard' ? (
                             <Dashboard supabase={supabase} appConfig={appConfig} />
                         ) : (
@@ -1263,9 +1554,35 @@
                                     <h2 className="text-2xl md:text-4xl font-bold text-white mb-2 drop-shadow-md">🏡 ระบบตรวจสอบค่าส่วนกลาง</h2>
                                     <p className="text-indigo-100 text-lg mb-4 font-medium drop-shadow-sm">ตรวจสอบสถานะการชำระเงินค่าส่วนกลางได้อย่างง่ายดาย</p>
                                     <div className="mb-8 text-indigo-200 text-sm space-y-1"><p>✅ 1. ข้อมูลสถานะรายเดือน อัพเดทเรียลไทม์</p><p>✅ 2. ข้อมูลประวัติการแจ้งชำระ อัพเดทเรียลไทม์</p></div>
-                                    <div className="flex flex-col sm:flex-row gap-3 items-stretch justify-center">
-                                        <div className="relative group flex-1"><div className="absolute -inset-1 bg-gradient-to-r from-blue-400 to-purple-400 rounded-xl blur opacity-25 group-hover:opacity-50 transition duration-200"></div><div className="relative h-full"><input type="text" placeholder="พิมพ์เลขที่บ้าน (เช่น 998/1)" className="w-full h-full pl-12 pr-4 py-4 bg-white/95 backdrop-blur rounded-xl text-lg text-slate-900 placeholder-slate-400 shadow-xl focus:outline-none focus:ring-2 focus:ring-white/50" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} onKeyDown={handleKeyDown} /><Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={24} /></div></div>
-                                        <button onClick={handleSearchClick} disabled={loading} className="bg-white/90 hover:bg-white text-indigo-600 font-bold px-8 py-4 sm:py-0 rounded-xl shadow-xl transition-all transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2 backdrop-blur-sm border border-white/50 disabled:opacity-80 disabled:cursor-not-allowed">{isAutoSyncing ? <Loader2 size={24} className="animate-spin text-indigo-600" /> : <Search size={22} />}<span className="text-lg">{isAutoSyncing ? 'กำลังซิงค์...' : 'ค้นหา'}</span></button>
+                                    
+                                    {/* ปรับปรุงช่องค้นหาใหม่ ให้รวม 998/ ไว้ด้านใน */}
+                                    <div className="flex flex-col sm:flex-row gap-3 items-stretch justify-center h-16 sm:h-16">
+                                        <div className="relative group flex-1 h-14 sm:h-full">
+                                            <div className="absolute -inset-1 bg-gradient-to-r from-blue-400 to-purple-400 rounded-xl blur opacity-25 group-hover:opacity-50 transition duration-200"></div>
+                                            <div className="relative h-full flex items-center bg-white/95 backdrop-blur rounded-xl shadow-xl overflow-hidden focus-within:ring-2 focus-within:ring-white/50 border border-white/20">
+                                                <div className="pl-4 pr-2 flex items-center text-indigo-600 bg-indigo-50/50 h-full border-r border-slate-200">
+                                                    <Search size={22} className="mr-2 text-indigo-400" />
+                                                    <span className="text-xl sm:text-2xl font-extrabold tracking-widest">998/</span>
+                                                </div>
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="กรอกเลขที่บ้าน (เช่น 1 หรือ 123)" 
+                                                    className="w-full h-full px-4 text-xl sm:text-2xl font-bold text-slate-800 placeholder-slate-400 focus:outline-none bg-transparent" 
+                                                    value={searchSuffix} 
+                                                    onChange={(e) => setSearchSuffix(e.target.value)} 
+                                                    onKeyDown={handleKeyDown} 
+                                                    list="desktop-search-history"
+                                                    autoComplete="off"
+                                                />
+                                                <datalist id="desktop-search-history">
+                                                    {searchHistory.map(h => <option key={h} value={h} />)}
+                                                </datalist>
+                                            </div>
+                                        </div>
+                                        <button onClick={handleSearchClick} disabled={loading} className="bg-white/90 hover:bg-white text-indigo-600 font-bold h-14 sm:h-full px-8 rounded-xl shadow-xl transition-all transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2 backdrop-blur-sm border border-white/50 disabled:opacity-80 disabled:cursor-not-allowed">
+                                            {isAutoSyncing || loading ? <Loader2 size={24} className="animate-spin text-indigo-600" /> : <Search size={22} />}
+                                            <span className="text-lg">{isAutoSyncing || loading ? 'กำลังค้นหา...' : 'ค้นหา'}</span>
+                                        </button>
                                     </div>
                                 </div>
                                 <HomeContent 
@@ -1273,6 +1590,8 @@
                                     openDetailModal={openDetailModal} handleSyncStatus={handleSyncStatus} 
                                     handlePrint={handlePrint} toggleNameVisibility={toggleNameVisibility} 
                                     visibleNames={visibleNames} syncingId={syncingId} allPendingFees={allPendingFees} 
+                                    isAdmin={isAdmin}
+                                    openQuickEditModal={(house, monthKey, status) => setQuickEditModal({ isOpen: true, house, monthKey, currentStatus: status || 'ยังไม่จ่าย' })}
                                 />
                             </div>
                         )}
@@ -1325,6 +1644,48 @@
                         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 no-print" onClick={closeImageModal}><div className="absolute inset-0 bg-black/90 backdrop-blur-sm"></div><div className="relative w-full max-w-4xl h-full max-h-[90vh] flex flex-col items-center justify-center animate-in fade-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}><button onClick={closeImageModal} className="absolute -top-12 right-0 text-white/80 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors"><X size={32} /></button><img src={selectedImageUrl} alt="Full Slip" className="max-w-full max-h-full object-contain rounded-lg shadow-2xl" /><div className="absolute -bottom-12 left-0 right-0 flex justify-center gap-4"><a href={selectedImageUrl} target="_blank" rel="noreferrer" className="text-white/80 hover:text-white text-sm flex items-center gap-2 bg-white/10 px-4 py-2 rounded-full hover:bg-white/20 transition-colors"><ExternalLink size={16} /> เปิดรูปต้นฉบับ</a></div></div></div>
                     )}
 
+                    {/* Quick Edit Modal (Admin Only) */}
+                    {quickEditModal.isOpen && (
+                        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 animate-in fade-in duration-200 no-print">
+                            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => !isSaving && setQuickEditModal({ isOpen: false, house: null, monthKey: null, currentStatus: '' })}></div>
+                            <div className="relative bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-slate-100 dark:border-slate-700">
+                                <div className="flex justify-between items-start mb-4">
+                                    <div>
+                                        <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                                            <Settings size={20} className="text-indigo-600" /> แก้ไขสถานะด่วน
+                                        </h3>
+                                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                                            บ้านเลขที่: <span className="font-bold text-indigo-600 dark:text-indigo-400">{quickEditModal.house?.house_numbe}</span> 
+                                            <br/>เดือน: <span className="font-bold text-indigo-600 dark:text-indigo-400">{months.find(m => m.key === quickEditModal.monthKey)?.label} ปี {quickEditModal.house?.year}</span>
+                                        </p>
+                                    </div>
+                                    <button onClick={() => setQuickEditModal({ isOpen: false, house: null, monthKey: null, currentStatus: '' })} disabled={isSaving} className="text-slate-400 hover:text-slate-600 dark:hover:text-white">
+                                        <X size={20} />
+                                    </button>
+                                </div>
+                                
+                                <div className="space-y-3 mt-6">
+                                    <button onClick={() => handleQuickEditSave('จ่ายแล้ว')} disabled={isSaving} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 border-2 transition-all ${quickEditModal.currentStatus === 'จ่ายแล้ว' ? 'border-green-500 bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'border-slate-200 text-slate-600 hover:border-green-300 hover:bg-green-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700'}`}>
+                                        <CheckCircle size={18} className="text-green-500" /> จ่ายแล้ว
+                                    </button>
+                                    <button onClick={() => handleQuickEditSave('รอตรวจสอบ')} disabled={isSaving} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 border-2 transition-all ${quickEditModal.currentStatus === 'รอตรวจสอบ' ? 'border-orange-500 bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' : 'border-slate-200 text-slate-600 hover:border-orange-300 hover:bg-orange-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700'}`}>
+                                        <Clock size={18} className="text-orange-500" /> รอตรวจสอบ
+                                    </button>
+                                    <button onClick={() => handleQuickEditSave('ยังไม่จ่าย')} disabled={isSaving} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 border-2 transition-all ${quickEditModal.currentStatus === 'ยังไม่จ่าย' ? 'border-red-500 bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'border-slate-200 text-slate-600 hover:border-red-300 hover:bg-red-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700'}`}>
+                                        <AlertCircle size={18} className="text-red-500" /> ยังไม่จ่าย
+                                    </button>
+                                    <button onClick={() => handleQuickEditSave('รอข้อมูล')} disabled={isSaving} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 border-2 transition-all ${quickEditModal.currentStatus === 'รอข้อมูล' ? 'border-yellow-500 bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' : 'border-slate-200 text-slate-600 hover:border-yellow-300 hover:bg-yellow-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700'}`}>
+                                        <Hourglass size={18} className="text-yellow-500" /> รอข้อมูล
+                                    </button>
+                                    <button onClick={() => handleQuickEditSave('ไม่เก็บ')} disabled={isSaving} className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 border-2 transition-all ${quickEditModal.currentStatus === 'ไม่เก็บ' ? 'border-slate-400 bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300' : 'border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700'}`}>
+                                        <X size={18} className="text-slate-400" /> ไม่เก็บ
+                                    </button>
+                                </div>
+                                {isSaving && <div className="absolute inset-0 bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm rounded-2xl flex items-center justify-center"><Loader2 size={32} className="animate-spin text-indigo-600" /></div>}
+                            </div>
+                        </div>
+                    )}
+
                     {/* Result Alert Modal */}
                     {resultModal.isOpen && (
                         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-200 no-print">
@@ -1347,7 +1708,7 @@
                         </div>
                     )}
 
-                    <footer className="text-center py-6 text-white/60 text-sm no-print"><p>9one © 2025 ระบบตรวจสอบค่าส่วนกลาง | หมู่บ้าน โกลเด้นแลนด์ ซีรีน</p></footer>
+                    <footer className="text-center py-6 text-white/60 text-sm no-print"><p>OcuPass © 2025 V.3 ระบบตรวจสอบค่าส่วนกลาง | หมู่บ้าน โกลเด้นแลนด์ ซีรีน</p></footer>
                 </div>
             );
         };
