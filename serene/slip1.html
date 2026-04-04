@@ -473,7 +473,7 @@
       </div>
       
       <div class="text-center mt-4 text-muted small">
-          9one © 2024 V.15 (Supabase Only + Safe Auto-ID + New UI)
+          9one © 2024 V.16 (Supabase Only + Exact house_payments Sync)
       </div>
     </div>
   </div>
@@ -628,11 +628,12 @@
             { key: 'nov', id: 'm11', short: 'พ.ย.' }, { key: 'dec', id: 'm12', short: 'ธ.ค.' }
         ];
 
+        // 1. รีเซ็ตทุกเดือนให้กลับมากดได้ปกติก่อน
         monthMap.forEach(m => {
             const cb = document.getElementById(m.id);
             const label = document.querySelector(`label[for="${m.id}"]`);
             cb.disabled = false;
-            label.classList.remove('btn-secondary', 'text-white');
+            label.classList.remove('btn-secondary', 'text-white', 'btn-light', 'text-muted', 'border');
             label.classList.add('btn-outline-success');
             label.innerHTML = m.short;
             label.title = "";
@@ -640,24 +641,36 @@
 
         if (!selectedYear || globalHousePaymentData.length === 0) return;
 
-        // ในตารางตรวจสอบสถานะ เรายังคงใช้ตาราง house_payments เหมือนเดิมตามที่แจ้งไว้
+        // ดึงข้อมูลปีนั้นจาก house_payments
         const yearData = globalHousePaymentData.find(row => String(row.year).trim() === selectedYear);
 
         if (yearData) {
             monthMap.forEach(m => {
                 const status = yearData[m.key] ? String(yearData[m.key]).trim() : '';
-                if (status && status !== 'ยังไม่จ่าย' && status !== 'ค้างจ่าย' && status !== 'รอข้อมูล') {
+                
+                // ถ่ายทอดสถานะ "จ่ายแล้ว" (ล็อกปุ่ม โชว์เครื่องหมายถูก)
+                if (status === 'จ่ายแล้ว') {
                     const cb = document.getElementById(m.id);
                     const label = document.querySelector(`label[for="${m.id}"]`);
-                    
                     cb.disabled = true; 
                     cb.checked = false; 
-                    
                     label.classList.remove('btn-outline-success');
                     label.classList.add('btn-secondary', 'text-white');
                     label.innerHTML = `<i class='bx bx-check'></i>`;
                     label.title = "ชำระแล้ว";
+                } 
+                // ถ่ายทอดสถานะ "ไม่เก็บ" (ล็อกปุ่ม โชว์เครื่องหมายขีดฆ่า สีเทา)
+                else if (status === 'ไม่เก็บ') {
+                    const cb = document.getElementById(m.id);
+                    const label = document.querySelector(`label[for="${m.id}"]`);
+                    cb.disabled = true; 
+                    cb.checked = false; 
+                    label.classList.remove('btn-outline-success');
+                    label.classList.add('btn-light', 'text-muted', 'border');
+                    label.innerHTML = `<i class='bx bx-block'></i>`;
+                    label.title = "ไม่เรียกเก็บ";
                 }
+                // ถ้าเป็น "ยังไม่จ่าย" หรือ "รอข้อมูล" ปุ่มจะยังกดเลือกจ่ายได้ตามปกติ
             });
         }
     }
@@ -679,6 +692,7 @@
       }
 
       try {
+        // ✅ ระบบเช็คยอดค้างจากตาราง house_payments ตามปกติ
         const { data, error } = await supabaseClient
           .from('house_payments')
           .select('*')
@@ -713,6 +727,7 @@
 
                 months.forEach((monthKey, index) => {
                     const status = row[monthKey] ? String(row[monthKey]).trim() : '';
+                    // สนใจนำมาแสดงในตารางเฉพาะ ยอดที่ยังไม่จ่าย หรือ ค้างชำระ (ส่วน "ไม่เก็บ" จะไม่แสดงในนี้)
                     if (status && (status === 'ยังไม่จ่าย' || status === 'ค้างจ่าย' || status === 'รอข้อมูล')) {
                         hasUnpaid = true;  totalUnpaidCount++;
                         let statusBadge = status === 'รอข้อมูล' ? 'bg-warning text-dark' : 'bg-danger';
@@ -735,7 +750,7 @@
         let currentSelectedDisabled = false;
         Array.from(yearSelect.options).forEach(opt => {
             if (opt.value !== "" && fullyPaidYears.includes(opt.value)) {
-                opt.disabled = true; opt.text = opt.value + " (จ่ายครบแล้ว)";
+                opt.disabled = true; opt.text = opt.value + " (ไม่ต้องชำระ / จ่ายครบแล้ว)";
                 if (yearSelect.value === opt.value) currentSelectedDisabled = true;
             }
         });
@@ -1023,8 +1038,7 @@
 
           document.getElementById('saveProgressText').innerHTML = "กำลังตรวจสอบระบบ ID...";
 
-          // --- STEP 2: ดึง ID ทั้งหมดมาคำนวณหาค่าสูงสุดเพื่อป้องกันปัญหารันมั่ว (รองรับ ID เก่าที่ไม่มีเลข 0 นำหน้า) ---
-          // เพิ่ม limit เยอะๆ ให้ครอบคลุมทุกข้อมูลในตาราง เพื่อหาเลขรันที่ถูกต้องที่สุด
+          // --- STEP 2: ดึง ID ทั้งหมดมาคำนวณหาค่าสูงสุด ---
           const { data: allRecords, error: idError } = await supabaseClient
             .from('common_fees1')
             .select('id')
@@ -1036,7 +1050,6 @@
           if (allRecords && allRecords.length > 0) {
               allRecords.forEach(record => {
                   if(record.id) {
-                      // ดึงเฉพาะตัวเลขออกมาจาก ID เช่น serene12 -> 12, หรือ serene000100 -> 100
                       let num = parseInt(String(record.id).replace('serene', ''), 10);
                       if (!isNaN(num) && num > currentIdNum) {
                           currentIdNum = num;
@@ -1053,7 +1066,7 @@
 
           for (let i = 0; i < selectedMonths.length; i++) {
               currentIdNum++;
-              let newId = 'serene' + ('000000' + currentIdNum).slice(-6); // แปลงเป็นเลข 6 หลักเสมอ (เช่น serene000124)
+              let newId = 'serene' + ('000000' + currentIdNum).slice(-6); 
 
               let recordObj = {
                   'id': newId,
@@ -1094,13 +1107,10 @@
               $("#btn_2").hide(); $("#btn_1").show();
               $('#picdata').hide(); $("#picdata").attr("src", ""); $("#file_input_help").html("");
               
-              // รีเซ็ตฟอร์ม
               document.getElementById("user_form").reset(); 
               document.getElementsByClassName("needs-validation")[0].classList.remove("was-validated");
 
               document.querySelectorAll('.month-check').forEach(cb => cb.checked = false);
-              
-              // เคลียร์ช่องเลขที่บ้าน
               document.getElementById('name1').value = "998/";
               document.getElementById('name1_suffix').value = "";
               
@@ -1206,15 +1216,12 @@
 
     document.getElementById('name').addEventListener('input', checkFormValidity);
     
-    // --- จัดการ Input บ้านเลขที่แบบใหม่ (Input Group 998 / ...) ---
     document.getElementById('name1_suffix').addEventListener('input', function(e) {
         let val = this.value.replace(/\s/g, ''); 
         
-        // กันเหนียวกรณีคนพิมพ์ 998/ ซ้ำเข้ามาในช่อง
         if (val.startsWith('998/')) val = val.substring(4); 
         this.value = val;
         
-        // ผสมกับ Prefix เพื่อนำไปใช้เป็น ID บันทึกหลังบ้าน
         const fullHouseNo = '998/' + val;
         document.getElementById('name1').value = fullHouseNo;
         
@@ -1248,7 +1255,6 @@
           
           document.getElementById('name1').value = cleanHouseNo;
           
-          // ดึงตัวเลขส่วนท้ายมาใส่ในช่องแสดงผล UI
           let suffix = cleanHouseNo.replace('998/', '');
           document.getElementById('name1_suffix').value = suffix;
           
