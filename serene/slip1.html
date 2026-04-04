@@ -473,7 +473,7 @@
       </div>
       
       <div class="text-center mt-4 text-muted small">
-          9one © 2024 V.17.2 (Smart Auto-ID & Retry Logic)
+          9one © 2024 V.18 (Supabase Primary + Frontend Telegram)
       </div>
     </div>
   </div>
@@ -546,6 +546,10 @@
     // สร้าง Supabase Client
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+    // --- Telegram Configuration ---
+    const TELEGRAM_TOKEN = '7775829866:AAGHs-c9unFARIrdXMT-J1SORIwTGGNqxTg';
+    const TELEGRAM_CHAT_ID = '-4552255502';
+
     // Global variables
     let uid = ""; 
     let uname = ""; 
@@ -556,7 +560,7 @@
     const urlAPI = "https://script.google.com/macros/s/AKfycbz6Ua9LYQikcgL8OcT3CkEcxfxQNFctPZ1fg5dDP6WTRQEZpvklObLufFFx2a-XBeruYw/exec";
 
     $(document).ready(function() {
-      const liffId = "2000143615-n47nfwO1";
+      const liffId = "2000143615-yk0LA09G";
       
       const savedTheme = localStorage.getItem('theme');
       if (savedTheme === 'dark') {
@@ -776,6 +780,43 @@
         console.error("Check Status Failed:", err);
         container.style.display = 'none';
       }
+    }
+
+    /** 🌟 ฟังก์ชันส่งการแจ้งเตือนไปที่ Telegram จากหน้าเว็บ 🌟 */
+    async function sendTelegramNotify(name, house_number, months_string, year, payment_method, remark, image_url) {
+        if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID) return;
+
+        const currentDateTime = new Date().toLocaleString("th-TH", { day: "numeric", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        const messageText = `*📢 มีการแจ้งชำระค่าส่วนกลาง*\n\n` +
+                            `⏰ เวลา : ${currentDateTime}\n` +
+                            `🙇 ชื่อ : ${name}\n` +
+                            `🏡 บ้านเลขที่ : ${house_number}\n` +
+                            `📅 เดือน : ${months_string}\n` +
+                            `🗓 ปี : ${year}\n` +
+                            `📱 ช่องทาง : ${payment_method}\n` +
+                            `📋 หมายเหตุ : ${remark || "-"}\n`;
+
+        const sendMessageUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+        try {
+            // ส่งข้อความไปที่กลุ่ม Telegram
+            await axios.post(sendMessageUrl, {
+                chat_id: TELEGRAM_CHAT_ID,
+                text: messageText,
+                parse_mode: 'Markdown'
+            });
+
+            // ถ้ามีรูปภาพ ให้ส่งรูปภาพไปด้วย
+            if (image_url && image_url !== "") {
+                const sendPhotoUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendPhoto`;
+                await axios.post(sendPhotoUrl, {
+                    chat_id: TELEGRAM_CHAT_ID,
+                    photo: image_url,
+                    caption: `รูปภาพหลักฐาน: ${name}`
+                });
+            }
+        } catch (error) {
+            console.error("Telegram Notification Error:", error);
+        }
     }
 
     function sendFlexMessage(uid, uname, picture, name, name1, name2_string, name3, uploadedImageUrl) {
@@ -1126,13 +1167,29 @@
               throw new Error("ระบบมีผู้ใช้งานพร้อมกันจำนวนมาก ทำให้รหัส ID ชนกัน โปรดลองกดบันทึกใหม่อีกครั้ง");
           }
 
-          // --- STEP 4: ส่งข้อมูลเข้า Google Sheets แบบเบื้องหลัง (Background Sync) ---
-          document.getElementById('saveProgressText').innerHTML = "กำลังรอระบบหลังบ้าน...";
+          // --- STEP 4.1: ส่งแจ้งเตือน Telegram โดยตรงจากหน้าเว็บ ---
+          document.getElementById('saveProgressText').innerHTML = "กำลังแจ้งเตือนผู้ดูแลระบบ...";
+          const allMonthsString = selectedMonths.join(", ");
+          await sendTelegramNotify(name, name1Hidden, allMonthsString, name3, payMethod, note, imageUrl);
+
+          // --- STEP 4.2: ส่งข้อมูลเข้า Google Sheets แบบเบื้องหลัง (Background Sync) ---
+          document.getElementById('saveProgressText').innerHTML = "กำลังส่งข้อมูลเข้า Google Sheets...";
           let bgConfig = {
-              method: "post", maxBodyLength: Infinity, url: `${urlAPI}?action=syncToSheet`, headers: { "Content-Type": "text/plain" },
-              data: JSON.stringify({ records: finalSheetPayload, telegram_months: selectedMonths.join(", ") })
+              method: "post", 
+              maxBodyLength: Infinity, 
+              url: urlAPI, 
+              headers: { "Content-Type": "text/plain" },
+              data: JSON.stringify({ 
+                  action: "syncToSheet", // 🌟 เพิ่มคำสั่งนี้ เพื่อให้ GAS รู้จัก
+                  records: finalSheetPayload 
+              }) 
           };
-          axios.request(bgConfig).catch(e => console.log("Background sync error", e));
+          
+          try {
+              await axios.request(bgConfig); // 🌟 รอให้ส่งเข้า Sheet เสร็จจริงๆ
+          } catch(e) {
+              console.log("Background sync error", e);
+          }
 
           // --- เสร็จสมบูรณ์! ---
           clearInterval(progressInterval);
@@ -1160,7 +1217,6 @@
               
               checkFormValidity(); updateMonthStatus(); 
 
-              const allMonthsString = selectedMonths.join(", ");
               sendFlexMessage(uid, uname, picture, name, name1Hidden, allMonthsString, name3, imageUrl);
 
               Swal.fire({
