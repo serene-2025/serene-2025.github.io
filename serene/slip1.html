@@ -473,7 +473,7 @@
       </div>
       
       <div class="text-center mt-4 text-muted small">
-          9one © 2024 V.18.2 (Secure Telegram via Backend)
+          9one © 2024 V.18.3 (Fast Fire & Forget Sync)
       </div>
     </div>
   </div>
@@ -543,8 +543,11 @@
     const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
     const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
     
-    // สร้าง Supabase Client
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    // --- Telegram Configuration (เปลี่ยนมาใช้ fetch แบบไม่รอแทนเพื่อความไว) ---
+    const TELEGRAM_TOKEN = '7775829866:AAGHs-c9unFARIrdXMT-J1SORIwTGGNqxTg';
+    const TELEGRAM_CHAT_ID = '-4552255502';
 
     // Global variables
     let uid = ""; 
@@ -778,6 +781,41 @@
       }
     }
 
+    /** 🌟 ฟังก์ชันส่งแจ้งเตือน Telegram (Fire & Forget - โยนทิ้งไว้ข้างหลัง) 🌟 */
+    function sendTelegramNotify(name, house_number, months_string, year, payment_method, remark, image_url) {
+        if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID) return Promise.resolve();
+
+        const currentDateTime = new Date().toLocaleString("th-TH", { day: "numeric", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        const messageText = `*📢 มีการแจ้งชำระค่าส่วนกลาง*\n\n` +
+                            `⏰ เวลา : ${currentDateTime}\n` +
+                            `🙇 ชื่อ : ${name}\n` +
+                            `🏡 บ้านเลขที่ : ${house_number}\n` +
+                            `📅 เดือน : ${months_string}\n` +
+                            `🗓 ปี : ${year}\n` +
+                            `📱 ช่องทาง : ${payment_method}\n` +
+                            `📋 หมายเหตุ : ${remark || "-"}\n`;
+
+        const sendMessageUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+        // ใช้ fetch แบบ keepalive เพื่อไม่ให้โดนตัดตอนเปลี่ยนหน้า
+        fetch(sendMessageUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: messageText, parse_mode: 'Markdown' }),
+            keepalive: true 
+        }).catch(e => console.log("Tele Text Error:", e));
+
+        if (image_url && image_url !== "") {
+            const sendPhotoUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendPhoto`;
+            fetch(sendPhotoUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, photo: image_url, caption: `รูปภาพหลักฐาน: ${name}` }),
+                keepalive: true
+            }).catch(e => console.log("Tele Photo Error:", e));
+        }
+        return Promise.resolve();
+    }
+
     function sendFlexMessage(uid, uname, picture, name, name1, name2_string, name3, uploadedImageUrl) {
       if (!liff.isInClient()) return; 
 
@@ -948,7 +986,7 @@
         });
     }
 
-    /** 🌟 Function บันทึกข้อมูลหลัก - Supabase Primary with Retry Logic 🌟 */
+    /** 🌟 Function บันทึกข้อมูลหลัก - Supabase Primary with Fast Sync 🌟 */
     async function getAllElmForm() {
       if (!uid) {
          if(liff.isLoggedIn()){ const idToken = liff.getDecodedIDToken(); if(idToken) uid = idToken.sub; }
@@ -1126,28 +1164,25 @@
               throw new Error("ระบบมีผู้ใช้งานพร้อมกันจำนวนมาก ทำให้รหัส ID ชนกัน โปรดลองกดบันทึกใหม่อีกครั้ง");
           }
 
-          // --- STEP 4: ส่งข้อมูลเข้า Google Sheets แบบเบื้องหลัง (Background Sync) และให้ GAS แจ้งเตือน Telegram ---
-          document.getElementById('saveProgressText').innerHTML = "กำลังส่งข้อมูลเข้า Google Sheets...";
+          // --- STEP 4: ทำงานเบื้องหลัง (Fire and Forget) ไม่ต้องรอ! ---
           const allMonthsString = selectedMonths.join(", ");
-          let bgConfig = {
-              method: "post", 
-              maxBodyLength: Infinity, 
-              url: urlAPI, 
-              headers: { "Content-Type": "text/plain" },
-              data: JSON.stringify({ 
+          
+          // 4.1 ส่ง Telegram เบื้องหลัง (เอา await ออก เพื่อให้ทะลุไปหน้าสำเร็จทันที)
+          sendTelegramNotify(name, name1Hidden, allMonthsString, name3, payMethod, note, imageUrl);
+
+          // 4.2 ส่งข้อมูลเข้า Google Sheets แบบไม่รอ (ใช้ fetch + keepalive เพื่อการันตีว่าส่งสำเร็จแม้ปิดหน้าเว็บไปแล้ว)
+          fetch(urlAPI, {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/plain' },
+              body: JSON.stringify({ 
                   action: "syncToSheet", 
                   records: finalSheetPayload,
-                  telegram_months: allMonthsString // ส่งเดือนไปให้ GAS เพื่อแจ้งเตือน
-              }) 
-          };
-          
-          try {
-              await axios.request(bgConfig); // 🌟 รอให้ส่งเข้า Sheet เสร็จจริงๆ
-          } catch(e) {
-              console.log("Background sync error", e);
-          }
+                  telegram_months: allMonthsString 
+              }),
+              keepalive: true // 🌟 โคตรสำคัญ! ทำให้ส่งข้อมูลต่อจนจบแม้ liff.closeWindow() จะทำงาน
+          }).catch(e => console.log("Background sync error", e));
 
-          // --- เสร็จสมบูรณ์! ---
+          // --- เสร็จสมบูรณ์ทันใจ! ---
           clearInterval(progressInterval);
           const progressBar = document.getElementById('saveProgressBar');
           if(progressBar) {
@@ -1156,7 +1191,7 @@
               progressBar.classList.add('bg-primary');
               document.getElementById('saveProgressText').className = "mt-3 mb-1 fw-bold text-primary fs-5";
               document.getElementById('saveProgressText').innerHTML = "บันทึกข้อมูลสำเร็จ!";
-              document.getElementById('saveSubText').innerHTML = "กำลังเตรียมออกใบเสร็จให้คุณ...";
+              document.getElementById('saveSubText').innerHTML = "ระบบส่งข้อมูลไปอัปเดตเบื้องหลังแล้ว...";
           }
 
           setTimeout(() => {
@@ -1179,11 +1214,11 @@
                 title: 'ขอบคุณที่จ่ายค่าส่วนกลาง',
                 text: `บันทึกข้อมูลเรียบร้อยจำนวน ${selectedMonths.length} เดือน`,
                 icon: 'success',
-                showCancelButton: false, confirmButtonColor: '#3085d6', confirmButtonText: 'ตกลง'
+                showCancelButton: false, confirmButtonColor: '#3085d6', confirmButtonText: 'ปิดหน้าต่าง'
               }).then((result) => {
                 if (result.isConfirmed) liff.closeWindow();
               });
-          }, 800);
+          }, 400);
 
       } catch (err) {
           console.error(`Error:`, err);
