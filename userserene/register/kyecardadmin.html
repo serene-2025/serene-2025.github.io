@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="th" class="bg-slate-50">
+<html lang="th">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -14,16 +14,27 @@
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Supabase SDK -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <!-- PapaParse สำหรับจัดการไฟล์ CSV (ใช้ CDN ใหม่ที่เสถียรขึ้น ป้องกัน 404) -->
+    <!-- PapaParse สำหรับจัดการไฟล์ CSV -->
     <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+    <!-- ตรวจสอบธีมก่อนเรนเดอร์ ป้องกันจอกระพริบ -->
+    <script>
+        if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+    </script>
 
     <script>
         tailwind.config = {
+            darkMode: 'class',
             theme: {
                 extend: {
                     fontFamily: { sans: ['Noto Sans Thai', 'sans-serif'] },
                     colors: {
-                        golden: { 400: '#fbbf24', 500: '#f59e0b', 600: '#d97706' }
+                        golden: { 400: '#fbbf24', 500: '#f59e0b', 600: '#d97706' },
+                        darkslate: { 800: '#1e293b', 900: '#0f172a', 950: '#020617' }
                     }
                 }
             }
@@ -36,95 +47,139 @@
             backdrop-filter: blur(10px);
             border-bottom: 1px solid rgba(0, 0, 0, 0.05);
         }
+        .dark .glass-header {
+            background: rgba(15, 23, 42, 0.9);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        /* ซ่อนลูกศรใน input number */
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
-<body class="text-slate-800 antialiased min-h-screen flex flex-col">
+<body class="bg-slate-50 dark:bg-darkslate-900 text-slate-800 dark:text-slate-100 antialiased min-h-screen flex flex-col relative overflow-x-hidden transition-colors duration-300">
+
+    <!-- Toast Notification Container -->
+    <div id="toast" class="fixed bottom-6 right-6 z-[150] transform transition-all duration-300 translate-y-32 opacity-0 flex items-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xl rounded-xl p-4 min-w-[300px]">
+        <div id="toastIcon" class="w-8 h-8 rounded-full flex items-center justify-center shrink-0 mr-3"></div>
+        <div class="flex-1">
+            <h4 id="toastTitle" class="text-sm font-bold text-slate-800 dark:text-white mb-0.5">Notification</h4>
+            <p id="toastMessage" class="text-xs text-slate-500 dark:text-slate-400 font-medium">Message goes here</p>
+        </div>
+        <button onclick="hideToast()" class="ml-auto pl-3 text-slate-400 hover:text-slate-600 dark:hover:text-white">
+            <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+    </div>
+
+    <!-- หน้าจอโหลดดิ้ง (Loading Screen) -->
+    <div id="loadingScreen" class="fixed inset-0 z-[100] bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm hidden flex-col items-center justify-center transition-opacity duration-300">
+        <i data-lucide="loader-2" class="w-12 h-12 text-blue-500 animate-spin mb-4"></i>
+        <p id="loadingText" class="text-slate-700 dark:text-slate-200 font-bold text-lg animate-pulse">กำลังโหลดข้อมูล...</p>
+    </div>
 
     <!-- Header -->
-    <header class="glass-header sticky top-0 z-40 w-full shadow-sm">
+    <header class="glass-header sticky top-0 z-40 w-full shadow-sm transition-colors duration-300">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between items-center h-16">
                 <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl flex items-center justify-center shadow-md text-golden-400">
+                    <div class="w-10 h-10 bg-gradient-to-br from-slate-800 to-slate-900 dark:from-slate-700 dark:to-slate-800 rounded-xl flex items-center justify-center shadow-md text-golden-400 border border-slate-700">
                         <i data-lucide="shield" class="w-5 h-5"></i>
                     </div>
                     <div>
-                        <h1 class="text-xl font-bold text-slate-800">Admin Dashboard</h1>
-                        <p class="text-xs text-slate-500 font-medium">ระบบจัดการคีย์การ์ด - โกลเด้นแลนด์ ซีรีน</p>
+                        <h1 class="text-xl font-bold text-slate-800 dark:text-white">Admin Dashboard</h1>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 font-medium">ระบบจัดการคีย์การ์ด - โกลเด้นแลนด์ ซีรีน</p>
                     </div>
                 </div>
                 <div class="flex items-center gap-4">
+                    <!-- ปุ่มสลับธีม -->
+                    <button onclick="toggleTheme()" class="p-2 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-golden-400 hover:scale-105 transition-all shadow-sm">
+                        <i id="themeIcon" data-lucide="moon" class="w-5 h-5"></i>
+                    </button>
+                    
                     <div class="text-right hidden sm:block">
-                        <p class="text-sm font-bold text-slate-700">Administrator</p>
-                        <p class="text-xs text-green-500 font-medium">● Online</p>
+                        <p class="text-sm font-bold text-slate-700 dark:text-slate-200">Administrator</p>
+                        <p class="text-xs text-green-500 dark:text-green-400 font-medium">● Online</p>
                     </div>
-                    <div class="w-10 h-10 bg-slate-200 rounded-full flex items-center justify-center border border-slate-300">
-                        <i data-lucide="user-cog" class="w-5 h-5 text-slate-600"></i>
+                    <div class="w-10 h-10 bg-slate-200 dark:bg-slate-700 rounded-full flex items-center justify-center border border-slate-300 dark:border-slate-600 shadow-inner">
+                        <i data-lucide="user-cog" class="w-5 h-5 text-slate-600 dark:text-slate-300"></i>
                     </div>
                 </div>
             </div>
         </div>
     </header>
 
-    <!-- หน้าจอโหลดดิ้ง (Loading Screen) -->
-    <div id="loadingScreen" class="fixed inset-0 z-[100] bg-white/90 backdrop-blur-sm hidden flex-col items-center justify-center transition-opacity duration-300">
-        <i data-lucide="loader-2" class="w-12 h-12 text-blue-500 animate-spin mb-4"></i>
-        <p id="loadingText" class="text-slate-700 font-bold text-lg animate-pulse">กำลังโหลดข้อมูล...</p>
-    </div>
-
     <!-- Main Content -->
     <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
         <!-- Stats Cards -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex items-center gap-4">
-                <div class="w-12 h-12 rounded-xl bg-blue-50 text-blue-500 flex items-center justify-center">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center gap-4 hover:shadow-md transition-shadow">
+                <div class="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0 border border-blue-100 dark:border-blue-500/20">
                     <i data-lucide="credit-card" class="w-6 h-6"></i>
                 </div>
                 <div>
-                    <p class="text-sm text-slate-500 font-medium">บัตรทั้งหมด</p>
-                    <h3 class="text-2xl font-bold text-slate-800" id="statTotal">0</h3>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 font-medium">บัตรทั้งหมด</p>
+                    <h3 class="text-2xl font-bold text-slate-800 dark:text-white" id="statTotal">0</h3>
                 </div>
             </div>
-            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex items-center gap-4 relative overflow-hidden">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center gap-4 relative overflow-hidden hover:shadow-md transition-shadow cursor-pointer" onclick="document.getElementById('statusFilter').value='reviewing'; filterTable();">
                 <div class="absolute top-0 right-0 w-2 h-full bg-orange-400"></div>
-                <div class="w-12 h-12 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center">
+                <div class="w-12 h-12 rounded-xl bg-orange-50 dark:bg-orange-500/10 text-orange-500 flex items-center justify-center shrink-0 border border-orange-100 dark:border-orange-500/20">
                     <i data-lucide="search" class="w-6 h-6"></i>
                 </div>
                 <div>
-                    <p class="text-sm text-slate-500 font-medium">รอตรวจสอบ</p>
-                    <h3 class="text-2xl font-bold text-slate-800" id="statReviewing">0</h3>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 font-medium">รอตรวจสอบ</p>
+                    <h3 class="text-2xl font-bold text-slate-800 dark:text-white" id="statReviewing">0</h3>
                 </div>
             </div>
-            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex items-center gap-4">
-                <div class="w-12 h-12 rounded-xl bg-green-50 text-green-500 flex items-center justify-center">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer" onclick="document.getElementById('statusFilter').value='active'; filterTable();">
+                <div class="w-12 h-12 rounded-xl bg-green-50 dark:bg-green-500/10 text-green-500 flex items-center justify-center shrink-0 border border-green-100 dark:border-green-500/20">
                     <i data-lucide="check-circle" class="w-6 h-6"></i>
                 </div>
                 <div>
-                    <p class="text-sm text-slate-500 font-medium">ใช้งานปกติ</p>
-                    <h3 class="text-2xl font-bold text-slate-800" id="statActive">0</h3>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 font-medium">ใช้งานปกติ</p>
+                    <h3 class="text-2xl font-bold text-slate-800 dark:text-white" id="statActive">0</h3>
                 </div>
             </div>
-            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex items-center gap-4">
-                <div class="w-12 h-12 rounded-xl bg-red-50 text-red-500 flex items-center justify-center">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer" onclick="document.getElementById('statusFilter').value='suspended'; filterTable();">
+                <div class="w-12 h-12 rounded-xl bg-red-50 dark:bg-red-500/10 text-red-500 flex items-center justify-center shrink-0 border border-red-100 dark:border-red-500/20">
                     <i data-lucide="ban" class="w-6 h-6"></i>
                 </div>
                 <div>
-                    <p class="text-sm text-slate-500 font-medium">ระงับการใช้งาน</p>
-                    <h3 class="text-2xl font-bold text-slate-800" id="statSuspended">0</h3>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 font-medium">ระงับการใช้งาน</p>
+                    <h3 class="text-2xl font-bold text-slate-800 dark:text-white" id="statSuspended">0</h3>
                 </div>
             </div>
         </div>
 
         <!-- Controls Toolbar -->
-        <div class="bg-white rounded-t-2xl border border-slate-200 border-b-0 p-4 flex flex-col md:flex-row justify-between items-center gap-4">
-            <!-- Search & Filter -->
-            <div class="flex flex-col sm:flex-row w-full md:w-auto gap-3">
+        <div class="bg-white dark:bg-slate-800 rounded-t-2xl border border-slate-200 dark:border-slate-700 border-b-0 p-4 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 transition-colors">
+            
+            <!-- Smart Search & Filter Area -->
+            <div class="flex flex-col sm:flex-row flex-wrap w-full xl:w-auto gap-3 items-center">
+                <select id="searchCategory" class="w-full sm:w-auto px-3 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 font-medium text-slate-700 dark:text-slate-200" onchange="filterTable()">
+                    <option value="all">🔍 ค้นหาทั้งหมด</option>
+                    <option value="house">🏠 เฉพาะบ้านเลขที่</option>
+                    <option value="card">💳 เฉพาะเลขบัตร</option>
+                </select>
+
                 <div class="relative w-full sm:w-64">
                     <i data-lucide="search" class="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4"></i>
-                    <input type="text" id="searchInput" placeholder="ค้นหา บ้านเลขที่, เลขบัตร..." class="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition-all" oninput="filterTable()">
+                    <input type="text" id="searchInput" placeholder="พิมพ์คำค้นหา..." class="w-full pl-9 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all font-medium text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500" oninput="filterTable()">
                 </div>
-                <select id="statusFilter" class="w-full sm:w-48 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition-all cursor-pointer" onchange="filterTable()">
+
+                <label class="flex items-center gap-2 cursor-pointer p-2 hover:bg-slate-50 dark:hover:bg-slate-700/50 rounded-lg border border-transparent hover:border-slate-200 dark:hover:border-slate-600 transition-colors w-full sm:w-auto justify-center sm:justify-start">
+                    <input type="checkbox" id="exactMatch" class="w-4 h-4 text-blue-600 bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-600 rounded focus:ring-blue-500" onchange="filterTable()">
+                    <span class="text-sm font-bold text-slate-600 dark:text-slate-300 select-none">📌 ตรงตัวเป๊ะ</span>
+                </label>
+
+                <div class="h-8 w-px bg-slate-200 dark:bg-slate-700 hidden sm:block mx-1"></div>
+                
+                <select id="statusFilter" class="w-full sm:w-48 px-3 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 font-medium text-slate-700 dark:text-slate-200" onchange="filterTable()">
                     <option value="all">ทุกสถานะ</option>
                     <option value="reviewing">รอแอดมินตรวจสอบ</option>
                     <option value="pending">รอเจ้าบ้านยืนยัน</option>
@@ -136,73 +191,215 @@
             </div>
 
             <!-- Action Buttons -->
-            <div class="flex w-full md:w-auto gap-2">
+            <div class="flex w-full xl:w-auto gap-2">
                 <input type="file" id="csvFileInput" accept=".csv" class="hidden" onchange="handleImportCSV(event)">
-                <button onclick="document.getElementById('csvFileInput').click()" class="flex-1 sm:flex-none flex items-center justify-center px-4 py-2 bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-sm font-bold hover:bg-slate-200 transition-colors">
+                <button onclick="document.getElementById('csvFileInput').click()" class="flex-1 sm:flex-none flex items-center justify-center px-4 py-2.5 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 rounded-xl text-sm font-bold hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors shadow-sm">
                     <i data-lucide="upload-cloud" class="w-4 h-4 mr-2"></i> นำเข้าข้อมูล
                 </button>
-                <button onclick="exportCSV()" class="flex-1 sm:flex-none flex items-center justify-center px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-bold hover:bg-slate-700 transition-colors shadow-sm">
+                <button onclick="exportCSV()" class="flex-1 sm:flex-none flex items-center justify-center px-4 py-2.5 bg-slate-800 dark:bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-slate-700 dark:hover:bg-blue-700 transition-colors shadow-sm border border-transparent dark:border-blue-500">
                     <i data-lucide="download" class="w-4 h-4 mr-2"></i> ส่งออกข้อมูล
                 </button>
             </div>
         </div>
 
         <!-- Data Table -->
-        <div class="bg-white border border-slate-200 rounded-b-2xl overflow-x-auto shadow-sm">
-            <table class="w-full text-left border-collapse min-w-[800px]">
+        <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 overflow-x-auto transition-colors">
+            <table class="w-full text-left border-collapse min-w-[980px]">
                 <thead>
-                    <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
-                        <th class="px-6 py-4 font-bold">บ้านเลขที่</th>
-                        <th class="px-6 py-4 font-bold">หมายเลขบัตร</th>
-                        <th class="px-6 py-4 font-bold">ผู้ถือบัตร</th>
-                        <th class="px-6 py-4 font-bold">สถานะ</th>
+                    <tr class="bg-slate-100 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 select-none">
+                        <th class="px-6 py-4 font-bold cursor-pointer hover:text-slate-800 dark:hover:text-slate-200 transition-colors group" onclick="toggleSort('house_number')">
+                            <div class="flex items-center gap-1">บ้านเลขที่ <i data-lucide="arrow-up-down" class="w-3 h-3 opacity-50 group-hover:opacity-100"></i></div>
+                        </th>
+                        <th class="px-6 py-4 font-bold cursor-pointer hover:text-slate-800 dark:hover:text-slate-200 transition-colors group" onclick="toggleSort('front_number')">
+                            <div class="flex items-center gap-1">หมายเลขบัตร <i data-lucide="arrow-up-down" class="w-3 h-3 opacity-50 group-hover:opacity-100"></i></div>
+                        </th>
+                        <th class="px-6 py-4 font-bold cursor-pointer hover:text-slate-800 dark:hover:text-slate-200 transition-colors group" onclick="toggleSort('holder_name')">
+                            <div class="flex items-center gap-1">ผู้ถือบัตร <i data-lucide="arrow-up-down" class="w-3 h-3 opacity-50 group-hover:opacity-100"></i></div>
+                        </th>
+                        <th class="px-6 py-4 font-bold cursor-pointer hover:text-slate-800 dark:hover:text-slate-200 transition-colors group" onclick="toggleSort('status')">
+                            <div class="flex items-center gap-1">สถานะ <i data-lucide="arrow-up-down" class="w-3 h-3 opacity-50 group-hover:opacity-100"></i></div>
+                        </th>
                         <th class="px-6 py-4 font-bold text-center">รูปถ่าย</th>
-                        <th class="px-6 py-4 font-bold text-center">จัดการ</th>
+                        <th class="px-6 py-4 font-bold text-center">อัปเดตล่าสุด</th>
+                        <th class="px-6 py-4 font-bold text-center">จัดการ/แก้ไข</th>
                     </tr>
                 </thead>
-                <tbody id="tableBody" class="text-sm divide-y divide-slate-100">
-                    <!-- ข้อมูลแถวตารางจะถูกสร้างที่นี่ -->
+                <tbody id="tableBody" class="text-sm divide-y divide-slate-100 dark:divide-slate-700/50">
                     <tr>
-                        <td colspan="6" class="px-6 py-10 text-center text-slate-400">
-                            <i data-lucide="loader-2" class="w-6 h-6 animate-spin mx-auto mb-2 text-blue-500"></i>
+                        <td colspan="7" class="px-6 py-12 text-center text-slate-400">
+                            <i data-lucide="loader-2" class="w-8 h-8 animate-spin mx-auto mb-3 text-blue-500"></i>
                             กำลังโหลดข้อมูล...
                         </td>
                     </tr>
                 </tbody>
             </table>
         </div>
+
+        <!-- Pagination Controls -->
+        <div class="bg-slate-50 dark:bg-slate-800/50 border border-t-0 border-slate-200 dark:border-slate-700 p-4 flex flex-col sm:flex-row justify-between items-center rounded-b-2xl gap-4 transition-colors">
+            <div class="text-sm text-slate-500 dark:text-slate-400 font-medium">
+                แสดง <span id="pageStartItem" class="font-bold text-slate-800 dark:text-white">0</span> - <span id="pageEndItem" class="font-bold text-slate-800 dark:text-white">0</span> 
+                จากทั้งหมด <span id="totalItems" class="font-bold text-slate-800 dark:text-white">0</span> รายการ
+            </div>
+            <div class="flex gap-2">
+                <button onclick="changePage(-1)" id="btnPrevPage" class="px-4 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-xl text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm flex items-center">
+                    <i data-lucide="chevron-left" class="w-4 h-4 mr-1"></i> ก่อนหน้า
+                </button>
+                <div class="flex items-center px-3 font-bold text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl shadow-sm text-sm">
+                    หน้า <span id="currentPageNum" class="mx-1 text-blue-600 dark:text-blue-400">1</span>
+                </div>
+                <button onclick="changePage(1)" id="btnNextPage" class="px-4 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-xl text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm flex items-center">
+                    ถัดไป <i data-lucide="chevron-right" class="w-4 h-4 ml-1"></i>
+                </button>
+            </div>
+        </div>
+
     </main>
 
-    <!-- Modal: ดูรูปภาพ / อนุมัติ -->
-    <div id="imageModal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-slate-900/80 backdrop-blur-sm px-4">
-        <div id="imageModalContent" class="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl transform scale-95 opacity-0 transition-all duration-300">
-            <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                <h3 class="text-lg font-bold text-slate-800">ตรวจสอบข้อมูลรูปภาพ</h3>
-                <button onclick="closeImageModal()" class="text-slate-400 hover:text-slate-600 bg-white border border-slate-200 p-1.5 rounded-full transition-colors">
-                    <i data-lucide="x" class="w-4 h-4"></i>
+    <!-- Modal: ดูรูปภาพ / อนุมัติ (Review Image) -->
+    <div id="imageModal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-md px-4 transition-opacity duration-300 opacity-0">
+        <div id="imageModalContent" class="bg-white dark:bg-slate-900 rounded-[24px] w-full max-w-lg overflow-hidden shadow-2xl dark:shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-slate-100 dark:border-slate-700 transform scale-95 transition-all duration-300">
+            <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
+                <h3 class="text-lg font-bold text-slate-800 dark:text-white flex items-center">
+                    <i data-lucide="image-search" class="w-5 h-5 mr-2 text-blue-500"></i> ตรวจสอบข้อมูลรูปภาพ
+                </h3>
+                <button onclick="closeImageModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 p-1.5 rounded-full transition-colors shadow-sm">
+                    <i data-lucide="x" class="w-5 h-5"></i>
                 </button>
             </div>
             <div class="p-6">
-                <div class="mb-4">
-                    <p class="text-sm text-slate-500 mb-1">บ้านเลขที่: <span id="modalHouseNo" class="font-bold text-slate-800"></span></p>
-                    <p class="text-sm text-slate-500">หมายเลขบัตร: <span id="modalCardNo" class="font-mono text-blue-600 bg-blue-50 px-2 py-0.5 rounded font-bold tracking-wider"></span></p>
+                <div class="mb-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl p-4 flex justify-between items-center">
+                    <div>
+                        <p class="text-[11px] text-slate-400 dark:text-slate-500 uppercase tracking-widest font-bold mb-0.5">บ้านเลขที่</p>
+                        <p class="font-bold text-slate-800 dark:text-white text-lg" id="modalHouseNo">-</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-[11px] text-slate-400 dark:text-slate-500 uppercase tracking-widest font-bold mb-0.5">หมายเลขบัตร</p>
+                        <p id="modalCardNo" class="font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10 px-2.5 py-1 rounded-lg font-bold tracking-wider border border-blue-100 dark:border-blue-500/20">-</p>
+                    </div>
                 </div>
                 
-                <div class="bg-slate-100 rounded-xl overflow-hidden border border-slate-200 mb-6 flex items-center justify-center h-64 relative">
-                    <img id="previewModalImage" src="" alt="Card Image" class="max-w-full max-h-full object-contain">
-                    <div id="noImageText" class="text-slate-400 hidden flex-col items-center">
-                        <i data-lucide="image-off" class="w-10 h-10 mb-2"></i>
-                        <p class="text-sm font-medium">ไม่พบรูปภาพ</p>
+                <div class="bg-slate-100/50 dark:bg-slate-950 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 mb-6 flex items-center justify-center h-72 relative">
+                    <img id="previewModalImage" src="" alt="Card Image" class="max-w-full max-h-full object-contain drop-shadow-md">
+                    <div id="noImageText" class="text-slate-400 dark:text-slate-600 hidden flex-col items-center">
+                        <div class="w-16 h-16 bg-slate-200 dark:bg-slate-800 rounded-full flex items-center justify-center mb-3">
+                            <i data-lucide="image-off" class="w-8 h-8 text-slate-400 dark:text-slate-600"></i>
+                        </div>
+                        <p class="text-sm font-bold">ไม่พบรูปภาพด้านหลังบัตร</p>
                     </div>
                 </div>
 
                 <!-- Action Buttons -->
                 <div class="flex gap-3">
-                    <button onclick="updateStatusFromModal('active')" class="flex-1 bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-600 flex items-center justify-center transition-colors">
+                    <button onclick="updateStatusFromModal('active')" class="flex-1 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold py-3.5 rounded-xl hover:shadow-lg hover:shadow-green-500/30 flex items-center justify-center transition-all active:scale-[0.98]">
                         <i data-lucide="check-circle" class="w-5 h-5 mr-2"></i> อนุมัติ (ผ่าน)
                     </button>
-                    <button onclick="updateStatusFromModal('mismatch')" class="flex-1 bg-orange-500 text-white font-bold py-3 rounded-xl hover:bg-orange-600 flex items-center justify-center transition-colors">
-                        <i data-lucide="x-circle" class="w-5 h-5 mr-2"></i> ไม่ผ่าน (รูปไม่ตรง)
+                    <button onclick="updateStatusFromModal('mismatch')" class="flex-1 bg-gradient-to-r from-orange-500 to-red-500 text-white font-bold py-3.5 rounded-xl hover:shadow-lg hover:shadow-orange-500/30 flex items-center justify-center transition-all active:scale-[0.98]">
+                        <i data-lucide="x-circle" class="w-5 h-5 mr-2"></i> ข้อมูลไม่ตรง
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: ยืนยันสิทธิ์แทนลูกบ้าน (Admin Confirm) -->
+    <div id="adminConfirmModal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-md px-4 transition-opacity duration-300 opacity-0">
+        <div id="adminConfirmContent" class="bg-white dark:bg-slate-900 rounded-[24px] w-full max-w-md overflow-hidden shadow-2xl transform scale-95 transition-all duration-300 border border-slate-100 dark:border-slate-700">
+            <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
+                <h3 class="text-lg font-bold text-slate-800 dark:text-white flex items-center">
+                    <i data-lucide="user-check" class="w-5 h-5 mr-2 text-green-500"></i> ยืนยันสิทธิ์แทนลูกบ้าน
+                </h3>
+                <button onclick="closeAdminConfirmModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 p-1.5 rounded-full transition-colors shadow-sm hover:shadow">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-6">
+                <div class="mb-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl p-4 flex justify-between items-center">
+                    <div>
+                        <p class="text-[11px] text-slate-400 dark:text-slate-500 uppercase tracking-widest font-bold mb-0.5">บ้านเลขที่</p>
+                        <p class="font-bold text-slate-800 dark:text-white text-lg" id="adminModalHouseNo">-</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-[11px] text-slate-400 dark:text-slate-500 uppercase tracking-widest font-bold mb-0.5">หมายเลขบัตร</p>
+                        <p id="adminModalCardNo" class="font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10 px-2.5 py-1 rounded-lg font-bold tracking-wider border border-blue-100 dark:border-blue-500/20">-</p>
+                    </div>
+                </div>
+
+                <div class="space-y-4 mb-6">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wide">สถานะผู้ถือบัตร</label>
+                        <select id="adminSelectCardHolder" class="w-full px-4 py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-600 focus:outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 font-medium text-slate-700 dark:text-slate-200 cursor-pointer">
+                            <option value="เจ้าบ้าน">👑 เจ้าบ้าน</option>
+                            <option value="สมาชิกในบ้าน" selected>👨‍👩‍👧‍👦 สมาชิกในบ้าน</option>
+                            <option value="ผู้เช่า">🔑 ผู้เช่า</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wide">แนบรูปภาพ (ไม่บังคับ)</label>
+                        <input type="file" id="adminKeycardPhotoInput" accept="image/*" class="hidden" onchange="previewAdminKeycardPhoto(event)">
+                        
+                        <div id="adminPhotoPreviewContainer" class="hidden relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 mb-2 h-40 group">
+                            <img id="adminPhotoPreview" src="" alt="ภาพถ่ายคีย์การ์ด" class="w-full h-full object-cover">
+                            <div class="absolute inset-0 bg-slate-900/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 backdrop-blur-sm">
+                                <button onclick="document.getElementById('adminKeycardPhotoInput').click()" class="bg-white/90 dark:bg-slate-800/90 text-slate-800 dark:text-white border dark:border-slate-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center hover:bg-white transition-all shadow-md">
+                                    <i data-lucide="refresh-cw" class="w-4 h-4 mr-2"></i> เปลี่ยนรูป
+                                </button>
+                            </div>
+                        </div>
+
+                        <button id="adminBtnTakePhoto" onclick="document.getElementById('adminKeycardPhotoInput').click()" class="w-full flex flex-col items-center justify-center py-6 bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 rounded-xl text-sm font-bold transition-all border border-slate-200 dark:border-slate-700 border-dashed group">
+                            <i data-lucide="camera" class="w-6 h-6 mb-2 text-slate-400 dark:text-slate-500 group-hover:text-blue-500 transition-colors"></i>
+                            <span>อัปโหลดรูปภาพ (ถ้ามี)</span>
+                        </button>
+                    </div>
+                </div>
+
+                <button id="btnAdminConfirmAction" onclick="submitAdminConfirm()" class="w-full bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold py-3.5 px-4 rounded-xl hover:shadow-lg hover:shadow-green-500/30 active:scale-[0.98] transition-all duration-200 flex items-center justify-center">
+                    <i data-lucide="check-circle" class="w-5 h-5 mr-2"></i> ยืนยันและอนุมัติทันที
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: แก้ไขข้อมูลคีย์การ์ด (Edit All Data) -->
+    <div id="editCardModal" class="fixed inset-0 z-[120] hidden flex items-center justify-center bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-sm px-4 transition-opacity duration-300 opacity-0">
+        <div id="editCardContent" class="bg-white dark:bg-slate-900 rounded-[24px] w-full max-w-md overflow-hidden shadow-2xl dark:shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-slate-100 dark:border-slate-700 transform scale-95 transition-all duration-300">
+            <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
+                <h3 class="text-lg font-bold text-slate-800 dark:text-white flex items-center">
+                    <i data-lucide="edit-3" class="w-5 h-5 mr-2 text-blue-500"></i> แก้ไขข้อมูลบัตร
+                </h3>
+                <button onclick="closeEditCardModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 p-1.5 rounded-full transition-colors shadow-sm hover:shadow">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wide">บ้านเลขที่</label>
+                    <input type="text" id="editHouseNo" class="w-full px-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500/50 focus:border-blue-400 outline-none transition-all">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wide">เลขชุดหน้า</label>
+                        <input type="text" id="editFrontNo" class="w-full px-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500/50 focus:border-blue-400 outline-none transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wide">เลขชุดหลัง</label>
+                        <input type="text" id="editBackNo" class="w-full px-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500/50 focus:border-blue-400 outline-none transition-all">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wide">ผู้ถือบัตร</label>
+                    <select id="editHolderName" class="w-full px-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500/50 focus:border-blue-400 outline-none transition-all cursor-pointer">
+                        <option value="เจ้าบ้าน">👑 เจ้าบ้าน</option>
+                        <option value="สมาชิกในบ้าน">👨‍👩‍👧‍👦 สมาชิกในบ้าน</option>
+                        <option value="ผู้เช่า">🔑 ผู้เช่า</option>
+                    </select>
+                </div>
+                
+                <div class="pt-4 border-t border-slate-100 dark:border-slate-700 mt-4">
+                    <button id="btnSaveEditCard" onclick="saveEditCard()" class="w-full bg-blue-600 dark:bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl hover:bg-blue-700 dark:hover:bg-blue-500 active:scale-[0.98] transition-all duration-200 flex items-center justify-center shadow-lg shadow-blue-500/20">
+                        <i data-lucide="save" class="w-5 h-5 mr-2"></i> บันทึกการแก้ไข
                     </button>
                 </div>
             </div>
@@ -218,48 +415,152 @@
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
         const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+        // State Management
         let allData = [];
-        let currentModalCardId = null;
+        let filteredData = [];
 
-        // จัดรูปแบบหมายเลขบัตร
+        // Modals State
+        let currentModalCardId = null;
+        let currentAdminConfirmId = null;
+        let adminCapturedPhoto = null;
+        let currentEditCardId = null;
+
+        // Pagination State
+        let currentPage = 1;
+        const itemsPerPage = 50;
+
+        // Sorting State
+        let currentSortCol = 'created_at';
+        let isSortAsc = false;
+
+        // ==========================================
+        // ระบบสลับธีม (Light/Dark Mode)
+        // ==========================================
+        function toggleTheme() {
+            document.documentElement.classList.toggle('dark');
+            const isDark = document.documentElement.classList.contains('dark');
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+            updateThemeIcon(isDark);
+        }
+
+        function updateThemeIcon(isDark) {
+            const icon = document.getElementById('themeIcon');
+            if(isDark) {
+                icon.setAttribute('data-lucide', 'sun');
+            } else {
+                icon.setAttribute('data-lucide', 'moon');
+            }
+            if (window.lucide) { lucide.createIcons(); }
+        }
+
+        // ==========================================
+        // ระบบแจ้งเตือน (Toast Notification)
+        // ==========================================
+        let toastTimeout;
+        function showToast(title, message, type = 'success') {
+            const toast = document.getElementById('toast');
+            const iconContainer = document.getElementById('toastIcon');
+            
+            document.getElementById('toastTitle').textContent = title;
+            document.getElementById('toastMessage').textContent = message;
+            
+            if (type === 'success') {
+                iconContainer.className = 'w-8 h-8 rounded-full flex items-center justify-center shrink-0 mr-3 bg-green-100 text-green-600 dark:bg-green-500/20 dark:text-green-400';
+                iconContainer.innerHTML = '<i data-lucide="check" class="w-5 h-5"></i>';
+            } else if (type === 'error') {
+                iconContainer.className = 'w-8 h-8 rounded-full flex items-center justify-center shrink-0 mr-3 bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-400';
+                iconContainer.innerHTML = '<i data-lucide="alert-triangle" class="w-5 h-5"></i>';
+            } else {
+                iconContainer.className = 'w-8 h-8 rounded-full flex items-center justify-center shrink-0 mr-3 bg-blue-100 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400';
+                iconContainer.innerHTML = '<i data-lucide="info" class="w-5 h-5"></i>';
+            }
+
+            lucide.createIcons();
+            toast.classList.remove('translate-y-32', 'opacity-0');
+            
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => { hideToast(); }, 4000);
+        }
+
+        function hideToast() {
+            document.getElementById('toast').classList.add('translate-y-32', 'opacity-0');
+        }
+
+        // ==========================================
+        // Helper Functions
+        // ==========================================
         function formatCardNo(front, back) {
             let part2 = back || '';
             if (part2.length > 5) part2 = part2.slice(0, -5) + ',' + part2.slice(-5);
             return `${front || '-'} ${part2}`;
         }
 
-        // ดึงข้อมูลทั้งหมดจากตาราง rfid
+        function formatDate(dateString) {
+            if (!dateString) return '-';
+            const date = new Date(dateString);
+            return date.toLocaleString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+        }
+
+        // ==========================================
+        // โหลดข้อมูลหลัก (Fetch Data)
+        // ==========================================
         async function fetchAllData() {
             try {
-                const { data, error } = await supabaseClient
-                    .from('rfid') // ใช้ตาราง rfid 
-                    .select('*')
-                    .order('created_at', { ascending: false });
-
+                const { data, error } = await supabaseClient.from('rfid').select('*');
                 if (error) throw error;
                 
-                // แมปข้อมูลให้ตรงกับตาราง rfid ตามชื่อคอลัมน์จริง (front_number, back_number)
                 allData = (data || []).map(c => ({
                     id: c.id,
-                    house_number: c.house_number,
+                    house_number: c.house_number || '',
                     front_number: c.front_number || c.phone_col || '',      
                     back_number: c.back_number || c.card_num_col || '',    
                     holder_name: c.holder_name || 'สมาชิกบ้าน',
                     status: c.status || 'pending',
                     img: c.img, 
                     created_at: c.created_at,
-                    updated_at: c.updated_at
+                    updated_at: c.updated_at || c.created_at
                 }));
                 
                 updateStats();
+                sortDataArray();
                 filterTable();
             } catch (err) {
                 console.error("Error fetching data:", err);
-                alert("เกิดข้อผิดพลาดในการดึงข้อมูล: " + err.message);
+                showToast("ดึงข้อมูลล้มเหลว", err.message, "error");
             }
         }
 
-        // อัปเดตสถิติ
+        // ==========================================
+        // ระบบเรียงลำดับข้อมูล (Sorting)
+        // ==========================================
+        function toggleSort(column) {
+            if (currentSortCol === column) {
+                isSortAsc = !isSortAsc; 
+            } else {
+                currentSortCol = column;
+                isSortAsc = true; 
+            }
+            sortDataArray();
+            filterTable();
+        }
+
+        function sortDataArray() {
+            allData.sort((a, b) => {
+                let valA = a[currentSortCol] || '';
+                let valB = b[currentSortCol] || '';
+                
+                if (currentSortCol === 'house_number') {
+                    return isSortAsc 
+                        ? valA.toString().localeCompare(valB.toString(), undefined, {numeric: true})
+                        : valB.toString().localeCompare(valA.toString(), undefined, {numeric: true});
+                }
+                
+                if (valA < valB) return isSortAsc ? -1 : 1;
+                if (valA > valB) return isSortAsc ? 1 : -1;
+                return 0;
+            });
+        }
+
         function updateStats() {
             const total = allData.length;
             const reviewing = allData.filter(c => c.status === 'reviewing').length;
@@ -272,85 +573,160 @@
             document.getElementById('statSuspended').textContent = suspended;
         }
 
-        // กรองข้อมูลและแสดงผลตาราง
+        // ==========================================
+        // ระบบค้นหาและคัดกรอง (Smart Search & Filter)
+        // ==========================================
         function filterTable() {
-            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
+            const searchCategory = document.getElementById('searchCategory').value;
+            const isExactMatch = document.getElementById('exactMatch').checked;
             const statusFilter = document.getElementById('statusFilter').value;
 
-            const filteredData = allData.filter(card => {
-                const matchSearch = (card.house_number || '').toLowerCase().includes(searchTerm) || 
-                                    (card.front_number || '').toLowerCase().includes(searchTerm) ||
-                                    (card.back_number || '').toLowerCase().includes(searchTerm);
+            filteredData = allData.filter(card => {
+                let matchSearch = false;
+                const hNo = (card.house_number || '').toLowerCase();
+                const fNo = (card.front_number || '').toLowerCase();
+                const bNo = (card.back_number || '').toLowerCase();
+
+                if (searchTerm === '') {
+                    matchSearch = true;
+                } else {
+                    if (searchCategory === 'house') {
+                        matchSearch = isExactMatch ? (hNo === searchTerm) : hNo.includes(searchTerm);
+                    } else if (searchCategory === 'card') {
+                        matchSearch = isExactMatch ? (fNo === searchTerm || bNo === searchTerm) 
+                                                   : (fNo.includes(searchTerm) || bNo.includes(searchTerm));
+                    } else {
+                        if (isExactMatch) {
+                            matchSearch = (hNo === searchTerm || fNo === searchTerm || bNo === searchTerm);
+                        } else {
+                            matchSearch = hNo.includes(searchTerm) || fNo.includes(searchTerm) || bNo.includes(searchTerm);
+                        }
+                    }
+                }
                 
                 const matchStatus = statusFilter === 'all' || card.status === statusFilter;
-
                 return matchSearch && matchStatus;
             });
 
-            renderTable(filteredData);
+            currentPage = 1; 
+            renderTable();
+        }
+
+        // ==========================================
+        // ระบบแบ่งหน้าตาราง (Pagination & Rendering)
+        // ==========================================
+        function changePage(delta) {
+            const maxPage = Math.ceil(filteredData.length / itemsPerPage);
+            currentPage += delta;
+            if (currentPage < 1) currentPage = 1;
+            if (currentPage > maxPage) currentPage = maxPage;
+            renderTable();
         }
 
         function getStatusBadge(status) {
             const statusMap = {
-                'active': { text: 'ใช้งานปกติ', css: 'bg-green-100 text-green-700 border-green-200' },
-                'pending': { text: 'รอเจ้าบ้านยืนยัน', css: 'bg-amber-100 text-amber-700 border-amber-200' },
-                'reviewing': { text: 'รอแอดมินตรวจสอบ', css: 'bg-blue-100 text-blue-700 border-blue-200 font-bold animate-pulse' },
-                'mismatch': { text: 'ข้อมูลไม่ตรง', css: 'bg-orange-100 text-orange-700 border-orange-200' },
-                'return_check': { text: 'ส่งคืนตรวจสอบ', css: 'bg-yellow-100 text-yellow-700 border-yellow-200' },
-                'not_found': { text: 'ไม่มีในระบบ', css: 'bg-slate-200 text-slate-700 border-slate-300' },
-                'suspended': { text: 'ระงับการใช้งาน', css: 'bg-red-100 text-red-700 border-red-200' }
+                'active': { text: 'ใช้งานปกติ', css: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-500/20 dark:text-green-400 dark:border-green-500/30' },
+                'pending': { text: 'รอการยืนยัน', css: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-500/20 dark:text-amber-400 dark:border-amber-500/30' },
+                'reviewing': { text: 'รอตรวจสอบ', css: 'bg-blue-100 text-blue-700 border-blue-200 font-bold shadow-sm dark:bg-blue-500/20 dark:text-blue-400 dark:border-blue-500/30' },
+                'mismatch': { text: 'ข้อมูลไม่ตรง', css: 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-500/20 dark:text-orange-400 dark:border-orange-500/30' },
+                'return_check': { text: 'ส่งคืนตรวจสอบ', css: 'bg-yellow-100 text-yellow-700 border-yellow-200 dark:bg-yellow-500/20 dark:text-yellow-400 dark:border-yellow-500/30' },
+                'not_found': { text: 'ไม่มีในระบบ', css: 'bg-slate-200 text-slate-700 border-slate-300 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600' },
+                'suspended': { text: 'ระงับใช้งาน', css: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-500/20 dark:text-red-400 dark:border-red-500/30' }
             };
-            const s = statusMap[status] || { text: status || 'Unknown', css: 'bg-slate-100 text-slate-600' };
-            return `<span class="px-2.5 py-1 text-xs font-semibold rounded-md border ${s.css}">${s.text}</span>`;
+            const s = statusMap[status] || { text: status || 'Unknown', css: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' };
+            
+            let icon = '';
+            if(status==='active') icon = '<i data-lucide="check-circle" class="w-3 h-3 mr-1 inline"></i>';
+            else if(status==='reviewing') icon = '<span class="flex h-2 w-2 relative mr-1.5 inline-flex"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span></span>';
+            else if(status==='pending') icon = '<i data-lucide="clock" class="w-3 h-3 mr-1 inline"></i>';
+
+            return `<span class="inline-flex items-center px-2.5 py-1.5 text-[11px] uppercase tracking-wider font-bold rounded-md border ${s.css}">${icon}${s.text}</span>`;
         }
 
-        function renderTable(dataArray) {
+        function renderTable() {
             const tbody = document.getElementById('tableBody');
             tbody.innerHTML = '';
 
-            if (dataArray.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="6" class="px-6 py-8 text-center text-slate-500">ไม่พบข้อมูลที่ค้นหา</td></tr>`;
+            const totalItems = filteredData.length;
+            const maxPage = Math.ceil(totalItems / itemsPerPage) || 1;
+            
+            if (currentPage > maxPage) currentPage = maxPage;
+
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = Math.min(startIndex + itemsPerPage, totalItems);
+
+            document.getElementById('totalItems').textContent = totalItems.toLocaleString();
+            document.getElementById('pageStartItem').textContent = totalItems === 0 ? 0 : (startIndex + 1).toLocaleString();
+            document.getElementById('pageEndItem').textContent = endIndex.toLocaleString();
+            document.getElementById('currentPageNum').textContent = currentPage;
+
+            document.getElementById('btnPrevPage').disabled = currentPage === 1;
+            document.getElementById('btnNextPage').disabled = currentPage === maxPage || totalItems === 0;
+
+            if (totalItems === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="px-6 py-16 text-center text-slate-400 dark:text-slate-500 flex-col items-center justify-center"><div class="bg-slate-100 dark:bg-slate-800 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3"><i data-lucide="inbox" class="w-8 h-8 text-slate-400 dark:text-slate-500"></i></div><p class="font-medium text-slate-500 dark:text-slate-400">ไม่พบข้อมูลที่ค้นหา</p></td></tr>`;
                 lucide.createIcons();
                 return;
             }
 
-            dataArray.forEach(card => {
+            const pageData = filteredData.slice(startIndex, endIndex);
+
+            pageData.forEach(card => {
                 const tr = document.createElement('tr');
-                tr.className = 'hover:bg-slate-50/50 transition-colors group';
+                tr.className = 'hover:bg-blue-50/50 dark:hover:bg-slate-700/50 transition-colors group border-b border-slate-100 dark:border-slate-700/50 last:border-0';
 
                 const displayCardNo = formatCardNo(card.front_number, card.back_number);
                 
-                // รูปภาพ
-                let imgHtml = '-';
+                let imgHtml = '<span class="text-slate-300 dark:text-slate-600 text-xs">-</span>';
                 if (card.img) {
                     imgHtml = `
-                        <button onclick="viewImage('${card.id}')" class="text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg transition-colors" title="ดูรูปภาพ">
+                        <button onclick="viewImage('${card.id}')" class="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 bg-blue-50 dark:bg-blue-500/10 hover:bg-blue-100 dark:hover:bg-blue-500/20 p-2 rounded-xl transition-colors shadow-sm" title="ดูรูปภาพ">
                             <i data-lucide="image" class="w-4 h-4"></i>
                         </button>
                     `;
                 }
 
+                let leftBorder = 'border-l-4 border-transparent';
+                if(card.status === 'reviewing') leftBorder = 'border-l-4 border-blue-400 dark:border-blue-500 bg-blue-50/30 dark:bg-blue-500/5';
+
+                let extraActionHtml = '';
+                if (card.status === 'pending') {
+                    extraActionHtml = `
+                        <button onclick="openAdminConfirmModal('${card.id}')" class="bg-green-500 dark:bg-green-600 text-white p-1.5 rounded-lg hover:bg-green-600 dark:hover:bg-green-500 transition-colors shadow-sm shrink-0" title="ยืนยันแทนลูกบ้าน">
+                            <i data-lucide="user-check" class="w-4 h-4"></i>
+                        </button>
+                    `;
+                }
+
                 tr.innerHTML = `
-                    <td class="px-6 py-4 font-bold text-slate-800">${card.house_number || '-'}</td>
-                    <td class="px-6 py-4 font-mono text-slate-600">${displayCardNo}</td>
+                    <td class="px-6 py-4 font-bold text-slate-800 dark:text-slate-200 ${leftBorder}">${card.house_number || '-'}</td>
+                    <td class="px-6 py-4 font-mono text-slate-600 dark:text-slate-300 text-[13px] tracking-wide">${displayCardNo}</td>
                     <td class="px-6 py-4">
                         <div class="flex items-center">
-                            <div class="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center mr-2 border border-slate-200">
-                                <i data-lucide="user" class="w-3 h-3 text-slate-400"></i>
+                            <div class="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-2 border border-slate-200 dark:border-slate-600">
+                                <i data-lucide="user" class="w-3 h-3 text-slate-400 dark:text-slate-400"></i>
                             </div>
-                            <span class="font-medium text-slate-700">${card.holder_name || '-'}</span>
+                            <span class="font-medium text-slate-700 dark:text-slate-200">${card.holder_name || '-'}</span>
                         </div>
                     </td>
                     <td class="px-6 py-4">${getStatusBadge(card.status)}</td>
                     <td class="px-6 py-4 text-center">${imgHtml}</td>
-                    <td class="px-6 py-4 text-center">
-                        <select onchange="updateStatusInline('${card.id}', this.value)" class="text-sm border border-slate-300 rounded-md px-2 py-1.5 text-slate-600 bg-white focus:ring-1 focus:ring-blue-400 outline-none cursor-pointer">
-                            <option value="" disabled selected>เปลี่ยนสถานะ...</option>
-                            <option value="active">✅ อนุมัติ (Active)</option>
-                            <option value="pending">⏳ รีเซ็ตเป็น รอเจ้าบ้าน</option>
-                            <option value="mismatch">❌ ข้อมูลรูปไม่ตรง</option>
-                            <option value="suspended">🚫 ระงับการใช้งาน</option>
-                        </select>
+                    <td class="px-6 py-4 text-center text-xs text-slate-500 dark:text-slate-400 font-medium">${formatDate(card.updated_at)}</td>
+                    <td class="px-4 py-4 text-center">
+                        <div class="flex items-center justify-center w-full max-w-[220px] mx-auto gap-1">
+                            ${extraActionHtml}
+                            <button onclick="openEditCardModal('${card.id}')" class="text-slate-400 hover:text-blue-500 dark:text-slate-400 dark:hover:text-blue-400 bg-slate-50 dark:bg-slate-700 hover:bg-blue-50 dark:hover:bg-slate-600 p-1.5 rounded-lg transition-colors shadow-sm shrink-0" title="แก้ไขข้อมูลบัตรทั้งหมด">
+                                <i data-lucide="edit-3" class="w-4 h-4"></i>
+                            </button>
+                            <select onchange="updateStatusInline('${card.id}', this.value)" class="w-full text-xs border border-slate-300 dark:border-slate-600 rounded-lg px-2 py-1.5 text-slate-700 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 hover:bg-white dark:hover:bg-slate-700 focus:ring-2 focus:ring-blue-400 focus:border-blue-400 outline-none cursor-pointer shadow-sm transition-all font-bold">
+                                <option value="" disabled selected>เปลี่ยนสถานะ</option>
+                                <option value="active">✅ อนุมัติ (Active)</option>
+                                <option value="pending">⏳ รีเซ็ตเป็นรอตรวจสอบ</option>
+                                <option value="mismatch">❌ ข้อมูลรูปไม่ตรง</option>
+                                <option value="suspended">🚫 ระงับการใช้งาน</option>
+                            </select>
+                        </div>
                     </td>
                 `;
                 tbody.appendChild(tr);
@@ -360,7 +736,253 @@
         }
 
         // ==========================================
-        // การจัดการสถานะและรูปภาพ
+        // ฟังก์ชันบีบอัดรูปภาพ
+        // ==========================================
+        async function compressImage(file, maxWidth = 800, quality = 0.7) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.src = event.target.result;
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const scaleSize = maxWidth / img.width;
+                        canvas.width = maxWidth;
+                        canvas.height = img.height * scaleSize;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                        canvas.toBlob((blob) => { resolve(new File([blob], file.name, { type: 'image/jpeg' })); }, 'image/jpeg', quality);
+                    };
+                };
+            });
+        }
+
+        // ==========================================
+        // Modal: แก้ไขข้อมูลคีย์การ์ดทั้งหมด (Edit Card)
+        // ==========================================
+        function openEditCardModal(id) {
+            const card = allData.find(c => c.id === id);
+            if (!card) return;
+
+            currentEditCardId = id;
+            document.getElementById('editHouseNo').value = card.house_number || '';
+            document.getElementById('editFrontNo').value = card.front_number || '';
+            document.getElementById('editBackNo').value = card.back_number || '';
+            
+            const holderSelect = document.getElementById('editHolderName');
+            if (card.holder_name && [...holderSelect.options].some(o => o.value === card.holder_name)) {
+                holderSelect.value = card.holder_name;
+            } else {
+                holderSelect.value = 'สมาชิกในบ้าน';
+            }
+
+            const modal = document.getElementById('editCardModal');
+            const content = document.getElementById('editCardContent');
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                content.classList.remove('scale-95');
+                content.classList.add('scale-100');
+            }, 10);
+            
+            lucide.createIcons();
+        }
+
+        function closeEditCardModal() {
+            const modal = document.getElementById('editCardModal');
+            const content = document.getElementById('editCardContent');
+            modal.classList.add('opacity-0');
+            content.classList.remove('scale-100');
+            content.classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                currentEditCardId = null;
+            }, 300);
+        }
+
+        async function saveEditCard() {
+            if (!currentEditCardId) return;
+
+            const houseNo = document.getElementById('editHouseNo').value.trim() || null;
+            const frontNo = document.getElementById('editFrontNo').value.trim();
+            const backNo = document.getElementById('editBackNo').value.trim();
+            const holderName = document.getElementById('editHolderName').value;
+
+            if (!frontNo && !backNo) {
+                showToast("ข้อมูลไม่ครบ", "กรุณาระบุเลขบัตรอย่างน้อย 1 ช่อง (ชุดหน้า หรือ ชุดหลัง)", "error");
+                return;
+            }
+
+            const btn = document.getElementById('btnSaveEditCard');
+            btn.innerHTML = '<div class="flex items-center justify-center"><div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>กำลังบันทึก...</div>';
+            btn.classList.add('pointer-events-none');
+
+            try {
+                const payload = {
+                    house_number: houseNo,
+                    front_number: frontNo,
+                    back_number: backNo,
+                    holder_name: holderName,
+                    updated_at: new Date().toISOString()
+                };
+
+                const { error } = await supabaseClient
+                    .from('rfid')
+                    .update(payload)
+                    .eq('id', currentEditCardId);
+
+                if (error) throw new Error(error.message);
+
+                // Update in memory
+                const cardIndex = allData.findIndex(c => c.id === currentEditCardId);
+                if (cardIndex !== -1) {
+                    allData[cardIndex].house_number = houseNo;
+                    allData[cardIndex].front_number = frontNo;
+                    allData[cardIndex].back_number = backNo;
+                    allData[cardIndex].holder_name = holderName;
+                    allData[cardIndex].updated_at = payload.updated_at;
+                }
+
+                closeEditCardModal();
+                filterTable();
+                showToast("บันทึกสำเร็จ", "แก้ไขข้อมูลคีย์การ์ดเรียบร้อยแล้ว", "success");
+
+            } catch (err) {
+                console.error('Save Edit Error:', err);
+                showToast("เกิดข้อผิดพลาด", err.message, "error");
+            } finally {
+                btn.innerHTML = '<i data-lucide="save" class="w-5 h-5 mr-2"></i> บันทึกการแก้ไข';
+                btn.classList.remove('pointer-events-none');
+                lucide.createIcons();
+            }
+        }
+
+
+        // ==========================================
+        // Modal: ยืนยันสิทธิ์แทนลูกบ้าน (Admin Confirm)
+        // ==========================================
+        function openAdminConfirmModal(id) {
+            const card = allData.find(c => c.id === id);
+            if (!card) return;
+
+            currentAdminConfirmId = id;
+            document.getElementById('adminModalHouseNo').textContent = card.house_number || '-';
+            document.getElementById('adminModalCardNo').textContent = formatCardNo(card.front_number, card.back_number);
+            
+            adminCapturedPhoto = null;
+            document.getElementById('adminKeycardPhotoInput').value = '';
+            document.getElementById('adminPhotoPreviewContainer').classList.add('hidden');
+            document.getElementById('adminBtnTakePhoto').classList.remove('hidden');
+
+            const modal = document.getElementById('adminConfirmModal');
+            const content = document.getElementById('adminConfirmContent');
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                content.classList.remove('scale-95');
+                content.classList.add('scale-100');
+            }, 10);
+            
+            lucide.createIcons();
+        }
+
+        function closeAdminConfirmModal() {
+            const modal = document.getElementById('adminConfirmModal');
+            const content = document.getElementById('adminConfirmContent');
+            
+            modal.classList.add('opacity-0');
+            content.classList.remove('scale-100');
+            content.classList.add('scale-95');
+            
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                currentAdminConfirmId = null;
+                adminCapturedPhoto = null;
+            }, 300);
+        }
+
+        function previewAdminKeycardPhoto(event) {
+            const file = event.target.files[0];
+            if (file) {
+                adminCapturedPhoto = file;
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    document.getElementById('adminPhotoPreview').src = e.target.result;
+                    document.getElementById('adminPhotoPreviewContainer').classList.remove('hidden');
+                    document.getElementById('adminBtnTakePhoto').classList.add('hidden');
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        async function submitAdminConfirm() {
+            if (!currentAdminConfirmId) return;
+
+            const btn = document.getElementById('btnAdminConfirmAction');
+            btn.innerHTML = '<div class="flex items-center justify-center"><div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>กำลังบันทึก...</div>';
+            btn.classList.add('pointer-events-none');
+
+            try {
+                let imageUrl = null;
+
+                if (adminCapturedPhoto) {
+                    const compressedFile = await compressImage(adminCapturedPhoto, 800, 0.7);
+                    const fileName = `keycard_${currentAdminConfirmId}_${Date.now()}.jpg`;
+                    
+                    const { data: uploadData, error: uploadError } = await supabaseClient.storage
+                        .from('keycard_images')
+                        .upload(fileName, compressedFile, { upsert: true });
+
+                    if (uploadError) throw new Error("ระบบเก็บรูปภาพมีปัญหา: " + uploadError.message);
+
+                    const { data: publicUrlData } = supabaseClient.storage
+                        .from('keycard_images')
+                        .getPublicUrl(fileName);
+                    imageUrl = publicUrlData.publicUrl;
+                }
+
+                const selectedRole = document.getElementById('adminSelectCardHolder').value;
+                const updatePayload = { 
+                    status: 'active', 
+                    holder_name: selectedRole,
+                    updated_at: new Date().toISOString()
+                };
+
+                if (imageUrl) updatePayload.img = imageUrl;
+
+                const { error: updateError } = await supabaseClient
+                    .from('rfid')
+                    .update(updatePayload)
+                    .eq('id', currentAdminConfirmId);
+
+                if (updateError) throw new Error("อัปเดตฐานข้อมูลล้มเหลว: " + updateError.message);
+
+                const cardIndex = allData.findIndex(c => c.id === currentAdminConfirmId);
+                if (cardIndex !== -1) {
+                    allData[cardIndex].status = 'active';
+                    allData[cardIndex].holder_name = selectedRole;
+                    if (imageUrl) allData[cardIndex].img = imageUrl;
+                    allData[cardIndex].updated_at = updatePayload.updated_at;
+                }
+
+                closeAdminConfirmModal();
+                updateStats();
+                filterTable();
+                showToast("ยืนยันสิทธิ์สำเร็จ", "อนุมัติคีย์การ์ดแทนลูกบ้านเรียบร้อยแล้ว", "success");
+
+            } catch (error) {
+                console.error('Admin Confirm Error:', error);
+                showToast("เกิดข้อผิดพลาด", error.message, "error");
+            } finally {
+                btn.innerHTML = '<i data-lucide="check-circle" class="w-5 h-5 mr-2"></i> ยืนยันและอนุมัติทันที';
+                btn.classList.remove('pointer-events-none');
+                lucide.createIcons();
+            }
+        }
+
+        // ==========================================
+        // การจัดการสถานะและรูปภาพ (Image Modal ของเดิม)
         // ==========================================
         function viewImage(id) {
             const card = allData.find(c => c.id === id);
@@ -386,16 +1008,20 @@
             const content = document.getElementById('imageModalContent');
             modal.classList.remove('hidden');
             setTimeout(() => {
-                content.classList.remove('scale-95', 'opacity-0');
-                content.classList.add('scale-100', 'opacity-100');
+                modal.classList.remove('opacity-0');
+                content.classList.remove('scale-95');
+                content.classList.add('scale-100');
             }, 10);
         }
 
         function closeImageModal() {
             const modal = document.getElementById('imageModal');
             const content = document.getElementById('imageModalContent');
-            content.classList.remove('scale-100', 'opacity-100');
-            content.classList.add('scale-95', 'opacity-0');
+            
+            modal.classList.add('opacity-0');
+            content.classList.remove('scale-100');
+            content.classList.add('scale-95');
+            
             setTimeout(() => {
                 modal.classList.add('hidden');
                 currentModalCardId = null;
@@ -404,41 +1030,48 @@
 
         async function updateStatusFromModal(newStatus) {
             if(!currentModalCardId) return;
-            await updateStatusInDB(currentModalCardId, newStatus);
-            closeImageModal();
+            const success = await updateStatusInDB(currentModalCardId, newStatus);
+            if(success) {
+                showToast("อัปเดตสำเร็จ", `เปลี่ยนสถานะบัตรเรียบร้อยแล้ว`, "success");
+                closeImageModal();
+            }
         }
 
         async function updateStatusInline(id, newStatus) {
             if(!newStatus) return;
             if(confirm(`ยืนยันการเปลี่ยนสถานะบัตรเป็น ${newStatus} หรือไม่?`)) {
-                await updateStatusInDB(id, newStatus);
+                const success = await updateStatusInDB(id, newStatus);
+                if(success) showToast("อัปเดตสำเร็จ", "อัปเดตสถานะข้อมูลสำเร็จ", "success");
             } else {
-                filterTable(); // Reset dropdown visually
+                renderTable(); 
             }
         }
 
         async function updateStatusInDB(id, status) {
             try {
-                // บันทึกสถานะกลับไปยังตาราง rfid
                 const { error } = await supabaseClient
                     .from('rfid')
-                    .update({ status: status })
+                    .update({ 
+                        status: status,
+                        updated_at: new Date().toISOString()
+                    })
                     .eq('id', id);
 
                 if (error) throw error;
 
-                // อัปเดตใน Array ที่แสดงผล
                 const idx = allData.findIndex(c => c.id === id);
                 if(idx !== -1) {
                     allData[idx].status = status;
+                    allData[idx].updated_at = new Date().toISOString();
                 }
 
                 updateStats();
                 filterTable();
-                
+                return true;
             } catch (err) {
                 console.error("Update Status Error:", err);
-                alert("อัปเดตสถานะไม่สำเร็จ: " + err.message);
+                showToast("อัปเดตไม่สำเร็จ", err.message, "error");
+                return false;
             }
         }
 
@@ -447,11 +1080,10 @@
         // ==========================================
         function exportCSV() {
             if (allData.length === 0) {
-                alert("ไม่มีข้อมูลสำหรับส่งออก");
+                showToast("ไม่พบข้อมูล", "ไม่มีข้อมูลในระบบสำหรับส่งออก", "info");
                 return;
             }
 
-            // ส่งออกข้อมูลในรูปแบบมาตรฐานเพื่อง่ายต่อการนำกลับเข้า
             const csvData = allData.map(c => ({
                 'house_number': c.house_number || '',
                 'front_number': c.front_number || '',
@@ -462,23 +1094,23 @@
             }));
 
             const csv = Papa.unparse(csvData, { quotes: true });
-            
-            // ใส่ BOM เพื่อให้ Excel เปิดภาษาไทยได้ถูกต้อง
             const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.setAttribute('download', `Keycards_Export_${new Date().toISOString().slice(0,10)}.csv`);
+            link.setAttribute('download', `Keycards_DB_${new Date().toISOString().slice(0,10)}.csv`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+            
+            showToast("ส่งออกสำเร็จ", "ดาวน์โหลดไฟล์ CSV เรียบร้อยแล้ว", "success");
         }
 
         function handleImportCSV(event) {
             const file = event.target.files[0];
             if (!file) return;
 
-            if(!confirm("การนำเข้าข้อมูลจะทำการเพิ่ม/อัปเดตข้อมูลในระบบ คุณต้องการดำเนินการต่อหรือไม่?")) {
+            if(!confirm("⚠️ การนำเข้าข้อมูลจะทำการอัปเดตฐานข้อมูลจริง\nคุณต้องการดำเนินการต่อหรือไม่?")) {
                 event.target.value = '';
                 return;
             }
@@ -492,37 +1124,33 @@
                     let errorCount = 0;
                     let lastErrorMsg = "";
 
-                    // แสดงหน้าจอ Loading
-                    document.getElementById('loadingText').textContent = "กำลังอัปโหลดข้อมูล " + data.length + " รายการ...";
+                    document.getElementById('loadingText').textContent = `กำลังประมวลผล ${data.length} รายการ...`;
                     document.getElementById('loadingScreen').style.display = 'flex';
 
                     for (let i = 0; i < data.length; i++) {
                         const row = data[i];
                         
-                        // ดึงข้อมูล (รองรับทั้งภาษาไทยและอังกฤษ)
                         const houseNo = row.house_number || row['บ้านเลขที่'] || null;
                         const frontVal = row.front_number || row.phone_col || row['เลขชุดหน้า'] || '';
                         const backVal = row.back_number || row.card_num_col || row['เลขชุดหลัง'] || '';
                         const holderName = row.holder_name || row['ผู้ถือบัตร'] || 'สมาชิกบ้าน';
                         const status = row.status || row['สถานะ'] || 'pending';
 
-                        // ปรับปรุง: ถ้ายอมให้มีข้อมูลแค่ตัวใดตัวหนึ่งได้ (แต่ถ้าไม่มีเลยทั้งคู่ ให้ข้ามบรรทัดนี้)
                         if (!frontVal && !backVal) {
                             errorCount++;
                             continue;
                         }
 
-                        // กำหนดโครงสร้างข้อมูลส่งขึ้นตาราง rfid (ใช้คอลัมน์ front_number, back_number ตามตารางจริง)
                         const payload = {
                             house_number: houseNo,
                             front_number: frontVal,     
                             back_number: backVal,   
                             status: status,
-                            holder_name: holderName
+                            holder_name: holderName,
+                            updated_at: new Date().toISOString()
                         };
 
                         try {
-                            // ตรวจสอบว่าบัตรนี้มีในระบบหรือยัง โดยเทียบจากรหัสบัตร
                             const { data: existing, error: selectErr } = await supabaseClient
                                 .from('rfid')
                                 .select('id')
@@ -533,11 +1161,9 @@
                             if (selectErr) throw selectErr;
 
                             if (existing && existing.length > 0) {
-                                // ถ้ามีแล้วให้ Update
                                 const { error: updErr } = await supabaseClient.from('rfid').update(payload).eq('id', existing[0].id);
                                 if (updErr) throw updErr;
                             } else {
-                                // ถ้ายังไม่มีให้ Insert ใหม่
                                 const { error: insErr } = await supabaseClient.from('rfid').insert([payload]);
                                 if (insErr) throw insErr;
                             }
@@ -549,27 +1175,31 @@
                         }
                     }
 
-                    // ปิดหน้าจอ Loading
                     document.getElementById('loadingScreen').style.display = 'none';
 
-                    let resultAlert = `นำเข้าข้อมูลสำเร็จ!\nสำเร็จ: ${successCount} รายการ\nไม่สามารถนำเข้าได้: ${errorCount} รายการ`;
-                    if (errorCount > 0 && lastErrorMsg) {
-                        resultAlert += `\n\nข้อผิดพลาดล่าสุด: ${lastErrorMsg}`;
+                    if(errorCount > 0) {
+                        showToast("พบข้อผิดพลาดบางส่วน", `นำเข้าได้ ${successCount} รายการ | ล้มเหลว ${errorCount} รายการ`, "error");
+                    } else {
+                        showToast("นำเข้าข้อมูลสำเร็จ", `เพิ่มและอัปเดตข้อมูล ${successCount} รายการเรียบร้อย`, "success");
                     }
-                    
-                    alert(resultAlert);
-                    event.target.value = ''; // รีเซ็ต input
-                    fetchAllData(); // โหลดข้อมูลมาแสดงใหม่
+
+                    event.target.value = ''; 
+                    fetchAllData(); 
                 },
                 error: function(err) {
-                    alert("ไม่สามารถอ่านไฟล์ CSV ได้");
+                    document.getElementById('loadingScreen').style.display = 'none';
+                    showToast("อ่านไฟล์ล้มเหลว", err.message, "error");
                     console.error(err);
                 }
             });
         }
 
-        // เริ่มต้นการทำงานเมื่อเปิดหน้าเว็บ
+        // เริ่มต้นการทำงานเมื่อหน้าเว็บโหลด
         window.onload = () => {
+            // โหลดธีมตั้งต้น
+            const isDark = document.documentElement.classList.contains('dark');
+            updateThemeIcon(isDark);
+            
             lucide.createIcons();
             fetchAllData();
         };
