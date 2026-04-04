@@ -473,7 +473,7 @@
       </div>
       
       <div class="text-center mt-4 text-muted small">
-          9one © 2024 V.17.1 (Supabase Insert Fix & RLS Handler)
+          9one © 2024 V.17.2 (Smart Auto-ID & Retry Logic)
       </div>
     </div>
   </div>
@@ -552,6 +552,8 @@
     let picture = ""; 
     let emailL = "";
     let globalHousePaymentData = []; 
+    // ⚠️ อย่าลืมตั้งค่า Web App URL ตรงนี้ด้วยนะครับ
+    const urlAPI = "https://script.google.com/macros/s/AKfycbz6Ua9LYQikcgL8OcT3CkEcxfxQNFctPZ1fg5dDP6WTRQEZpvklObLufFFx2a-XBeruYw/exec";
 
     $(document).ready(function() {
       const liffId = "2000143615-n47nfwO1";
@@ -628,7 +630,6 @@
             { key: 'nov', id: 'm11', short: 'พ.ย.' }, { key: 'dec', id: 'm12', short: 'ธ.ค.' }
         ];
 
-        // 1. รีเซ็ตทุกเดือนให้กลับมากดได้ปกติก่อน
         monthMap.forEach(m => {
             const cb = document.getElementById(m.id);
             const label = document.querySelector(`label[for="${m.id}"]`);
@@ -641,14 +642,12 @@
 
         if (!selectedYear || globalHousePaymentData.length === 0) return;
 
-        // ดึงข้อมูลปีนั้นจาก house_payments
         const yearData = globalHousePaymentData.find(row => String(row.year).trim() === selectedYear);
 
         if (yearData) {
             monthMap.forEach(m => {
                 const status = yearData[m.key] ? String(yearData[m.key]).trim() : '';
                 
-                // ถ่ายทอดสถานะ "จ่ายแล้ว" (ล็อกปุ่ม โชว์เครื่องหมายถูก)
                 if (status === 'จ่ายแล้ว') {
                     const cb = document.getElementById(m.id);
                     const label = document.querySelector(`label[for="${m.id}"]`);
@@ -659,7 +658,6 @@
                     label.innerHTML = `<i class='bx bx-check'></i>`;
                     label.title = "ชำระแล้ว";
                 } 
-                // ถ่ายทอดสถานะ "ไม่เก็บ" (ล็อกปุ่ม โชว์เครื่องหมายขีดฆ่า สีเทา)
                 else if (status === 'ไม่เก็บ') {
                     const cb = document.getElementById(m.id);
                     const label = document.querySelector(`label[for="${m.id}"]`);
@@ -670,7 +668,6 @@
                     label.innerHTML = `<i class='bx bx-block'></i>`;
                     label.title = "ไม่เรียกเก็บ";
                 }
-                // ถ้าเป็น "ยังไม่จ่าย" หรือ "รอข้อมูล" ปุ่มจะยังกดเลือกจ่ายได้ตามปกติ
             });
         }
     }
@@ -692,7 +689,6 @@
       }
 
       try {
-        // ✅ ระบบเช็คยอดค้างจากตาราง house_payments ตามปกติ
         const { data, error } = await supabaseClient
           .from('house_payments')
           .select('*')
@@ -727,7 +723,6 @@
 
                 months.forEach((monthKey, index) => {
                     const status = row[monthKey] ? String(row[monthKey]).trim() : '';
-                    // สนใจนำมาแสดงในตารางเฉพาะ ยอดที่ยังไม่จ่าย หรือ ค้างชำระ (ส่วน "ไม่เก็บ" จะไม่แสดงในนี้)
                     if (status && (status === 'ยังไม่จ่าย' || status === 'ค้างจ่าย' || status === 'รอข้อมูล')) {
                         hasUnpaid = true;  totalUnpaidCount++;
                         let statusBadge = status === 'รอข้อมูล' ? 'bg-warning text-dark' : 'bg-danger';
@@ -953,7 +948,7 @@
         });
     }
 
-    /** 🌟 Function บันทึกข้อมูลหลัก - ทำงานแบบ Supabase Primary 🌟 */
+    /** 🌟 Function บันทึกข้อมูลหลัก - Supabase Primary with Retry Logic 🌟 */
     async function getAllElmForm() {
       if (!uid) {
          if(liff.isLoggedIn()){ const idToken = liff.getDecodedIDToken(); if(idToken) uid = idToken.sub; }
@@ -1036,16 +1031,16 @@
           const { data: publicUrlData } = supabaseClient.storage.from('slip-images').getPublicUrl(fileName);
           const imageUrl = publicUrlData.publicUrl;
 
-          document.getElementById('saveProgressText').innerHTML = "กำลังตรวจสอบระบบ ID...";
+          document.getElementById('saveProgressText').innerHTML = "กำลังคำนวณรหัสอ้างอิง (ID)...";
 
-          // --- STEP 2: ดึง ID ทั้งหมดมาคำนวณหาค่าสูงสุดจากตาราง common_fees ---
-          const { data: allRecords, error: idError } = await supabaseClient
+          // --- STEP 2: ดึงข้อมูลล่าสุด 1000 รายการ (เรียงตามเวลา) เพื่อหาค่า ID ล่าสุดอย่างแม่นยำ ---
+          const { data: recentRecords, error: idError } = await supabaseClient
             .from('common_fees')
             .select('id')
-            .limit(10000); 
+            .order('reported_at', { ascending: false }) // เรียงตามเวลาล่าสุด
+            .limit(1000); 
           
           if(idError) {
-              // ดักจับ Error กรณีที่เกิดจากลืมเปิดสิทธิ์ Policy (RLS)
               if(idError.message.includes('security policy') || idError.code === '42501' || idError.code === 'PGRST116') {
                   throw new Error("ยังไม่ได้เปิดสิทธิ์ Policy (Select) ให้ตาราง common_fees ใน Supabase");
               }
@@ -1053,10 +1048,11 @@
           }
 
           let currentIdNum = 0;
-          if (allRecords && allRecords.length > 0) {
-              allRecords.forEach(record => {
+          if (recentRecords && recentRecords.length > 0) {
+              recentRecords.forEach(record => {
                   if(record.id) {
-                      let num = parseInt(String(record.id).replace('serene', ''), 10);
+                      // สกัดเอาเฉพาะตัวเลขออกมาจาก ID อย่างแม่นยำ (เช่น serene000125 -> 125)
+                      let num = parseInt(String(record.id).replace(/[^0-9]/g, ''), 10);
                       if (!isNaN(num) && num > currentIdNum) {
                           currentIdNum = num;
                       }
@@ -1066,47 +1062,75 @@
 
           document.getElementById('saveProgressText').innerHTML = "กำลังบันทึกข้อมูลหลัก...";
 
-          // --- STEP 3: บันทึกข้อมูลรวดเดียวลง Supabase (ตาราง common_fees) ---
-          let supabasePayload = [];
-          let currentDate = new Date();
+          // --- STEP 3: บันทึกข้อมูลแบบ Smart Retry (สู้กลับถ้า ID ชนกัน) ---
+          let maxRetries = 3;
+          let isSuccess = false;
+          let finalSheetPayload = [];
 
-          for (let i = 0; i < selectedMonths.length; i++) {
-              currentIdNum++;
-              let newId = 'serene' + ('000000' + currentIdNum).slice(-6); 
+          while (maxRetries > 0 && !isSuccess) {
+              let supabasePayload = [];
+              finalSheetPayload = [];
+              let tempIdNum = currentIdNum; // ใช้ตัวแปรชั่วคราวเผื่อต้องวนลูปใหม่
+              let currentDate = new Date();
 
-              let recordObj = {
-                  'id': newId,
-                  'reported_at': currentDate.toISOString(),
-                  'user_id': uid,
-                  'name': name,
-                  'house_number': name1Hidden,
-                  'month': selectedMonths[i],
-                  'year': name3,
-                  'payment_method': payMethod,
-                  'remark': note,
-                  'amount_text': "สามร้อยบาทถ้วน",
-                  'amount': 300,
-                  'image_url': imageUrl,
-                  'status': "รอตรวจสอบ"
-              };
+              for (let i = 0; i < selectedMonths.length; i++) {
+                  tempIdNum++;
+                  let newId = 'serene' + ('000000' + tempIdNum).slice(-6); 
+
+                  let recordObj = {
+                      'id': newId,
+                      'reported_at': currentDate.toISOString(),
+                      'user_id': uid,
+                      'name': name,
+                      'house_number': name1Hidden,
+                      'month': selectedMonths[i],
+                      'year': name3,
+                      'payment_method': payMethod,
+                      'remark': note,
+                      'amount_text': "สามร้อยบาทถ้วน",
+                      'amount': 300,
+                      'image_url': imageUrl,
+                      'status': "รอตรวจสอบ"
+                  };
+                  
+                  supabasePayload.push(recordObj);
+                  finalSheetPayload.push(recordObj);
+              }
+
+              // ยิงบันทึกข้อมูล
+              const { error: insertError } = await supabaseClient.from('common_fees').insert(supabasePayload);
               
-              supabasePayload.push(recordObj);
+              if (insertError) {
+                  // ถ้าเกิด Error ID ชนกัน (Duplicate Key - Code 23505)
+                  if (insertError.code === '23505' || insertError.message.includes('duplicate key')) {
+                      console.warn(`⚠️ ID ${tempIdNum} ชนกับคนอื่น! กำลังพยายามใหม่... (เหลือ ${maxRetries-1} รอบ)`);
+                      currentIdNum += selectedMonths.length; // ขยับเลข ID หนีไปอีก
+                      maxRetries--;
+                      await new Promise(r => setTimeout(r, 500)); // หน่วงเวลาครึ่งวินาทีแล้วลองใหม่
+                      continue; // กลับไปเริ่มลูป while ใหม่
+                  } 
+                  // ถ้าเป็น Error เรื่องสิทธิ์ (RLS)
+                  else if(insertError.message.includes('security policy') || insertError.code === '42501' || insertError.code === 'PGRST116') {
+                      throw new Error("ยังไม่ได้เปิดสิทธิ์ Policy (Insert) ให้ตาราง common_fees ใน Supabase");
+                  } 
+                  // Error อื่นๆ
+                  else {
+                      throw new Error("บันทึกข้อมูลลง Database ไม่สำเร็จ: " + insertError.message);
+                  }
+              } else {
+                  isSuccess = true; // บันทึกสำเร็จ! หลุดออกจากลูป while
+              }
           }
 
-          const { error: insertError } = await supabaseClient.from('common_fees').insert(supabasePayload);
-          if (insertError) {
-              // ดักจับ Error กรณีที่เกิดจากลืมเปิดสิทธิ์ Policy (RLS)
-              if(insertError.message.includes('security policy') || insertError.code === '42501' || insertError.code === 'PGRST116') {
-                  throw new Error("ยังไม่ได้เปิดสิทธิ์ Policy (Insert) ให้ตาราง common_fees ใน Supabase");
-              }
-              throw new Error("บันทึกข้อมูลลง Database ไม่สำเร็จ: " + insertError.message);
+          if (!isSuccess) {
+              throw new Error("ระบบมีผู้ใช้งานพร้อมกันจำนวนมาก ทำให้รหัส ID ชนกัน โปรดลองกดบันทึกใหม่อีกครั้ง");
           }
 
           // --- STEP 4: ส่งข้อมูลเข้า Google Sheets แบบเบื้องหลัง (Background Sync) ---
           document.getElementById('saveProgressText').innerHTML = "กำลังรอระบบหลังบ้าน...";
           let bgConfig = {
               method: "post", maxBodyLength: Infinity, url: `${urlAPI}?action=syncToSheet`, headers: { "Content-Type": "text/plain" },
-              data: JSON.stringify({ records: supabasePayload, telegram_months: selectedMonths.join(", ") })
+              data: JSON.stringify({ records: finalSheetPayload, telegram_months: selectedMonths.join(", ") })
           };
           axios.request(bgConfig).catch(e => console.log("Background sync error", e));
 
