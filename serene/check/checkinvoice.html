@@ -25,9 +25,6 @@
     <!-- Canvas Confetti -->
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
 
-    <!-- ES Module Shims (แก้ปัญหาหน้าขาวในเบราว์เซอร์ LINE / รุ่นเก่าที่ไม่รองรับ Import Map) -->
-    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
-
     <!-- Import Map for React & Icons -->
     <script type="importmap">
     {
@@ -460,9 +457,16 @@
                     if (!supabase) return;
                     setLoading(true);
                     try {
-                        const { data: houseData, error: houseError } = await supabase.from('house_payments').select('*');
-                        if (houseError) throw houseError;
-                        setRawData(houseData);
+                        let allHouses = [];
+                        let from = 0;
+                        while(true) {
+                            const { data: houseData, error: houseError } = await supabase.from('house_payments').select('*').range(from, from + 999);
+                            if (houseError) throw houseError;
+                            allHouses.push(...houseData);
+                            if(houseData.length < 1000) break;
+                            from += 1000;
+                        }
+                        setRawData(allHouses);
                         setYearFilter('all');
 
                         const { data: pendingData, error: pendingError } = await supabase
@@ -731,13 +735,10 @@
         const HomeContent = ({ payments, loading, error, supabase, openDetailModal, handleSyncStatus, handlePrint, toggleNameVisibility, visibleNames, syncingId, allPendingFees, isAdmin, openQuickEditModal }) => {
             const [showCompleted, setShowCompleted] = useState(false);
 
-            // รีเซ็ตการซ่อนเมื่อมีการค้นหาใหม่
             useEffect(() => {
                 setShowCompleted(false);
             }, [payments]);
 
-            // คำนวณสรุป และคัดแยกการ์ดที่ยังไม่เสร็จ (Active) กับการ์ดที่ชำระครบแล้ว (Completed)
-            // ย้ายมาด้านบนสุดก่อนเกิด Early Returns
             const { summary, activeCards, completedCards } = useMemo(() => {
                 let totalPaid = 0, totalOverdue = 0, totalWaiting = 0, totalFuture = 0;
                 const active = [];
@@ -752,10 +753,11 @@
                     totalWaiting += fin.waiting;
                     totalFuture += fin.future;
 
-                    // เงื่อนไขการชำระครบ: ไม่มียอดค้างชำระ (overdue), ไม่มียอดรอตรวจสอบ (waiting) และไม่มียอดรอข้อมูล (future)
+                    // เปลี่ยนเงื่อนไขใหม่: จะซ่อนก็ต่อเมื่อ overdue=0, waiting=0 และ future=0 (ไม่มียอดรอข้อมูล)
                     if (fin.overdueMonths === 0 && fin.waitingMonths === 0 && fin.future === 0) {
                         completed.push({ item, fin });
                     } else {
+                        // ถ้ามียอดค้าง, ยอดรอตรวจ, หรือ ยอดรอข้อมูล ให้แสดงอยู่ด้านบนตลอด
                         active.push({ item, fin });
                     }
                 });
@@ -764,7 +766,7 @@
                     summary: {
                         paid: totalPaid,
                         overdue: totalOverdue,
-                        waiting: totalWaiting + totalFuture // เอารอข้อมูลรวมไปกับรอตรวจสอบเพื่อสรุปง่ายๆ
+                        waiting: totalWaiting + totalFuture 
                     },
                     activeCards: active,
                     completedCards: completed
@@ -937,9 +939,9 @@
                                 <div className="h-px bg-white/30 flex-1 w-full sm:w-auto"></div>
                                 <button 
                                     onClick={() => setShowCompleted(!showCompleted)}
-                                    className="px-8 py-3 rounded-full bg-gradient-to-r from-fuchsia-500 to-indigo-600 hover:from-fuchsia-400 hover:to-indigo-500 text-white text-base md:text-lg font-extrabold backdrop-blur border border-white/50 flex items-center justify-center gap-3 transition-all shadow-[0_0_30px_rgba(168,85,247,0.5)] transform hover:scale-105 ring-2 ring-white/20 w-full sm:w-auto"
+                                    className="px-8 py-4 rounded-full bg-gradient-to-r from-pink-500 via-purple-500 to-indigo-600 hover:from-pink-400 hover:via-purple-400 hover:to-indigo-500 text-white text-lg md:text-xl font-extrabold backdrop-blur border-2 border-white/50 flex items-center justify-center gap-3 transition-all shadow-[0_0_40px_rgba(168,85,247,0.6)] transform hover:scale-105 w-full sm:w-auto mx-auto"
                                 >
-                                    {showCompleted ? <ChevronUp size={24} /> : <ChevronDown size={24} />}
+                                    {showCompleted ? <ChevronUp size={28} className="animate-bounce" /> : <ChevronDown size={28} className="animate-bounce" />}
                                     {showCompleted ? 'ซ่อนประวัติปีที่ชำระครบแล้ว' : `คลิกแสดงประวัติปีที่ชำระครบแล้ว (${completedCards.length} รายการ)`}
                                 </button>
                                 <div className="h-px bg-white/30 flex-1 w-full sm:w-auto"></div>
@@ -1088,11 +1090,20 @@
                 if (!supabase) return;
                 setIsSaving(true); 
                 try {
-                    const { data: rowsToUpdate, error: fetchError } = await supabase
-                        .from('house_payments')
-                        .select('*')
-                        .eq('year', targetYear);
-                    if (fetchError) throw fetchError;
+                    let rowsToUpdate = [];
+                    let from = 0;
+                    while(true) {
+                        const { data, error: fetchError } = await supabase
+                            .from('house_payments')
+                            .select('*')
+                            .eq('year', targetYear)
+                            .range(from, from + 999);
+                        if (fetchError) throw fetchError;
+                        rowsToUpdate.push(...data);
+                        if(data.length < 1000) break;
+                        from += 1000;
+                    }
+                    
                     let updatedCount = 0;
                     for (const row of rowsToUpdate) {
                         const currentStatus = row[targetMonthKey];
@@ -1134,14 +1145,27 @@
                 }
 
                 try {
-                    const currentYear = new Date().getFullYear() + 543; 
-                    const { data: houses, error: houseError } = await supabase.from('house_payments').select('*');
-                    if (houseError) throw houseError;
+                    let houses = [];
+                    let hFrom = 0;
+                    while(true) {
+                        const { data, error: houseError } = await supabase.from('house_payments').select('*').range(hFrom, hFrom + 999);
+                        if (houseError) throw houseError;
+                        houses.push(...data);
+                        if(data.length < 1000) break;
+                        hFrom += 1000;
+                    }
 
                     if (!silent) setSyncProgress(prev => ({ ...prev, message: 'กำลังดึงประวัติการชำระเงิน...' }));
 
-                    const { data: fees, error: feeError } = await supabase.from('common_fees').select('*');
-                    if (feeError) throw feeError;
+                    let fees = [];
+                    let fFrom = 0;
+                    while(true) {
+                        const { data, error: feeError } = await supabase.from('common_fees').select('*').range(fFrom, fFrom + 999);
+                        if (feeError) throw feeError;
+                        fees.push(...data);
+                        if(data.length < 1000) break;
+                        fFrom += 1000;
+                    }
 
                     let updatedCount = 0;
                     const totalHouses = houses.length;
@@ -1339,33 +1363,62 @@
                 if (!supabase) return [];
                 setLoading(true);
                 try {
-                    let query = supabase.from('house_payments').select('*');
-                    if (search) query = query.or(`house_numbe.ilike.%${search}%,owner_name.ilike.%${search}%`);
-                    const { data, error } = await query.order('year', { ascending: false }).order('house_numbe', { ascending: true });
-                    if (error) throw error;
-                    let finalData = data || [];
+                    let allData = [];
+                    let from = 0;
+                    while(true) {
+                        let query = supabase.from('house_payments').select('*').order('year', { ascending: false }).order('house_numbe', { ascending: true }).range(from, from + 999);
+                        if (search) query = query.or(`house_numbe.ilike.%${search}%,owner_name.ilike.%${search}%`);
+                        const { data, error } = await query;
+                        if (error) throw error;
+                        allData.push(...data);
+                        if(data.length < 1000) break;
+                        from += 1000;
+                    }
+                    
+                    let finalData = allData;
+                    
                     if (search) {
                         const lowerSearch = search.trim().toLowerCase();
                         const exactMatches = finalData.filter(item => item.house_numbe.toLowerCase() === lowerSearch);
                         if (exactMatches.length > 0) finalData = exactMatches;
                     }
+                    
                     // --- APPLY CONFIG FILTER ---
                     const currentThaiYear = new Date().getFullYear() + 543;
                     finalData = finalData.filter(item => {
                         const y = parseInt(item.year);
                         if (appConfig.useManual) { return appConfig.manualYears.includes(y); } else { return y <= currentThaiYear; }
                     });
+                    
                     if (autoSync && finalData.length > 0) {
                         const syncPromises = finalData.map(async (item) => await syncHouseLogic(item));
                         const results = await Promise.all(syncPromises);
                         if (results.some(r => r === true)) {
-                            const { data: refreshedData } = await query.order('year', { ascending: false }).order('house_numbe', { ascending: true });
-                            if (refreshedData) finalData = refreshedData;
+                            // If something updated, we should really re-fetch or optimistically update. 
+                            // For safety, re-fetching only the returned finalData items would be better,
+                            // but fetching all matching again is safer.
+                            let refreshedAllData = [];
+                            let rFrom = 0;
+                            while(true) {
+                                let rQuery = supabase.from('house_payments').select('*').order('year', { ascending: false }).order('house_numbe', { ascending: true }).range(rFrom, rFrom + 999);
+                                if (search) rQuery = rQuery.or(`house_numbe.ilike.%${search}%,owner_name.ilike.%${search}%`);
+                                const { data: rData } = await rQuery;
+                                if (!rData) break;
+                                refreshedAllData.push(...rData);
+                                if(rData.length < 1000) break;
+                                rFrom += 1000;
+                            }
+                            
+                            finalData = refreshedAllData;
                             if (search) {
                                 const lowerSearch = search.trim().toLowerCase();
                                 const exactMatches = finalData.filter(item => item.house_numbe.toLowerCase() === lowerSearch);
                                 if (exactMatches.length > 0) finalData = exactMatches;
                             }
+                            finalData = finalData.filter(item => {
+                                const y = parseInt(item.year);
+                                if (appConfig.useManual) { return appConfig.manualYears.includes(y); } else { return y <= currentThaiYear; }
+                            });
                         }
                     }
                     setPayments(finalData);
@@ -1375,8 +1428,16 @@
 
             const fetchAllPendingFees = async () => {
                 if (!supabase) return;
-                const { data } = await supabase.from('common_fees').select('*').eq('status', 'รอตรวจสอบ');
-                setAllPendingFees(data || []);
+                let allPending = [];
+                let from = 0;
+                while(true) {
+                    const { data, error } = await supabase.from('common_fees').select('*').eq('status', 'รอตรวจสอบ').range(from, from + 999);
+                    if(error) break;
+                    allPending.push(...data);
+                    if(data.length < 1000) break;
+                    from += 1000;
+                }
+                setAllPendingFees(allPending);
             };
 
             const handleSyncStatus = async (item) => {
@@ -1426,11 +1487,7 @@
                 // บันทึกประวัติการค้นหาลง Local Storage (เฉพาะเลขท้าย)
                 const newHistory = [cleanSuffix, ...searchHistory.filter(h => h !== cleanSuffix)].slice(0, 5); // เก็บ 5 รายการล่าสุด
                 setSearchHistory(newHistory);
-                try {
-                    localStorage.setItem('houseSearchHistory', JSON.stringify(newHistory));
-                } catch (e) {
-                    console.warn("Cannot save to localStorage", e);
-                }
+                localStorage.setItem('houseSearchHistory', JSON.stringify(newHistory));
 
                 setLoading(true);
                 
@@ -1531,21 +1588,24 @@
                                 </div>
                                 {currentPage === 'home' && (
                                     <div className="flex flex-col gap-3">
-                                        <div className="relative flex-1 flex items-center bg-white/90 rounded-xl overflow-hidden border focus-within:border-blue-400 min-h-[64px]">
-                                            <Search className="ml-3 text-slate-400" size={24} />
-                                            <span className="pl-3 pr-1 text-slate-500 font-extrabold text-xl">998/</span>
+                                        <div className="relative flex-1 flex items-center bg-white/90 rounded-xl overflow-hidden border focus-within:border-blue-400 h-14">
+                                            <Search className="ml-3 text-slate-400" size={20} />
+                                            <span className="pl-2 pr-0.5 text-slate-500 font-extrabold text-lg">998/</span>
                                             <input 
                                                 type="text" 
-                                                placeholder="เช่น 123" 
-                                                className="w-full h-full pr-3 text-slate-900 bg-transparent focus:outline-none text-xl font-bold" 
+                                                placeholder="เช่น 1 หรือ 123" 
+                                                className="w-full h-full pr-3 text-slate-900 bg-transparent focus:outline-none text-lg font-bold" 
                                                 value={searchSuffix} 
                                                 onChange={(e) => setSearchSuffix(e.target.value)} 
                                                 onKeyDown={handleKeyDown} 
-                                                autoComplete="off"
+                                                list="mobile-search-history"
                                             />
+                                            <datalist id="mobile-search-history">
+                                                {searchHistory.map(h => <option key={h} value={h} />)}
+                                            </datalist>
                                         </div>
-                                        <button onClick={handleSearchClick} className="bg-blue-600 text-white px-4 min-h-[64px] rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-sm flex items-center justify-center gap-2 text-xl">
-                                            {isAutoSyncing ? <Loader2 size={24} className="animate-spin"/> : 'ค้นหา'}
+                                        <button onClick={handleSearchClick} className="bg-blue-600 text-white px-4 h-14 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-sm flex items-center justify-center gap-2 text-lg">
+                                            {isAutoSyncing ? <Loader2 size={20} className="animate-spin"/> : 'ค้นหา'}
                                         </button>
                                     </div>
                                 )}
@@ -1565,29 +1625,31 @@
                                     <p className="text-indigo-100 text-lg mb-4 font-medium drop-shadow-sm">ตรวจสอบสถานะการชำระเงินค่าส่วนกลางได้อย่างง่ายดาย</p>
                                     <div className="mb-8 text-indigo-200 text-sm space-y-1"><p>✅ 1. ข้อมูลสถานะรายเดือน อัพเดทเรียลไทม์</p><p>✅ 2. ข้อมูลประวัติการแจ้งชำระ อัพเดทเรียลไทม์</p></div>
                                     
-                                    {/* ปรับปรุงช่องค้นหาใหม่ ให้ปลดล็อกความสูงบนมือถือ */}
-                                    <div className="flex flex-col sm:flex-row gap-4 items-stretch justify-center">
+                                    {/* ปรับปรุงช่องค้นหาใหม่ ให้กลับไปใช้ดีไซน์และขนาดเท่ากับต้นฉบับเป๊ะๆ */}
+                                    <div className="flex flex-col sm:flex-row gap-3 items-stretch justify-center">
                                         <div className="relative group flex-1">
                                             <div className="absolute -inset-1 bg-gradient-to-r from-blue-400 to-purple-400 rounded-xl blur opacity-25 group-hover:opacity-50 transition duration-200"></div>
-                                            <div className="relative flex items-stretch bg-white/95 backdrop-blur rounded-xl shadow-xl overflow-hidden focus-within:ring-2 focus-within:ring-white/50 border border-white/20 min-h-[72px] sm:min-h-[80px]">
-                                                <div className="pl-4 pr-3 sm:pl-6 sm:pr-4 flex items-center text-indigo-600 bg-indigo-50/80 border-r border-indigo-100">
-                                                    <Search size={28} className="mr-2 text-indigo-400 hidden sm:block" />
-                                                    <span className="text-2xl sm:text-3xl font-extrabold tracking-widest">998/</span>
-                                                </div>
+                                            <div className="relative h-full flex items-center bg-white/95 backdrop-blur rounded-xl shadow-xl focus-within:ring-2 focus-within:ring-white/50">
+                                                <Search className="ml-4 text-slate-400 shrink-0" size={24} />
+                                                <span className="pl-3 text-slate-800 text-lg font-bold shrink-0">998/</span>
                                                 <input 
                                                     type="text" 
-                                                    placeholder="เลขที่บ้าน (เช่น 123)" 
-                                                    className="w-full h-full py-4 px-4 sm:px-6 text-2xl sm:text-3xl font-bold text-slate-800 placeholder-slate-400 focus:outline-none bg-transparent" 
+                                                    placeholder="เช่น 1 หรือ 123" 
+                                                    className="w-full h-full py-4 pr-4 pl-1 bg-transparent text-lg text-slate-900 placeholder-slate-400 focus:outline-none rounded-xl" 
                                                     value={searchSuffix} 
                                                     onChange={(e) => setSearchSuffix(e.target.value)} 
                                                     onKeyDown={handleKeyDown} 
+                                                    list="desktop-search-history"
                                                     autoComplete="off"
                                                 />
+                                                <datalist id="desktop-search-history">
+                                                    {searchHistory.map(h => <option key={h} value={h} />)}
+                                                </datalist>
                                             </div>
                                         </div>
-                                        <button onClick={handleSearchClick} disabled={loading} className="bg-white/90 hover:bg-white text-indigo-600 font-extrabold min-h-[72px] sm:min-h-[80px] px-8 rounded-xl shadow-xl transition-all transform hover:scale-105 active:scale-95 flex items-center justify-center gap-3 backdrop-blur-sm border border-white/50 disabled:opacity-80 disabled:cursor-not-allowed shrink-0">
-                                            {isAutoSyncing || loading ? <Loader2 size={28} className="animate-spin text-indigo-600" /> : <Search size={28} />}
-                                            <span className="text-xl sm:text-2xl">{isAutoSyncing || loading ? 'กำลังค้นหา...' : 'ค้นหา'}</span>
+                                        <button onClick={handleSearchClick} disabled={loading} className="bg-white/90 hover:bg-white text-indigo-600 font-bold px-8 py-4 sm:py-0 rounded-xl shadow-xl transition-all transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2 backdrop-blur-sm border border-white/50 disabled:opacity-80 disabled:cursor-not-allowed">
+                                            {isAutoSyncing || loading ? <Loader2 size={24} className="animate-spin text-indigo-600" /> : <Search size={22} />}
+                                            <span className="text-lg">{isAutoSyncing || loading ? 'กำลังค้นหา...' : 'ค้นหา'}</span>
                                         </button>
                                     </div>
                                 </div>
@@ -1714,7 +1776,7 @@
                         </div>
                     )}
 
-                    <footer className="text-center py-6 text-white/60 text-sm no-print"><p>OcuPass © 2025 ระบบตรวจสอบค่าส่วนกลาง | หมู่บ้าน โกลเด้นแลนด์ ซีรีน</p></footer>
+                    <footer className="text-center py-6 text-white/60 text-sm no-print"><p>9one © 2025 ระบบตรวจสอบค่าส่วนกลาง | หมู่บ้าน โกลเด้นแลนด์ ซีรีน</p></footer>
                 </div>
             );
         };
