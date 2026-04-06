@@ -451,35 +451,42 @@
             const [yearFilter, setYearFilter] = useState('all');
             const [monthFilter, setMonthFilter] = useState('all');
             const [pendingList, setPendingList] = useState([]);
+            const [isRefreshing, setIsRefreshing] = useState(false); // เพิ่ม State สำหรับปุ่มรีเฟรช
+
+            // แยกฟังก์ชันดึงข้อมูลออกมา เพื่อให้ปุ่มรีเฟรชเรียกใช้ได้
+            const fetchAllData = async () => {
+                if (!supabase) return;
+                setIsRefreshing(true);
+                if (rawData.length === 0) setLoading(true);
+                try {
+                    let allHouses = [];
+                    let from = 0;
+                    while(true) {
+                        const { data: houseData, error: houseError } = await supabase.from('house_payments').select('*').range(from, from + 999);
+                        if (houseError) throw houseError;
+                        allHouses.push(...houseData);
+                        if(houseData.length < 1000) break;
+                        from += 1000;
+                    }
+                    setRawData(allHouses);
+                    // ไม่รีเซ็ตปีตรงนี้ เพื่อให้คงฟิลเตอร์เดิมไว้เวลากดรีเฟรช
+
+                    const { data: pendingData, error: pendingError } = await supabase
+                        .from('common_fees')
+                        .select('*')
+                        .eq('status', 'รอตรวจสอบ')
+                        .order('reported_at', { ascending: false });
+                    
+                    if (!pendingError) setPendingList(pendingData || []);
+
+                } catch (err) { console.error("Dashboard Error:", err); } 
+                finally { 
+                    setLoading(false); 
+                    setIsRefreshing(false); 
+                }
+            };
 
             useEffect(() => {
-                const fetchAllData = async () => {
-                    if (!supabase) return;
-                    setLoading(true);
-                    try {
-                        let allHouses = [];
-                        let from = 0;
-                        while(true) {
-                            const { data: houseData, error: houseError } = await supabase.from('house_payments').select('*').range(from, from + 999);
-                            if (houseError) throw houseError;
-                            allHouses.push(...houseData);
-                            if(houseData.length < 1000) break;
-                            from += 1000;
-                        }
-                        setRawData(allHouses);
-                        setYearFilter('all');
-
-                        const { data: pendingData, error: pendingError } = await supabase
-                            .from('common_fees')
-                            .select('*')
-                            .eq('status', 'รอตรวจสอบ')
-                            .order('reported_at', { ascending: false });
-                        
-                        if (!pendingError) setPendingList(pendingData || []);
-
-                    } catch (err) { console.error("Dashboard Error:", err); } 
-                    finally { setLoading(false); }
-                };
                 fetchAllData();
             }, [supabase]);
 
@@ -506,26 +513,55 @@
                 const overdueMap = {};
                 const soiOverdueMap = {}; 
 
+                // ดึงเวลาปัจจุบันมาเช็ค เพื่อไม่ให้นับเดือนอนาคตเป็น "ค้างชำระ"
+                const now = new Date();
+                const currentYear = now.getFullYear();
+                const currentMonthIdx = now.getMonth();
+
                 filteredData.forEach(item => {
                     let itemOverdueCount = 0; let itemOverdueAmount = 0;
+                    const itemYear = parseInt(item.year);
+                    const compareYear = itemYear > 2400 ? currentYear + 543 : currentYear;
+
                     months.forEach((m, idx) => {
                         const status = item[m.key] || '';
+                        
+                        // ตรวจสอบว่าเดือนนี้ "ถึงกำหนดเวลาแล้วหรือยัง"
+                        let isEffective = false;
+                        if (itemYear < compareYear) isEffective = true;
+                        else if (itemYear === compareYear && idx <= currentMonthIdx) isEffective = true;
+
                         if (status.includes('จ่ายแล้ว') || status.includes('ชำระแล้ว')) monthlyChartStats[idx].paid++;
-                        else if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) monthlyChartStats[idx].unpaid++;
+                        else if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) {
+                            if (isEffective) monthlyChartStats[idx].unpaid++;
+                            else monthlyChartStats[idx].waiting++; // ถ้าเป็นเดือนอนาคตแต่ใส่ค้างไว้ ให้นับเป็นรอข้อมูลแทน
+                        }
                         else if (status.includes('รอข้อมูล') || status.includes('รอตรวจสอบ')) monthlyChartStats[idx].waiting++;
 
                         const isTargetMonth = monthFilter === 'all' || m.key === monthFilter;
                         if (isTargetMonth) {
-                            if (status.includes('จ่ายแล้ว') || status.includes('ชำระแล้ว')) totalPaidAmount += RATE;
-                            else if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) { totalUnpaidAmount += RATE; itemOverdueCount++; itemOverdueAmount += RATE; }
-                            else if (status.includes('รอข้อมูล')) totalFutureAmount += RATE;
+                            if (status.includes('จ่ายแล้ว') || status.includes('ชำระแล้ว')) {
+                                totalPaidAmount += RATE;
+                            }
+                            else if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) { 
+                                if (isEffective) { // นับยอดค้าง เฉพาะเดือนที่ถึงกำหนดแล้วเท่านั้น
+                                    totalUnpaidAmount += RATE; 
+                                    itemOverdueCount++; 
+                                    itemOverdueAmount += RATE; 
+                                } else {
+                                    totalFutureAmount += RATE; // ถ้ายังไม่ถึงเดือนนั้น ปัดไปเป็นยอดอนาคต
+                                }
+                            }
+                            else if (status.includes('รอข้อมูล') || status.includes('รอตรวจสอบ') || status.includes('ไม่เก็บ')) {
+                                totalFutureAmount += RATE;
+                            }
                         }
                     });
 
                     if (itemOverdueCount > 0) {
                         if (!overdueMap[item.house_numbe]) overdueMap[item.house_numbe] = { houseNo: item.house_numbe, totalMonths: 0, totalAmount: 0 };
                         overdueMap[item.house_numbe].totalMonths += itemOverdueCount;
-                        overdueMap[item.house_numbe].totalAmount += (itemOverdueCount * RATE);
+                        overdueMap[item.house_numbe].totalAmount += itemOverdueAmount;
                     }
                     if (itemOverdueAmount > 0) {
                         const soiName = item.soi ? item.soi.trim() : 'ไม่ระบุซอย';
@@ -601,46 +637,26 @@
 
                     {/* Filter Bar & Export */}
                     <div className="bg-white/10 backdrop-blur-md p-4 rounded-2xl mb-8 flex flex-col md:flex-row gap-4 items-center justify-between border border-white/20 shadow-lg">
-                        <div className="flex flex-col md:flex-row gap-4 items-center">
-                            <div className="flex items-center gap-2 text-white font-medium"><Filter size={20} /> ตัวกรอง:</div>
-                            <div className="flex gap-2">
-                                <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} className="bg-white/90 text-slate-800 px-4 py-2 rounded-lg font-medium outline-none focus:ring-2 focus:ring-indigo-400 dark:bg-slate-700 dark:text-white">
+                        <div className="flex flex-col md:flex-row gap-4 items-center w-full md:w-auto">
+                            <div className="flex items-center gap-2 text-white font-medium hidden md:flex"><Filter size={20} /> ตัวกรอง:</div>
+                            <div className="flex gap-2 w-full md:w-auto">
+                                <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} className="flex-1 bg-white/90 text-slate-800 px-4 py-2 rounded-lg font-medium outline-none focus:ring-2 focus:ring-indigo-400 dark:bg-slate-700 dark:text-white">
                                     <option value="all">ทุกปี</option>
                                     {availableYears.map(y => <option key={y} value={y}>ปี {y}</option>)}
                                 </select>
-                                <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} className="bg-white/90 text-slate-800 px-4 py-2 rounded-lg font-medium outline-none focus:ring-2 focus:ring-indigo-400 dark:bg-slate-700 dark:text-white">
+                                <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} className="flex-1 bg-white/90 text-slate-800 px-4 py-2 rounded-lg font-medium outline-none focus:ring-2 focus:ring-indigo-400 dark:bg-slate-700 dark:text-white">
                                     <option value="all">ทุกเดือน</option>
                                     {months.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
                                 </select>
                             </div>
                         </div>
-                        <button onClick={exportToCSV} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold shadow-md transition-colors flex items-center gap-2"><Download size={18} /> Export Excel</button>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                         <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-lg border border-slate-100 dark:border-slate-700 flex flex-col items-center justify-center relative overflow-hidden group hover:-translate-y-1 transition-all">
-                            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity"><Coins size={60} className="text-green-600" /></div>
-                            <span className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">ยอดจัดเก็บได้ (บาท)</span>
-                            <h3 className="text-2xl font-bold text-green-600 dark:text-green-400">{stats.totalPaidAmount.toLocaleString()}</h3>
-                            <div className="mt-2 text-xs font-bold px-2 py-1 bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300 rounded-lg">{stats.paidPercentage.toFixed(1)}% ของยอดทั้งหมด</div>
-                        </div>
-                        <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-lg border border-slate-100 dark:border-slate-700 flex flex-col items-center justify-center relative overflow-hidden group hover:-translate-y-1 transition-all">
-                            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity"><AlertCircle size={60} className="text-red-600" /></div>
-                            <span className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">ยอดค้างชำระ (บาท)</span>
-                            <h3 className="text-2xl font-bold text-red-500 dark:text-red-400">{stats.totalUnpaidAmount.toLocaleString()}</h3>
-                            <div className="mt-2 text-xs font-bold px-2 py-1 bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 rounded-lg">ต้องติดตาม</div>
-                        </div>
-                         <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-lg border border-slate-100 dark:border-slate-700 flex flex-col items-center justify-center relative overflow-hidden group hover:-translate-y-1 transition-all">
-                            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity"><Hourglass size={60} className="text-yellow-600" /></div>
-                            <span className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">ยอดรอเก็บ (อนาคต)</span>
-                            <h3 className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{stats.totalFutureAmount.toLocaleString()}</h3>
-                            <div className="mt-2 text-xs font-bold px-2 py-1 bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-300 rounded-lg">รอข้อมูล</div>
-                        </div>
-                        <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-lg border border-slate-100 dark:border-slate-700 flex flex-col items-center justify-center relative overflow-hidden group hover:-translate-y-1 transition-all">
-                            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity"><Home size={60} className="text-blue-600" /></div>
-                            <span className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">จำนวนบ้าน ({yearFilter === 'all' ? 'รวม' : yearFilter})</span>
-                            <h3 className="text-2xl font-bold text-slate-800 dark:text-white">{stats.totalHouses} หลัง</h3>
-                            <div className="mt-2 text-xs font-bold px-2 py-1 bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300 rounded-lg">ในระบบ</div>
+                        <div className="flex gap-2 w-full md:w-auto mt-4 md:mt-0">
+                            <button onClick={fetchAllData} disabled={isRefreshing} className="flex-1 md:flex-none bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold shadow-md transition-colors flex items-center justify-center gap-2 disabled:opacity-70">
+                                <RefreshCw size={18} className={isRefreshing ? "animate-spin" : ""} /> รีเฟรช
+                            </button>
+                            <button onClick={exportToCSV} className="flex-1 md:flex-none bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold shadow-md transition-colors flex items-center justify-center gap-2">
+                                <Download size={18} /> Export
+                            </button>
                         </div>
                     </div>
                     
@@ -962,9 +978,8 @@
         const App = () => {
             const [currentPage, setCurrentPage] = useState('home');
             const [searchTerm, setSearchTerm] = useState('');
-            // เพิ่ม State สำหรับ Search Prefix/Suffix และ History
+            // เพิ่ม State สำหรับ Search Prefix/Suffix
             const [searchSuffix, setSearchSuffix] = useState('');
-            const [searchHistory, setSearchHistory] = useState([]);
 
             const [payments, setPayments] = useState([]);
             const [loading, setLoading] = useState(false);
@@ -1012,14 +1027,6 @@
                 document.body.appendChild(script);
                 const handleScroll = () => setShowScrollTop(window.scrollY > 300);
                 window.addEventListener('scroll', handleScroll);
-
-                // โหลดประวัติการค้นหาเมื่อเปิดหน้าเว็บ
-                const savedHistory = localStorage.getItem('houseSearchHistory');
-                if (savedHistory) {
-                    try {
-                        setSearchHistory(JSON.parse(savedHistory));
-                    } catch (e) { console.error("Error parsing history"); }
-                }
 
                 return () => {
                     if (document.body.contains(script)) document.body.removeChild(script);
@@ -1483,11 +1490,6 @@
 
                 const fullSearchTerm = `998/${cleanSuffix}`;
                 setSearchTerm(fullSearchTerm); // บันทึกคำค้นหาเต็มรูปแบบลง State
-                
-                // บันทึกประวัติการค้นหาลง Local Storage (เฉพาะเลขท้าย)
-                const newHistory = [cleanSuffix, ...searchHistory.filter(h => h !== cleanSuffix)].slice(0, 5); // เก็บ 5 รายการล่าสุด
-                setSearchHistory(newHistory);
-                localStorage.setItem('houseSearchHistory', JSON.stringify(newHistory));
 
                 setLoading(true);
                 
@@ -1589,24 +1591,21 @@
                                 </div>
                                 {currentPage === 'home' && (
                                     <div className="flex flex-col gap-3">
-                                        <div className="relative flex-1 flex items-center bg-white/90 rounded-xl overflow-hidden border focus-within:border-blue-400 min-h-[64px]">
-                                            <Search className="ml-3 text-slate-400" size={24} />
-                                            <span className="pl-3 pr-1 text-slate-500 font-extrabold text-xl">998/</span>
+                                        <div className="relative flex-1 flex items-center bg-white/90 rounded-xl overflow-hidden border focus-within:border-blue-400">
+                                            <Search className="ml-4 text-slate-400 shrink-0" size={20} />
+                                            <span className="pl-2 text-slate-800 font-bold text-lg shrink-0">998/</span>
                                             <input 
                                                 type="text" 
                                                 placeholder="เช่น 1 หรือ 123" 
-                                                className="w-full h-full pr-3 text-slate-900 bg-transparent focus:outline-none text-xl font-bold" 
+                                                className="w-full py-3 pr-4 pl-1 text-slate-900 bg-transparent focus:outline-none text-lg" 
                                                 value={searchSuffix} 
                                                 onChange={(e) => setSearchSuffix(e.target.value)} 
                                                 onKeyDown={handleKeyDown} 
-                                                list="mobile-search-history"
+                                                autoComplete="off"
                                             />
-                                            <datalist id="mobile-search-history">
-                                                {searchHistory.map(h => <option key={h} value={h} />)}
-                                            </datalist>
                                         </div>
-                                        <button onClick={handleSearchClick} className="bg-blue-600 text-white px-4 min-h-[64px] rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-sm flex items-center justify-center gap-2 text-xl">
-                                            {isAutoSyncing ? <Loader2 size={24} className="animate-spin"/> : 'ค้นหา'}
+                                        <button onClick={handleSearchClick} className="bg-blue-600 text-white px-4 py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-sm flex items-center justify-center gap-2 text-lg">
+                                            {isAutoSyncing ? <Loader2 size={20} className="animate-spin"/> : 'ค้นหา'}
                                         </button>
                                     </div>
                                 )}
@@ -1626,33 +1625,27 @@
                                     <p className="text-indigo-100 text-lg mb-4 font-medium drop-shadow-sm">ตรวจสอบสถานะการชำระเงินค่าส่วนกลางได้อย่างง่ายดาย</p>
                                     <div className="mb-8 text-indigo-200 text-sm space-y-1"><p>✅ 1. ข้อมูลสถานะรายเดือน อัพเดทเรียลไทม์</p><p>✅ 2. ข้อมูลประวัติการแจ้งชำระ อัพเดทเรียลไทม์</p></div>
                                     
-                                    {/* ปรับปรุงช่องค้นหาใหม่ ให้ปลดล็อกความสูงบนมือถือ */}
-                                    <div className="flex flex-col sm:flex-row gap-4 items-stretch justify-center">
+                                    {/* ปรับปรุงช่องค้นหาใหม่ ให้กลับไปใช้ดีไซน์และขนาดเท่ากับต้นฉบับเป๊ะๆ */}
+                                    <div className="flex flex-col sm:flex-row gap-3 items-stretch justify-center">
                                         <div className="relative group flex-1">
                                             <div className="absolute -inset-1 bg-gradient-to-r from-blue-400 to-purple-400 rounded-xl blur opacity-25 group-hover:opacity-50 transition duration-200"></div>
-                                            <div className="relative flex items-stretch bg-white/95 backdrop-blur rounded-xl shadow-xl overflow-hidden focus-within:ring-2 focus-within:ring-white/50 border border-white/20 min-h-[72px] sm:min-h-[80px]">
-                                                <div className="pl-4 pr-3 sm:pl-6 sm:pr-4 flex items-center text-indigo-600 bg-indigo-50/80 border-r border-indigo-100">
-                                                    <Search size={28} className="mr-2 text-indigo-400 hidden sm:block" />
-                                                    <span className="text-2xl sm:text-3xl font-extrabold tracking-widest">998/</span>
-                                                </div>
+                                            <div className="relative h-full flex items-center bg-white/95 backdrop-blur rounded-xl shadow-xl focus-within:ring-2 focus-within:ring-white/50">
+                                                <Search className="ml-4 text-slate-400 shrink-0" size={24} />
+                                                <span className="pl-3 text-slate-800 text-lg font-bold shrink-0">998/</span>
                                                 <input 
                                                     type="text" 
-                                                    placeholder="เลขที่บ้าน (เช่น 1 หรือ 123)" 
-                                                    className="w-full h-full py-4 px-4 sm:px-6 text-2xl sm:text-3xl font-bold text-slate-800 placeholder-slate-400 focus:outline-none bg-transparent" 
+                                                    placeholder="เช่น 1 หรือ 123" 
+                                                    className="w-full h-full py-4 pr-4 pl-1 bg-transparent text-lg text-slate-900 placeholder-slate-400 focus:outline-none rounded-xl" 
                                                     value={searchSuffix} 
                                                     onChange={(e) => setSearchSuffix(e.target.value)} 
                                                     onKeyDown={handleKeyDown} 
-                                                    list="desktop-search-history"
                                                     autoComplete="off"
                                                 />
-                                                <datalist id="desktop-search-history">
-                                                    {searchHistory.map(h => <option key={h} value={h} />)}
-                                                </datalist>
                                             </div>
                                         </div>
-                                        <button onClick={handleSearchClick} disabled={loading} className="bg-white/90 hover:bg-white text-indigo-600 font-extrabold min-h-[72px] sm:min-h-[80px] px-8 rounded-xl shadow-xl transition-all transform hover:scale-105 active:scale-95 flex items-center justify-center gap-3 backdrop-blur-sm border border-white/50 disabled:opacity-80 disabled:cursor-not-allowed shrink-0">
-                                            {isAutoSyncing || loading ? <Loader2 size={28} className="animate-spin text-indigo-600" /> : <Search size={28} />}
-                                            <span className="text-xl sm:text-2xl">{isAutoSyncing || loading ? 'กำลังค้นหา...' : 'ค้นหา'}</span>
+                                        <button onClick={handleSearchClick} disabled={loading} className="bg-white/90 hover:bg-white text-indigo-600 font-bold px-8 py-4 sm:py-0 rounded-xl shadow-xl transition-all transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2 backdrop-blur-sm border border-white/50 disabled:opacity-80 disabled:cursor-not-allowed">
+                                            {isAutoSyncing || loading ? <Loader2 size={24} className="animate-spin text-indigo-600" /> : <Search size={22} />}
+                                            <span className="text-lg">{isAutoSyncing || loading ? 'กำลังค้นหา...' : 'ค้นหา'}</span>
                                         </button>
                                     </div>
                                 </div>
