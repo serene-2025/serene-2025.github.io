@@ -740,7 +740,51 @@
             document.getElementById('content-area').innerHTML = html;
             lucide.createIcons();
         }
+async function updateAllUserProfiles() {
+    const { data, error: fetchError } = await supabaseClient
+        .from('user_profiles')
+        .select('userId', { count: 'exact' });
+    
+    if (fetchError || !data) {
+        showToast('ไม่สามารถโหลดข้อมูลผู้ใช้', 'error');
+        return;
+    }
 
+    const total = data.length;
+    if (total > 100) {
+        showToast(`⚠️ มีผู้ใช้มากกว่า 100 คน (${total} คน) ระบบจะใช้เวลาสักครู่`, 'loading');
+    }
+
+    let succeeded = 0, failed = 0;
+    
+    // Sequential updates (ทีละคน) ป้องกัน rate limiting
+    for (let i = 0; i < data.length; i++) {
+        try {
+            const res = await fetch(`${API_BASE_URL}/api/admin/users/updateProfile`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: data[i].userId })
+            });
+            
+            if (res.ok) {
+                succeeded++;
+            } else {
+                failed++;
+            }
+            
+            // เพิ่ม delay เพื่อไม่ให้ server ชอก (100ms ระหว่างแต่ละ request)
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // แสดง progress
+            const progress = Math.round(((i + 1) / total) * 100);
+            console.log(`Progress: ${progress}%`);
+        } catch (err) {
+            failed++;
+        }
+    }
+    
+    showToast(`✅ สำเร็จ: ${succeeded}, ❌ ล้มเหลว: ${failed}`, 'success');
+}
         async function deleteKeyword(id) {
             showConfirmModal('ยืนยันหน้าต่างลบ', 'ยืนยันการลบข้อมูลนี้หรือไม่?', async () => {
                 showToast('กำลังลบข้อมูล...', 'loading');
