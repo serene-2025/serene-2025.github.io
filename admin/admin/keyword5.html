@@ -4860,19 +4860,47 @@ async function updateAllUserProfiles() {
             
             let counts = { todo: 0, doing: 0, done: 0 };
 
+            const priorityConfig = {
+                high:   { label: 'สูง',    cls: 'bg-rose-100 text-rose-600 border-rose-200',     dot: 'bg-rose-500',    borderL: 'border-l-rose-500' },
+                medium: { label: 'ปานกลาง', cls: 'bg-amber-100 text-amber-600 border-amber-200',   dot: 'bg-amber-400',   borderL: 'border-l-amber-400' },
+                low:    { label: 'ต่ำ',    cls: 'bg-emerald-100 text-emerald-600 border-emerald-200', dot: 'bg-emerald-400', borderL: 'border-l-emerald-400' },
+            };
+            const statusBorder = { todo: 'border-l-rose-500', doing: 'border-l-amber-500', done: 'border-l-emerald-500' };
+
             kanbanTickets.forEach(t => {
                 counts[t.status]++;
+                const p = priorityConfig[t.priority] || priorityConfig.medium;
+                const borderColor = t.priority ? p.borderL : statusBorder[t.status];
+                const dueDateHtml = t.dueDate ? (() => {
+                    const diff = Math.ceil((new Date(t.dueDate) - new Date()) / 86400000);
+                    const overdue = diff < 0;
+                    const soon = diff >= 0 && diff <= 2;
+                    const cls = overdue ? 'text-rose-500 bg-rose-50 border-rose-200' : soon ? 'text-amber-600 bg-amber-50 border-amber-200' : 'text-slate-500 bg-slate-50 border-slate-200';
+                    const label = overdue ? `เกินกำหนด ${Math.abs(diff)} วัน` : diff === 0 ? 'วันนี้!' : `${diff} วัน`;
+                    return `<span class="text-[10px] font-bold px-2 py-0.5 rounded-lg border ${cls} flex items-center gap-1"><i data-lucide="calendar-clock" class="w-3 h-3"></i>${label}</span>`;
+                })() : '';
+
                 const el = document.createElement('div');
                 el.id = `ticket-${t.id}`;
-                el.className = "bg-white dark:bg-slate-700 p-4 rounded-2xl shadow-sm border border-slate-200 cursor-move hover:shadow-md transition-shadow relative group active:cursor-grabbing border-l-4 " + (t.status==='todo'?'border-l-rose-500':t.status==='doing'?'border-l-amber-500':'border-l-emerald-500');
+                el.className = `bg-white dark:bg-slate-700 p-4 rounded-2xl shadow-sm border border-slate-200 cursor-move hover:shadow-lg transition-all relative group active:cursor-grabbing border-l-4 ${borderColor} select-none`;
                 el.draggable = true;
                 el.ondragstart = (e) => { e.dataTransfer.setData("text/plain", t.id); };
                 el.innerHTML = `
-                    <div class="font-bold text-slate-800 mb-1 leading-snug pr-6">${escapeHtml(t.title)}</div>
-                    <div class="text-xs text-slate-500 line-clamp-2 mb-3 leading-relaxed">${escapeHtml(t.desc)}</div>
-                    <div class="flex justify-between items-center pt-3 border-t border-slate-100">
-                        <span class="text-[10px] text-slate-400 font-mono bg-slate-50 px-2 py-0.5 rounded-md border border-slate-100">#${t.id.substring(0,6)}</span>
-                        <button onclick="deleteTicket('${t.id}')" class="text-slate-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                    <div class="flex items-start justify-between gap-2 mb-2">
+                        <div class="font-bold text-slate-800 text-sm leading-snug flex-1">${escapeHtml(t.title)}</div>
+                        <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                            <button onclick="editTicket('${t.id}')" class="p-1.5 text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 rounded-lg transition-colors"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+                            <button onclick="deleteTicket('${t.id}')" class="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                        </div>
+                    </div>
+                    ${t.desc ? `<div class="text-xs text-slate-500 line-clamp-2 mb-3 leading-relaxed">${escapeHtml(t.desc)}</div>` : ''}
+                    ${t.assignee ? `<div class="text-xs text-slate-500 flex items-center gap-1.5 mb-2"><div class="w-5 h-5 rounded-full bg-gradient-to-tr from-indigo-400 to-violet-400 flex items-center justify-center text-white text-[9px] font-bold shrink-0">${escapeHtml(t.assignee.charAt(0).toUpperCase())}</div><span class="truncate">${escapeHtml(t.assignee)}</span></div>` : ''}
+                    <div class="flex items-center justify-between pt-2.5 border-t border-slate-100 mt-1 gap-2 flex-wrap">
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                            <span class="text-[10px] text-slate-400 font-mono bg-slate-50 px-1.5 py-0.5 rounded-md border border-slate-100">#${t.id.substring(0,6)}</span>
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-lg border ${p.cls} flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full ${p.dot} inline-block"></span>${p.label}</span>
+                        </div>
+                        ${dueDateHtml}
                     </div>
                 `;
                 document.getElementById(`col-${t.status}`)?.appendChild(el);
@@ -4900,13 +4928,110 @@ async function updateAllUserProfiles() {
             }
         }
 
-        function addNewTicket() {
-            const title = prompt("ระบุหัวข้องาน:");
-            if (!title) return;
-            const desc = prompt("รายละเอียด (ถ้ามี):") || "";
-            const newTicket = { id: Date.now().toString(), title, desc, status: 'todo' };
-            kanbanTickets.push(newTicket);
-            saveTickets().then(loadTickets);
+        function openTicketModal(ticket = null) {
+            const isEdit = !!ticket;
+            document.getElementById('modal-title').innerHTML = `
+                <div class="flex items-center gap-2.5">
+                    <span class="p-2 rounded-xl ${isEdit ? 'bg-indigo-100 text-indigo-600' : 'bg-emerald-100 text-emerald-600'}">
+                        <i data-lucide="${isEdit ? 'pencil' : 'plus-circle'}" class="w-5 h-5"></i>
+                    </span>
+                    ${isEdit ? 'แก้ไขงาน' : 'เพิ่มงานใหม่'}
+                </div>`;
+
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('modal-content').innerHTML = `
+                <div class="space-y-5">
+                    <!-- Title -->
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 mb-1.5">หัวข้องาน <span class="text-rose-500">*</span></label>
+                        <input id="tk-title" type="text" maxlength="120" placeholder="ระบุหัวข้องาน..."
+                            value="${isEdit ? escapeHtml(ticket.title) : ''}"
+                            class="w-full rounded-2xl border border-slate-200 px-4 py-3 focus:ring-2 focus:ring-emerald-400 focus:border-transparent outline-none bg-white shadow-sm text-sm transition-all placeholder-slate-300">
+                    </div>
+                    <!-- Description -->
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 mb-1.5">รายละเอียด</label>
+                        <textarea id="tk-desc" rows="3" placeholder="อธิบายรายละเอียดงาน..."
+                            class="w-full rounded-2xl border border-slate-200 px-4 py-3 focus:ring-2 focus:ring-emerald-400 focus:border-transparent outline-none bg-white shadow-sm text-sm transition-all resize-none placeholder-slate-300">${isEdit ? escapeHtml(ticket.desc || '') : ''}</textarea>
+                    </div>
+                    <!-- Priority + Status row -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 mb-1.5">ความสำคัญ</label>
+                            <div class="flex gap-2">
+                                ${[['high','🔴 สูง','border-rose-400 bg-rose-50 text-rose-600'],['medium','🟡 กลาง','border-amber-400 bg-amber-50 text-amber-600'],['low','🟢 ต่ำ','border-emerald-400 bg-emerald-50 text-emerald-600']].map(([v,l,c]) => `
+                                <label class="flex-1 cursor-pointer">
+                                    <input type="radio" name="tk-priority" value="${v}" class="sr-only peer" ${(isEdit ? ticket.priority : 'medium') === v ? 'checked' : ''}>
+                                    <div class="text-center text-xs font-bold py-2 px-1 rounded-xl border-2 border-slate-200 peer-checked:${c} transition-all hover:border-slate-300">${l}</div>
+                                </label>`).join('')}
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 mb-1.5">สถานะ</label>
+                            <select id="tk-status" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 focus:ring-2 focus:ring-emerald-400 outline-none bg-white shadow-sm text-sm transition-all">
+                                <option value="todo" ${(isEdit ? ticket.status : 'todo') === 'todo' ? 'selected' : ''}>🔴 รอดำเนินการ</option>
+                                <option value="doing" ${(isEdit && ticket.status === 'doing') ? 'selected' : ''}>🟡 กำลังทำ</option>
+                                <option value="done" ${(isEdit && ticket.status === 'done') ? 'selected' : ''}>🟢 เสร็จสิ้น</option>
+                            </select>
+                        </div>
+                    </div>
+                    <!-- Assignee + Due Date row -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 mb-1.5">มอบหมายให้</label>
+                            <input id="tk-assignee" type="text" maxlength="60" placeholder="ชื่อผู้รับผิดชอบ..."
+                                value="${isEdit ? escapeHtml(ticket.assignee || '') : ''}"
+                                class="w-full rounded-2xl border border-slate-200 px-4 py-3 focus:ring-2 focus:ring-emerald-400 focus:border-transparent outline-none bg-white shadow-sm text-sm transition-all placeholder-slate-300">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 mb-1.5">กำหนดส่ง</label>
+                            <input id="tk-duedate" type="date" min="${today}"
+                                value="${isEdit && ticket.dueDate ? ticket.dueDate : ''}"
+                                class="w-full rounded-2xl border border-slate-200 px-4 py-3 focus:ring-2 focus:ring-emerald-400 focus:border-transparent outline-none bg-white shadow-sm text-sm transition-all">
+                        </div>
+                    </div>
+                    <!-- Actions -->
+                    <div class="flex gap-3 pt-4 border-t border-slate-100">
+                        <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold hover:bg-slate-100 border border-slate-200 transition-all text-sm">ยกเลิก</button>
+                        <button onclick="saveTicketModal('${isEdit ? ticket.id : ''}')" id="tk-save-btn"
+                            class="flex-1 py-3 ${isEdit ? 'bg-indigo-500 hover:bg-indigo-600 shadow-indigo-200' : 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-200'} text-white rounded-2xl font-bold shadow-lg transition-all text-sm flex items-center justify-center gap-2 active:scale-95">
+                            <i data-lucide="${isEdit ? 'save' : 'plus'}" class="w-4 h-4"></i>
+                            ${isEdit ? 'บันทึกการแก้ไข' : 'เพิ่มงาน'}
+                        </button>
+                    </div>
+                </div>`;
+            openModal();
+            lucide.createIcons();
+            setTimeout(() => document.getElementById('tk-title')?.focus(), 150);
+        }
+
+        async function saveTicketModal(editId) {
+            const btn = document.getElementById('tk-save-btn');
+            const title = document.getElementById('tk-title').value.trim();
+            if (!title) { document.getElementById('tk-title').classList.add('border-rose-400','ring-2','ring-rose-200'); return; }
+
+            const priority = document.querySelector('input[name="tk-priority"]:checked')?.value || 'medium';
+            const status   = document.getElementById('tk-status').value;
+            const assignee = document.getElementById('tk-assignee').value.trim();
+            const dueDate  = document.getElementById('tk-duedate').value;
+
+            setBtnLoading(btn, true);
+            if (editId) {
+                const t = kanbanTickets.find(x => x.id === editId);
+                if (t) Object.assign(t, { title, desc: document.getElementById('tk-desc').value.trim(), priority, status, assignee, dueDate });
+            } else {
+                kanbanTickets.push({ id: Date.now().toString(), title, desc: document.getElementById('tk-desc').value.trim(), priority, status, assignee, dueDate });
+            }
+            await saveTickets();
+            await loadTickets();
+            closeModal();
+        }
+
+        function addNewTicket() { openTicketModal(null); }
+
+        function editTicket(id) {
+            const ticket = kanbanTickets.find(t => t.id === id);
+            if (ticket) openTicketModal(ticket);
         }
 
         function deleteTicket(id) {
