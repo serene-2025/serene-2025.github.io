@@ -492,10 +492,11 @@
 
 <button onclick="loadView('dataai');" id="nav-dataai" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="brain" class="w-5 h-5 text-fuchsia-500"></i> <span>คลังความรู้ AI</span></button>
 
-                            <button onclick="loadView('aigaps');" id="nav-aigaps" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all group">
-                                <i data-lucide="search-x" class="w-5 h-5 text-rose-500 transition-transform group-hover:scale-110"></i> <span>คำถามที่ขาด (AI Gaps)</span>
-                                <span id="aigaps-badge" class="ml-auto bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
-                            </button>
+                            <button onclick="loadView('aigaps');" id="nav-aigaps" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="help-circle" class="w-5 h-5 text-rose-500"></i> <span>คำถามที่ AI ไม่รู้</span></button>
+
+                            <button onclick="loadView('targeted');" id="nav-targeted" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="target" class="w-5 h-5 text-blue-500"></i> <span>Push เฉพาะกลุ่ม</span></button>
+
+                            <button onclick="loadView('logs');" id="nav-logs" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="scroll-text" class="w-5 h-5 text-slate-500"></i> <span>System Logs</span></button>
 
                             <p class="px-3 text-[11px] font-bold text-slate-400 uppercase tracking-widest mt-4 mb-2">Advanced Tools</p>
                             
@@ -527,7 +528,6 @@
             `;
             initGlobalAiButton();
             lucide.createIcons();
-            loadAiGapsBadge();
         }
 
         function toggleSidebar() {
@@ -576,6 +576,8 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'storage') await renderStorageTable();
             else if (viewName === 'dataai') await renderDataAIView();
             else if (viewName === 'aigaps') await renderAiGapsView();
+            else if (viewName === 'targeted') await renderTargetedPushView();
+            else if (viewName === 'logs') await renderLogsView();
             else if (viewName === 'kanban') await renderKanbanView();
             else if (viewName === 'sandbox') await renderSandboxView();
 
@@ -5242,27 +5244,38 @@ async function updateAllUserProfiles() {
                 document.getElementById('stat-ai-replies').innerText = aiCount || 0;
                 document.getElementById('stat-knowledge').innerText = knowledgeCount || 0;
 
-                // วาดกราฟ 1: ปริมาณข้อความ 7 วัน (Mockup Data ผสมของจริงบางส่วนถ้าเขียนสูตรซับซ้อน)
-                // สำหรับใช้งานจริงตรงนี้จะต้อง group by date จาก DB แต่อันนี้เป็นตัวอย่างกราฟเพื่อให้ UI สมบูรณ์
+                // วาดกราฟ 1: ปริมาณข้อความ 7 วัน (ข้อมูลจริงจาก RPC dashboard_weekly_activity)
+                let dayLabels = ['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'];
+                let totalData = [0, 0, 0, 0, 0, 0, 0];
+                let aiData = [0, 0, 0, 0, 0, 0, 0];
+
+                try {
+                    const actRes = await fetch(`${API_BASE_URL}/api/admin/chat/dashboard_activity`);
+                    if (actRes.ok) {
+                        const actJson = await actRes.json();
+                        if (actJson.data && actJson.data.length > 0) {
+                            const thaiDayMap = { Mon: 'จ.', Tue: 'อ.', Wed: 'พ.', Thu: 'พฤ.', Fri: 'ศ.', Sat: 'ส.', Sun: 'อา.' };
+                            dayLabels = actJson.data.map(d => thaiDayMap[d.day_label?.trim()] || d.day_label);
+                            totalData = actJson.data.map(d => d.total_msg || 0);
+                            aiData    = actJson.data.map(d => d.ai_msg    || 0);
+                        }
+                    }
+                } catch (e) { console.warn("Dashboard activity fetch failed:", e); }
+
                 const ctxActivity = document.getElementById('activityChart').getContext('2d');
                 new Chart(ctxActivity, {
                     type: 'line',
                     data: {
-                        labels: ['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'],
-                        datasets: [{
-                            label: 'จำนวนข้อความเข้า',
-                            data: [12, 19, 3, 5, 2, 3, Math.min(msgCount || 15, 50)],
-                            borderColor: '#6366f1',
-                            backgroundColor: 'rgba(99, 102, 241, 0.1)',
-                            borderWidth: 3,
-                            tension: 0.4,
-                            fill: true
-                        }]
+                        labels: dayLabels,
+                        datasets: [
+                            { label: 'ข้อความทั้งหมด', data: totalData, borderColor: '#6366f1', backgroundColor: 'rgba(99, 102, 241, 0.1)', borderWidth: 3, tension: 0.4, fill: true },
+                            { label: 'AI ตอบ',        data: aiData,    borderColor: '#d946ef', backgroundColor: 'rgba(217, 70, 239, 0.08)', borderWidth: 2, tension: 0.4, fill: false, borderDash: [5, 3] }
+                        ]
                     },
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
-                        plugins: { legend: { display: false } },
+                        plugins: { legend: { display: true, position: 'bottom' } },
                         scales: { y: { beginAtZero: true, grid: { borderDash: [2, 4], color: '#e2e8f0' } }, x: { grid: { display: false } } }
                     }
                 });
@@ -5386,255 +5399,334 @@ async function updateAllUserProfiles() {
             });
         }
 
-        // ==============================================
-        // 📊 AI Gaps — คำถามที่ยังไม่มีใน Knowledge Base
-        // ==============================================
+        // ======================================================================
+        // 📊 คำถามที่ AI ไม่รู้ (ai_gaps)
+        // ======================================================================
         async function renderAiGapsView() {
-            const content = document.getElementById('content-area');
-            content.innerHTML = `
-                <div class="slide-in p-1">
-                    <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
+            const { data: gaps, error } = await supabaseClient
+                .from('ai_gaps')
+                .select('*')
+                .order('count', { ascending: false })
+                .limit(100);
+
+            if (error) {
+                document.getElementById('content-area').innerHTML = `<div class="p-6 text-rose-600">โหลดข้อมูลไม่สำเร็จ: ${error.message}</div>`;
+                return;
+            }
+
+            const pending  = gaps?.filter(g => g.status === 'pending') || [];
+            const added    = gaps?.filter(g => g.status === 'added')   || [];
+            const wontfix  = gaps?.filter(g => g.status === 'wontfix') || [];
+
+            document.getElementById('content-area').innerHTML = `
+                <div class="slide-in p-2">
+                    <div class="mb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
                         <div>
                             <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">
-                                <span class="bg-rose-100 text-rose-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="search-x" class="w-8 h-8"></i></span>
-                                คำถามที่ขาด (AI Gaps)
+                                <span class="bg-rose-100 text-rose-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="help-circle" class="w-8 h-8"></i></span>
+                                คำถามที่ AI ไม่รู้
                             </h1>
-                            <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">คำถามที่ลูกบ้านถาม แต่ AI ยังตอบไม่ได้ — เพิ่มลง Knowledge Base เพื่อให้ AI ฉลาดขึ้น</p>
+                            <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">ดูคำถามที่ AI ตอบไม่ได้ พร้อมเพิ่มลง Knowledge Base</p>
                         </div>
-                        <div class="flex gap-2">
-                            <select id="gaps-filter" onchange="filterAiGaps()" class="px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white shadow-sm focus:ring-2 focus:ring-rose-300 outline-none">
-                                <option value="pending">รอดำเนินการ</option>
-                                <option value="added">เพิ่มใน KB แล้ว</option>
-                                <option value="wontfix">ไม่เพิ่ม</option>
-                                <option value="">ทั้งหมด</option>
-                            </select>
-                            <button onclick="renderAiGapsView()" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-bold hover:bg-slate-50 shadow-sm flex items-center gap-2 transition-all">
-                                <i data-lucide="refresh-cw" class="w-4 h-4"></i> รีเฟรช
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Summary Cards -->
-                    <div class="grid grid-cols-3 gap-4 mb-6">
-                        <div class="glass p-5 rounded-2xl border-0 shadow-sm text-center">
-                            <div id="gaps-count-pending" class="text-3xl font-bold text-rose-600 font-display">—</div>
-                            <div class="text-xs text-slate-500 mt-1 font-medium">รอดำเนินการ</div>
-                        </div>
-                        <div class="glass p-5 rounded-2xl border-0 shadow-sm text-center">
-                            <div id="gaps-count-added" class="text-3xl font-bold text-emerald-600 font-display">—</div>
-                            <div class="text-xs text-slate-500 mt-1 font-medium">เพิ่มใน KB แล้ว</div>
-                        </div>
-                        <div class="glass p-5 rounded-2xl border-0 shadow-sm text-center">
-                            <div id="gaps-count-total" class="text-3xl font-bold text-slate-700 font-display">—</div>
-                            <div class="text-xs text-slate-500 mt-1 font-medium">ทั้งหมด</div>
+                        <div class="flex gap-3">
+                            <div class="bg-rose-50 border border-rose-200 rounded-2xl px-4 py-2.5 text-center">
+                                <div class="text-xs text-rose-700 font-bold">รอเพิ่ม</div>
+                                <div class="text-2xl font-bold text-rose-600">${pending.length}</div>
+                            </div>
+                            <div class="bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-2.5 text-center">
+                                <div class="text-xs text-emerald-700 font-bold">เพิ่มแล้ว</div>
+                                <div class="text-2xl font-bold text-emerald-600">${added.length}</div>
+                            </div>
+                            <div class="bg-slate-100 border border-slate-200 rounded-2xl px-4 py-2.5 text-center">
+                                <div class="text-xs text-slate-600 font-bold">ไม่เพิ่ม</div>
+                                <div class="text-2xl font-bold text-slate-500">${wontfix.length}</div>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Table -->
                     <div class="glass rounded-3xl border-0 shadow-sm overflow-hidden">
-                        <div id="gaps-table-body" class="divide-y divide-slate-100">
-                            <div class="flex justify-center py-16"><div class="animate-spin text-rose-400"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></div></div>
+                        <div class="flex border-b border-slate-200/60">
+                            <button onclick="filterGaps('pending')"  id="gap-tab-pending"  class="gap-tab flex-1 px-5 py-4 font-bold text-rose-600 border-b-2 border-rose-500 text-sm">🔴 รอเพิ่ม KB (${pending.length})</button>
+                            <button onclick="filterGaps('added')"    id="gap-tab-added"    class="gap-tab flex-1 px-5 py-4 font-bold text-slate-500 hover:text-emerald-600 text-sm">🟢 เพิ่มแล้ว (${added.length})</button>
+                            <button onclick="filterGaps('wontfix')"  id="gap-tab-wontfix"  class="gap-tab flex-1 px-5 py-4 font-bold text-slate-500 hover:text-slate-700 text-sm">⚫ ไม่เพิ่ม (${wontfix.length})</button>
+                        </div>
+                        <div id="gap-list" class="divide-y divide-slate-100"></div>
+                    </div>
+                </div>
+            `;
+
+            window._allGaps = gaps;
+            filterGaps('pending');
+            lucide.createIcons();
+        }
+
+        function filterGaps(status) {
+            document.querySelectorAll('.gap-tab').forEach(t => {
+                t.classList.remove('border-b-2', 'border-rose-500', 'border-emerald-500', 'border-slate-500', 'text-rose-600', 'text-emerald-600', 'text-slate-700');
+                t.classList.add('text-slate-500');
+            });
+            const activeTab = document.getElementById(`gap-tab-${status}`);
+            if (activeTab) {
+                activeTab.classList.remove('text-slate-500');
+                if (status === 'pending') activeTab.classList.add('border-b-2', 'border-rose-500', 'text-rose-600');
+                if (status === 'added')   activeTab.classList.add('border-b-2', 'border-emerald-500', 'text-emerald-600');
+                if (status === 'wontfix') activeTab.classList.add('border-b-2', 'border-slate-500', 'text-slate-700');
+            }
+
+            const filtered = (window._allGaps || []).filter(g => g.status === status);
+            const list = document.getElementById('gap-list');
+
+            if (filtered.length === 0) {
+                list.innerHTML = `<div class="p-10 text-center text-slate-400 text-sm">ไม่มีข้อมูล</div>`;
+                return;
+            }
+
+            list.innerHTML = filtered.map(g => `
+                <div class="p-5 hover:bg-white/50 transition-colors group">
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="text-[10px] font-bold bg-rose-100 text-rose-600 px-2 py-0.5 rounded-md">ถาม ${g.count} ครั้ง</span>
+                                <span class="text-[10px] text-slate-400">${new Date(g.asked_at).toLocaleString('th-TH')}</span>
+                                ${g.user_name ? `<span class="text-[10px] text-slate-500">· โดย ${escapeHtml(g.user_name)}</span>` : ''}
+                            </div>
+                            <div class="text-slate-800 font-medium leading-relaxed">${escapeHtml(g.question)}</div>
+                            ${g.note ? `<div class="text-xs text-slate-500 mt-2 italic">📝 ${escapeHtml(g.note)}</div>` : ''}
+                        </div>
+                        <div class="flex gap-2 shrink-0 opacity-60 group-hover:opacity-100 transition-opacity">
+                            ${status === 'pending' ? `
+                                <button onclick="addGapToKB(${g.id}, \`${escapeHtml(g.question).replace(/`/g, '\\`')}\`)" class="px-3 py-1.5 bg-emerald-500 text-white text-xs font-bold rounded-xl hover:bg-emerald-600 transition-all flex items-center gap-1.5"><i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มลง KB</button>
+                                <button onclick="updateGapStatus(${g.id}, 'wontfix')" class="px-3 py-1.5 bg-slate-100 text-slate-600 text-xs font-bold rounded-xl hover:bg-slate-200 transition-all">ไม่เพิ่ม</button>
+                            ` : status === 'added' ? `
+                                <button onclick="updateGapStatus(${g.id}, 'pending')" class="px-3 py-1.5 bg-slate-100 text-slate-600 text-xs font-bold rounded-xl hover:bg-slate-200 transition-all">ย้อน</button>
+                            ` : `
+                                <button onclick="updateGapStatus(${g.id}, 'pending')" class="px-3 py-1.5 bg-rose-100 text-rose-600 text-xs font-bold rounded-xl hover:bg-rose-200 transition-all">นำกลับ</button>
+                            `}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        async function updateGapStatus(id, newStatus) {
+            const { error } = await supabaseClient.from('ai_gaps').update({ status: newStatus }).eq('id', id);
+            if (error) return showToast(error.message, 'error');
+            showToast('อัปเดตสถานะเรียบร้อย', 'success');
+            renderAiGapsView();
+        }
+
+        async function addGapToKB(gapId, question) {
+            document.getElementById('modal-title').innerHTML = `<div class="flex items-center gap-2"><i data-lucide="plus-circle" class="w-6 h-6 text-emerald-500"></i> เพิ่มคำตอบใน Knowledge Base</div>`;
+            document.getElementById('modal-content').innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-rose-50 border border-rose-200 rounded-2xl p-4">
+                        <div class="text-xs text-rose-600 font-bold mb-1">คำถามจาก user</div>
+                        <div class="text-slate-700 font-medium">${escapeHtml(question)}</div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 mb-2">เนื้อหาคำตอบ</label>
+                        <textarea id="gap-kb-content" rows="7" placeholder="เขียนคำตอบที่ถูกต้องสำหรับคำถามนี้..." class="w-full rounded-2xl border border-slate-200 px-4 py-3 focus:ring-2 focus:ring-emerald-400 outline-none text-sm resize-none"></textarea>
+                        <p class="text-xs text-slate-400 mt-1.5">เขียนให้ครอบคลุมคำถามและตอบให้ชัดเจน AI จะนำไปใช้ตอบครั้งถัดไปที่มีคนถามเรื่องนี้</p>
+                    </div>
+                    <div class="flex gap-3 pt-4 border-t border-slate-100">
+                        <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold hover:bg-slate-100 border border-slate-200">ยกเลิก</button>
+                        <button onclick="saveGapToKB(${gapId}, \`${escapeHtml(question).replace(/`/g, '\\`')}\`)" id="gap-save-btn" class="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> บันทึกลง KB</button>
+                    </div>
+                </div>
+            `;
+            openModal();
+            lucide.createIcons();
+            setTimeout(() => document.getElementById('gap-kb-content').focus(), 150);
+        }
+
+        async function saveGapToKB(gapId, originalQuestion) {
+            const btn = document.getElementById('gap-save-btn');
+            const answer = document.getElementById('gap-kb-content').value.trim();
+            if (!answer) return showToast('กรุณาเขียนคำตอบ', 'warning');
+            setBtnLoading(btn, true);
+
+            // รวมคำถาม+คำตอบเป็น content เดียว (dataai มีแค่ column content)
+            const content = `Q: ${originalQuestion}\nA: ${answer}`;
+            const { error: insErr } = await supabaseClient.from('dataai').insert({ content });
+            if (insErr) { setBtnLoading(btn, false); return showToast(insErr.message, 'error'); }
+
+            await supabaseClient.from('ai_gaps').update({ status: 'added' }).eq('id', gapId);
+            showToast('เพิ่มลง KB สำเร็จ! แนะนำให้กด Regenerate Embeddings ที่หน้าคลังความรู้', 'success');
+            closeModal();
+            renderAiGapsView();
+        }
+
+        // ======================================================================
+        // 🎯 Targeted Push - ส่ง push ตาม tags
+        // ======================================================================
+        async function renderTargetedPushView() {
+            const { data: tags } = await supabaseClient.from('user_tags').select('tag_name').limit(500);
+            const uniqueTags = [...new Set((tags || []).map(t => t.tag_name))].sort();
+
+            document.getElementById('content-area').innerHTML = `
+                <div class="slide-in p-2 max-w-4xl">
+                    <div class="mb-6">
+                        <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">
+                            <span class="bg-blue-100 text-blue-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="target" class="w-8 h-8"></i></span>
+                            ส่ง Push เฉพาะกลุ่ม
+                        </h1>
+                        <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">เลือก tags เพื่อส่งข้อความหาเฉพาะกลุ่มที่ต้องการ</p>
+                    </div>
+
+                    <div class="glass rounded-3xl p-6 shadow-sm space-y-5">
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 mb-2">เลือก Tags (กดเพื่อเลือกหลายอัน)</label>
+                            <div id="tag-chips" class="flex flex-wrap gap-2 max-h-48 overflow-y-auto p-3 bg-white rounded-2xl border border-slate-200">
+                                ${uniqueTags.length === 0 ? '<span class="text-xs text-slate-400">ยังไม่มี tags ในระบบ</span>' : uniqueTags.map(t => `
+                                    <button type="button" onclick="toggleTagChip(this)" data-tag="${escapeHtml(t)}" class="tag-chip px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 bg-slate-50 text-slate-600 hover:bg-blue-50 transition-all">${escapeHtml(t)}</button>
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 mb-2">เงื่อนไข</label>
+                            <div class="flex gap-3">
+                                <label class="flex-1 cursor-pointer">
+                                    <input type="radio" name="match" value="any" checked class="sr-only peer">
+                                    <div class="p-3 rounded-2xl border-2 border-slate-200 peer-checked:border-blue-400 peer-checked:bg-blue-50 text-center transition-all">
+                                        <div class="font-bold text-sm">มีอย่างน้อย 1 tag (OR)</div>
+                                        <div class="text-xs text-slate-500">Tags ใดก็ได้</div>
+                                    </div>
+                                </label>
+                                <label class="flex-1 cursor-pointer">
+                                    <input type="radio" name="match" value="all" class="sr-only peer">
+                                    <div class="p-3 rounded-2xl border-2 border-slate-200 peer-checked:border-blue-400 peer-checked:bg-blue-50 text-center transition-all">
+                                        <div class="font-bold text-sm">มีทุก tag (AND)</div>
+                                        <div class="text-xs text-slate-500">Tags ครบทุกอัน</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 mb-2">ข้อความ</label>
+                            <textarea id="push-message" rows="5" placeholder="พิมพ์ข้อความที่ต้องการส่ง..." class="w-full rounded-2xl border border-slate-200 px-4 py-3 focus:ring-2 focus:ring-blue-400 outline-none text-sm resize-none"></textarea>
+                        </div>
+
+                        <div class="flex justify-between items-center pt-4 border-t border-slate-100">
+                            <div class="text-sm text-slate-500">
+                                เลือก tags: <span id="tag-count" class="font-bold text-blue-600">0</span> อัน
+                            </div>
+                            <button onclick="sendTargetedPush()" id="push-btn" class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-2xl font-bold shadow-lg shadow-blue-200 flex items-center gap-2 transition-all disabled:opacity-50" disabled>
+                                <i data-lucide="send" class="w-4 h-4"></i> ส่งข้อความ
+                            </button>
                         </div>
                     </div>
                 </div>
             `;
+            window._selectedTags = [];
             lucide.createIcons();
-            await loadAiGapsData();
         }
 
-        let allAiGaps = [];
-
-        async function loadAiGapsData() {
-            const { data, error } = await supabaseClient
-                .from('ai_gaps')
-                .select('*')
-                .order('count', { ascending: false })
-                .order('asked_at', { ascending: false });
-
-            if (error) {
-                document.getElementById('gaps-table-body').innerHTML = `<div class="p-8 text-center text-rose-500 text-sm">เกิดข้อผิดพลาด: ${escapeHtml(error.message)}</div>`;
-                return;
+        function toggleTagChip(btn) {
+            const tag = btn.dataset.tag;
+            const idx = window._selectedTags.indexOf(tag);
+            if (idx === -1) {
+                window._selectedTags.push(tag);
+                btn.classList.remove('bg-slate-50', 'text-slate-600', 'border-slate-200');
+                btn.classList.add('bg-blue-500', 'text-white', 'border-blue-500');
+            } else {
+                window._selectedTags.splice(idx, 1);
+                btn.classList.add('bg-slate-50', 'text-slate-600', 'border-slate-200');
+                btn.classList.remove('bg-blue-500', 'text-white', 'border-blue-500');
             }
-
-            allAiGaps = data || [];
-
-            // Update summary counts
-            const pending = allAiGaps.filter(g => g.status === 'pending').length;
-            const added   = allAiGaps.filter(g => g.status === 'added').length;
-            document.getElementById('gaps-count-pending').innerText = pending;
-            document.getElementById('gaps-count-added').innerText   = added;
-            document.getElementById('gaps-count-total').innerText   = allAiGaps.length;
-
-            // Update badge in sidebar
-            const badge = document.getElementById('aigaps-badge');
-            if (badge) {
-                badge.innerText = pending;
-                badge.classList.toggle('hidden', pending === 0);
-            }
-
-            filterAiGaps();
+            document.getElementById('tag-count').innerText = window._selectedTags.length;
+            document.getElementById('push-btn').disabled = window._selectedTags.length === 0;
         }
 
-        function filterAiGaps() {
-            const filterVal = document.getElementById('gaps-filter')?.value ?? 'pending';
-            const filtered = filterVal ? allAiGaps.filter(g => g.status === filterVal) : allAiGaps;
-            renderAiGapsTable(filtered);
+        async function sendTargetedPush() {
+            const tags = window._selectedTags || [];
+            const message = document.getElementById('push-message').value.trim();
+            const match = document.querySelector('input[name="match"]:checked')?.value || 'any';
+            if (!message) return showToast('กรุณาพิมพ์ข้อความ', 'warning');
+
+            showConfirmModal('ยืนยันการส่ง?', `จะส่งข้อความไปยัง user ที่มี tags (${match === 'all' ? 'ครบทุก' : 'อย่างน้อย 1'}): ${tags.join(', ')}`, async () => {
+                const btn = document.getElementById('push-btn');
+                setBtnLoading(btn, true);
+                try {
+                    const res = await fetch(`${API_BASE_URL}/api/admin/audience/targeted_push`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tags, match, messages: [{ type: 'text', text: message }] })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || 'ส่งไม่สำเร็จ');
+                    showToast(`ส่งสำเร็จ ${data.sent} คน (เลือกได้ ${data.targetedUsers} คน)`, 'success');
+                    document.getElementById('push-message').value = '';
+                } catch (e) { showToast(e.message, 'error'); }
+                finally { setBtnLoading(btn, false); }
+            });
         }
 
-        function renderAiGapsTable(gaps) {
-            const tbody = document.getElementById('gaps-table-body');
-            if (!gaps || gaps.length === 0) {
-                tbody.innerHTML = `
-                    <div class="flex flex-col items-center justify-center py-16 text-slate-400">
-                        <i data-lucide="check-circle-2" class="w-12 h-12 mb-3 text-emerald-400"></i>
-                        <p class="font-medium text-slate-500">ไม่มีคำถามในหมวดนี้</p>
-                    </div>`;
-                lucide.createIcons();
-                return;
-            }
+        // ======================================================================
+        // 📜 System Logs
+        // ======================================================================
+        async function renderLogsView() {
+            document.getElementById('content-area').innerHTML = `
+                <div class="slide-in p-2">
+                    <div class="mb-6">
+                        <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">
+                            <span class="bg-slate-100 text-slate-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="scroll-text" class="w-8 h-8"></i></span>
+                            System Logs
+                        </h1>
+                        <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">บันทึก events ในระบบแบบ structured เพื่อวิเคราะห์ปัญหา</p>
+                    </div>
 
-            const statusConfig = {
-                pending: { label: 'รอดำเนินการ', cls: 'bg-rose-100 text-rose-700' },
-                added:   { label: 'เพิ่มใน KB แล้ว', cls: 'bg-emerald-100 text-emerald-700' },
-                wontfix: { label: 'ไม่เพิ่ม', cls: 'bg-slate-100 text-slate-500' },
+                    <div class="glass rounded-3xl border-0 shadow-sm overflow-hidden">
+                        <div class="p-4 border-b border-slate-200/60 flex gap-3 items-center">
+                            <select id="log-level-filter" onchange="renderLogsView()" class="px-4 py-2 rounded-xl border border-slate-200 text-sm bg-white focus:ring-2 focus:ring-indigo-400 outline-none">
+                                <option value="">ทุกระดับ</option>
+                                <option value="info">Info</option>
+                                <option value="warn">Warn</option>
+                                <option value="error">Error</option>
+                            </select>
+                            <button onclick="renderLogsView()" class="px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-sm font-bold flex items-center gap-2">
+                                <i data-lucide="refresh-cw" class="w-4 h-4"></i> รีเฟรช
+                            </button>
+                        </div>
+                        <div id="logs-list" class="divide-y divide-slate-100 max-h-[70vh] overflow-y-auto"></div>
+                    </div>
+                </div>
+            `;
+
+            const level = document.getElementById('log-level-filter')?.value || '';
+            let query = supabaseClient.from('app_logs').select('*').order('created_at', { ascending: false }).limit(200);
+            if (level) query = query.eq('level', level);
+
+            const { data: logs, error } = await query;
+            const list = document.getElementById('logs-list');
+            if (error) { list.innerHTML = `<div class="p-6 text-rose-600">${error.message}</div>`; return; }
+            if (!logs || logs.length === 0) { list.innerHTML = `<div class="p-10 text-center text-slate-400 text-sm">ไม่มี logs</div>`; return; }
+
+            const colors = {
+                info:  'bg-blue-50 text-blue-700 border-blue-200',
+                warn:  'bg-amber-50 text-amber-700 border-amber-200',
+                error: 'bg-rose-50 text-rose-700 border-rose-200'
             };
 
-            tbody.innerHTML = gaps.map(g => {
-                const sc = statusConfig[g.status] || statusConfig.pending;
-                const heatLevel = g.count >= 10 ? 'text-rose-600 font-bold' : g.count >= 5 ? 'text-amber-600 font-bold' : 'text-slate-600';
-                return `
-                <div class="flex items-start gap-4 p-5 hover:bg-slate-50/60 transition-colors group">
-                    <!-- Count Badge -->
-                    <div class="shrink-0 w-12 h-12 rounded-2xl bg-slate-100 flex flex-col items-center justify-center">
-                        <span class="${heatLevel} text-lg leading-none">${g.count}</span>
-                        <span class="text-[9px] text-slate-400 font-medium">ครั้ง</span>
-                    </div>
-                    <!-- Content -->
-                    <div class="flex-1 min-w-0">
-                        <p class="font-semibold text-slate-800 text-sm leading-snug mb-1">${escapeHtml(g.question)}</p>
-                        <div class="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                            <span class="flex items-center gap-1"><i data-lucide="user" class="w-3 h-3"></i>${escapeHtml(g.user_name || '-')}</span>
-                            <span class="flex items-center gap-1"><i data-lucide="clock" class="w-3 h-3"></i>${formatThaiDateTime(g.asked_at)}</span>
-                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${sc.cls}">${sc.label}</span>
+            list.innerHTML = logs.map(l => `
+                <div class="p-4 hover:bg-white/50 transition-colors">
+                    <div class="flex items-start gap-3">
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md border ${colors[l.level] || colors.info} uppercase">${l.level}</span>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="font-mono text-sm font-bold text-slate-800">${escapeHtml(l.event)}</span>
+                                <span class="text-[10px] text-slate-400">${new Date(l.created_at).toLocaleString('th-TH')}</span>
+                                ${l.user_id ? `<span class="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-mono">${l.user_id.substring(0, 10)}...</span>` : ''}
+                            </div>
+                            ${l.context ? `<pre class="text-[11px] text-slate-500 font-mono bg-slate-50 p-2 rounded-lg overflow-x-auto">${escapeHtml(JSON.stringify(l.context, null, 2))}</pre>` : ''}
                         </div>
-                        ${g.note ? `<p class="text-xs text-slate-500 mt-1.5 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100"><i data-lucide="pencil-line" class="w-3 h-3 inline mr-1"></i>${escapeHtml(g.note)}</p>` : ''}
                     </div>
-                    <!-- Actions -->
-                    <div class="shrink-0 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        ${g.status === 'pending' ? `
-                        <button onclick="addGapToKnowledge('${g.id}', \`${escapeHtml(g.question)}\`)"
-                            class="px-3 py-1.5 bg-indigo-500 text-white rounded-lg text-xs font-bold hover:bg-indigo-600 transition-all flex items-center gap-1 shadow-sm">
-                            <i data-lucide="brain" class="w-3 h-3"></i> เพิ่มใน KB
-                        </button>
-                        <button onclick="markGapWontfix('${g.id}')"
-                            class="px-3 py-1.5 bg-slate-100 text-slate-500 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all">
-                            ไม่เพิ่ม
-                        </button>` : ''}
-                        ${g.status === 'added' ? `
-                        <button onclick="markGapPending('${g.id}')"
-                            class="px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-xs font-bold hover:bg-amber-100 transition-all">
-                            คืนค่า
-                        </button>` : ''}
-                        <button onclick="deleteAiGap('${g.id}')"
-                            class="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors">
-                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                        </button>
-                    </div>
-                </div>`;
-            }).join('');
-            lucide.createIcons();
-        }
-
-        // เปิด dataai modal พร้อมคำถามจาก gap เพื่อให้แอดมินเพิ่มคำตอบลง KB
-        async function addGapToKnowledge(gapId, question) {
-            // เปิด modal เพิ่มข้อมูล dataai โดยใส่คำถามเป็น title อัตโนมัติ
-            document.getElementById('modal-title').innerHTML = `<div class="flex items-center gap-2"><i data-lucide="brain" class="w-6 h-6 text-fuchsia-500"></i> เพิ่มข้อมูลลงคลังความรู้ AI</div>`;
-            document.getElementById('modal-content').innerHTML = `
-                <div class="p-3 bg-rose-50 border border-rose-100 rounded-xl text-sm text-rose-700 mb-4 flex gap-2">
-                    <i data-lucide="search-x" class="w-4 h-4 shrink-0 mt-0.5"></i>
-                    <div>คำถามที่ AI ยังตอบไม่ได้: <b>"${escapeHtml(question)}"</b></div>
                 </div>
-                <div class="space-y-3">
-                    <div>
-                        <label class="text-sm font-bold text-slate-700 mb-1 block">หัวข้อ (Title)</label>
-                        <input id="gap-kb-title" type="text" value="${escapeHtml(question)}"
-                            class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-fuchsia-400 bg-white">
-                    </div>
-                    <div>
-                        <label class="text-sm font-bold text-slate-700 mb-1 block">เนื้อหาคำตอบ (Content) <span class="text-rose-500">*</span></label>
-                        <textarea id="gap-kb-content" rows="6" placeholder="พิมพ์ข้อมูลหรือคำตอบที่ AI ควรรู้เกี่ยวกับคำถามนี้..."
-                            class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-fuchsia-400 bg-white resize-none"></textarea>
-                    </div>
-                    <div class="flex gap-3 pt-2">
-                        <button onclick="closeModal()" class="flex-1 py-2.5 bg-slate-50 text-slate-600 rounded-xl font-bold hover:bg-slate-100 border border-slate-200 text-sm transition-all">ยกเลิก</button>
-                        <button onclick="submitGapToKnowledge('${gapId}')" id="gap-kb-save-btn"
-                            class="flex-1 py-2.5 bg-fuchsia-500 hover:bg-fuchsia-600 text-white rounded-xl font-bold text-sm shadow-md flex items-center justify-center gap-2 transition-all active:scale-95">
-                            <i data-lucide="save" class="w-4 h-4"></i> บันทึกลง KB
-                        </button>
-                    </div>
-                </div>`;
-            openModal();
+            `).join('');
             lucide.createIcons();
-            setTimeout(() => document.getElementById('gap-kb-content')?.focus(), 150);
         }
-
-        async function submitGapToKnowledge(gapId) {
-            const btn = document.getElementById('gap-kb-save-btn');
-            const title   = document.getElementById('gap-kb-title').value.trim();
-            const content = document.getElementById('gap-kb-content').value.trim();
-            if (!content) {
-                document.getElementById('gap-kb-content').classList.add('border-rose-400', 'ring-2', 'ring-rose-200');
-                return;
-            }
-            setBtnLoading(btn, true);
-            try {
-                // 1. บันทึกลง dataai
-                const { error: insertErr } = await supabaseClient.from('dataai').insert({ title, content });
-                if (insertErr) throw insertErr;
-
-                // 2. อัพเดต status ของ gap เป็น 'added'
-                await supabaseClient.from('ai_gaps').update({ status: 'added' }).eq('id', gapId);
-
-                showToast('เพิ่มข้อมูลลง Knowledge Base เรียบร้อยแล้ว', 'success');
-                closeModal();
-                await loadAiGapsData();
-            } catch (err) {
-                showToast(err.message, 'error');
-                setBtnLoading(btn, false);
-            }
-        }
-
-        async function markGapWontfix(gapId) {
-            showConfirmModal('ไม่เพิ่มข้อมูลนี้?', 'ต้องการทำเครื่องหมายว่าคำถามนี้ไม่จำเป็นต้องเพิ่มใน Knowledge Base ใช่หรือไม่?', async () => {
-                await supabaseClient.from('ai_gaps').update({ status: 'wontfix' }).eq('id', gapId);
-                await loadAiGapsData();
-            });
-        }
-
-        async function markGapPending(gapId) {
-            await supabaseClient.from('ai_gaps').update({ status: 'pending' }).eq('id', gapId);
-            await loadAiGapsData();
-            showToast('คืนค่าสถานะเรียบร้อยแล้ว', 'success');
-        }
-
-        async function deleteAiGap(gapId) {
-            showConfirmModal('ลบคำถามนี้?', 'ต้องการลบคำถามนี้ออกจากรายการ AI Gaps ใช่หรือไม่?', async () => {
-                await supabaseClient.from('ai_gaps').delete().eq('id', gapId);
-                await loadAiGapsData();
-                showToast('ลบเรียบร้อยแล้ว', 'success');
-            });
-        }
-
-        // โหลด badge count เมื่อเริ่มต้น
-        async function loadAiGapsBadge() {
-            const { count } = await supabaseClient.from('ai_gaps').select('*', { count: 'exact', head: true }).eq('status', 'pending');
-            const badge = document.getElementById('aigaps-badge');
-            if (badge && count > 0) {
-                badge.innerText = count;
-                badge.classList.remove('hidden');
-            }
-        }
-
         //*********************
         
   </script>
