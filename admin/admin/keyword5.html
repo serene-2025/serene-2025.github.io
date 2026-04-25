@@ -516,6 +516,7 @@
                             <p class="px-3 text-[11px] font-bold text-slate-400 uppercase tracking-widest mt-4 mb-2">CRM Pro</p>
 
                             <button onclick="loadView('crmDash');" id="nav-crmDash" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="layout-dashboard" class="w-5 h-5 text-green-500"></i> <span>CRM Dashboard</span></button>
+                            <button onclick="loadView('crmTiers');" id="nav-crmTiers" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="award" class="w-5 h-5 text-indigo-500"></i> <span>จัดการ Level (Tiers)</span></button>
                             <button onclick="loadView('crmMembers');" id="nav-crmMembers" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="users-round" class="w-5 h-5 text-emerald-500"></i> <span>สมาชิก &amp; แต้ม</span></button>
                             <button onclick="loadView('crmRewards');" id="nav-crmRewards" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="gift" class="w-5 h-5 text-rose-500"></i> <span>รางวัล / คูปอง</span></button>
                             <button onclick="loadView('crmNews');" id="nav-crmNews" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="megaphone" class="w-5 h-5 text-amber-500"></i> <span>ข่าว / โปรโมชั่น</span></button>
@@ -602,6 +603,7 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'targeted') await renderTargetedPushView();
             else if (viewName === 'logs') await renderLogsView();
             else if (viewName === 'crmDash')    await renderCrmDashView();
+            else if (viewName === 'crmTiers')   await renderCrmTiersView();
             else if (viewName === 'crmMembers') await renderCrmMembersView();
             else if (viewName === 'crmRewards') await renderCrmRewardsView();
             else if (viewName === 'crmNews')    await renderCrmNewsView();
@@ -5834,12 +5836,156 @@ async function updateAllUserProfiles() {
         }
 
         // ─── Members + Points ──────────────────────────────
+        // ─── Tier Management ────────────────────────────────
+        async function renderCrmTiersView() {
+            const { data: tiers } = await supabaseClient.from('tiers').select('*').order('min_points', { ascending: true });
+            window._tiers = tiers || [];
+            const maxPts = (tiers || []).length > 0 ? Math.max(...tiers.map(t => t.min_points)) : 1000;
+
+            const TIER_ICONS = ['🥉', '🥈', '🥇', '💎', '👑', '🌟', '⚡', '🔥'];
+
+            document.getElementById('content-area').innerHTML = `
+                <div class="slide-in p-2">
+                    <div class="mb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+                        <div>
+                            <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">
+                                <span class="bg-indigo-100 text-indigo-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="award" class="w-8 h-8"></i></span>
+                                จัดการ Level (Tiers)
+                            </h1>
+                            <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">กำหนดระดับสมาชิก คะแนนขั้นต่ำ และสีประจำระดับ</p>
+                        </div>
+                        <button onclick="openTierModal()" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold shadow-lg shadow-indigo-200 flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i> เพิ่ม Level</button>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        ${(tiers || []).map((t, i) => {
+                            const icon = TIER_ICONS[i] || '⭐';
+                            const pct = maxPts > 0 ? Math.round((t.min_points / maxPts) * 100) : 0;
+                            return `
+                            <div class="glass rounded-3xl p-5 shadow-sm hover:shadow-lg transition-all group cursor-pointer" onclick="openTierModal('${t.id}')">
+                                <div class="flex items-start justify-between mb-3">
+                                    <div class="w-14 h-14 ${t.color_theme} rounded-2xl shadow-lg flex items-center justify-center text-white text-2xl font-black border-4 border-white">${icon}</div>
+                                    <button onclick="event.stopPropagation(); deleteTier('${t.id}', '${escapeHtml(t.name)}')" class="opacity-0 group-hover:opacity-100 p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                </div>
+                                <h3 class="font-bold text-slate-800 text-lg">${escapeHtml(t.name)}</h3>
+                                <div class="text-3xl font-extrabold text-slate-700 mt-1">${t.min_points.toLocaleString()}<span class="text-xs font-normal text-slate-400 ml-1">แต้ม</span></div>
+                                <div class="text-[10px] text-slate-400 font-mono mt-1">${t.color_theme}</div>
+                                <div class="mt-3 h-2 bg-slate-100 rounded-full overflow-hidden"><div class="h-full ${t.color_theme}" style="width:${pct}%"></div></div>
+                            </div>`;
+                        }).join('') || '<div class="col-span-full text-center py-16 text-slate-400">ยังไม่มี Level — กดปุ่ม "เพิ่ม Level" เพื่อสร้างระดับสมาชิก</div>'}
+                    </div>
+
+                    ${(tiers || []).length > 0 ? `
+                    <div class="glass rounded-3xl p-6 shadow-sm mt-6">
+                        <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2"><i data-lucide="bar-chart-2" class="w-5 h-5 text-indigo-500"></i> Tier Progression</h3>
+                        <div class="relative h-3 bg-slate-100 rounded-full overflow-hidden mb-4">
+                            ${(tiers || []).map((t, i) => {
+                                const pct = maxPts > 0 ? (t.min_points / maxPts) * 100 : 0;
+                                return `<div class="absolute h-3 ${t.color_theme} opacity-80 rounded-full" style="left:0; width:${Math.max(pct, i === 0 ? 5 : 2)}%"></div>`;
+                            }).join('')}
+                        </div>
+                    </div>` : ''}
+                </div>`;
+            lucide.createIcons();
+        }
+
+        function openTierModal(editId) {
+            const editing = editId ? (window._tiers || []).find(t => t.id === editId) : null;
+            const COLOR_OPTIONS = [
+                { class: 'bg-slate-400',  label: 'Member (Grey)' },
+                { class: 'bg-blue-500',   label: 'Blue' },
+                { class: 'bg-emerald-500',label: 'Green' },
+                { class: 'bg-amber-400',  label: 'Gold' },
+                { class: 'bg-orange-500', label: 'Orange' },
+                { class: 'bg-rose-500',   label: 'Red' },
+                { class: 'bg-violet-600', label: 'Platinum (Purple)' },
+                { class: 'bg-indigo-600', label: 'Indigo' },
+                { class: 'bg-sky-500',    label: 'Sky Blue' },
+                { class: 'bg-pink-500',   label: 'Pink' },
+                { class: 'bg-teal-500',   label: 'Teal' },
+                { class: 'bg-yellow-400', label: 'Diamond (Yellow)' },
+            ];
+
+            document.getElementById('modal-title').innerHTML = `<div class="flex items-center gap-2"><i data-lucide="award" class="w-6 h-6 text-indigo-500"></i> ${editing ? 'แก้ไข Level' : 'เพิ่ม Level ใหม่'}</div>`;
+            document.getElementById('modal-content').innerHTML = `
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 mb-1.5">ชื่อ Level *</label>
+                        <input id="t-name" type="text" placeholder="เช่น Gold, Platinum" value="${editing ? escapeHtml(editing.name) : ''}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 mb-1.5">คะแนนขั้นต่ำ *</label>
+                        <input id="t-min" type="number" min="0" placeholder="0" value="${editing?.min_points ?? ''}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
+                        <p class="text-xs text-slate-400 mt-1">สมาชิกที่มีแต้มถึงจำนวนนี้จะได้ Level นี้</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 mb-1.5">สีประจำ Level</label>
+                        <div class="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto p-2 bg-slate-50 rounded-2xl">
+                            ${COLOR_OPTIONS.map(c => `
+                                <label class="cursor-pointer">
+                                    <input type="radio" name="t-color" value="${c.class}" ${(editing?.color_theme || 'bg-slate-400') === c.class ? 'checked' : ''} class="sr-only peer">
+                                    <div class="p-3 rounded-xl border-2 border-transparent peer-checked:border-slate-700 transition-all hover:scale-105">
+                                        <div class="w-full h-8 ${c.class} rounded-lg shadow-sm"></div>
+                                        <div class="text-[10px] font-bold text-slate-600 text-center mt-1.5">${c.label}</div>
+                                    </div>
+                                </label>`).join('')}
+                        </div>
+                    </div>
+                    <div class="flex gap-3 pt-4 border-t border-slate-100">
+                        <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">ยกเลิก</button>
+                        <button onclick="saveTier('${editing?.id || ''}')" id="t-save-btn" class="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> บันทึก</button>
+                    </div>
+                </div>`;
+            openModal();
+            lucide.createIcons();
+        }
+
+        async function saveTier(editId) {
+            const btn = document.getElementById('t-save-btn');
+            const name = document.getElementById('t-name').value.trim();
+            const min = parseInt(document.getElementById('t-min').value);
+            const color = document.querySelector('input[name="t-color"]:checked')?.value;
+            if (!name || isNaN(min)) return showToast('กรุณากรอกชื่อและคะแนนขั้นต่ำ', 'warning');
+            if (!color) return showToast('กรุณาเลือกสี', 'warning');
+            setBtnLoading(btn, true);
+
+            const payload = { name, min_points: min, color_theme: color };
+            const { error } = editId
+                ? await supabaseClient.from('tiers').update(payload).eq('id', editId)
+                : await supabaseClient.from('tiers').insert([payload]);
+
+            setBtnLoading(btn, false);
+            if (error) return showToast(error.message, 'error');
+            showToast(editId ? 'อัปเดตแล้ว' : 'เพิ่ม Level สำเร็จ!', 'success');
+            closeModal();
+            renderCrmTiersView();
+        }
+
+        async function deleteTier(id, name) {
+            showConfirmModal(`ลบ Level "${name}"?`, 'การลบไม่สามารถนำกลับได้', async () => {
+                const { error } = await supabaseClient.from('tiers').delete().eq('id', id);
+                if (error) return showToast(error.message, 'error');
+                showToast('ลบแล้ว', 'success');
+                renderCrmTiersView();
+            });
+        }
+
         async function renderCrmMembersView() {
-            const { data: members } = await supabaseClient
+            // โหลด tiers ก่อน เพื่อใช้คำนวณระดับจาก points
+            const { data: tiers } = await supabaseClient.from('tiers').select('*').order('min_points', { ascending: true });
+            window._tiers = tiers || [];
+
+            // โหลด members ทั้งหมด (ไม่ join เพราะ tier_id อาจ null)
+            const { data: members, error } = await supabaseClient
                 .from('user_profiles')
-                .select('userId, displayName, pictureUrl, points, last_activity, tier_id, tiers:tier_id(name, color_theme)')
-                .order('points', { ascending: false })
-                .limit(200);
+                .select('userId, displayName, pictureUrl, points, last_activity, status')
+                .order('points', { ascending: false, nullsFirst: false })
+                .limit(500);
+
+            if (error) {
+                document.getElementById('content-area').innerHTML = `<div class="p-6 text-rose-600">โหลดข้อมูลไม่สำเร็จ: ${error.message}</div>`;
+                return;
+            }
 
             document.getElementById('content-area').innerHTML = `
                 <div class="slide-in p-2">
@@ -5849,9 +5995,12 @@ async function updateAllUserProfiles() {
                                 <span class="bg-emerald-100 text-emerald-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="users-round" class="w-8 h-8"></i></span>
                                 สมาชิก &amp; แต้ม
                             </h1>
-                            <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">จัดการสมาชิกและปรับแต้ม</p>
+                            <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">พบ ${(members || []).length} คน · จัดการสมาชิกและปรับแต้ม</p>
                         </div>
-                        <input id="member-search" oninput="filterMembers()" placeholder="🔍 ค้นหาชื่อ / userId..." class="w-full md:w-80 px-4 py-2.5 rounded-2xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-400 outline-none bg-white/80">
+                        <div class="flex gap-2 w-full md:w-auto">
+                            <input id="member-search" oninput="filterMembers()" placeholder="🔍 ค้นหาชื่อ / userId..." class="flex-1 md:w-72 px-4 py-2.5 rounded-2xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-400 outline-none bg-white/80">
+                            <button onclick="syncTierForAll()" class="px-4 py-2.5 bg-indigo-50 text-indigo-600 rounded-2xl text-sm font-bold hover:bg-indigo-100 inline-flex items-center gap-2"><i data-lucide="refresh-cw" class="w-4 h-4"></i> Sync Tiers</button>
+                        </div>
                     </div>
                     <div class="glass rounded-3xl overflow-hidden shadow-sm">
                         <div class="overflow-x-auto">
@@ -5859,9 +6008,9 @@ async function updateAllUserProfiles() {
                                 <thead class="bg-slate-50 text-slate-600">
                                     <tr>
                                         <th class="text-left p-4 font-bold">สมาชิก</th>
-                                        <th class="text-center p-4 font-bold">Tier</th>
+                                        <th class="text-center p-4 font-bold">Tier (จากแต้ม)</th>
                                         <th class="text-right p-4 font-bold">แต้ม</th>
-                                        <th class="text-center p-4 font-bold">Active</th>
+                                        <th class="text-center p-4 font-bold">Active ล่าสุด</th>
                                         <th class="text-center p-4 font-bold">จัดการ</th>
                                     </tr>
                                 </thead>
@@ -5875,25 +6024,70 @@ async function updateAllUserProfiles() {
             renderMembersTable(window._allMembers);
         }
 
+        // คำนวณ tier จาก points และ tiers list (client-side)
+        function getTierByPoints(points) {
+            const tiers = window._tiers || [];
+            if (tiers.length === 0) return { name: 'Member', color_theme: 'bg-slate-400' };
+            const sorted = [...tiers].sort((a, b) => b.min_points - a.min_points);
+            return sorted.find(t => (points || 0) >= t.min_points) || tiers[0];
+        }
+
         function renderMembersTable(list) {
-            const tierColors = { Member: 'bg-slate-100 text-slate-600', Silver: 'bg-slate-200 text-slate-700', Gold: 'bg-amber-100 text-amber-700', Platinum: 'bg-indigo-100 text-indigo-700' };
-            document.getElementById('members-tbody').innerHTML = (list || []).slice(0, 100).map(m => {
-                const tierName = m.tiers?.name || 'Member';
+            // map tier color (Tailwind class) → text+bg combo
+            const colorMap = {
+                'bg-slate-400':  'bg-slate-100 text-slate-700 border-slate-200',
+                'bg-blue-500':   'bg-blue-50 text-blue-700 border-blue-200',
+                'bg-emerald-500':'bg-emerald-50 text-emerald-700 border-emerald-200',
+                'bg-amber-400':  'bg-amber-50 text-amber-700 border-amber-200',
+                'bg-orange-500': 'bg-orange-50 text-orange-700 border-orange-200',
+                'bg-rose-500':   'bg-rose-50 text-rose-700 border-rose-200',
+                'bg-violet-600': 'bg-violet-50 text-violet-700 border-violet-200',
+                'bg-indigo-600': 'bg-indigo-50 text-indigo-700 border-indigo-200',
+                'bg-sky-500':    'bg-sky-50 text-sky-700 border-sky-200',
+                'bg-pink-500':   'bg-pink-50 text-pink-700 border-pink-200',
+                'bg-teal-500':   'bg-teal-50 text-teal-700 border-teal-200',
+                'bg-yellow-400': 'bg-yellow-50 text-yellow-700 border-yellow-200',
+            };
+
+            document.getElementById('members-tbody').innerHTML = (list || []).slice(0, 200).map(m => {
+                const tier = getTierByPoints(m.points || 0);
+                const tierCls = colorMap[tier.color_theme] || colorMap['bg-slate-400'];
                 const last = m.last_activity ? new Date(m.last_activity).toLocaleDateString('th-TH') : '—';
-                return `<tr class="hover:bg-white/50">
+                return `<tr class="hover:bg-white/50 transition-colors">
                     <td class="p-4">
                         <div class="flex items-center gap-3">
                             <img src="${m.pictureUrl || 'https://cdn-icons-png.flaticon.com/512/8188/8188362.png'}" class="w-10 h-10 rounded-full border-2 border-white shadow-sm" onerror="this.src='https://cdn-icons-png.flaticon.com/512/8188/8188362.png'">
-                            <div class="min-w-0"><div class="font-bold text-slate-800 truncate">${escapeHtml(m.displayName || 'ไม่มีชื่อ')}</div><div class="text-[10px] text-slate-400 font-mono truncate">${m.userId.substring(0, 16)}...</div></div>
+                            <div class="min-w-0"><div class="font-bold text-slate-800 truncate">${escapeHtml(m.displayName || 'ไม่มีชื่อ')}</div><div class="text-[10px] text-slate-400 font-mono truncate">${m.userId.substring(0, 18)}...</div></div>
                         </div>
                     </td>
-                    <td class="p-4 text-center"><span class="text-[10px] font-bold px-2.5 py-1 rounded-lg ${tierColors[tierName] || tierColors.Member}">${tierName}</span></td>
+                    <td class="p-4 text-center"><span class="text-[10px] font-bold px-2.5 py-1 rounded-lg border ${tierCls} inline-flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full ${tier.color_theme}"></span>${escapeHtml(tier.name)}</span></td>
                     <td class="p-4 text-right font-bold text-emerald-600">${(m.points || 0).toLocaleString()}</td>
                     <td class="p-4 text-center text-xs text-slate-500">${last}</td>
-                    <td class="p-4 text-center"><button onclick="openAdjustPointsModal('${m.userId}', '${escapeHtml(m.displayName || '')}', ${m.points || 0})" class="px-3 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl text-xs font-bold transition-colors inline-flex items-center gap-1.5"><i data-lucide="plus-minus" class="w-3.5 h-3.5"></i> ปรับแต้ม</button></td>
+                    <td class="p-4 text-center"><button onclick="openAdjustPointsModal('${m.userId}', '${escapeHtml(m.displayName || '').replace(/'/g, "\\'")}', ${m.points || 0})" class="px-3 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl text-xs font-bold transition-colors inline-flex items-center gap-1.5"><i data-lucide="plus-minus" class="w-3.5 h-3.5"></i> ปรับแต้ม</button></td>
                 </tr>`;
-            }).join('') || '<tr><td colspan="5" class="p-8 text-center text-slate-400">ไม่พบสมาชิก</td></tr>';
+            }).join('') || '<tr><td colspan="5" class="p-8 text-center text-slate-400">ไม่พบสมาชิก — ลองให้ user เข้า LIFF App ก่อน หรือ sync จากหน้า Users</td></tr>';
             lucide.createIcons();
+        }
+
+        // Sync tier_id ของทุกคนใน DB ให้ตรงกับ points ปัจจุบัน
+        async function syncTierForAll() {
+            showConfirmModal('Sync Tier ทั้งระบบ?', 'ระบบจะคำนวณและอัปเดต tier_id ของทุกสมาชิกตาม points ปัจจุบัน', async () => {
+                showToast('กำลัง sync...', 'info');
+                const { data: members } = await supabaseClient.from('user_profiles').select('userId, points');
+                const tiers = window._tiers || [];
+                if (tiers.length === 0) return showToast('ยังไม่มี Tier กรุณาสร้างก่อน', 'warning');
+
+                let updated = 0;
+                for (const m of (members || [])) {
+                    const tier = getTierByPoints(m.points || 0);
+                    if (tier?.id) {
+                        await supabaseClient.from('user_profiles').update({ tier_id: tier.id }).eq('userId', m.userId);
+                        updated++;
+                    }
+                }
+                showToast(`Sync เสร็จ ${updated} คน`, 'success');
+                renderCrmMembersView();
+            });
         }
 
         function filterMembers() {
