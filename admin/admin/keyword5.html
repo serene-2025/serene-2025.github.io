@@ -483,7 +483,9 @@
                                 <i data-lucide="layout" class="w-5 h-5 transition-transform group-hover:scale-110"></i>
                                 <span>จัดการ Rich Menu</span>
                             </button>
-                            
+                            <button onclick="openRichMenuBuilderModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-200 font-semibold text-sm active:scale-95 group whitespace-nowrap">
+                                 <i data-lucide="plus" class="w-5 h-5 group-hover:scale-110 transition-transform"></i> สร้าง Rich Menu API
+                             </button>
                             <button onclick="loadView('tags');" id="nav-tags" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all group">
                                 <i data-lucide="tag" class="w-5 h-5 transition-transform group-hover:scale-110"></i>
                                 <span>จัดการ Tag & Audience</span>
@@ -6963,6 +6965,114 @@ async function updateAllUserProfiles() {
         }
 
         //*********************
+
+        // ฟังก์ชันเปิด Modal สำหรับสร้าง Rich Menu แบบ API
+function openRichMenuBuilderModal() {
+    document.getElementById('modal-title').innerText = 'สร้าง Rich Menu API (แบบ 6 ช่อง)';
+    document.getElementById('modal-content').innerHTML = `
+        <form id="richMenuBuilderForm" class="space-y-6">
+            <div class="p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
+                <label class="block text-sm font-bold text-indigo-800 mb-2">1. อัปโหลดรูปภาพ (2500 x 1686 px)</label>
+                <input type="file" id="rm-image" accept="image/jpeg, image/png" required class="w-full bg-white p-2 rounded-xl border border-indigo-200 text-sm">
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-1">ชื่ออ้างอิง</label>
+                    <input type="text" id="rm-name" required class="w-full rounded-xl border border-slate-200 p-3" placeholder="เช่น เมนูหลัก">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-1">ข้อความบนบาร์</label>
+                    <input type="text" id="rm-chatbar" required class="w-full rounded-xl border border-slate-200 p-3" value="เมนู">
+                </div>
+            </div>
+
+            <div class="space-y-4">
+                <h3 class="font-bold text-slate-700">2. กำหนดปุ่มกด (ตัวอย่าง Template 6 ช่อง)</h3>
+                ${[1,2,3,4,5,6].map(num => `
+                    <div class="flex gap-2 items-center bg-slate-50 p-3 rounded-xl border border-slate-100">
+                        <span class="font-bold text-indigo-500 w-6">#${num}</span>
+                        <select id="action-type-${num}" class="rounded-lg border border-slate-200 p-2 text-sm">
+                            <option value="message">ส่งข้อความ</option>
+                            <option value="uri">เปิดลิงก์ URL</option>
+                        </select>
+                        <input type="text" id="action-value-${num}" class="flex-1 rounded-lg border border-slate-200 p-2 text-sm" placeholder="ข้อความหรือลิงก์...">
+                    </div>
+                `).join('')}
+            </div>
+
+            <label class="flex items-center gap-2 font-bold text-slate-700">
+                <input type="checkbox" id="rm-set-default" checked class="w-5 h-5 rounded text-indigo-600"> เปิดใช้งานทันที (Set Default)
+            </label>
+
+            <div class="flex justify-end gap-3 pt-4">
+                <button type="button" onclick="closeModal()" class="px-6 py-3 bg-slate-100 rounded-xl font-bold text-slate-600">ยกเลิก</button>
+                <button type="submit" class="px-6 py-3 btn-primary text-white rounded-xl font-bold flex gap-2"><i data-lucide="upload-cloud"></i> สร้างและอัปโหลด</button>
+            </div>
+        </form>
+    `;
+    lucide.createIcons();
+    openModal();
+
+    // จัดการตอนกดปุ่มสร้าง
+    document.getElementById('richMenuBuilderForm').onsubmit = async (e) => {
+        e.preventDefault();
+        const btn = e.target.querySelector('button[type="submit"]');
+        setBtnLoading(btn, true);
+
+        // คำนวณพิกัดสำหรับ 6 ช่อง (2500x1686 แบ่ง 3 คอลัมน์ 2 แถว)
+        const boxW = 833, boxH = 843;
+        const positions = [
+            {x: 0, y: 0}, {x: boxW, y: 0}, {x: boxW*2, y: 0},
+            {x: 0, y: boxH}, {x: boxW, y: boxH}, {x: boxW*2, y: boxH}
+        ];
+
+        const areas = [];
+        for(let i=1; i<=6; i++) {
+            const val = document.getElementById(`action-value-${i}`).value.trim();
+            if(val) {
+                const type = document.getElementById(`action-type-${i}`).value;
+                const pos = positions[i-1];
+                areas.push({
+                    bounds: { x: pos.x, y: pos.y, width: boxW, height: boxH },
+                    action: type === 'uri' ? { type: 'uri', uri: val } : { type: 'message', text: val }
+                });
+            }
+        }
+
+        // อ่านไฟล์ภาพเป็น Base64
+        const file = document.getElementById('rm-image').files[0];
+        const reader = new FileReader();
+        reader.onload = async () => {
+            const base64Image = reader.result;
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/richmenus`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'create',
+                        name: document.getElementById('rm-name').value,
+                        chatBarText: document.getElementById('rm-chatbar').value,
+                        selected: document.getElementById('rm-set-default').checked,
+                        base64Image,
+                        areas
+                    })
+                });
+                const data = await res.json();
+                if(data.success) {
+                    showToast('สร้าง Rich Menu พร้อมใช้งานเรียบร้อย!');
+                    closeModal();
+                    syncRichMenus(); // ซิงค์ข้อมูลลงตารางของคุณ
+                } else throw new Error(data.error);
+            } catch(err) {
+                showToast(err.message, 'error');
+            } finally {
+                setBtnLoading(btn, false);
+            }
+        };
+        reader.readAsDataURL(file);
+    };
+}
         
   </script>
 
