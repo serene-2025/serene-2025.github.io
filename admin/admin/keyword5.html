@@ -6969,112 +6969,208 @@ async function updateAllUserProfiles() {
 
         //*********************
 
-        // ฟังก์ชันเปิด Modal สำหรับสร้าง Rich Menu แบบ API
-function openRichMenuBuilderModal() {
-    document.getElementById('modal-title').innerText = 'สร้าง Rich Menu API (แบบ 6 ช่อง)';
+        // เพิ่ม CSS สำหรับกล่องวาดในสไตล์ของ admin_v22
+const style = document.createElement('style');
+style.textContent = `
+    .selection-box { position: absolute; border: 2px solid #6366f1; background-color: rgba(99, 102, 241, 0.2); pointer-events: none; }
+    .box-label { position: absolute; top: -2px; left: -2px; background: #6366f1; color: white; padding: 2px 6px; font-size: 10px; font-weight: bold; border-radius: 2px; }
+`;
+document.head.appendChild(style);
+
+let rmDrawingData = { isDrawing: false, startX: 0, startY: 0, boxes: [], base64: "", scaleX: 1, scaleY: 1 };
+
+// ฟังก์ชันเปิด Modal สร้างแบบ Advanced
+function openRichMenuAdvancedBuilder() {
+    document.getElementById('modal-title').innerText = 'สร้าง Rich Menu (วาดพื้นที่อิสระ)';
     document.getElementById('modal-content').innerHTML = `
-        <form id="richMenuBuilderForm" class="space-y-6">
-            <div class="p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
-                <label class="block text-sm font-bold text-indigo-800 mb-2">1. อัปโหลดรูปภาพ (2500 x 1686 px)</label>
-                <input type="file" id="rm-image" accept="image/jpeg, image/png" required class="w-full bg-white p-2 rounded-xl border border-indigo-200 text-sm">
+        <div class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input type="text" id="rm-adv-name" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm" placeholder="ชื่อเมนู" onkeyup="updateRMPreview()">
+                <input type="text" id="rm-adv-chatbar" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm" placeholder="ข้อความบนบาร์" value="เมนู" onkeyup="updateRMPreview()">
+                <select id="rm-adv-size" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm" onchange="updateRMPreview()">
+                    <option value="full">ขนาดใหญ่ (2500x1686)</option>
+                    <option value="half">ขนาดเล็ก (2500x843)</option>
+                </select>
+                <input type="file" id="rm-adv-file" accept="image/*" class="w-full text-sm" onchange="handleRMFile(this)">
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-sm font-bold text-slate-700 mb-1">ชื่ออ้างอิง</label>
-                    <input type="text" id="rm-name" required class="w-full rounded-xl border border-slate-200 p-3" placeholder="เช่น เมนูหลัก">
-                </div>
-                <div>
-                    <label class="block text-sm font-bold text-slate-700 mb-1">ข้อความบนบาร์</label>
-                    <input type="text" id="rm-chatbar" required class="w-full rounded-xl border border-slate-200 p-3" value="เมนู">
-                </div>
+            <div class="relative bg-slate-100 rounded-xl overflow-hidden border-2 border-dashed border-slate-300 flex justify-center p-2">
+                <div id="rm-draw-canvas" class="relative bg-white shadow-sm cursor-crosshair select-none" style="width:0; height:0;"></div>
             </div>
 
-            <div class="space-y-4">
-                <h3 class="font-bold text-slate-700">2. กำหนดปุ่มกด (ตัวอย่าง Template 6 ช่อง)</h3>
-                ${[1,2,3,4,5,6].map(num => `
-                    <div class="flex gap-2 items-center bg-slate-50 p-3 rounded-xl border border-slate-100">
-                        <span class="font-bold text-indigo-500 w-6">#${num}</span>
-                        <select id="action-type-${num}" class="rounded-lg border border-slate-200 p-2 text-sm">
-                            <option value="message">ส่งข้อความ</option>
-                            <option value="uri">เปิดลิงก์ URL</option>
-                        </select>
-                        <input type="text" id="action-value-${num}" class="flex-1 rounded-lg border border-slate-200 p-2 text-sm" placeholder="ข้อความหรือลิงก์...">
-                    </div>
-                `).join('')}
+            <div id="rm-adv-inputs" class="space-y-2 max-h-48 overflow-y-auto pr-1"></div>
+
+            <div class="bg-slate-900 rounded-xl p-3">
+                <div class="text-[10px] text-slate-400 mb-1 uppercase font-bold">JSON Preview</div>
+                <pre id="rm-json-pre" class="text-[11px] text-emerald-400 overflow-x-auto whitespace-pre-wrap"></pre>
             </div>
 
-            <label class="flex items-center gap-2 font-bold text-slate-700">
-                <input type="checkbox" id="rm-set-default" checked class="w-5 h-5 rounded text-indigo-600"> เปิดใช้งานทันที (Set Default)
-            </label>
-
-            <div class="flex justify-end gap-3 pt-4">
-                <button type="button" onclick="closeModal()" class="px-6 py-3 bg-slate-100 rounded-xl font-bold text-slate-600">ยกเลิก</button>
-                <button type="submit" class="px-6 py-3 btn-primary text-white rounded-xl font-bold flex gap-2"><i data-lucide="upload-cloud"></i> สร้างและอัปโหลด</button>
+            <div class="flex justify-end gap-2 pt-2 border-t">
+                <button onclick="closeModal()" class="px-4 py-2 text-sm font-bold text-slate-600">ยกเลิก</button>
+                <button onclick="saveAdvancedRichMenu(this)" class="btn-primary px-6 py-2 rounded-xl text-sm font-bold text-white flex gap-2">
+                    <i data-lucide="send" class="w-4 h-4"></i> สร้างและส่ง API
+                </button>
             </div>
-        </form>
+        </div>
     `;
     lucide.createIcons();
+    initDrawEvents();
     openModal();
+    updateRMPreview();
+}
 
-    // จัดการตอนกดปุ่มสร้าง
-    document.getElementById('richMenuBuilderForm').onsubmit = async (e) => {
-        e.preventDefault();
-        const btn = e.target.querySelector('button[type="submit"]');
-        setBtnLoading(btn, true);
-
-        // คำนวณพิกัดสำหรับ 6 ช่อง (2500x1686 แบ่ง 3 คอลัมน์ 2 แถว)
-        const boxW = 833, boxH = 843;
-        const positions = [
-            {x: 0, y: 0}, {x: boxW, y: 0}, {x: boxW*2, y: 0},
-            {x: 0, y: boxH}, {x: boxW, y: boxH}, {x: boxW*2, y: boxH}
-        ];
-
-        const areas = [];
-        for(let i=1; i<=6; i++) {
-            const val = document.getElementById(`action-value-${i}`).value.trim();
-            if(val) {
-                const type = document.getElementById(`action-type-${i}`).value;
-                const pos = positions[i-1];
-                areas.push({
-                    bounds: { x: pos.x, y: pos.y, width: boxW, height: boxH },
-                    action: type === 'uri' ? { type: 'uri', uri: val } : { type: 'message', text: val }
-                });
-            }
-        }
-
-        // อ่านไฟล์ภาพเป็น Base64
-        const file = document.getElementById('rm-image').files[0];
+function handleRMFile(input) {
+    if (input.files && input.files[0]) {
         const reader = new FileReader();
-        reader.onload = async () => {
-            const base64Image = reader.result;
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/admin/richmenus`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'create',
-                        name: document.getElementById('rm-name').value,
-                        chatBarText: document.getElementById('rm-chatbar').value,
-                        selected: document.getElementById('rm-set-default').checked,
-                        base64Image,
-                        areas
-                    })
-                });
-                const data = await res.json();
-                if(data.success) {
-                    showToast('สร้าง Rich Menu พร้อมใช้งานเรียบร้อย!');
-                    closeModal();
-                    syncRichMenus(); // ซิงค์ข้อมูลลงตารางของคุณ
-                } else throw new Error(data.error);
-            } catch(err) {
-                showToast(err.message, 'error');
-            } finally {
-                setBtnLoading(btn, false);
-            }
+        reader.onload = (e) => {
+            rmDrawingData.base64 = e.target.result;
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.getElementById('rm-draw-canvas');
+                const displayW = Math.min(canvas.parentElement.clientWidth - 20, 500);
+                const displayH = (img.height / img.width) * displayW;
+                canvas.style.width = displayW + 'px';
+                canvas.style.height = displayH + 'px';
+                canvas.style.backgroundImage = `url(${e.target.result})`;
+                canvas.style.backgroundSize = '100% 100%';
+                canvas.innerHTML = '';
+                rmDrawingData.boxes = [];
+                updateRMPreview();
+            };
+            img.src = e.target.result;
         };
-        reader.readAsDataURL(file);
+        reader.readAsDataURL(input.files[0]);
+    }
+}
+
+function initDrawEvents() {
+    const canvas = document.getElementById('rm-draw-canvas');
+    let currentBox = null;
+
+    canvas.onmousedown = (e) => {
+        if (!rmDrawingData.base64) return;
+        rmDrawingData.isDrawing = true;
+        const rect = canvas.getBoundingClientRect();
+        rmDrawingData.startX = e.clientX - rect.left;
+        rmDrawingData.startY = e.clientY - rect.top;
+        currentBox = document.createElement('div');
+        currentBox.className = 'selection-box';
+        currentBox.style.left = rmDrawingData.startX + 'px';
+        currentBox.style.top = rmDrawingData.startY + 'px';
+        canvas.appendChild(currentBox);
     };
+
+    canvas.onmousemove = (e) => {
+        if (!rmDrawingData.isDrawing) return;
+        const rect = canvas.getBoundingClientRect();
+        const curX = Math.max(0, Math.min(e.clientX - rect.left, canvas.offsetWidth));
+        const curY = Math.max(0, Math.min(e.clientY - rect.top, canvas.offsetHeight));
+        currentBox.style.width = Math.abs(curX - rmDrawingData.startX) + 'px';
+        currentBox.style.height = Math.abs(curY - rmDrawingData.startY) + 'px';
+        currentBox.style.left = Math.min(curX, rmDrawingData.startX) + 'px';
+        currentBox.style.top = Math.min(curY, rmDrawingData.startY) + 'px';
+    };
+
+    canvas.onmouseup = () => {
+        if (!rmDrawingData.isDrawing) return;
+        rmDrawingData.isDrawing = false;
+        if (parseInt(currentBox.style.width) < 10) return currentBox.remove();
+
+        const sizeMode = document.getElementById('rm-adv-size').value;
+        const targetH = sizeMode === 'half' ? 843 : 1686;
+        const scX = 2500 / canvas.offsetWidth;
+        const scY = targetH / canvas.offsetHeight;
+
+        const boxId = Date.now();
+        const label = document.createElement('div');
+        label.className = 'box-label';
+        label.innerText = rmDrawingData.boxes.length + 1;
+        currentBox.appendChild(label);
+        currentBox.id = `box-draw-${boxId}`;
+
+        rmDrawingData.boxes.push({
+            id: boxId,
+            x: Math.round(parseInt(currentBox.style.left) * scX),
+            y: Math.round(parseInt(currentBox.style.top) * scY),
+            w: Math.round(parseInt(currentBox.style.width) * scX),
+            h: Math.round(parseInt(currentBox.style.height) * scY),
+            type: 'message',
+            val: ''
+        });
+        renderRMInputs();
+    };
+}
+
+function renderRMInputs() {
+    const container = document.getElementById('rm-adv-inputs');
+    container.innerHTML = rmDrawingData.boxes.map((b, i) => `
+        <div class="flex gap-2 items-center bg-white p-2 rounded-lg border border-slate-200 text-xs">
+            <span class="font-bold text-indigo-500 w-4">#${i + 1}</span>
+            <select onchange="updateRMBox(${b.id}, 'type', this.value)" class="border-0 bg-slate-100 rounded p-1">
+                <option value="message">ข้อความ</option>
+                <option value="uri">ลิงก์</option>
+                <option value="postback">Postback</option>
+            </select>
+            <input type="text" placeholder="ข้อมูลปุ่ม" onkeyup="updateRMBox(${b.id}, 'val', this.value)" class="flex-1 border-0 bg-slate-50 p-1 rounded">
+            <button onclick="removeRMBox(${b.id})" class="text-red-400 hover:text-red-600"><i class="fas fa-times"></i></button>
+        </div>
+    `).join('');
+    updateRMPreview();
+}
+
+function updateRMBox(id, k, v) {
+    const box = rmDrawingData.boxes.find(b => b.id === id);
+    if (box) box[k] = v;
+    updateRMPreview();
+}
+
+function removeRMBox(id) {
+    rmDrawingData.boxes = rmDrawingData.boxes.filter(b => b.id !== id);
+    const el = document.getElementById(`box-draw-${id}`);
+    if (el) el.remove();
+    renderRMInputs();
+}
+
+function updateRMPreview() {
+    const sizeMode = document.getElementById('rm-adv-size')?.value || 'full';
+    const payload = {
+        size: { width: 2500, height: sizeMode === 'half' ? 843 : 1686 },
+        selected: false,
+        name: document.getElementById('rm-adv-name')?.value || 'Unnamed Menu',
+        chatBarText: document.getElementById('rm-adv-chatbar')?.value || 'Menu',
+        areas: rmDrawingData.boxes.map(b => ({
+            bounds: { x: b.x, y: b.y, width: b.w, height: b.h },
+            action: b.type === 'uri' ? { type: 'uri', uri: b.val || 'https://' } : 
+                    b.type === 'postback' ? { type: 'postback', data: b.val || 'action=none' } :
+                    { type: 'message', text: b.val || 'Hello' }
+        }))
+    };
+    const pre = document.getElementById('rm-json-pre');
+    if (pre) pre.innerText = JSON.stringify(payload, null, 2);
+    return payload;
+}
+
+async function saveAdvancedRichMenu(btn) {
+    if (!rmDrawingData.base64 || rmDrawingData.boxes.length === 0) return showToast('กรุณาวาดปุ่มอย่างน้อย 1 ปุ่ม', 'warning');
+    const payload = updateRMPreview();
+    setBtnLoading(btn, true);
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/richmenus`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...payload, action: 'create', base64Image: rmDrawingData.base64 })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast('สร้าง Rich Menu สำเร็จ');
+            closeModal();
+            syncRichMenus();
+        } else throw new Error(data.error);
+    } catch (e) {
+        showToast(e.message, 'error');
+    } finally {
+        setBtnLoading(btn, false);
+    }
 }
         
   </script>
