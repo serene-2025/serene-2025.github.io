@@ -1940,8 +1940,9 @@ async function updateAllUserProfiles() {
         }
 
         function escapeHtml(text) {
-            if (!text) return "";
-            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+            if (text === null || text === undefined || text === "") return "";
+            const str = String(text);
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
         }
         async function syncRichMenus() {
             showConfirmModal('Sync Rich Menu', 'ต้องการ Sync ข้อมูล Rich Menu จาก LINE หรือไม่? (ข้อมูลเก่าที่มี ID ตรงกันจะถูกอัปเดต)', async () => {
@@ -7200,18 +7201,235 @@ async function renderCrmAwardEventView() {
                         <span class="bg-pink-100 text-pink-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="party-popper" class="w-8 h-8"></i></span>
                         ให้แต้มจากกิจกรรม
                     </h1>
-                    <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">ประชุม · จิตอาสา · กิจกรรมชุมชน · ฯลฯ — เลือกสมาชิกที่เข้าร่วม + ให้แต้มทีเดียว</p>
+                    <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">2 รูปแบบ: ให้ย้อนหลัง (admin ติ๊กเอง) · Self Check-in (user กรอกรหัสในงาน)</p>
                 </div>
-                <button onclick="openAwardEventModal()" class="px-5 py-2.5 bg-pink-500 hover:bg-pink-600 text-white rounded-2xl font-bold shadow-lg shadow-pink-200 flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i> ให้แต้มกิจกรรมใหม่</button>
+                <div class="flex gap-2 flex-wrap">
+                    <button onclick="openCheckInEventModal()" class="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold shadow-lg shadow-emerald-200 flex items-center gap-2"><i data-lucide="qr-code" class="w-4 h-4"></i> สร้าง Self Check-in</button>
+                    <button onclick="openAwardEventModal()" class="px-5 py-2.5 bg-pink-500 hover:bg-pink-600 text-white rounded-2xl font-bold shadow-lg shadow-pink-200 flex items-center gap-2"><i data-lucide="users" class="w-4 h-4"></i> ให้แต้มย้อนหลัง</button>
+                </div>
             </div>
 
-            <h2 class="font-bold text-slate-700 mb-3">📋 ประวัติกิจกรรมที่เคยให้แต้ม</h2>
-            <div id="event-history" class="space-y-2">
-                <div class="glass rounded-3xl p-8 text-center text-slate-400">กำลังโหลด...</div>
+            <!-- Tabs -->
+            <div class="flex gap-2 mb-5 border-b border-slate-200">
+                <button onclick="switchEventTab('history')" id="evtab-history" class="px-4 py-2 text-sm font-bold border-b-2 border-pink-500 text-pink-600">📋 ประวัติให้แต้ม</button>
+                <button onclick="switchEventTab('checkin')" id="evtab-checkin" class="px-4 py-2 text-sm font-bold border-b-2 border-transparent text-slate-500 hover:text-slate-700">🎟️ Active Check-in Events</button>
             </div>
+
+            <div id="evtab-history-content"><div class="space-y-2" id="event-history"><div class="glass rounded-3xl p-8 text-center text-slate-400">กำลังโหลด...</div></div></div>
+            <div id="evtab-checkin-content" class="hidden"><div id="active-events"><div class="glass rounded-3xl p-8 text-center text-slate-400">กำลังโหลด...</div></div></div>
         </div>`;
     lucide.createIcons();
     loadEventHistory();
+    loadActiveEvents();
+}
+
+function switchEventTab(tab) {
+    ['history', 'checkin'].forEach(t => {
+        const btn = document.getElementById(`evtab-${t}`);
+        const content = document.getElementById(`evtab-${t}-content`);
+        if (t === tab) {
+            btn.classList.add('border-pink-500', 'text-pink-600');
+            btn.classList.remove('border-transparent', 'text-slate-500');
+            content.classList.remove('hidden');
+        } else {
+            btn.classList.remove('border-pink-500', 'text-pink-600');
+            btn.classList.add('border-transparent', 'text-slate-500');
+            content.classList.add('hidden');
+        }
+    });
+}
+
+async function loadActiveEvents() {
+    try {
+        const { data: events } = await supabaseClient.from('events')
+            .select('*, checkin_count:event_checkins(count)')
+            .order('created_at', { ascending: false })
+            .limit(50);
+
+        const wrap = document.getElementById('active-events');
+        if (!events || events.length === 0) {
+            wrap.innerHTML = `<div class="glass rounded-3xl p-12 text-center text-slate-400">
+                <div class="text-6xl mb-3">🎟️</div>
+                <p class="font-bold">ยังไม่มี Self Check-in Events</p>
+                <p class="text-xs mt-1">กดปุ่ม "สร้าง Self Check-in" เพื่อเริ่ม</p>
+            </div>`;
+            return;
+        }
+        wrap.innerHTML = events.map(e => {
+            const isExpired = new Date(e.ends_at) < new Date();
+            const isFuture = new Date(e.starts_at) > new Date();
+            const status = !e.is_active ? ['ปิด', 'bg-slate-100 text-slate-600']
+                         : isExpired ? ['หมดอายุ', 'bg-rose-100 text-rose-600']
+                         : isFuture ? ['ยังไม่เริ่ม', 'bg-amber-100 text-amber-600']
+                         : ['กำลังเปิด', 'bg-emerald-100 text-emerald-600'];
+            const checkinCnt = (e.checkin_count?.[0]?.count) || 0;
+            return `<div class="glass rounded-2xl p-4 mb-3 hover:shadow-md transition-all">
+                <div class="flex items-center justify-between gap-4">
+                    <div class="flex items-center gap-3 flex-1 min-w-0">
+                        <div class="text-3xl">${e.icon || '🎉'}</div>
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="text-[10px] font-bold ${status[1]} px-2 py-0.5 rounded-md">${status[0]}</span>
+                                <span class="text-[10px] font-bold bg-pink-100 text-pink-600 px-2 py-0.5 rounded-md">+${e.points} แต้ม</span>
+                            </div>
+                            <div class="font-bold text-slate-800 truncate">${escapeHtml(e.name)}</div>
+                            <div class="text-[11px] text-slate-500 truncate">${escapeHtml(e.location || '')} · ${new Date(e.starts_at).toLocaleString('th-TH', {dateStyle:'short', timeStyle:'short'})} → ${new Date(e.ends_at).toLocaleString('th-TH', {dateStyle:'short', timeStyle:'short'})}</div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <div class="text-right">
+                            <div class="text-2xl font-extrabold text-emerald-600">${checkinCnt}${e.max_checkins ? `/${e.max_checkins}` : ''}</div>
+                            <div class="text-[10px] text-slate-500 font-bold">เช็คอินแล้ว</div>
+                        </div>
+                        <div class="bg-slate-900 text-white rounded-xl px-3 py-2 text-center">
+                            <div class="text-[9px] opacity-70 font-bold">CODE</div>
+                            <div class="text-base font-mono font-extrabold tracking-wider">${escapeHtml(e.code)}</div>
+                        </div>
+                        <button onclick="showEventQR('${e.id}', '${escapeHtml(e.code).replace(/'/g, '&apos;')}', '${escapeHtml(e.name).replace(/'/g, '&apos;')}')" class="p-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-700"><i data-lucide="qr-code" class="w-4 h-4"></i></button>
+                        <button onclick="toggleEventActive('${e.id}', ${!e.is_active})" class="p-2.5 ${e.is_active ? 'bg-rose-100 hover:bg-rose-200 text-rose-600' : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-600'} rounded-xl"><i data-lucide="${e.is_active ? 'pause' : 'play'}" class="w-4 h-4"></i></button>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+        lucide.createIcons();
+    } catch (e) {
+        document.getElementById('active-events').innerHTML = `<div class="glass rounded-3xl p-6 text-rose-600 text-center">${e.message}</div>`;
+    }
+}
+
+async function toggleEventActive(eventId, newState) {
+    await supabaseClient.from('events').update({ is_active: newState }).eq('id', eventId);
+    showToast(newState ? 'เปิดใช้งานแล้ว' : 'ปิดใช้งานแล้ว', 'success');
+    loadActiveEvents();
+}
+
+function showEventQR(eventId, code, name) {
+    // ใช้ qr.js ผ่าน chart-server
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(code)}`;
+    document.getElementById('modal-title').innerHTML = `<div class="flex items-center gap-2"><i data-lucide="qr-code" class="w-6 h-6 text-emerald-500"></i> QR Code: ${name}</div>`;
+    document.getElementById('modal-content').innerHTML = `
+        <div class="text-center space-y-4">
+            <div class="bg-white border-4 border-slate-200 rounded-3xl p-6 inline-block">
+                <img src="${qrUrl}" alt="QR Code" class="w-64 h-64 mx-auto">
+            </div>
+            <div class="bg-slate-900 text-white rounded-2xl py-3 px-6 inline-block">
+                <div class="text-xs opacity-70 font-bold">รหัสเช็คอิน</div>
+                <div class="text-3xl font-mono font-extrabold tracking-widest">${code}</div>
+            </div>
+            <p class="text-sm text-slate-500">ลูกบ้านสแกน QR หรือกรอกรหัสนี้ใน Mini App → Tab "Check-in" → ได้แต้มทันที</p>
+            <div class="flex gap-2 justify-center">
+                <button onclick="window.print()" class="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-sm font-bold inline-flex items-center gap-2"><i data-lucide="printer" class="w-4 h-4"></i> พิมพ์</button>
+                <a href="${qrUrl}" download="qr-${code}.png" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-sm font-bold inline-flex items-center gap-2"><i data-lucide="download" class="w-4 h-4"></i> ดาวน์โหลด</a>
+            </div>
+        </div>`;
+    openModal();
+    lucide.createIcons();
+}
+
+async function openCheckInEventModal() {
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const now = new Date();
+    const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    const next4h = new Date(now.getTime() + 4*3600*1000 - now.getTimezoneOffset()*60000).toISOString().slice(0, 16);
+
+    document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="qr-code" class="w-6 h-6 text-emerald-500"></i> สร้าง Self Check-in Event</div>';
+    document.getElementById('modal-content').innerHTML = `
+        <div class="space-y-4">
+            <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
+                <div class="text-sm font-bold text-emerald-800 mb-1">💡 ลูกบ้าน check-in เองได้</div>
+                <div class="text-xs text-emerald-700">เปิด Mini App → Tab "Check-in" → กรอกรหัส 6 หลัก หรือ scan QR → ได้แต้มอัตโนมัติ ไม่ต้องให้ admin มาติ๊กชื่อ</div>
+            </div>
+
+            <div>
+                <label class="block text-sm font-bold text-slate-700 mb-1.5">ชื่อกิจกรรม *</label>
+                <input id="ck-name" type="text" placeholder="เช่น สงกรานต์ 2569, จิตอาสา 1 พ.ค." class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-emerald-400 outline-none">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-1.5">Icon</label>
+                    <select id="ck-icon" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                        <option value="🎉">🎉 กิจกรรม</option>
+                        <option value="🌳">🌳 จิตอาสา</option>
+                        <option value="🎊">🎊 ประเพณี</option>
+                        <option value="🏃">🏃 กีฬา</option>
+                        <option value="🎓">🎓 อบรม</option>
+                        <option value="🎂">🎂 วันเกิด</option>
+                        <option value="🎄">🎄 ปีใหม่</option>
+                        <option value="💧">💧 สงกรานต์</option>
+                        <option value="🪔">🪔 ลอยกระทง</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-emerald-600 mb-1.5">แต้มต่อคน *</label>
+                    <input id="ck-points" type="number" min="1" value="50" class="w-full rounded-2xl border border-emerald-200 px-3 py-2.5 text-sm bg-emerald-50 font-bold text-emerald-600">
+                </div>
+            </div>
+            <div>
+                <label class="block text-sm font-bold text-slate-700 mb-1.5">สถานที่</label>
+                <input id="ck-location" type="text" placeholder="เช่น ลานเอนกประสงค์ของหมู่บ้าน" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-1.5">เริ่มเช็คอิน *</label>
+                    <input id="ck-start" type="datetime-local" value="${today}" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-1.5">หมดเขตเช็คอิน *</label>
+                    <input id="ck-end" type="datetime-local" value="${next4h}" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm">
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-1.5">รหัส (auto-gen)</label>
+                    <div class="flex gap-2">
+                        <input id="ck-code" type="text" value="${code}" maxlength="6" class="flex-1 rounded-2xl border border-slate-200 px-3 py-2.5 text-sm font-mono font-bold tracking-widest text-center bg-slate-900 text-white">
+                        <button type="button" onclick="document.getElementById('ck-code').value=Math.random().toString(36).substring(2,8).toUpperCase()" class="px-3 bg-slate-100 rounded-xl"><i data-lucide="refresh-cw" class="w-4 h-4"></i></button>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-1.5">จำนวนคน (เว้นว่าง = ไม่จำกัด)</label>
+                    <input id="ck-max" type="number" min="1" placeholder="เช่น 100" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm">
+                </div>
+            </div>
+
+            <div class="flex gap-3 pt-4 border-t border-slate-100">
+                <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">ยกเลิก</button>
+                <button onclick="saveCheckInEvent()" id="ck-save-btn" class="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> สร้าง Event</button>
+            </div>
+        </div>`;
+    openModal();
+    lucide.createIcons();
+}
+
+async function saveCheckInEvent() {
+    const btn = document.getElementById('ck-save-btn');
+    const name = document.getElementById('ck-name').value.trim();
+    const code = document.getElementById('ck-code').value.trim().toUpperCase();
+    if (!name) return showToast('กรุณากรอกชื่อกิจกรรม', 'warning');
+    if (!code || code.length < 4) return showToast('รหัสต้องมีอย่างน้อย 4 ตัวอักษร', 'warning');
+
+    setBtnLoading(btn, true);
+    const payload = {
+        name,
+        code,
+        icon: document.getElementById('ck-icon').value,
+        points: parseInt(document.getElementById('ck-points').value) || 50,
+        location: document.getElementById('ck-location').value.trim(),
+        starts_at: document.getElementById('ck-start').value,
+        ends_at: document.getElementById('ck-end').value,
+        max_checkins: parseInt(document.getElementById('ck-max').value) || null,
+        is_active: true
+    };
+    const { error } = await supabaseClient.from('events').insert(payload);
+    setBtnLoading(btn, false);
+    if (error) {
+        if (error.code === '23505') return showToast('รหัสนี้ใช้ไปแล้ว กรุณาเปลี่ยน', 'error');
+        return showToast(error.message, 'error');
+    }
+    showToast('สร้าง Event สำเร็จ! ลูกบ้านเช็คอินได้แล้ว', 'success');
+    closeModal();
+    switchEventTab('checkin');
+    loadActiveEvents();
 }
 
 async function loadEventHistory() {
