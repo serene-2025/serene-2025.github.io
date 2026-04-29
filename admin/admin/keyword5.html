@@ -532,6 +532,7 @@
                             <button onclick="loadView('crmMaintenance');" id="nav-crmMaintenance" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="alert-triangle" class="w-5 h-5 text-orange-500"></i> <span>แจ้งเตือนค่าส่วนกลาง</span></button>
                             <button onclick="loadView('crmAwardFee');" id="nav-crmAwardFee" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="coins" class="w-5 h-5 text-emerald-500"></i> <span>ให้แต้ม จ่ายตรงเวลา</span></button>
                             <button onclick="loadView('crmAwardEvent');" id="nav-crmAwardEvent" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="party-popper" class="w-5 h-5 text-pink-500"></i> <span>ให้แต้ม กิจกรรม</span></button>
+                            <button onclick="loadView('commonFees');" id="nav-commonFees" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="receipt" class="w-5 h-5 text-blue-500"></i> <span>การจ่ายค่าส่วนกลาง</span></button>
                             <button onclick="loadView('leaderboard');" id="nav-leaderboard" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="trophy" class="w-5 h-5 text-amber-500"></i> <span>Leaderboard</span></button>
                             <button onclick="loadView('agm');" id="nav-agm" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="vote" class="w-5 h-5 text-rose-500"></i> <span>AGM Voting</span></button>
 
@@ -624,6 +625,7 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'crmMaintenance') await renderCrmMaintenanceView();
             else if (viewName === 'crmAwardFee') await renderCrmAwardFeeView();
             else if (viewName === 'crmAwardEvent') await renderCrmAwardEventView();
+            else if (viewName === 'commonFees') await renderCommonFeesView();
             else if (viewName === 'leaderboard') await renderLeaderboardAdminView();
             else if (viewName === 'agm') await renderAgmAdminView();
             else if (viewName === 'kanban') await renderKanbanView();
@@ -7372,6 +7374,264 @@ async function submitEventAward() {
             finally { setBtnLoading(btn, false); }
         }
     );
+}
+
+   // ============================================================================
+// 💰 การจ่ายค่าส่วนกลาง (Common Fees Management)
+// ============================================================================
+async function renderCommonFeesView() {
+    const now = new Date();
+    const curYearTH = now.getFullYear() + 543;
+    const TH_MONTHS_LIST = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน',
+                            'กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+
+    document.getElementById('content-area').innerHTML = `
+        <div class="slide-in p-2">
+            <div class="mb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+                <div>
+                    <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">
+                        <span class="bg-blue-100 text-blue-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="receipt" class="w-8 h-8"></i></span>
+                        การจ่ายค่าส่วนกลาง
+                    </h1>
+                    <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">
+                        ตรวจสอบรายการที่ลูกบ้านบันทึกจ่ายค่าส่วนกลาง · ระบบ auto-sync เข้าตาราง house_payments + ให้แต้มเจ้าของบ้านจริง<br>
+                        <span class="text-amber-600 font-bold">⚙️ ตรงเวลา = +100 · ก่อนกำหนด = +150 · ล่าช้า (>วันที่ 5 เดือนถัดไป) = ไม่ให้แต้ม</span>
+                    </p>
+                </div>
+                <button onclick="openBackfillModal()" class="px-5 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-2xl font-bold shadow-lg shadow-blue-200 flex items-center gap-2">
+                    <i data-lucide="refresh-cw" class="w-4 h-4"></i> Backfill ข้อมูลเก่า
+                </button>
+            </div>
+
+            <!-- Filters -->
+            <div class="glass rounded-3xl p-5 shadow-sm mb-5">
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+                    <select id="cf-month" class="rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                        <option value="">ทุกเดือน</option>
+                        ${TH_MONTHS_LIST.map(m => `<option value="${m}">${m}</option>`).join('')}
+                    </select>
+                    <select id="cf-year" class="rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                        <option value="">ทุกปี</option>
+                        ${[curYearTH, curYearTH-1, curYearTH-2].map(y => `<option value="${y}">${y}</option>`).join('')}
+                    </select>
+                    <select id="cf-status" class="rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                        <option value="">ทุกสถานะ</option>
+                        <option value="ตรวจสอบแล้ว">✓ ตรวจสอบแล้ว</option>
+                        <option value="รอตรวจสอบ">⏳ รอตรวจสอบ</option>
+                    </select>
+                    <select id="cf-synced" class="rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                        <option value="">การ sync ทั้งหมด</option>
+                        <option value="true">✓ Sync แล้ว</option>
+                        <option value="false">⏳ ยังไม่ sync</option>
+                    </select>
+                    <button onclick="loadCommonFees()" id="cf-load-btn" class="px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2"><i data-lucide="search" class="w-4 h-4"></i> ค้นหา</button>
+                </div>
+            </div>
+
+            <div id="cf-result"></div>
+        </div>`;
+    lucide.createIcons();
+    loadCommonFees();
+}
+
+async function loadCommonFees() {
+    const btn = document.getElementById('cf-load-btn');
+    const month  = document.getElementById('cf-month').value;
+    const year   = document.getElementById('cf-year').value;
+    const status = document.getElementById('cf-status').value;
+    const synced = document.getElementById('cf-synced').value;
+
+    const params = new URLSearchParams();
+    if (month) params.set('month', month);
+    if (year) params.set('year', year);
+    if (status) params.set('status', status);
+    if (synced) params.set('synced', synced);
+    params.set('limit', '300');
+
+    setBtnLoading(btn, true);
+    document.getElementById('cf-result').innerHTML = '<div class="glass rounded-3xl p-8 text-center text-slate-400">กำลังโหลด...</div>';
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/common_fees_list?${params}`);
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || 'load fail');
+        renderCommonFeesList(d);
+    } catch (e) {
+        document.getElementById('cf-result').innerHTML = `<div class="glass rounded-3xl p-6 text-rose-600 text-center">${e.message}</div>`;
+    } finally { setBtnLoading(btn, false); }
+}
+
+function renderCommonFeesList({ data, summary }) {
+    const wrap = document.getElementById('cf-result');
+    if (!data || data.length === 0) {
+        wrap.innerHTML = '<div class="glass rounded-3xl p-12 text-center text-slate-400"><div class="text-6xl mb-3">📭</div><p class="font-bold">ไม่พบรายการ</p></div>';
+        return;
+    }
+
+    const timingBadge = (t) => {
+        if (t === 'early')  return '<span class="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-md">⚡ ก่อนกำหนด</span>';
+        if (t === 'ontime') return '<span class="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-md">✓ ตรงเวลา</span>';
+        if (t === 'late')   return '<span class="text-[10px] font-bold bg-rose-100 text-rose-700 px-2 py-0.5 rounded-md">⏰ ล่าช้า</span>';
+        return '<span class="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-md">—</span>';
+    };
+
+    wrap.innerHTML = `
+        <!-- Stats summary -->
+        <div class="grid grid-cols-2 md:grid-cols-7 gap-2 mb-5">
+            <div class="bg-white rounded-2xl p-3 border border-slate-100 text-center"><div class="text-xs text-slate-500 font-bold">ทั้งหมด</div><div class="text-2xl font-extrabold text-slate-800 mt-1">${summary.total}</div></div>
+            <div class="bg-emerald-50 rounded-2xl p-3 border border-emerald-100 text-center"><div class="text-xs text-emerald-700 font-bold">ตรวจสอบแล้ว</div><div class="text-2xl font-extrabold text-emerald-600 mt-1">${summary.approved}</div></div>
+            <div class="bg-amber-50 rounded-2xl p-3 border border-amber-100 text-center"><div class="text-xs text-amber-700 font-bold">รอตรวจสอบ</div><div class="text-2xl font-extrabold text-amber-600 mt-1">${summary.pending}</div></div>
+            <div class="bg-blue-50 rounded-2xl p-3 border border-blue-100 text-center"><div class="text-xs text-blue-700 font-bold">Sync แล้ว</div><div class="text-2xl font-extrabold text-blue-600 mt-1">${summary.synced}</div></div>
+            <div class="bg-emerald-50 rounded-2xl p-3 border border-emerald-100 text-center"><div class="text-xs text-emerald-700 font-bold">⚡ก่อนกำหนด</div><div class="text-2xl font-extrabold text-emerald-600 mt-1">${summary.early}</div></div>
+            <div class="bg-amber-50 rounded-2xl p-3 border border-amber-100 text-center"><div class="text-xs text-amber-700 font-bold">⏰ล่าช้า</div><div class="text-2xl font-extrabold text-amber-600 mt-1">${summary.late}</div></div>
+            <div class="bg-purple-50 rounded-2xl p-3 border border-purple-100 text-center"><div class="text-xs text-purple-700 font-bold">รวมแต้มที่ให้</div><div class="text-2xl font-extrabold text-purple-600 mt-1">${(summary.total_points || 0).toLocaleString()}</div></div>
+        </div>
+
+        <!-- Table -->
+        <div class="glass rounded-3xl overflow-hidden shadow-sm">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-slate-50 text-slate-600">
+                        <tr>
+                            <th class="text-left p-3 font-bold">ID</th>
+                            <th class="text-left p-3 font-bold">บ้าน / เจ้าของ</th>
+                            <th class="text-center p-3 font-bold">งวด</th>
+                            <th class="text-right p-3 font-bold">จำนวน</th>
+                            <th class="text-center p-3 font-bold">สถานะ</th>
+                            <th class="text-center p-3 font-bold">Timing</th>
+                            <th class="text-center p-3 font-bold">แต้มที่ให้</th>
+                            <th class="text-center p-3 font-bold">วันบันทึก</th>
+                            <th class="text-center p-3 font-bold">ทำงาน</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.map(r => `<tr class="border-t border-slate-100 hover:bg-white/50">
+                            <td class="p-3 font-mono text-[10px] text-slate-400">${escapeHtml(r.id || '—')}</td>
+                            <td class="p-3">
+                                <div class="font-bold text-slate-800">${escapeHtml(r.house_number || '—')}</div>
+                                <div class="text-[11px] text-slate-500 truncate max-w-[150px]">${escapeHtml(r.name || '—')}</div>
+                            </td>
+                            <td class="p-3 text-center text-xs">${escapeHtml(r.month || '—')}<br><span class="text-slate-400 font-mono">${escapeHtml(r.year || '')}</span></td>
+                            <td class="p-3 text-right font-bold">${r.amount ? Number(r.amount).toLocaleString() : '—'}</td>
+                            <td class="p-3 text-center">
+                                ${r.status === 'ตรวจสอบแล้ว' ? '<span class="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-md">✓</span>' :
+                                  r.status === 'รอตรวจสอบ' ? '<span class="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-md">⏳</span>' :
+                                  `<span class="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-md">${escapeHtml(r.status || '—')}</span>`}
+                                ${r.house_payment_synced ? '<span class="text-[9px] text-blue-600 ml-1">↻</span>' : ''}
+                            </td>
+                            <td class="p-3 text-center">${timingBadge(r.timing_status)}</td>
+                            <td class="p-3 text-center">
+                                ${r.points_awarded > 0
+                                    ? `<span class="text-emerald-600 font-bold">+${r.points_awarded}</span>`
+                                    : '<span class="text-slate-300">—</span>'}
+                            </td>
+                            <td class="p-3 text-center text-[11px] text-slate-500">${r.reported_at ? new Date(r.reported_at).toLocaleDateString('th-TH', {year:'2-digit', month:'short', day:'numeric'}) : '—'}</td>
+                            <td class="p-3 text-center">
+                                ${!r.house_payment_synced && (r.status === 'ตรวจสอบแล้ว' || r.status === 'ผ่านการตรวจสอบ')
+                                    ? `<button onclick="processSingleFee('${escapeHtml(r.id)}')" class="text-[10px] font-bold bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded-md">Sync</button>`
+                                    : '<span class="text-slate-300 text-xs">—</span>'}
+                            </td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="text-xs text-slate-400 text-center mt-3">แสดง ${data.length} รายการ · Filter ด้านบนเพื่อค้นหา</div>
+    `;
+    lucide.createIcons();
+}
+
+async function processSingleFee(feeId) {
+    showConfirmModal(
+        'ประมวลผลรายการนี้?',
+        'ระบบจะ:<br>• Update house_payments เป็น "จ่ายแล้ว"<br>• ให้แต้มเจ้าของบ้านจริง (ไม่ใช่ admin)<br>• ตรวจ streak bonus',
+        async () => {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/common_fees_process`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ feeId })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'process fail');
+                const r = d.result || {};
+                let msg = `✓ ${r.timing === 'late' ? 'ล่าช้า — ไม่ให้แต้ม' : `ให้แต้ม ${r.points_awarded || 0} แต้ม`}`;
+                if (r.streak_bonus > 0) msg += ` (+ Streak ${r.streak_bonus} แต้ม!)`;
+                showToast(msg, 'success');
+                loadCommonFees();
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+    );
+}
+
+function openBackfillModal() {
+    document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="refresh-cw" class="w-6 h-6 text-blue-500"></i> Backfill ข้อมูลเก่า</div>';
+    document.getElementById('modal-content').innerHTML = `
+        <div class="space-y-4">
+            <div class="bg-blue-50 border border-blue-200 rounded-2xl p-4">
+                <div class="text-sm font-bold text-blue-900 mb-2">⚙️ ระบบจะ:</div>
+                <ul class="text-xs text-blue-800 space-y-1 list-disc pl-4">
+                    <li>ดึง common_fees ที่ status = "ตรวจสอบแล้ว" และยังไม่ได้ sync</li>
+                    <li>Update ตาราง house_payments อัตโนมัติ</li>
+                    <li><b>ให้แต้มเจ้าของบ้านจริง</b> (resolve จาก userhome ไม่ใช่ user_id ใน common_fees)</li>
+                    <li>คำนวณ "ก่อนกำหนด/ตรงเวลา/ล่าช้า" และให้แต้มตามเกณฑ์</li>
+                    <li>ตรวจ streak bonus 3/6/12 เดือนติด</li>
+                    <li>กันให้ซ้ำอัตโนมัติด้วย reference_id</li>
+                </ul>
+            </div>
+            <div>
+                <label class="block text-sm font-bold text-slate-700 mb-1.5">จำนวนต่อ batch (max 200)</label>
+                <input id="bf-limit" type="number" value="50" min="1" max="200" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm">
+                <p class="text-[11px] text-slate-500 mt-1">เริ่มที่ 50 ก่อน ทดสอบดู ถ้าไม่มีปัญหาค่อยเพิ่มเป็น 100-200</p>
+            </div>
+            <label class="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer bg-amber-50 border border-amber-200 rounded-xl p-3">
+                <input id="bf-force" type="checkbox" class="accent-amber-500 w-4 h-4">
+                <span>Force re-process (ทำซ้ำทุก records แม้ sync ไปแล้ว) — <b class="text-amber-700">ใช้กรณีต้องการ recompute เท่านั้น</b></span>
+            </label>
+            <div class="flex gap-3 pt-4 border-t border-slate-100">
+                <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">ยกเลิก</button>
+                <button onclick="runBackfill()" id="bf-run-btn" class="flex-1 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="play" class="w-4 h-4"></i> เริ่ม Backfill</button>
+            </div>
+            <div id="bf-result"></div>
+        </div>`;
+    openModal();
+    lucide.createIcons();
+}
+
+async function runBackfill() {
+    const btn = document.getElementById('bf-run-btn');
+    const limit = parseInt(document.getElementById('bf-limit').value) || 50;
+    const force = document.getElementById('bf-force').checked;
+
+    setBtnLoading(btn, true);
+    document.getElementById('bf-result').innerHTML = '<div class="text-center text-slate-400 py-3 text-sm">⚙️ กำลังประมวลผล... อย่าปิดหน้านี้</div>';
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/common_fees_backfill`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limit, force })
+        });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || 'backfill fail');
+
+        document.getElementById('bf-result').innerHTML = `
+            <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
+                <div class="font-bold text-emerald-800 mb-2">✅ ${escapeHtml(d.message)}</div>
+                <div class="grid grid-cols-3 gap-2 text-center text-xs">
+                    <div class="bg-white rounded-lg p-2"><div class="text-slate-500">ประมวลผล</div><div class="text-xl font-bold text-emerald-600">${d.processed}</div></div>
+                    <div class="bg-white rounded-lg p-2"><div class="text-slate-500">ให้แต้ม</div><div class="text-xl font-bold text-blue-600">${d.awarded}</div></div>
+                    <div class="bg-white rounded-lg p-2"><div class="text-slate-500">ล้มเหลว</div><div class="text-xl font-bold text-rose-600">${d.failed}</div></div>
+                </div>
+                <div class="text-center text-sm mt-2">รวมแต้มที่ให้: <b class="text-purple-600">${(d.totalPoints || 0).toLocaleString()}</b> แต้ม</div>
+                ${d.errors && d.errors.length > 0 ? `<details class="mt-3"><summary class="text-xs text-rose-600 font-bold cursor-pointer">Error logs (${d.errors.length})</summary><pre class="text-[10px] text-rose-500 mt-2 bg-rose-50 p-2 rounded overflow-x-auto">${d.errors.map(e => escapeHtml(e)).join('\n')}</pre></details>` : ''}
+            </div>`;
+        showToast(d.message, 'success');
+        // refresh list ถ้าเปิดอยู่
+        if (typeof loadCommonFees === 'function' && document.getElementById('cf-result')) loadCommonFees();
+    } catch (e) {
+        document.getElementById('bf-result').innerHTML = `<div class="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-rose-700 font-bold">${e.message}</div>`;
+        showToast(e.message, 'error');
+    } finally { setBtnLoading(btn, false); }
 }
 
    // ============================================================================
