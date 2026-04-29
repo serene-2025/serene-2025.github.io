@@ -6971,634 +6971,504 @@ async function updateAllUserProfiles() {
         }
 
    // ============================================================================
-// ชุดโค้ดระบบสร้าง Rich Menu V2 (เพิ่มปุ่มลบบนกล่องวาด + แก้ไขปัญหากดลบไม่ได้)
+// 🎨 Rich Menu Builder PRO v3 — Snap Grid + Templates + Edit + Multi-action + Phone Preview
+// รองรับ tappable areas สูงสุด 20 ปุ่ม (LINE API limit) · ทำงาน mouse + touch
 // ============================================================================
 
-const drawStyle = document.createElement('style');
-drawStyle.textContent = `
-    .selection-box { position: absolute; border: 2px solid #ef4444; background-color: rgba(239, 68, 68, 0.2); pointer-events: none; z-index: 10; }
-    .box-label { position: absolute; top: -2px; left: -2px; background: #ef4444; color: white; padding: 2px 6px; font-size: 10px; font-weight: bold; border-radius: 2px; }
-    /* ปุ่ม X สำหรับลบกล่องวาดบนรูปภาพ */
-    .box-delete-btn { position: absolute; top: -12px; right: -12px; background: #ef4444; color: white; width: 24px; height: 24px; border-radius: 50%; text-align: center; line-height: 22px; font-size: 12px; font-weight: bold; cursor: pointer; pointer-events: auto; box-shadow: 0 2px 4px rgba(0,0,0,0.3); z-index: 20; }
-    .box-delete-btn:active { transform: scale(0.9); background: #dc2626; }
-    #rm-canvas { touch-action: none; -webkit-user-select: none; user-select: none; } 
-`;
-document.head.appendChild(drawStyle);
-
-let rmDrawData = { isDrawing: false, boxes: [], base64: "" };
-
-function openRichMenuAdvancedBuilder() {
-    document.getElementById('modal-title').innerText = 'สร้าง Rich Menu API (วาดพื้นที่อิสระ)';
-    document.getElementById('modal-content').innerHTML = `
-        <div class="space-y-4">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <input type="text" id="rm-adv-name" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm" placeholder="ชื่อเมนู" onkeyup="updateJSONPreview()">
-                <input type="text" id="rm-adv-chatbar" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm" placeholder="ข้อความบาร์" value="เมนู" onkeyup="updateJSONPreview()">
-                <select id="rm-adv-size" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm" onchange="updateJSONPreview()">
-                    <option value="full">Full (2500x1686)</option>
-                    <option value="half">Half (2500x843)</option>
-                </select>
-                <input type="file" id="rm-adv-file" accept="image/*" class="w-full text-xs bg-white border border-slate-200 p-2 rounded-xl" onchange="loadRMImage(this)">
-            </div>
-            
-            <div class="flex justify-between items-center bg-indigo-50 p-2 rounded-lg">
-                <p class="text-[11px] text-indigo-600 font-bold"><i class="fas fa-mouse-pointer mr-1"></i> ลากนิ้วบนรูปภาพเพื่อสร้างพื้นที่ปุ่ม</p>
-                <button type="button" onclick="clearAllRMBoxes()" class="text-[11px] text-red-500 font-bold hover:underline px-2 py-1 bg-red-50 rounded-md border border-red-200">ล้างพื้นที่ทั้งหมด</button>
-            </div>
-            
-            <div class="relative bg-slate-100 rounded-xl overflow-hidden border-2 border-dashed border-slate-300 flex justify-center p-2 min-h-[220px]">
-                <div id="rm-canvas" class="relative bg-white shadow-sm cursor-crosshair select-none" style="width:0; height:0;"></div>
-            </div>
-            
-            <div id="rm-adv-inputs" class="space-y-2 max-h-48 overflow-y-auto pr-1"></div>
-            
-            <div class="bg-slate-900 rounded-xl p-3 border border-slate-800">
-                <div class="text-[10px] text-slate-400 mb-1 font-bold uppercase tracking-wider">JSON Payload Preview</div>
-                <pre id="rm-json-preview" class="text-[11px] text-emerald-400 overflow-x-auto whitespace-pre-wrap max-h-32"></pre>
-            </div>
-            
-            <div class="flex justify-end gap-2 pt-2 border-t">
-                <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-slate-600 font-bold bg-slate-100 rounded-xl">ยกเลิก</button>
-                <button type="button" onclick="saveAdvancedRichMenu(this)" class="btn-primary px-6 py-2 rounded-xl text-sm font-bold text-white flex gap-2 shadow-lg shadow-indigo-200">
-                    <i data-lucide="upload-cloud" class="w-4 h-4"></i> บันทึกและสร้างเมนู
-                </button>
-            </div>
-        </div>
+(function() {
+    // ─── Style ───────────────────────────────────────────────────────────
+    const rmStyle = document.createElement('style');
+    rmStyle.textContent = `
+        .rm-canvas-wrap { position:relative; background:#f8fafc; border:2px dashed #cbd5e1; border-radius:14px; padding:8px; display:flex; justify-content:center; min-height:240px; overflow:hidden; }
+        #rm-canvas { position:relative; background:#fff; box-shadow:0 4px 14px rgba(0,0,0,0.08); cursor:crosshair; user-select:none; -webkit-user-select:none; touch-action:none; }
+        #rm-canvas.snap-on { background-image: linear-gradient(rgba(99,102,241,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,.08) 1px, transparent 1px); background-size: 5% 5%; }
+        .rm-box { position:absolute; border:2px solid #ef4444; background:rgba(239,68,68,0.15); box-sizing:border-box; pointer-events:auto; transition: border-color 0.1s; }
+        .rm-box.selected { border-color:#6366f1; background:rgba(99,102,241,0.18); border-width:3px; box-shadow:0 0 0 2px rgba(99,102,241,0.3); }
+        .rm-box-label { position:absolute; top:-2px; left:-2px; background:#ef4444; color:white; padding:2px 7px; font-size:11px; font-weight:bold; border-radius:3px; pointer-events:none; }
+        .rm-box.selected .rm-box-label { background:#6366f1; }
+        .rm-box-del { position:absolute; top:-12px; right:-12px; background:#ef4444; color:white; width:24px; height:24px; border-radius:50%; text-align:center; line-height:22px; font-size:12px; font-weight:bold; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.3); border:2px solid white; }
+        .rm-box-del:active { transform:scale(0.9); }
+        .rm-box-handle { position:absolute; right:-7px; bottom:-7px; width:14px; height:14px; background:#fff; border:2px solid #6366f1; border-radius:50%; cursor:nwse-resize; }
+        .rm-template-card { padding:8px 10px; border:2px solid #e2e8f0; border-radius:10px; cursor:pointer; transition:all 0.15s; background:#fff; }
+        .rm-template-card:hover { border-color:#6366f1; transform:translateY(-2px); box-shadow:0 4px 12px rgba(99,102,241,0.15); }
+        .rm-template-card.active { border-color:#6366f1; background:#eef2ff; }
+        .rm-template-mini { width:100%; aspect-ratio: 25/16.86; background:#f1f5f9; border-radius:4px; display:grid; gap:1px; padding:2px; }
+        .rm-template-mini.half { aspect-ratio: 25/8.43; }
+        .rm-template-mini > div { background:#cbd5e1; border-radius:1px; }
+        .rm-phone-preview { width:200px; height:380px; background:#1f2937; border-radius:24px; padding:14px 10px; box-shadow:0 10px 30px rgba(0,0,0,0.2); position:relative; }
+        .rm-phone-screen { background:#fff; border-radius:14px; height:100%; overflow:hidden; display:flex; flex-direction:column; }
+        .rm-phone-chat { flex:1; padding:10px; background:#06b6d4; background-image:linear-gradient(135deg,#0891b2,#06b6d4); }
+        .rm-phone-chatbar { background:#fff; padding:6px 12px; font-size:9px; color:#1e293b; font-weight:600; border-top:1px solid #e2e8f0; display:flex; align-items:center; gap:4px; }
+        .rm-phone-rm { background:#f1f5f9; aspect-ratio: 25/16.86; }
+        .rm-phone-rm.half { aspect-ratio: 25/8.43; }
     `;
-    lucide.createIcons();
-    initDrawEvents();
-    openModal();
-    updateJSONPreview();
-}
+    document.head.appendChild(rmStyle);
 
-function loadRMImage(input) {
-    if (input.files && input.files[0]) {
+    window.rmDrawData = { boxes: [], base64: "", sizeMode: "full", snapToGrid: true, selectedBoxId: null };
+    const RM_MAX_AREAS = 20;
+
+    const RM_TEMPLATES = {
+        'full-1x1': { label:'Full 1 ปุ่ม', size:'full', boxes:[ {x:0,y:0,w:100,h:100} ] },
+        'full-2x1': { label:'Full 2 ปุ่ม (ซ้าย-ขวา)', size:'full', boxes:[ {x:0,y:0,w:50,h:100}, {x:50,y:0,w:50,h:100} ] },
+        'full-1x2': { label:'Full 2 ปุ่ม (บน-ล่าง)', size:'full', boxes:[ {x:0,y:0,w:100,h:50}, {x:0,y:50,w:100,h:50} ] },
+        'full-2x2': { label:'Full 4 ปุ่ม (2×2)', size:'full', boxes:[
+            {x:0,y:0,w:50,h:50}, {x:50,y:0,w:50,h:50}, {x:0,y:50,w:50,h:50}, {x:50,y:50,w:50,h:50}
+        ]},
+        'full-2x3': { label:'Full 6 ปุ่ม (3×2)', size:'full', boxes:[
+            {x:0,y:0,w:33.33,h:50}, {x:33.33,y:0,w:33.34,h:50}, {x:66.67,y:0,w:33.33,h:50},
+            {x:0,y:50,w:33.33,h:50}, {x:33.33,y:50,w:33.34,h:50}, {x:66.67,y:50,w:33.33,h:50}
+        ]},
+        'half-3x1': { label:'Half 3 ปุ่ม', size:'half', boxes:[
+            {x:0,y:0,w:33.33,h:100}, {x:33.33,y:0,w:33.34,h:100}, {x:66.67,y:0,w:33.33,h:100}
+        ]},
+        'half-6x1': { label:'Half 6 ปุ่ม', size:'half', boxes:[
+            {x:0,y:0,w:16.67,h:100}, {x:16.67,y:0,w:16.66,h:100}, {x:33.33,y:0,w:16.67,h:100},
+            {x:50,y:0,w:16.67,h:100}, {x:66.67,y:0,w:16.66,h:100}, {x:83.33,y:0,w:16.67,h:100}
+        ]},
+    };
+
+    const targetH = () => rmDrawData.sizeMode === 'half' ? 843 : 1686;
+    function snap(val, gridPct = 5) { if (!rmDrawData.snapToGrid) return val; return Math.round(val / gridPct) * gridPct; }
+    function pctToPx(pct) {
+        const canvas = document.getElementById('rm-canvas');
+        return { x: pct.x / 100 * canvas.offsetWidth, y: pct.y / 100 * canvas.offsetHeight,
+                 w: pct.w / 100 * canvas.offsetWidth, h: pct.h / 100 * canvas.offsetHeight };
+    }
+
+    window.openRichMenuAdvancedBuilder = function() {
+        rmDrawData.boxes = []; rmDrawData.base64 = ''; rmDrawData.selectedBoxId = null;
+        document.getElementById('modal-title').innerText = '🎨 สร้าง Rich Menu (วาดอิสระ + Template + Snap)';
+        document.getElementById('modal-content').innerHTML = `
+            <div class="space-y-3">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <input type="text" id="rm-adv-name" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm" placeholder="ชื่อเมนู">
+                    <input type="text" id="rm-adv-chatbar" maxlength="14" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm" placeholder="ข้อความบาร์ (≤14 ตัว)" value="เมนู">
+                    <select id="rm-adv-size" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm">
+                        <option value="full">Full (2500×1686)</option>
+                        <option value="half">Half (2500×843)</option>
+                    </select>
+                </div>
+                <div>
+                    <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Template (กดเพื่อใช้)</div>
+                    <div class="grid grid-cols-3 md:grid-cols-7 gap-1.5" id="rm-templates"></div>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap bg-indigo-50 p-2 rounded-xl">
+                    <input type="file" id="rm-adv-file" accept="image/png,image/jpeg" class="text-xs flex-1 min-w-[150px] bg-white border border-slate-200 p-1.5 rounded-lg">
+                    <label class="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 cursor-pointer bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
+                        <input type="checkbox" id="rm-snap" checked class="accent-indigo-500"> Snap 5%
+                    </label>
+                    <span class="text-[11px] font-bold text-indigo-600">ปุ่ม <span id="rm-count">0</span>/${RM_MAX_AREAS}</span>
+                    <button type="button" onclick="window.rmClearAll()" class="text-[11px] text-rose-500 font-bold px-2 py-1 bg-rose-50 rounded border border-rose-200 ml-auto">ล้างทั้งหมด</button>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                    <div class="lg:col-span-2 rm-canvas-wrap">
+                        <div id="rm-canvas" class="snap-on" style="width:0;height:0;"></div>
+                    </div>
+                    <div class="flex flex-col items-center justify-center bg-slate-50 rounded-xl py-3">
+                        <div class="text-[10px] font-bold text-slate-500 uppercase mb-2">Preview ใน LINE</div>
+                        <div class="rm-phone-preview">
+                            <div class="rm-phone-screen">
+                                <div class="rm-phone-chat"></div>
+                                <div class="rm-phone-chatbar">
+                                    <i class="fas fa-bars text-[8px]"></i>
+                                    <span id="rm-preview-chatbar">เมนู</span>
+                                </div>
+                                <div id="rm-preview-rm" class="rm-phone-rm"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="rm-box-editor" class="space-y-2 max-h-56 overflow-y-auto pr-1"></div>
+                <details class="bg-slate-900 rounded-xl border border-slate-800">
+                    <summary class="px-3 py-2 cursor-pointer text-[10px] text-slate-400 font-bold uppercase tracking-wider">JSON Payload</summary>
+                    <pre id="rm-json-preview" class="text-[11px] text-emerald-400 overflow-x-auto whitespace-pre-wrap max-h-32 px-3 pb-2"></pre>
+                </details>
+                <div class="flex justify-between items-center pt-2 border-t border-slate-100">
+                    <label class="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer">
+                        <input type="checkbox" id="rm-set-default" class="accent-indigo-500 w-4 h-4">
+                        ตั้งเป็น Default ทันที
+                    </label>
+                    <div class="flex gap-2">
+                        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-slate-600 font-bold bg-slate-100 rounded-xl">ยกเลิก</button>
+                        <button type="button" onclick="window.saveAdvancedRichMenu(this)" class="btn-primary px-5 py-2 rounded-xl text-sm font-bold text-white flex gap-1.5 items-center shadow-lg shadow-indigo-200">
+                            <i data-lucide="upload-cloud" class="w-4 h-4"></i> สร้างเมนู
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        renderTemplates(); bindEvents();
+        if (window.lucide) lucide.createIcons();
+        openModal(); updatePhonePreview(); updateJSONPreview();
+    };
+
+    function renderTemplates() {
+        const wrap = document.getElementById('rm-templates');
+        wrap.innerHTML = Object.entries(RM_TEMPLATES).map(([key, tpl]) => {
+            const cols = key === 'full-1x1' ? '1fr'
+                       : key === 'full-2x1' ? '1fr 1fr'
+                       : key === 'full-1x2' ? '1fr'
+                       : key === 'full-2x2' ? '1fr 1fr'
+                       : key === 'full-2x3' ? '1fr 1fr 1fr'
+                       : key === 'half-3x1' ? '1fr 1fr 1fr'
+                       : 'repeat(6, 1fr)';
+            const rows = key === 'full-1x2' ? '1fr 1fr'
+                       : key === 'full-2x2' ? '1fr 1fr'
+                       : key === 'full-2x3' ? '1fr 1fr'
+                       : '1fr';
+            return `<div class="rm-template-card" onclick="window.applyRMTemplate('${key}')" title="${tpl.label}">
+                <div class="rm-template-mini ${tpl.size === 'half' ? 'half' : ''}" style="grid-template-columns:${cols};grid-template-rows:${rows}">
+                    ${tpl.boxes.map(() => '<div></div>').join('')}
+                </div>
+                <div class="text-[10px] mt-1 text-center font-bold text-slate-600">${tpl.boxes.length} ปุ่ม</div>
+            </div>`;
+        }).join('');
+    }
+
+    window.applyRMTemplate = function(key) {
+        const tpl = RM_TEMPLATES[key];
+        if (!tpl) return;
+        rmDrawData.sizeMode = tpl.size;
+        document.getElementById('rm-adv-size').value = tpl.size;
+        rmDrawData.boxes = tpl.boxes.map((b, i) => ({
+            id: 'tpl_' + Date.now() + '_' + i,
+            ...b, type: 'message', val: '', label: ''
+        }));
+        rmDrawData.selectedBoxId = null;
+        adjustCanvasHeight(); redrawAllBoxes(); updatePhonePreview(); updateJSONPreview();
+    };
+
+    function bindEvents() {
+        document.getElementById('rm-adv-file').onchange = (e) => loadRMImage(e.target);
+        document.getElementById('rm-adv-name').oninput = updateJSONPreview;
+        document.getElementById('rm-adv-chatbar').oninput = (e) => {
+            document.getElementById('rm-preview-chatbar').innerText = e.target.value || 'เมนู';
+            updateJSONPreview();
+        };
+        document.getElementById('rm-adv-size').onchange = (e) => {
+            rmDrawData.sizeMode = e.target.value;
+            adjustCanvasHeight(); updatePhonePreview(); updateJSONPreview();
+        };
+        document.getElementById('rm-snap').onchange = (e) => {
+            rmDrawData.snapToGrid = e.target.checked;
+            document.getElementById('rm-canvas').classList.toggle('snap-on', e.target.checked);
+        };
+        initDrawEvents();
+    }
+
+    function loadRMImage(input) {
+        if (!input.files || !input.files[0]) return;
         const reader = new FileReader();
         reader.onload = (e) => {
-            rmDrawData.base64 = e.target.result;
             const img = new Image();
             img.onload = () => {
-                const canvas = document.getElementById('rm-canvas');
-                const displayW = Math.min(canvas.parentElement.clientWidth - 20, 500);
-                canvas.style.width = displayW + 'px';
-                canvas.style.height = ((img.height / img.width) * displayW) + 'px';
-                canvas.style.backgroundImage = `url(${e.target.result})`;
-                canvas.style.backgroundSize = '100% 100%';
-                canvas.innerHTML = ''; 
-                rmDrawData.boxes = [];
-                updateJSONPreview();
+                const expectedH = rmDrawData.sizeMode === 'half' ? 843 : 1686;
+                const isExact = (img.width === 2500 && (img.height === 1686 || img.height === 843));
+                if (!isExact) {
+                    const cv = document.createElement('canvas');
+                    cv.width = 2500; cv.height = expectedH;
+                    cv.getContext('2d').drawImage(img, 0, 0, 2500, expectedH);
+                    rmDrawData.base64 = cv.toDataURL('image/png');
+                    if (window.showToast) showToast(`รูปถูก resize เป็น 2500×${expectedH}`, 'info');
+                } else {
+                    rmDrawData.base64 = e.target.result;
+                    if (img.height === 843 && rmDrawData.sizeMode !== 'half') {
+                        rmDrawData.sizeMode = 'half';
+                        document.getElementById('rm-adv-size').value = 'half';
+                    }
+                }
+                applyImageToCanvas();
+                rmDrawData.boxes = []; rmDrawData.selectedBoxId = null;
+                redrawAllBoxes(); updatePhonePreview(); updateJSONPreview();
             };
             img.src = e.target.result;
         };
         reader.readAsDataURL(input.files[0]);
     }
-}
 
-function initDrawEvents() {
-    const canvas = document.getElementById('rm-canvas');
-    let currentBox = null;
-    let startX, startY;
-
-    const getCoords = (e) => {
-        const rect = canvas.getBoundingClientRect();
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-        return {
-            x: Math.max(0, Math.min(clientX - rect.left, canvas.offsetWidth)),
-            y: Math.max(0, Math.min(clientY - rect.top, canvas.offsetHeight))
-        };
-    };
-
-    const startDrawing = (e) => {
-        if (!rmDrawData.base64) return;
-        rmDrawData.isDrawing = true;
-        const coords = getCoords(e);
-        startX = coords.x; startY = coords.y;
-
-        currentBox = document.createElement('div');
-        currentBox.className = 'selection-box';
-        currentBox.style.left = startX + 'px';
-        currentBox.style.top = startY + 'px';
-        canvas.appendChild(currentBox);
-    };
-
-    const moveDrawing = (e) => {
-        if (!rmDrawData.isDrawing) return;
-        if (e.cancelable) e.preventDefault(); 
-        const coords = getCoords(e);
-        currentBox.style.width = Math.abs(coords.x - startX) + 'px';
-        currentBox.style.height = Math.abs(coords.y - startY) + 'px';
-        currentBox.style.left = Math.min(coords.x, startX) + 'px';
-        currentBox.style.top = Math.min(coords.y, startY) + 'px';
-    };
-
-    const stopDrawing = () => {
-        if (!rmDrawData.isDrawing) return;
-        rmDrawData.isDrawing = false;
-        const width = parseInt(currentBox.style.width) || 0;
-        const height = parseInt(currentBox.style.height) || 0;
-
-        if (width < 20 || height < 20) { currentBox.remove(); return; }
-
-        const sizeMode = document.getElementById('rm-adv-size').value;
-        const targetH = sizeMode === 'half' ? 843 : 1686;
-        const scX = 2500 / canvas.offsetWidth;
-        const scY = targetH / canvas.offsetHeight;
-
-        const boxId = "id_" + Date.now(); 
-        currentBox.id = `box-ui-${boxId}`;
-
-        // 1. เพิ่ม Label ตัวเลข
-        const label = document.createElement('div');
-        label.className = 'box-label';
-        label.innerText = rmDrawData.boxes.length + 1;
-        currentBox.appendChild(label);
-
-        // 2. เพิ่มปุ่ม (X) สีแดงสำหรับลบกล่องนี้โดยเฉพาะ
-        const delBtn = document.createElement('div');
-        delBtn.className = 'box-delete-btn';
-        delBtn.innerHTML = '✕';
-        delBtn.onclick = function(e) {
-            e.stopPropagation(); // ป้องกันการสร้างกล่องใหม่ตอนกดลบ
-            removeRMBox(boxId);
-        };
-        // รองรับการแตะบนมือถือ
-        delBtn.ontouchend = function(e) {
-            e.stopPropagation(); e.preventDefault();
-            removeRMBox(boxId);
-        };
-        currentBox.appendChild(delBtn);
-
-        rmDrawData.boxes.push({
-            id: boxId,
-            x: Math.round(parseInt(currentBox.style.left) * scX),
-            y: Math.round(parseInt(currentBox.style.top) * scY),
-            w: Math.round(width * scX),
-            h: Math.round(height * scY),
-            type: 'message', val: ''
-        });
-        renderRMInputs();
-    };
-
-    canvas.addEventListener('mousedown', startDrawing);
-    window.addEventListener('mousemove', moveDrawing);
-    window.addEventListener('mouseup', stopDrawing);
-    canvas.addEventListener('touchstart', startDrawing, { passive: false });
-    canvas.addEventListener('touchmove', moveDrawing, { passive: false });
-    canvas.addEventListener('touchend', stopDrawing);
-}
-
-function renderRMInputs() {
-    const container = document.getElementById('rm-adv-inputs');
-    container.innerHTML = rmDrawData.boxes.map((b, i) => `
-        <div class="flex gap-2 items-center bg-white p-2.5 rounded-xl border border-slate-200 text-xs shadow-sm hover:border-indigo-300 transition-colors">
-            <span class="font-bold text-indigo-600 w-5 text-center">#${i + 1}</span>
-            <select onchange="updateRMBox('${b.id}', 'type', this.value)" class="bg-slate-100 rounded-lg p-2 border-0 focus:ring-0 cursor-pointer text-[11px] md:text-xs">
-                <option value="message" ${b.type === 'message' ? 'selected' : ''}>ข้อความ</option>
-                <option value="uri" ${b.type === 'uri' ? 'selected' : ''}>ลิงก์</option>
-                <option value="postback" ${b.type === 'postback' ? 'selected' : ''}>Postback</option>
-            </select>
-            <input type="text" placeholder="ข้อมูลปุ่ม" value="${b.val}" onkeyup="updateRMBox('${b.id}', 'val', this.value)" class="flex-1 bg-slate-50 p-2 border border-slate-100 rounded-lg focus:ring-1 focus:ring-indigo-400 text-[11px] md:text-xs">
-            <button type="button" onclick="removeRMBox('${b.id}')" class="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white font-bold py-1.5 px-3 rounded-lg transition-colors border border-red-100">ลบ</button>
-        </div>
-    `).join('');
-    updateJSONPreview();
-}
-
-function updateRMBox(id, k, v) { 
-    const b = rmDrawData.boxes.find(x => x.id == id); 
-    if(b) b[k] = v; 
-    if(k === 'type') renderRMInputs(); else updateJSONPreview(); 
-}
-
-// ฟังก์ชันล้างพื้นที่ทั้งหมด
-window.clearAllRMBoxes = function() {
-    rmDrawData.boxes = [];
-    const canvas = document.getElementById('rm-canvas');
-    if(canvas) {
-        // ลบเฉพาะกล่องที่วาด ไม่ลบรูปภาพ
-        const boxes = canvas.querySelectorAll('.selection-box');
-        boxes.forEach(box => box.remove());
-    }
-    renderRMInputs();
-};
-
-// ฟังก์ชันลบที่ได้รับการปรับปรุง: ลบทั้งใน Data และบน Canvas พร้อมเรียงลำดับใหม่
-window.removeRMBox = function(id) { 
-    // 1. ลบจาก Array
-    rmDrawData.boxes = rmDrawData.boxes.filter(b => b.id != id); 
-    
-    // 2. ลบออกจากรูปภาพ (Canvas)
-    const boxEl = document.getElementById(`box-ui-${id}`);
-    if (boxEl) boxEl.remove(); 
-    
-    // 3. เรียงลำดับตัวเลขบนรูปใหม่ (Re-index Labels)
-    const canvas = document.getElementById('rm-canvas');
-    if(canvas) {
-        const visualBoxes = canvas.querySelectorAll('.selection-box');
-        visualBoxes.forEach((box, index) => {
-            const label = box.querySelector('.box-label');
-            if (label) label.innerText = index + 1;
-        });
+    function applyImageToCanvas() {
+        const canvas = document.getElementById('rm-canvas');
+        const wrap = canvas.parentElement;
+        const maxW = Math.min(wrap.clientWidth - 24, 700);
+        canvas.style.width = maxW + 'px';
+        const ratio = rmDrawData.sizeMode === 'half' ? (843/2500) : (1686/2500);
+        canvas.style.height = (maxW * ratio) + 'px';
+        canvas.style.backgroundImage = `url(${rmDrawData.base64})`;
+        canvas.style.backgroundSize = '100% 100%';
     }
 
-    // 4. วาดรายการ Input ใหม่
-    renderRMInputs(); 
-};
-
-function updateJSONPreview() {
-    const sizeMode = document.getElementById('rm-adv-size')?.value || 'full';
-    const payload = {
-        size: { width: 2500, height: sizeMode === 'half' ? 843 : 1686 },
-        name: document.getElementById('rm-adv-name')?.value || 'New Menu',
-        chatBarText: document.getElementById('rm-adv-chatbar')?.value || 'เมนู',
-        areas: rmDrawData.boxes.map(b => ({
-            bounds: { x: b.x, y: b.y, width: b.w, height: b.h },
-            action: b.type === 'uri' ? { type: 'uri', uri: b.val || 'https://' } : 
-                    b.type === 'postback' ? { type: 'postback', data: b.val || 'action=none' } : 
-                    { type: 'message', text: b.val || 'Hello' }
-        }))
-    };
-    const previewEl = document.getElementById('rm-json-preview');
-    if(previewEl) previewEl.innerText = JSON.stringify(payload, null, 2);
-    return payload;
-}
-
-window.saveAdvancedRichMenu = async function(btn) {
-    if (!rmDrawData.base64 || rmDrawData.boxes.length === 0) return showToast('กรุณาวาดปุ่มอย่างน้อย 1 ช่อง', 'warning');
-    const payload = updateJSONPreview(); 
-    setBtnLoading(btn, true);
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/admin/richmenus`, { 
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json' }, 
-            body: JSON.stringify({ ...payload, action: 'create', base64Image: rmDrawData.base64 }) 
-        });
-        const data = await res.json();
-        if (data.success) { 
-            showToast('สร้าง Rich Menu สำเร็จ', 'success'); 
-            closeModal(); 
-            syncRichMenus(); 
-        } else throw new Error(data.error);
-    } catch (e) { 
-        showToast(e.message, 'error'); 
-    } finally { 
-        setBtnLoading(btn, false); 
-    }
-};
-// ============================================================================
-// ============================================================================
-// ชุดโค้ดระบบสร้าง Rich Menu V3 (Ultimate - เปลี่ยนชื่อตัวแปรหลบโค้ดเก่า 100%)
-// ============================================================================
-
-var rmV3StyleElement = document.createElement('style');
-rmV3StyleElement.textContent = `
-    .selection-box { position: absolute; border: 2px solid #ef4444; background-color: rgba(239, 68, 68, 0.2); pointer-events: none; z-index: 10; box-shadow: inset 0 0 10px rgba(239, 68, 68, 0.1); transition: all 0.1s; }
-    .box-label { position: absolute; top: -2px; left: -2px; background: #ef4444; color: white; padding: 2px 6px; font-size: 10px; font-weight: bold; border-radius: 2px; }
-    .box-delete-btn { position: absolute; top: -12px; right: -12px; background: #ef4444; color: white; width: 24px; height: 24px; border-radius: 50%; text-align: center; line-height: 22px; font-size: 12px; font-weight: bold; cursor: pointer; pointer-events: auto; box-shadow: 0 2px 4px rgba(0,0,0,0.3); z-index: 20; border: 2px solid white; transition: transform 0.1s; }
-    .box-delete-btn:active { transform: scale(0.9); background: #dc2626; }
-    #rm-canvas { touch-action: none; -webkit-user-select: none; user-select: none; border: 1px solid #e2e8f0; background-color: #f8fafc; } 
-    .phone-mockup { width: 300px; height: 600px; border: 12px solid #1e293b; border-radius: 36px; margin: 0 auto; overflow: hidden; position: relative; background: #fff; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
-    .phone-mockup::before { content: ''; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 120px; height: 24px; background: #1e293b; border-bottom-left-radius: 16px; border-bottom-right-radius: 16px; z-index: 50; }
-`;
-document.head.appendChild(rmV3StyleElement);
-
-// เปลี่ยนชื่อตัวแปรใหม่เป็น rmV3Data โค้ดจะได้ไม่ชนกับของเก่า
-var rmV3Data = { isDrawing: false, boxes: [], base64: "", finalW: 2500, finalH: 1686 };
-
-window.openRichMenuAdvancedBuilder = () => {
-    document.getElementById('modal-title').innerText = 'สร้าง Rich Menu Pro (V3)';
-    document.getElementById('modal-content').innerHTML = `
-        <div class="space-y-4">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <input type="text" id="rm-adv-name" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm" placeholder="ชื่ออ้างอิงเมนู" onkeyup="updateJSONPreview()">
-                <input type="text" id="rm-adv-chatbar" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm" placeholder="ข้อความบนบาร์" value="เมนู" onkeyup="updateJSONPreview()">
-                <select id="rm-adv-size" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm" onchange="triggerImageResize()">
-                    <option value="full">ขนาดใหญ่ Full (2500x1686)</option>
-                    <option value="half">ขนาดเล็ก Half (2500x843)</option>
-                </select>
-                <input type="file" id="rm-adv-file" accept="image/*" class="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer" onchange="loadAndResizeRMImage(this)">
-            </div>
-            
-            <div class="flex flex-wrap justify-between items-center bg-indigo-50 p-2 rounded-xl border border-indigo-100 gap-2">
-                <div class="flex gap-2">
-                    <button type="button" onclick="applyTemplate(6)" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-lg shadow-sm hover:bg-indigo-700">Template 6 ช่อง</button>
-                    <button type="button" onclick="applyTemplate(4)" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-lg shadow-sm hover:bg-indigo-700">Template 4 ช่อง</button>
-                </div>
-                <button type="button" onclick="clearAllRMBoxes()" class="text-xs text-red-600 hover:text-red-800 font-bold bg-red-100 px-3 py-1.5 rounded-lg border border-red-200">ล้างพื้นที่</button>
-            </div>
-            
-            <div class="relative bg-slate-100 rounded-xl overflow-hidden border-2 border-dashed border-slate-300 flex justify-center p-2 min-h-[220px]">
-                <div id="rm-canvas" class="relative bg-white shadow-sm cursor-crosshair select-none" style="width:0; height:0;">
-                    <div class="absolute inset-0 flex items-center justify-center text-slate-400 text-sm font-bold opacity-50" id="rm-canvas-placeholder">อัปโหลดรูปภาพเพื่อเริ่มต้น</div>
-                </div>
-            </div>
-            
-            <div id="rm-adv-inputs" class="space-y-2 max-h-48 overflow-y-auto pr-1"></div>
-            
-            <div class="bg-slate-900 rounded-xl p-3 border border-slate-800">
-                <div class="flex justify-between items-center mb-1">
-                    <div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">JSON Payload Preview</div>
-                    <button type="button" onclick="showPhonePreview()" class="text-[10px] bg-green-500/20 text-green-400 px-2 py-1 rounded border border-green-500/30 hover:bg-green-500/40"><i data-lucide="smartphone" class="w-3 h-3 inline"></i> ดูตัวอย่าง</button>
-                </div>
-                <pre id="rm-json-preview" class="text-[11px] text-emerald-400 overflow-x-auto whitespace-pre-wrap max-h-32 custom-scrollbar"></pre>
-            </div>
-            
-            <div class="flex justify-end gap-3 pt-4 border-t border-slate-200 mt-2">
-                <button type="button" onclick="closeModal()" class="px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl">ยกเลิก</button>
-                <button type="button" onclick="saveAdvancedRichMenu(this)" class="btn-primary px-6 py-2.5 rounded-xl text-sm font-bold text-white flex items-center gap-2 shadow-lg active:scale-95">
-                    <i data-lucide="upload-cloud" class="w-4 h-4"></i> บันทึกและสร้างเมนู
-                </button>
-            </div>
-        </div>
-    `;
-    lucide.createIcons();
-    initDrawEvents();
-    openModal();
-    window.updateJSONPreview();
-};
-
-window.loadAndResizeRMImage = (input) => {
-    if (!input.files || !input.files[0]) return;
-    var reader = new FileReader();
-    reader.onload = (e) => {
-        var img = new Image();
-        img.onload = () => processImageResize(img);
-        img.src = e.target.result;
-    };
-    reader.readAsDataURL(input.files[0]);
-};
-
-window.triggerImageResize = () => {
-    if(!rmV3Data.base64) return;
-    var img = new Image();
-    img.onload = () => processImageResize(img);
-    img.src = rmV3Data.base64;
-};
-
-function processImageResize(img) {
-    var sizeMode = document.getElementById('rm-adv-size').value;
-    rmV3Data.finalW = 2500;
-    rmV3Data.finalH = sizeMode === 'half' ? 843 : 1686;
-    
-    var cvs = document.createElement('canvas');
-    cvs.width = rmV3Data.finalW; cvs.height = rmV3Data.finalH;
-    var ctx = cvs.getContext('2d');
-    ctx.drawImage(img, 0, 0, cvs.width, cvs.height);
-    rmV3Data.base64 = cvs.toDataURL('image/jpeg', 0.9);
-
-    var canvasUI = document.getElementById('rm-canvas');
-    var displayW = Math.min(canvasUI.parentElement.clientWidth - 20, 500);
-    var displayH = (rmV3Data.finalH / rmV3Data.finalW) * displayW;
-    
-    canvasUI.style.width = displayW + 'px';
-    canvasUI.style.height = displayH + 'px';
-    canvasUI.style.backgroundImage = `url(${rmV3Data.base64})`;
-    canvasUI.style.backgroundSize = '100% 100%';
-    document.getElementById('rm-canvas-placeholder').style.display = 'none';
-    
-    rmV3Data.boxes = []; 
-    canvasUI.querySelectorAll('.selection-box').forEach(b => b.remove());
-    window.renderRMInputs();
-}
-
-window.applyTemplate = (slots) => {
-    if(!rmV3Data.base64) return showToast('กรุณาอัปโหลดรูปก่อน', 'warning');
-    clearAllRMBoxes();
-    var w = rmV3Data.finalW, h = rmV3Data.finalH;
-    var layouts = [];
-    
-    if (slots === 6) { 
-        var bw = Math.floor(w/3), bh = Math.floor(h/2);
-        for(var r=0; r<2; r++) for(var c=0; c<3; c++) layouts.push({x: c*bw, y: r*bh, w: bw, h: bh});
-    } else if (slots === 4) { 
-        var bw2 = Math.floor(w/2), bh2 = Math.floor(h/2);
-        for(var r2=0; r2<2; r2++) for(var c2=0; c2<2; c2++) layouts.push({x: c2*bw2, y: r2*bh2, w: bw2, h: bh2});
-    }
-
-    var canvas = document.getElementById('rm-canvas');
-    var scX = canvas.offsetWidth / w, scY = canvas.offsetHeight / h;
-
-    layouts.forEach((l, i) => {
-        var boxId = "id_" + Date.now() + i;
-        rmV3Data.boxes.push({ id: boxId, x: l.x, y: l.y, w: l.w, h: l.h, type: 'message', val: '' });
-        
-        var div = document.createElement('div');
-        div.className = 'selection-box';
-        div.id = `box-ui-${boxId}`;
-        div.style.left = (l.x * scX) + 'px';
-        div.style.top = (l.y * scY) + 'px';
-        div.style.width = (l.w * scX) + 'px';
-        div.style.height = (l.h * scY) + 'px';
-        div.innerHTML = `<div class="box-label">${i+1}</div><div class="box-delete-btn" onclick="event.stopPropagation(); window.removeRMBox('${boxId}')">✕</div>`;
-        canvas.appendChild(div);
-    });
-    window.renderRMInputs();
-};
-
-function initDrawEvents() {
-    var canvas = document.getElementById('rm-canvas');
-    var currentBox = null, startX, startY;
-
-    var getCoords = (e) => {
-        var rect = canvas.getBoundingClientRect();
-        var cX = e.touches ? e.touches[0].clientX : e.clientX;
-        var cY = e.touches ? e.touches[0].clientY : e.clientY;
-        return {
-            x: Math.max(0, Math.min(cX - rect.left, canvas.offsetWidth)),
-            y: Math.max(0, Math.min(cY - rect.top, canvas.offsetHeight))
-        };
-    };
-
-    var startDrawing = (e) => {
-        if (!rmV3Data.base64) return;
-        rmV3Data.isDrawing = true;
-        var coords = getCoords(e);
-        startX = coords.x; startY = coords.y;
-        currentBox = document.createElement('div');
-        currentBox.className = 'selection-box';
-        currentBox.style.left = startX + 'px';
-        currentBox.style.top = startY + 'px';
-        canvas.appendChild(currentBox);
-    };
-
-    var moveDrawing = (e) => {
-        if (!rmV3Data.isDrawing) return;
-        if (e.cancelable) e.preventDefault();
-        var coords = getCoords(e);
-        currentBox.style.width = Math.abs(coords.x - startX) + 'px';
-        currentBox.style.height = Math.abs(coords.y - startY) + 'px';
-        currentBox.style.left = Math.min(coords.x, startX) + 'px';
-        currentBox.style.top = Math.min(coords.y, startY) + 'px';
-    };
-
-    var stopDrawing = () => {
-        if (!rmV3Data.isDrawing) return;
-        rmV3Data.isDrawing = false;
-        var width = parseInt(currentBox.style.width) || 0;
-        var height = parseInt(currentBox.style.height) || 0;
-        if (width < 10 || height < 10) { currentBox.remove(); return; }
-
-        var boxId = "id_" + Date.now();
-        currentBox.id = `box-ui-${boxId}`;
-        var label = document.createElement('div'); label.className = 'box-label'; label.innerText = rmV3Data.boxes.length + 1;
-        currentBox.appendChild(label);
-        var delBtn = document.createElement('div'); delBtn.className = 'box-delete-btn'; delBtn.innerHTML = '✕';
-        delBtn.onclick = (e) => { e.stopPropagation(); window.removeRMBox(boxId); };
-        delBtn.ontouchend = (e) => { e.stopPropagation(); e.preventDefault(); window.removeRMBox(boxId); };
-        currentBox.appendChild(delBtn);
-
-        var scX = rmV3Data.finalW / canvas.offsetWidth;
-        var scY = rmV3Data.finalH / canvas.offsetHeight;
-        
-        rmV3Data.boxes.push({ 
-            id: boxId, 
-            x: Math.round(parseInt(currentBox.style.left)*scX), 
-            y: Math.round(parseInt(currentBox.style.top)*scY), 
-            w: Math.round(width*scX), 
-            h: Math.round(height*scY), 
-            type: 'message', val: '' 
-        });
-        window.renderRMInputs();
-    };
-
-    canvas.addEventListener('mousedown', startDrawing);
-    window.addEventListener('mousemove', moveDrawing);
-    window.addEventListener('mouseup', stopDrawing);
-    canvas.addEventListener('touchstart', startDrawing, { passive: false });
-    canvas.addEventListener('touchmove', moveDrawing, { passive: false });
-    canvas.addEventListener('touchend', stopDrawing);
-}
-
-window.syncBoxUI = function(id) {
-    var b = rmV3Data.boxes.find(x => x.id === id);
-    var canvas = document.getElementById('rm-canvas');
-    if(b && canvas) {
-        var scX = canvas.offsetWidth / rmV3Data.finalW;
-        var scY = canvas.offsetHeight / rmV3Data.finalH;
-        var div = document.getElementById(`box-ui-${id}`);
-        if(div) {
-            div.style.left = (b.x * scX) + 'px';
-            div.style.top = (b.y * scY) + 'px';
-            div.style.width = (b.w * scX) + 'px';
-            div.style.height = (b.h * scY) + 'px';
+    function adjustCanvasHeight() {
+        const canvas = document.getElementById('rm-canvas');
+        if (!canvas.style.width || canvas.style.width === '0px') {
+            // ถ้ายังไม่มีรูป ให้ตั้งค่า dummy width
+            const wrap = canvas.parentElement;
+            const maxW = Math.min(wrap.clientWidth - 24, 700);
+            canvas.style.width = maxW + 'px';
         }
-        window.updateJSONPreview();
+        const w = parseInt(canvas.style.width);
+        const ratio = rmDrawData.sizeMode === 'half' ? (843/2500) : (1686/2500);
+        canvas.style.height = (w * ratio) + 'px';
     }
-}
 
-window.renderRMInputs = function() {
-    var container = document.getElementById('rm-adv-inputs');
-    container.innerHTML = rmV3Data.boxes.map((b, i) => `
-        <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 shadow-sm mb-2">
-            <div class="flex gap-2 items-center mb-2">
-                <span class="font-black text-indigo-600 w-6 text-center text-lg">#${i + 1}</span>
-                <select onchange="window.updateRMBox('${b.id}', 'type', this.value)" class="bg-white rounded-lg p-2 border border-slate-300 text-xs font-bold text-slate-700 w-1/3">
-                    <option value="message" ${b.type === 'message' ? 'selected' : ''}>ส่งข้อความ</option>
-                    <option value="uri" ${b.type === 'uri' ? 'selected' : ''}>เปิดลิงก์ URL</option>
-                    <option value="postback" ${b.type === 'postback' ? 'selected' : ''}>Postback Data</option>
-                    <option value="richmenuswitch" ${b.type === 'richmenuswitch' ? 'selected' : ''}>สลับเมนู (Switch)</option>
-                </select>
-                <input type="text" placeholder="${b.type === 'richmenuswitch' ? 'ใส่ Alias ID ของเมนูเป้าหมาย' : 'ใส่ข้อมูล/ลิงก์...'}" value="${b.val}" onkeyup="window.updateRMBox('${b.id}', 'val', this.value)" class="flex-1 bg-white p-2 border border-slate-300 rounded-lg text-xs">
-                <button type="button" onclick="window.removeRMBox('${b.id}')" class="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-2 py-1 rounded border border-red-200"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
-            </div>
-            <div class="grid grid-cols-4 gap-2 pl-8">
-                <div class="flex items-center text-[10px] text-slate-500 bg-white border border-slate-200 rounded px-1"><span class="w-4">X:</span><input type="number" value="${b.x}" onchange="b.x=Number(this.value); syncBoxUI('${b.id}')" class="w-full bg-transparent border-0 p-1 text-center"></div>
-                <div class="flex items-center text-[10px] text-slate-500 bg-white border border-slate-200 rounded px-1"><span class="w-4">Y:</span><input type="number" value="${b.y}" onchange="b.y=Number(this.value); syncBoxUI('${b.id}')" class="w-full bg-transparent border-0 p-1 text-center"></div>
-                <div class="flex items-center text-[10px] text-slate-500 bg-white border border-slate-200 rounded px-1"><span class="w-4">W:</span><input type="number" value="${b.w}" onchange="b.w=Number(this.value); syncBoxUI('${b.id}')" class="w-full bg-transparent border-0 p-1 text-center"></div>
-                <div class="flex items-center text-[10px] text-slate-500 bg-white border border-slate-200 rounded px-1"><span class="w-4">H:</span><input type="number" value="${b.h}" onchange="b.h=Number(this.value); syncBoxUI('${b.id}')" class="w-full bg-transparent border-0 p-1 text-center"></div>
-            </div>
-        </div>
-    `).join('');
-    lucide.createIcons();
-    window.updateJSONPreview();
-};
-
-window.removeRMBox = function(id) {
-    rmV3Data.boxes = rmV3Data.boxes.filter(b => b.id != id);
-    var el = document.getElementById(`box-ui-${id}`);
-    if(el) el.remove();
-    document.getElementById('rm-canvas').querySelectorAll('.selection-box').forEach((box, index) => { box.querySelector('.box-label').innerText = index + 1; });
-    window.renderRMInputs();
-};
-
-window.clearAllRMBoxes = function() {
-    rmV3Data.boxes = [];
-    document.getElementById('rm-canvas').querySelectorAll('.selection-box').forEach(b => b.remove());
-    window.renderRMInputs();
-};
-
-window.updateRMBox = function(id, k, v) { 
-    var b = rmV3Data.boxes.find(x => x.id === id); 
-    if(b) b[k] = v; 
-    if(k === 'type') window.renderRMInputs(); else window.updateJSONPreview(); 
-};
-
-window.updateJSONPreview = function() {
-    var payload = {
-        size: { width: rmV3Data.finalW, height: rmV3Data.finalH },
-        name: document.getElementById('rm-adv-name')?.value || 'New Menu',
-        chatBarText: document.getElementById('rm-adv-chatbar')?.value || 'เมนู',
-        areas: rmV3Data.boxes.map(b => {
-            var act = {};
-            if (b.type === 'uri') act = { type: 'uri', uri: b.val || 'https://' };
-            else if (b.type === 'postback') act = { type: 'postback', data: b.val || 'action=none' };
-            else if (b.type === 'richmenuswitch') act = { type: 'richmenuswitch', richMenuAliasId: b.val || 'alias1', data: 'action=switch' };
-            else act = { type: 'message', text: b.val || 'Hello' };
-            return { bounds: { x: b.x, y: b.y, width: b.w, height: b.h }, action: act };
-        })
-    };
-    var pre = document.getElementById('rm-json-preview');
-    if(pre) pre.innerText = JSON.stringify(payload, null, 2);
-    return payload;
-};
-
-window.showPhonePreview = () => {
-    if(!rmV3Data.base64) return showToast('อัปโหลดรูปก่อนครับ', 'warning');
-    var previewDiv = document.createElement('div');
-    previewDiv.className = 'fixed inset-0 z-[9999] bg-slate-900/90 flex flex-col items-center justify-center p-4 backdrop-blur-md';
-    previewDiv.innerHTML = `
-        <div class="mb-4 flex justify-between w-full max-w-[300px]">
-            <span class="text-white font-bold">LINE Preview</span>
-            <button onclick="this.parentElement.parentElement.remove()" class="text-white hover:text-red-400"><i data-lucide="x"></i> ปิด</button>
-        </div>
-        <div class="phone-mockup flex flex-col bg-slate-100">
-            <div class="flex-1 bg-slate-200 flex items-center justify-center p-4 text-center text-slate-400">
-                <p class="text-xs font-bold opacity-50">พื้นที่แชท LINE<br>(Chat Area)</p>
-            </div>
-            <div class="w-full relative" style="aspect-ratio: ${rmV3Data.finalW}/${rmV3Data.finalH}; background-image: url(${rmV3Data.base64}); background-size: cover;">
-                ${rmV3Data.boxes.map((b, i) => `
-                    <div class="absolute border border-blue-500/50 bg-blue-500/20 flex items-center justify-center" 
-                         style="left: ${(b.x/rmV3Data.finalW)*100}%; top: ${(b.y/rmV3Data.finalH)*100}%; width: ${(b.w/rmV3Data.finalW)*100}%; height: ${(b.h/rmV3Data.finalH)*100}%;">
-                        <span class="bg-blue-600 text-white text-[10px] px-1 rounded-sm">${i+1}</span>
-                    </div>
-                `).join('')}
-            </div>
-            <div class="h-10 bg-slate-800 flex items-center justify-center text-white text-[11px] font-bold">
-                ${document.getElementById('rm-adv-chatbar').value || 'เมนู'} ▾
-            </div>
-        </div>
-    `;
-    document.body.appendChild(previewDiv);
-    lucide.createIcons();
-};
-
-window.saveAdvancedRichMenu = async function(btn) {
-    if (!rmV3Data.base64 || rmV3Data.boxes.length === 0) return showToast('กรุณาวาดปุ่ม/ใช้เทมเพลต อย่างน้อย 1 ช่อง', 'warning');
-    var payload = window.updateJSONPreview(); 
-    setBtnLoading(btn, true);
-    try {
-        var res = await fetch(`${API_BASE_URL}/api/admin/richmenus`, { 
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json' }, 
-            body: JSON.stringify({ ...payload, action: 'create', base64Image: rmV3Data.base64 }) 
+    function redrawAllBoxes() {
+        const canvas = document.getElementById('rm-canvas');
+        canvas.innerHTML = '';
+        rmDrawData.boxes.forEach((b, i) => {
+            const px = pctToPx(b);
+            const el = document.createElement('div');
+            el.className = 'rm-box' + (b.id === rmDrawData.selectedBoxId ? ' selected' : '');
+            el.id = 'rm-box-' + b.id;
+            el.style.left = px.x + 'px'; el.style.top = px.y + 'px';
+            el.style.width = px.w + 'px'; el.style.height = px.h + 'px';
+            el.dataset.id = b.id;
+            el.innerHTML = `
+                <div class="rm-box-label">${i+1}</div>
+                <div class="rm-box-del" data-del-id="${b.id}">✕</div>
+                <div class="rm-box-handle" data-resize-id="${b.id}"></div>
+            `;
+            canvas.appendChild(el);
         });
-        var data = await res.json();
-        if (data.success) { showToast('สร้าง Rich Menu สำเร็จ', 'success'); closeModal(); syncRichMenus(); } 
-        else throw new Error(data.error);
-    } catch (e) { showToast(e.message, 'error'); } 
-    finally { setBtnLoading(btn, false); }
-};
+        const cnt = document.getElementById('rm-count');
+        if (cnt) cnt.innerText = rmDrawData.boxes.length;
+        renderBoxEditor();
+    }
+
+    function initDrawEvents() {
+        const canvas = document.getElementById('rm-canvas');
+        let mode = null, startX, startY, activeBox = null, activeEl = null, origBox = null;
+
+        const getCoords = (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const cx = e.touches ? e.touches[0].clientX : e.clientX;
+            const cy = e.touches ? e.touches[0].clientY : e.clientY;
+            return { x: Math.max(0, Math.min(cx - rect.left, canvas.offsetWidth)),
+                     y: Math.max(0, Math.min(cy - rect.top, canvas.offsetHeight)) };
+        };
+
+        const onDown = (e) => {
+            if (!rmDrawData.base64) return;
+            const target = e.target;
+            const c = getCoords(e);
+
+            if (target.classList.contains('rm-box-del')) {
+                window.rmRemoveBox(target.dataset.delId);
+                return;
+            }
+            if (target.classList.contains('rm-box-handle')) {
+                const id = target.dataset.resizeId;
+                activeBox = rmDrawData.boxes.find(b => b.id === id);
+                if (!activeBox) return;
+                origBox = {...activeBox}; mode = 'resize'; startX = c.x; startY = c.y;
+                rmDrawData.selectedBoxId = id; redrawAllBoxes();
+                if (e.cancelable) e.preventDefault();
+                return;
+            }
+            if (target.classList.contains('rm-box') || target.parentElement?.classList.contains('rm-box')) {
+                const boxEl = target.classList.contains('rm-box') ? target : target.parentElement;
+                const id = boxEl.dataset.id;
+                activeBox = rmDrawData.boxes.find(b => b.id === id);
+                if (!activeBox) return;
+                origBox = {...activeBox}; mode = 'drag'; startX = c.x; startY = c.y;
+                rmDrawData.selectedBoxId = id; redrawAllBoxes();
+                if (e.cancelable) e.preventDefault();
+                return;
+            }
+            if (rmDrawData.boxes.length >= RM_MAX_AREAS) {
+                if (window.showToast) showToast(`สูงสุด ${RM_MAX_AREAS} ปุ่มเท่านั้น (LINE limit)`, 'warning');
+                return;
+            }
+            mode = 'draw'; startX = c.x; startY = c.y;
+            activeEl = document.createElement('div');
+            activeEl.className = 'rm-box selected';
+            activeEl.style.left = startX + 'px'; activeEl.style.top = startY + 'px';
+            canvas.appendChild(activeEl);
+        };
+
+        const onMove = (e) => {
+            if (!mode) return;
+            if (e.cancelable) e.preventDefault();
+            const c = getCoords(e);
+            if (mode === 'draw' && activeEl) {
+                activeEl.style.width = Math.abs(c.x - startX) + 'px';
+                activeEl.style.height = Math.abs(c.y - startY) + 'px';
+                activeEl.style.left = Math.min(c.x, startX) + 'px';
+                activeEl.style.top = Math.min(c.y, startY) + 'px';
+            } else if (mode === 'drag' && activeBox) {
+                const dx = c.x - startX, dy = c.y - startY;
+                const newPxX = Math.max(0, Math.min(canvas.offsetWidth - origBox.w * canvas.offsetWidth/100, origBox.x * canvas.offsetWidth/100 + dx));
+                const newPxY = Math.max(0, Math.min(canvas.offsetHeight - origBox.h * canvas.offsetHeight/100, origBox.y * canvas.offsetHeight/100 + dy));
+                activeBox.x = snap(newPxX / canvas.offsetWidth * 100);
+                activeBox.y = snap(newPxY / canvas.offsetHeight * 100);
+                redrawAllBoxes();
+            } else if (mode === 'resize' && activeBox) {
+                const dw = (c.x - startX) / canvas.offsetWidth * 100;
+                const dh = (c.y - startY) / canvas.offsetHeight * 100;
+                activeBox.w = snap(Math.max(5, Math.min(100 - activeBox.x, origBox.w + dw)));
+                activeBox.h = snap(Math.max(5, Math.min(100 - activeBox.y, origBox.h + dh)));
+                redrawAllBoxes();
+            }
+        };
+
+        const onUp = () => {
+            if (!mode) return;
+            if (mode === 'draw' && activeEl) {
+                const w = parseInt(activeEl.style.width) || 0;
+                const h = parseInt(activeEl.style.height) || 0;
+                const x = parseInt(activeEl.style.left) || 0;
+                const y = parseInt(activeEl.style.top) || 0;
+                if (w >= 20 && h >= 20) {
+                    const pct = { x: x/canvas.offsetWidth*100, y: y/canvas.offsetHeight*100,
+                                  w: w/canvas.offsetWidth*100, h: h/canvas.offsetHeight*100 };
+                    const box = {
+                        id: 'box_' + Date.now() + '_' + Math.random().toString(36).slice(2,5),
+                        x: snap(pct.x), y: snap(pct.y), w: snap(pct.w), h: snap(pct.h),
+                        type: 'message', val: '', label: ''
+                    };
+                    rmDrawData.boxes.push(box);
+                    rmDrawData.selectedBoxId = box.id;
+                }
+                activeEl.remove(); redrawAllBoxes();
+            }
+            mode = null; activeBox = null; activeEl = null; origBox = null;
+            updatePhonePreview(); updateJSONPreview();
+        };
+
+        canvas.addEventListener('mousedown', onDown);
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        canvas.addEventListener('touchstart', onDown, { passive: false });
+        canvas.addEventListener('touchmove', onMove, { passive: false });
+        canvas.addEventListener('touchend', onUp);
+    }
+
+    function renderBoxEditor() {
+        const wrap = document.getElementById('rm-box-editor');
+        if (!wrap) return;
+        if (rmDrawData.boxes.length === 0) {
+            wrap.innerHTML = '<div class="text-[11px] text-slate-400 text-center py-3 bg-slate-50 rounded-lg">วาดบนรูปหรือเลือก Template เพื่อสร้างปุ่ม</div>';
+            return;
+        }
+        wrap.innerHTML = rmDrawData.boxes.map((b, i) => `
+            <div class="bg-white border ${b.id === rmDrawData.selectedBoxId ? 'border-indigo-400 ring-2 ring-indigo-200' : 'border-slate-200'} rounded-xl p-2.5">
+                <div class="flex items-center gap-2 text-xs">
+                    <span class="font-bold text-indigo-600 w-6 h-6 rounded-full bg-indigo-100 inline-flex items-center justify-center">${i+1}</span>
+                    <select onchange="window.rmUpdateBoxField('${b.id}', 'type', this.value)" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                        <option value="message" ${b.type==='message'?'selected':''}>💬 ส่งข้อความ</option>
+                        <option value="postback" ${b.type==='postback'?'selected':''}>⚡ Postback</option>
+                        <option value="uri" ${b.type==='uri'?'selected':''}>🔗 เปิดลิงก์</option>
+                        <option value="richmenuswitch" ${b.type==='richmenuswitch'?'selected':''}>🔀 สลับเมนู</option>
+                    </select>
+                    <input type="text" placeholder="${
+                        b.type==='message'?'ข้อความที่ส่ง':
+                        b.type==='postback'?'data=action_xxx':
+                        b.type==='uri'?'https://...':
+                        'rich-menu-alias-id'
+                    }" value="${(b.val||'').replace(/"/g,'&quot;')}" oninput="window.rmUpdateBoxField('${b.id}', 'val', this.value)" class="flex-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-mono">
+                    ${b.type === 'richmenuswitch' ? `<input type="text" placeholder="label" value="${(b.label||'').replace(/"/g,'&quot;')}" oninput="window.rmUpdateBoxField('${b.id}', 'label', this.value)" class="w-20 rounded-lg border border-slate-200 px-2 py-1 text-xs">` : ''}
+                    <button onclick="window.rmRemoveBox('${b.id}')" class="text-rose-500 hover:bg-rose-50 px-1.5 py-1 rounded text-xs"><i class="fas fa-trash"></i></button>
+                </div>
+                <div class="text-[10px] text-slate-400 mt-1 font-mono">x:${b.x.toFixed(1)}% y:${b.y.toFixed(1)}% w:${b.w.toFixed(1)}% h:${b.h.toFixed(1)}%</div>
+            </div>
+        `).join('');
+    }
+
+    window.rmUpdateBoxField = function(id, field, value) {
+        const b = rmDrawData.boxes.find(x => x.id === id);
+        if (!b) return;
+        b[field] = value;
+        if (field === 'type') renderBoxEditor();
+        updateJSONPreview();
+    };
+
+    window.rmRemoveBox = function(id) {
+        rmDrawData.boxes = rmDrawData.boxes.filter(b => b.id !== id);
+        if (rmDrawData.selectedBoxId === id) rmDrawData.selectedBoxId = null;
+        redrawAllBoxes(); updatePhonePreview(); updateJSONPreview();
+    };
+
+    window.rmClearAll = function() {
+        rmDrawData.boxes = []; rmDrawData.selectedBoxId = null;
+        redrawAllBoxes(); updatePhonePreview(); updateJSONPreview();
+    };
+
+    function updatePhonePreview() {
+        const wrap = document.getElementById('rm-preview-rm');
+        if (!wrap) return;
+        wrap.className = 'rm-phone-rm' + (rmDrawData.sizeMode === 'half' ? ' half' : '');
+        wrap.style.position = 'relative';
+        wrap.style.backgroundImage = rmDrawData.base64 ? `url(${rmDrawData.base64})` : 'none';
+        wrap.style.backgroundSize = '100% 100%';
+        wrap.innerHTML = rmDrawData.boxes.map((b, i) => `
+            <div style="position:absolute;left:${b.x}%;top:${b.y}%;width:${b.w}%;height:${b.h}%;background:rgba(99,102,241,0.3);border:1px solid #6366f1;display:flex;align-items:center;justify-content:center;color:white;font-size:8px;font-weight:bold;">${i+1}</div>
+        `).join('');
+    }
+
+    function updateJSONPreview() {
+        const payload = buildPayload();
+        const el = document.getElementById('rm-json-preview');
+        if (el) el.innerText = JSON.stringify(payload, null, 2);
+    }
+
+    function buildPayload() {
+        const sizeH = targetH();
+        return {
+            size: { width: 2500, height: sizeH },
+            name: document.getElementById('rm-adv-name')?.value?.trim() || 'New Menu',
+            chatBarText: (document.getElementById('rm-adv-chatbar')?.value?.trim() || 'เมนู').slice(0, 14),
+            selected: !!document.getElementById('rm-set-default')?.checked,
+            areas: rmDrawData.boxes.map(b => {
+                const bounds = {
+                    x: Math.round(b.x/100*2500),
+                    y: Math.round(b.y/100*sizeH),
+                    width: Math.round(b.w/100*2500),
+                    height: Math.round(b.h/100*sizeH)
+                };
+                let action;
+                if (b.type === 'uri')                  action = { type: 'uri', uri: b.val || 'https://' };
+                else if (b.type === 'postback')        action = { type: 'postback', data: b.val || 'action=none' };
+                else if (b.type === 'richmenuswitch')  action = { type: 'richmenuswitch', richMenuAliasId: b.val || 'alias-id', data: 'switch=' + (b.label || 'tab') };
+                else                                   action = { type: 'message', text: b.val || 'Hello' };
+                return { bounds, action };
+            })
+        };
+    }
+
+    window.saveAdvancedRichMenu = async function(btn) {
+        if (!rmDrawData.base64) { if (window.showToast) showToast('กรุณาอัปโหลดรูปก่อน', 'warning'); return; }
+        if (rmDrawData.boxes.length === 0) { if (window.showToast) showToast('กรุณาวาดอย่างน้อย 1 ปุ่ม', 'warning'); return; }
+        if (rmDrawData.boxes.length > RM_MAX_AREAS) { if (window.showToast) showToast(`เกิน ${RM_MAX_AREAS} ปุ่ม`, 'error'); return; }
+
+        const payload = buildPayload();
+        if (window.setBtnLoading) setBtnLoading(btn, true);
+        try {
+            const res = await fetch(`${API_BASE_URL}/api/admin/richmenus`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'create',
+                    name: payload.name,
+                    chatBarText: payload.chatBarText,
+                    size: payload.size,
+                    selected: payload.selected,
+                    areas: payload.areas,
+                    base64Image: rmDrawData.base64
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                if (window.showToast) showToast('สร้าง Rich Menu สำเร็จ!', 'success');
+                closeModal();
+                if (typeof syncRichMenus === 'function') syncRichMenus();
+            } else {
+                throw new Error(data.error || 'สร้างไม่สำเร็จ');
+            }
+        } catch (e) {
+            if (window.showToast) showToast(e.message, 'error');
+        } finally {
+            if (window.setBtnLoading) setBtnLoading(btn, false);
+        }
+    };
+})();
 // ============================================================================
 // ============================================================================
   </script>
