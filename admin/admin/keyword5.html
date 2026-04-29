@@ -530,6 +530,8 @@
                             <button onclick="loadView('crmNews');" id="nav-crmNews" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="megaphone" class="w-5 h-5 text-amber-500"></i> <span>ข่าว / โปรโมชั่น</span></button>
                             <button onclick="loadView('crmVerify');" id="nav-crmVerify" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="scan-line" class="w-5 h-5 text-violet-500"></i> <span>Scan คูปอง</span></button>
                             <button onclick="loadView('crmMaintenance');" id="nav-crmMaintenance" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="alert-triangle" class="w-5 h-5 text-orange-500"></i> <span>แจ้งเตือนค่าส่วนกลาง</span></button>
+                            <button onclick="loadView('crmAwardFee');" id="nav-crmAwardFee" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="coins" class="w-5 h-5 text-emerald-500"></i> <span>ให้แต้ม จ่ายตรงเวลา</span></button>
+                            <button onclick="loadView('crmAwardEvent');" id="nav-crmAwardEvent" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="party-popper" class="w-5 h-5 text-pink-500"></i> <span>ให้แต้ม กิจกรรม</span></button>
                             <button onclick="loadView('leaderboard');" id="nav-leaderboard" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="trophy" class="w-5 h-5 text-amber-500"></i> <span>Leaderboard</span></button>
                             <button onclick="loadView('agm');" id="nav-agm" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="vote" class="w-5 h-5 text-rose-500"></i> <span>AGM Voting</span></button>
 
@@ -620,6 +622,8 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'crmNews')    await renderCrmNewsView();
             else if (viewName === 'crmVerify')  await renderCrmVerifyView();
             else if (viewName === 'crmMaintenance') await renderCrmMaintenanceView();
+            else if (viewName === 'crmAwardFee') await renderCrmAwardFeeView();
+            else if (viewName === 'crmAwardEvent') await renderCrmAwardEventView();
             else if (viewName === 'leaderboard') await renderLeaderboardAdminView();
             else if (viewName === 'agm') await renderAgmAdminView();
             else if (viewName === 'kanban') await renderKanbanView();
@@ -6969,6 +6973,406 @@ async function updateAllUserProfiles() {
                 manageAgmEvent(eventId);
             });
         }
+
+   // ============================================================================
+// 💰 ให้แต้มอัตโนมัติ — Award Points System (B + C)
+// ============================================================================
+
+// ─── (B) ให้แต้มจากการจ่ายค่าส่วนกลาง ─────────────────────────────
+async function renderCrmAwardFeeView() {
+    const now = new Date();
+    const curMonth = TH_MONTHS[now.getMonth()].col;
+    const curYearTH = now.getFullYear() + 543;
+
+    const { data: yearsData } = await supabaseClient
+        .from('house_payments').select('year').order('year', { ascending: false });
+    const uniqueYears = [...new Set((yearsData || []).map(r => r.year))].filter(Boolean);
+    if (uniqueYears.length === 0) uniqueYears.push(curYearTH);
+
+    document.getElementById('content-area').innerHTML = `
+        <div class="slide-in p-2">
+            <div class="mb-6">
+                <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">
+                    <span class="bg-emerald-100 text-emerald-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="coins" class="w-8 h-8"></i></span>
+                    ให้แต้มสมาชิกจ่ายค่าส่วนกลางตรงเวลา
+                </h1>
+                <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">ระบบจะตรวจตารางการจ่ายเดือนที่เลือก แล้วให้แต้มสมาชิกที่บ้านนั้นจ่ายแล้ว · กันการให้ซ้ำอัตโนมัติ</p>
+            </div>
+
+            <div class="glass rounded-3xl p-5 shadow-sm mb-5">
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-600 mb-1.5">เดือน</label>
+                        <select id="aw-month" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                            ${TH_MONTHS.map(m => `<option value="${m.col}" ${m.col === curMonth ? 'selected' : ''}>${m.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-600 mb-1.5">ปี (พ.ศ.)</label>
+                        <select id="aw-year" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                            ${uniqueYears.map(y => `<option value="${y}" ${y === curYearTH ? 'selected' : ''}>${y}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-emerald-600 mb-1.5">แต้มจ่ายตรงเวลา</label>
+                        <input id="aw-pts-ontime" type="number" min="0" value="100" class="w-full rounded-2xl border border-emerald-200 px-3 py-2.5 text-sm bg-emerald-50 font-bold">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-amber-600 mb-1.5">แต้มล่วงหน้า</label>
+                        <input id="aw-pts-early" type="number" min="0" value="150" class="w-full rounded-2xl border border-amber-200 px-3 py-2.5 text-sm bg-amber-50 font-bold">
+                    </div>
+                    <div class="flex items-end">
+                        <button onclick="checkPaidMembers()" id="aw-check-btn" class="w-full px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold shadow-lg shadow-emerald-200 flex items-center justify-center gap-2">
+                            <i data-lucide="search" class="w-4 h-4"></i> ตรวจสอบ
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="aw-result"></div>
+        </div>`;
+    lucide.createIcons();
+}
+
+async function checkPaidMembers() {
+    const btn = document.getElementById('aw-check-btn');
+    const month = document.getElementById('aw-month').value;
+    const year = document.getElementById('aw-year').value;
+    const monthLabel = TH_MONTHS.find(m => m.col === month)?.label || month;
+    const result = document.getElementById('aw-result');
+
+    setBtnLoading(btn, true);
+    result.innerHTML = `<div class="glass rounded-3xl p-8 text-center text-slate-400">กำลังตรวจสอบ...</div>`;
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/maintenance_paid?month=${month}&year=${year}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'ตรวจสอบล้มเหลว');
+
+        window._awItems = data.items || [];
+        if (data.total === 0) {
+            result.innerHTML = `<div class="glass rounded-3xl p-12 text-center"><div class="text-6xl mb-3">📭</div>
+                <h3 class="text-xl font-bold text-slate-600 mb-2">ยังไม่มีบ้านที่จ่ายแล้ว</h3>
+                <p class="text-slate-500 text-sm">${monthLabel} ${year} ยังไม่พบรายการที่จ่ายแล้ว/ล่วงหน้า</p></div>`;
+            return;
+        }
+        renderPaidList(data, monthLabel, year);
+    } catch (e) {
+        result.innerHTML = `<div class="glass rounded-3xl p-6 text-rose-600 text-center">${e.message}</div>`;
+    } finally { setBtnLoading(btn, false); }
+}
+
+function renderPaidList(data, monthLabel, year) {
+    const result = document.getElementById('aw-result');
+    const eligibleUsers = data.items.flatMap(i => (i.registered_users || []).filter(u => !u.already_awarded));
+    const alreadyAwardedCount = data.items.flatMap(i => (i.registered_users || []).filter(u => u.already_awarded)).length;
+
+    result.innerHTML = `
+        <div class="grid grid-cols-4 gap-3 mb-5">
+            <div class="bg-gradient-to-br from-emerald-400 to-green-500 rounded-3xl p-5 text-white shadow-lg">
+                <div class="text-3xl mb-1">✅</div>
+                <div class="text-xs opacity-90 font-bold">บ้านจ่ายแล้ว</div>
+                <div class="text-3xl font-extrabold mt-1">${data.total}</div>
+            </div>
+            <div class="bg-gradient-to-br from-blue-400 to-indigo-500 rounded-3xl p-5 text-white shadow-lg">
+                <div class="text-3xl mb-1">👥</div>
+                <div class="text-xs opacity-90 font-bold">มี LINE ลงทะเบียน</div>
+                <div class="text-3xl font-extrabold mt-1">${data.matched}</div>
+            </div>
+            <div class="bg-gradient-to-br from-amber-400 to-orange-500 rounded-3xl p-5 text-white shadow-lg">
+                <div class="text-3xl mb-1">🎁</div>
+                <div class="text-xs opacity-90 font-bold">รอให้แต้ม</div>
+                <div class="text-3xl font-extrabold mt-1">${eligibleUsers.length}</div>
+            </div>
+            <div class="bg-gradient-to-br from-slate-400 to-slate-600 rounded-3xl p-5 text-white shadow-lg">
+                <div class="text-3xl mb-1">✓</div>
+                <div class="text-xs opacity-90 font-bold">ให้ไปแล้ว</div>
+                <div class="text-3xl font-extrabold mt-1">${alreadyAwardedCount}</div>
+            </div>
+        </div>
+
+        <div class="glass rounded-3xl p-5 shadow-sm mb-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+            <div>
+                <div class="font-bold text-slate-800">งวด ${escapeHtml(monthLabel)} ${escapeHtml(year)}</div>
+                <div class="text-xs text-slate-500 mt-0.5">เลือกบ้านที่จะให้แต้ม · ระบบจะข้ามคนที่ได้แต้มงวดนี้แล้วโดยอัตโนมัติ</div>
+            </div>
+            <div class="flex gap-2 w-full md:w-auto">
+                <button onclick="awToggleAll()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-bold flex items-center gap-2"><i data-lucide="check-square" class="w-4 h-4"></i> เลือกทั้งหมด</button>
+                <button onclick="sendAwardPoints('${escapeHtml(monthLabel)}', '${escapeHtml(year)}')" id="aw-send-btn" class="flex-1 md:flex-initial px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-200">
+                    <i data-lucide="coins" class="w-4 h-4"></i> ให้แต้ม
+                </button>
+            </div>
+        </div>
+
+        <div class="glass rounded-3xl overflow-hidden shadow-sm">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-slate-50 text-slate-600">
+                        <tr>
+                            <th class="p-3 w-12 text-center"><input type="checkbox" id="aw-select-all" onchange="awToggleAll()" class="w-4 h-4 accent-emerald-500"></th>
+                            <th class="text-left p-3 font-bold">บ้านเลขที่</th>
+                            <th class="text-left p-3 font-bold">ซอย</th>
+                            <th class="text-left p-3 font-bold">เจ้าของ</th>
+                            <th class="text-center p-3 font-bold">สถานะ</th>
+                            <th class="text-left p-3 font-bold">สมาชิก LINE</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.items.map((item, idx) => {
+                            const eligibleCount = (item.registered_users || []).filter(u => !u.already_awarded).length;
+                            const allDone = item.has_user && item.all_awarded;
+                            const stColor = item.status === 'ล่วงหน้า' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700';
+                            return `<tr class="border-t border-slate-100 hover:bg-white/50 ${allDone ? 'opacity-50' : ''}">
+                                <td class="p-3 text-center">
+                                    ${eligibleCount > 0 ? `<input type="checkbox" class="aw-row-check w-4 h-4 accent-emerald-500" data-idx="${idx}" checked>` : '<span class="text-slate-300">—</span>'}
+                                </td>
+                                <td class="p-3 font-bold text-slate-800">${escapeHtml(item.house_no)}</td>
+                                <td class="p-3 text-slate-600">${escapeHtml(item.soi || '—')}</td>
+                                <td class="p-3 text-slate-600 max-w-xs truncate">${escapeHtml(item.owner_name || '—')}</td>
+                                <td class="p-3 text-center"><span class="text-[10px] font-bold ${stColor} px-2 py-0.5 rounded-md">${escapeHtml(item.status)}</span></td>
+                                <td class="p-3 text-xs">
+                                    ${(item.registered_users || []).length === 0
+                                        ? '<span class="text-slate-300">— ไม่มี LINE</span>'
+                                        : item.registered_users.map(u =>
+                                            `<div class="flex items-center gap-1.5 mb-0.5">
+                                                <span class="${u.already_awarded ? 'text-slate-400 line-through' : 'text-slate-700 font-medium'}">${escapeHtml(u.fullname || u.line_name || u.uid?.slice(-6))}</span>
+                                                ${u.already_awarded ? '<span class="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-md font-bold">ได้แล้ว</span>' : '<span class="text-[9px] bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded-md font-bold">รอ</span>'}
+                                            </div>`
+                                        ).join('')}
+                                </td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+    lucide.createIcons();
+}
+
+function awToggleAll() {
+    const all = document.getElementById('aw-select-all');
+    const rows = document.querySelectorAll('.aw-row-check');
+    const target = all.checked || ![...rows].every(r => r.checked);
+    rows.forEach(r => r.checked = target);
+    if (all) all.checked = target;
+}
+
+async function sendAwardPoints(monthLabel, year) {
+    const btn = document.getElementById('aw-send-btn');
+    const checkedIdx = [...document.querySelectorAll('.aw-row-check:checked')].map(c => parseInt(c.dataset.idx));
+    if (checkedIdx.length === 0) return showToast('กรุณาเลือกบ้านที่จะให้แต้ม', 'warning');
+
+    const items = checkedIdx.map(i => window._awItems[i]);
+    const pointsOnTime = parseInt(document.getElementById('aw-pts-ontime').value) || 100;
+    const pointsEarly  = parseInt(document.getElementById('aw-pts-early').value) || 150;
+    const eligibleCount = items.flatMap(i => i.registered_users.filter(u => !u.already_awarded)).length;
+
+    showConfirmModal(
+        `ยืนยันให้แต้ม?`,
+        `จะให้แต้ม <b>${eligibleCount}</b> สมาชิก จาก ${items.length} บ้าน · ${monthLabel} ${year}<br><br>
+         จ่ายตรงเวลา = <b class="text-emerald-600">+${pointsOnTime}</b> · ล่วงหน้า = <b class="text-amber-600">+${pointsEarly}</b>`,
+        async () => {
+            setBtnLoading(btn, true);
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/maintenance_award`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items, monthLabel, year, pointsOnTime, pointsEarly })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ล้มเหลว');
+                showToast(d.message, 'success');
+                checkPaidMembers();
+            } catch (e) { showToast(e.message, 'error'); }
+            finally { setBtnLoading(btn, false); }
+        }
+    );
+}
+
+// ─── (C) ให้แต้มจากการเข้าร่วมกิจกรรม ─────────────────────────────
+async function renderCrmAwardEventView() {
+    document.getElementById('content-area').innerHTML = `
+        <div class="slide-in p-2">
+            <div class="mb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+                <div>
+                    <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">
+                        <span class="bg-pink-100 text-pink-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="party-popper" class="w-8 h-8"></i></span>
+                        ให้แต้มจากกิจกรรม
+                    </h1>
+                    <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">ประชุม · จิตอาสา · กิจกรรมชุมชน · ฯลฯ — เลือกสมาชิกที่เข้าร่วม + ให้แต้มทีเดียว</p>
+                </div>
+                <button onclick="openAwardEventModal()" class="px-5 py-2.5 bg-pink-500 hover:bg-pink-600 text-white rounded-2xl font-bold shadow-lg shadow-pink-200 flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i> ให้แต้มกิจกรรมใหม่</button>
+            </div>
+
+            <h2 class="font-bold text-slate-700 mb-3">📋 ประวัติกิจกรรมที่เคยให้แต้ม</h2>
+            <div id="event-history" class="space-y-2">
+                <div class="glass rounded-3xl p-8 text-center text-slate-400">กำลังโหลด...</div>
+            </div>
+        </div>`;
+    lucide.createIcons();
+    loadEventHistory();
+}
+
+async function loadEventHistory() {
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/event_history`);
+        const { data } = await res.json();
+        const wrap = document.getElementById('event-history');
+        if (!data || data.length === 0) {
+            wrap.innerHTML = `<div class="glass rounded-3xl p-12 text-center text-slate-400">
+                <div class="text-6xl mb-3">🎉</div>
+                <p class="font-bold">ยังไม่มีประวัติกิจกรรม</p>
+                <p class="text-xs mt-1">กดปุ่ม "ให้แต้มกิจกรรมใหม่" เพื่อเริ่มต้น</p>
+            </div>`;
+            return;
+        }
+        wrap.innerHTML = data.map(e => `
+            <div class="glass rounded-2xl p-4 flex items-center gap-4 hover:shadow-md transition-all">
+                <div class="w-12 h-12 rounded-xl bg-pink-100 text-pink-600 flex items-center justify-center text-2xl flex-shrink-0">🎉</div>
+                <div class="flex-1 min-w-0">
+                    <div class="font-bold text-slate-800 truncate">${escapeHtml(e.reason)}</div>
+                    <div class="text-[11px] text-slate-400 font-mono mt-0.5">${escapeHtml(e.reference_id)}</div>
+                </div>
+                <div class="text-right">
+                    <div class="text-2xl font-extrabold text-pink-600">+${e.points_each}</div>
+                    <div class="text-[10px] text-slate-500 font-bold">${e.count} คน · ${new Date(e.last_at).toLocaleDateString('th-TH')}</div>
+                </div>
+            </div>
+        `).join('');
+    } catch (e) {
+        document.getElementById('event-history').innerHTML = `<div class="glass rounded-3xl p-6 text-rose-600 text-center">${e.message}</div>`;
+    }
+}
+
+async function openAwardEventModal() {
+    // ดึงสมาชิกทั้งหมด
+    const { data: members } = await supabaseClient
+        .from('user_profiles')
+        .select('userId, displayName, first_name, last_name, house_no, points')
+        .order('displayName');
+
+    document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="party-popper" class="w-6 h-6 text-pink-500"></i> ให้แต้มจากกิจกรรม</div>';
+    document.getElementById('modal-content').innerHTML = `
+        <div class="space-y-4">
+            <!-- Event info -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-bold text-slate-700 mb-1.5">ชื่อกิจกรรม *</label>
+                    <input id="ev-name" type="text" placeholder="เช่น ประชุมประจำเดือน, จิตอาสาทำความสะอาด, สงกรานต์ 2569" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-pink-400 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-1.5">วันที่จัด *</label>
+                    <input id="ev-date" type="date" value="${new Date().toISOString().slice(0,10)}" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-1.5">แต้มต่อคน *</label>
+                    <input id="ev-points" type="number" min="1" value="50" class="w-full rounded-2xl border border-pink-200 px-3 py-2.5 text-sm bg-pink-50 font-bold text-pink-600">
+                </div>
+            </div>
+
+            <!-- Quick presets -->
+            <div class="flex flex-wrap gap-2">
+                <span class="text-xs font-bold text-slate-500 self-center">ตัวอย่าง:</span>
+                <button onclick="evPreset('ประชุมประจำเดือน', 200)" class="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg font-bold hover:bg-blue-100">📋 ประชุม +200</button>
+                <button onclick="evPreset('จิตอาสาพัฒนาหมู่บ้าน', 100)" class="text-xs px-3 py-1.5 bg-green-50 text-green-600 rounded-lg font-bold hover:bg-green-100">🌳 จิตอาสา +100</button>
+                <button onclick="evPreset('กิจกรรมประเพณี', 50)" class="text-xs px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg font-bold hover:bg-amber-100">🎉 กิจกรรม +50</button>
+                <button onclick="evPreset('AGM ประจำปี', 200)" class="text-xs px-3 py-1.5 bg-purple-50 text-purple-600 rounded-lg font-bold hover:bg-purple-100">🗳️ AGM +200</button>
+                <button onclick="evPreset('แจ้งข้อมูล/ปัญหา', 30)" class="text-xs px-3 py-1.5 bg-slate-50 text-slate-600 rounded-lg font-bold hover:bg-slate-100">📢 รายงาน +30</button>
+            </div>
+
+            <!-- Member selector -->
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <label class="text-sm font-bold text-slate-700">เลือกสมาชิกที่เข้าร่วม <span class="text-pink-600" id="ev-count">(0 คน)</span></label>
+                    <div class="flex gap-2">
+                        <button onclick="evSelectAll(true)" class="text-xs text-pink-600 font-bold">เลือกทั้งหมด</button>
+                        <button onclick="evSelectAll(false)" class="text-xs text-slate-500 font-bold">ล้าง</button>
+                    </div>
+                </div>
+                <input id="ev-search" oninput="evFilterMembers()" type="text" placeholder="ค้นหาชื่อหรือบ้านเลขที่..." class="w-full rounded-2xl border border-slate-200 px-4 py-2.5 text-sm mb-2">
+                <div id="ev-member-list" class="max-h-72 overflow-y-auto border border-slate-200 rounded-2xl bg-white p-1 space-y-1">
+                    ${(members || []).map(m => `
+                        <label class="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-pink-50 cursor-pointer ev-member-row" data-name="${escapeHtml((m.displayName||'') + ' ' + (m.first_name||'') + ' ' + (m.last_name||'') + ' ' + (m.house_no||''))}">
+                            <input type="checkbox" class="ev-member w-4 h-4 accent-pink-500" data-uid="${m.userId}" onchange="evUpdateCount()">
+                            <div class="flex-1 min-w-0">
+                                <div class="text-sm font-bold text-slate-800 truncate">${escapeHtml(m.first_name ? `${m.first_name} ${m.last_name||''}`.trim() : m.displayName || '—')}</div>
+                                <div class="text-[10px] text-slate-400 font-mono truncate">${m.house_no ? '🏠 ' + escapeHtml(m.house_no) + ' · ' : ''}${(m.userId || '').slice(-12)}</div>
+                            </div>
+                            <span class="text-[10px] text-slate-400 font-bold">${(m.points || 0).toLocaleString()} แต้ม</span>
+                        </label>
+                    `).join('') || '<div class="text-center py-8 text-slate-400 text-sm">ยังไม่มีสมาชิก</div>'}
+                </div>
+            </div>
+
+            <div class="flex gap-3 pt-4 border-t border-slate-100">
+                <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">ยกเลิก</button>
+                <button onclick="submitEventAward()" id="ev-save-btn" class="flex-1 py-3 bg-pink-500 hover:bg-pink-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="coins" class="w-4 h-4"></i> ให้แต้ม</button>
+            </div>
+        </div>`;
+    openModal();
+    lucide.createIcons();
+}
+
+function evPreset(name, points) {
+    document.getElementById('ev-name').value = name;
+    document.getElementById('ev-points').value = points;
+}
+
+function evSelectAll(checked) {
+    document.querySelectorAll('.ev-member').forEach(c => {
+        if (c.closest('.ev-member-row').style.display !== 'none') c.checked = checked;
+    });
+    evUpdateCount();
+}
+
+function evUpdateCount() {
+    const n = document.querySelectorAll('.ev-member:checked').length;
+    document.getElementById('ev-count').innerText = `(${n} คน)`;
+}
+
+function evFilterMembers() {
+    const q = document.getElementById('ev-search').value.toLowerCase();
+    document.querySelectorAll('.ev-member-row').forEach(row => {
+        const name = (row.dataset.name || '').toLowerCase();
+        row.style.display = name.includes(q) ? '' : 'none';
+    });
+}
+
+async function submitEventAward() {
+    const btn = document.getElementById('ev-save-btn');
+    const eventName = document.getElementById('ev-name').value.trim();
+    const eventDate = document.getElementById('ev-date').value;
+    const points = parseInt(document.getElementById('ev-points').value);
+    if (!eventName) return showToast('กรุณากรอกชื่อกิจกรรม', 'warning');
+    if (!points || points <= 0) return showToast('กรุณากรอกจำนวนแต้ม', 'warning');
+
+    const userIds = [...document.querySelectorAll('.ev-member:checked')].map(c => c.dataset.uid);
+    if (userIds.length === 0) return showToast('กรุณาเลือกสมาชิกที่เข้าร่วม', 'warning');
+
+    showConfirmModal(
+        'ยืนยันให้แต้ม?',
+        `<b>${escapeHtml(eventName)}</b> · ${eventDate}<br>
+         ให้แต้ม <b class="text-pink-600">+${points}</b> ต่อคน × <b>${userIds.length}</b> คน
+         <br><br>รวม <b class="text-pink-600">${(points * userIds.length).toLocaleString()}</b> แต้ม`,
+        async () => {
+            setBtnLoading(btn, true);
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/event_award`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        eventName, eventDate, points, userIds,
+                        eventCode: `${eventDate}-${eventName.replace(/\s+/g,'-').slice(0,30)}`
+                    })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ล้มเหลว');
+                showToast(d.message, 'success');
+                closeModal();
+                loadEventHistory();
+            } catch (e) { showToast(e.message, 'error'); }
+            finally { setBtnLoading(btn, false); }
+        }
+    );
+}
 
    // ============================================================================
 // 🎨 Rich Menu Builder PRO v3 — Snap Grid + Templates + Edit + Multi-action + Phone Preview
