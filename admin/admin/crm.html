@@ -125,7 +125,7 @@
                             <div class="font-bold text-slate-800">{{ memberData?.first_name || userProfile?.displayName }}</div>
                         </div>
                     </div>
-                    <button @click="currentTab = 'profile'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-400 hover:text-line transition-colors">
+                    <button @click="showSettings = true" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-400 hover:text-line transition-colors">
                         <i class="fa-solid fa-gear"></i>
                     </button>
                 </div>
@@ -208,6 +208,11 @@
                         <div class="w-12 h-12 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center text-lg"><i class="fa-solid fa-house-chimney"></i></div>
                         <span class="text-xs font-bold text-slate-700">ค่าส่วนกลาง</span>
                         <span v-if="paymentStreak.streak >= 3" class="absolute top-2 right-2 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[9px] font-bold">🔥{{ paymentStreak.streak }}</span>
+                    </button>
+                    <button @click="openKeyCard" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 relative col-span-3">
+                        <div class="w-12 h-12 rounded-full bg-cyan-100 text-cyan-600 flex items-center justify-center text-lg"><i class="fa-solid fa-id-card"></i></div>
+                        <span class="text-xs font-bold text-slate-700">จัดการคีย์การ์ด</span>
+                        <span v-if="keyCardPendingCount > 0" class="absolute top-2 right-2 min-w-[20px] h-5 px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">{{ keyCardPendingCount }}</span>
                     </button>
                 </div>
 
@@ -692,7 +697,288 @@
                 </div>
             </div>
 
+            <!-- ═══════ KEY CARD TAB ═══════ -->
+            <div v-if="currentTab === 'keycard'" class="slide-up">
+                <div class="mb-5 flex items-center gap-3">
+                    <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="flex-1">
+                        <h2 class="text-2xl font-extrabold text-slate-800">จัดการคีย์การ์ด</h2>
+                        <p class="text-sm text-slate-500">ยืนยันตัวตน · อัปโหลดสำเนาบัตร</p>
+                    </div>
+                    <button @click="loadKeyCardData" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-cyan-500"><i class="fa-solid fa-rotate"></i></button>
+                </div>
+
+                <!-- Loading -->
+                <div v-if="keyCardLoading" class="glass-card p-12 text-center">
+                    <div class="w-12 h-12 mx-auto mb-3 border-4 border-cyan-200 border-t-cyan-500 rounded-full animate-spin"></div>
+                    <p class="text-sm text-slate-500 font-bold">กำลังโหลดข้อมูล...</p>
+                </div>
+
+                <!-- ไม่พบบ้าน -->
+                <div v-else-if="keyCardError" class="glass-card p-8 text-center">
+                    <div class="text-5xl mb-3">🏠</div>
+                    <p class="font-bold text-slate-700 mb-2">{{ keyCardError }}</p>
+                    <button @click="currentTab = 'profile'" class="px-5 py-2 bg-cyan-500 text-white rounded-xl font-bold text-sm">ไปกรอกข้อมูล</button>
+                </div>
+
+                <template v-else-if="keyCardHouse">
+                    <!-- House Info -->
+                    <div class="glass-card p-5 mb-4 bg-gradient-to-br from-cyan-50 to-blue-50">
+                        <div class="flex justify-between items-start mb-3">
+                            <div class="flex items-center gap-3">
+                                <div class="w-12 h-12 bg-cyan-500 rounded-2xl flex items-center justify-center text-white text-xl shadow-md">
+                                    <i class="fa-solid fa-house"></i>
+                                </div>
+                                <div>
+                                    <div class="text-xs text-cyan-700 font-bold">บ้านเลขที่</div>
+                                    <div class="text-2xl font-extrabold text-slate-800">{{ keyCardHouse.house_number }}</div>
+                                </div>
+                            </div>
+                            <button @click="openHouseEditModal" class="text-xs text-cyan-600 font-bold flex items-center gap-1 px-3 py-1.5 bg-white rounded-xl">
+                                <i class="fa-solid fa-pen"></i> แก้ไข
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-3 gap-2 text-center mt-4">
+                            <div class="bg-white rounded-xl p-2">
+                                <div class="text-[10px] text-slate-500 font-bold">เจ้าของบ้าน</div>
+                                <div class="text-xs font-bold text-slate-800 truncate">{{ keyCardHouse.owner_name || '—' }}</div>
+                            </div>
+                            <div class="bg-white rounded-xl p-2">
+                                <div class="text-[10px] text-slate-500 font-bold">เบอร์โทร</div>
+                                <div class="text-xs font-bold text-slate-800">{{ keyCardHouse.phone || '—' }}</div>
+                            </div>
+                            <div class="bg-white rounded-xl p-2">
+                                <div class="text-[10px] text-slate-500 font-bold">สมาชิก</div>
+                                <div class="text-xs font-bold text-slate-800">{{ keyCardHouse.members_count || 1 }} คน</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Status Legend -->
+                    <div class="flex justify-center gap-3 text-[10px] mb-3 flex-wrap">
+                        <span class="font-bold flex items-center gap-1"><span class="w-2 h-2 bg-amber-500 rounded-full"></span> รอยืนยัน</span>
+                        <span class="font-bold flex items-center gap-1"><span class="w-2 h-2 bg-blue-500 rounded-full"></span> รอตรวจสอบ</span>
+                        <span class="font-bold flex items-center gap-1"><span class="w-2 h-2 bg-emerald-500 rounded-full"></span> ใช้งานได้</span>
+                        <span class="font-bold flex items-center gap-1"><span class="w-2 h-2 bg-rose-500 rounded-full"></span> ระงับ</span>
+                    </div>
+
+                    <!-- Cards -->
+                    <h3 class="font-bold text-slate-800 mb-3">📇 คีย์การ์ดทั้งหมด ({{ keyCards.length }})</h3>
+                    <div v-if="keyCards.length === 0" class="glass-card p-8 text-center text-slate-400">
+                        <div class="text-5xl mb-2">📇</div>
+                        <p class="font-bold">ยังไม่มีคีย์การ์ด</p>
+                        <p class="text-xs mt-1">ติดต่อนิติฯ เพื่อรับคีย์การ์ด</p>
+                    </div>
+                    <div v-else class="space-y-3">
+                        <div v-for="card in keyCards" :key="card.id" class="glass-card p-4">
+                            <div class="flex items-start gap-3">
+                                <div class="w-14 h-14 rounded-xl flex items-center justify-center text-white shrink-0 shadow-md"
+                                     :class="card.status === 'active' ? 'bg-gradient-to-br from-emerald-400 to-green-500'
+                                            : card.status === 'reviewing' ? 'bg-gradient-to-br from-blue-400 to-indigo-500'
+                                            : card.status === 'cancelled' ? 'bg-gradient-to-br from-rose-400 to-red-500'
+                                            : 'bg-gradient-to-br from-amber-400 to-orange-500'">
+                                    <i class="fa-solid fa-id-card text-2xl"></i>
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md"
+                                              :class="card.status === 'active' ? 'bg-emerald-100 text-emerald-700'
+                                                     : card.status === 'reviewing' ? 'bg-blue-100 text-blue-700'
+                                                     : card.status === 'cancelled' ? 'bg-rose-100 text-rose-700'
+                                                     : 'bg-amber-100 text-amber-700'">
+                                            {{ keyCardStatusLabel(card.status) }}
+                                        </span>
+                                    </div>
+                                    <div class="font-mono font-extrabold text-slate-800 tracking-wider text-sm">{{ formatKeycardNumber(card.front_number, card.back_number) }}</div>
+                                    <div class="text-[11px] text-slate-500 mt-1">
+                                        <i class="fa-solid fa-user text-[9px]"></i> {{ card.holder_name || 'ยังไม่ระบุ' }}
+                                    </div>
+                                    <div v-if="card.expire_date" class="text-[10px] text-slate-400 mt-0.5">
+                                        หมดอายุ {{ formatDate(card.expire_date) }}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Actions -->
+                            <div class="flex gap-2 mt-3 pt-3 border-t border-slate-100">
+                                <button v-if="card.status === 'pending'" @click="openCardConfirmModal(card, false)" class="flex-1 py-2 bg-cyan-500 hover:bg-cyan-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5">
+                                    <i class="fa-solid fa-camera"></i> ยืนยันบัตร
+                                </button>
+                                <button v-if="card.status === 'active' || card.status === 'reviewing'" @click="openCardConfirmModal(card, true)" class="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5">
+                                    <i class="fa-solid fa-pen"></i> แก้ไข
+                                </button>
+                                <button v-if="card.status === 'pending' || card.status === 'reviewing'" @click="cancelKeyCard(card)" class="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-bold">
+                                    <i class="fa-solid fa-ban"></i>
+                                </button>
+                                <button v-if="card.img" @click="viewCardImage(card)" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold">
+                                    <i class="fa-solid fa-eye"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
         </main>
+
+        <!-- ═══════ Settings Sheet (slide up จากล่าง) ═══════ -->
+        <div v-if="showSettings" @click.self="showSettings = false" class="fixed inset-0 z-40 modal-bg flex items-end md:items-center justify-center">
+            <div class="bg-white rounded-t-3xl md:rounded-3xl w-full max-w-lg max-h-[85vh] overflow-y-auto slide-up">
+                <!-- Drag handle -->
+                <div class="pt-3 pb-1 flex justify-center md:hidden"><div class="w-10 h-1 bg-slate-300 rounded-full"></div></div>
+
+                <div class="p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-xl font-extrabold text-slate-800 flex items-center gap-2"><i class="fa-solid fa-gear text-slate-500"></i> ตั้งค่า</h2>
+                        <button @click="showSettings = false" class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-500"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+
+                    <!-- Profile preview card -->
+                    <div class="bg-gradient-to-br from-slate-50 to-slate-100 rounded-2xl p-4 flex items-center gap-3 mb-4">
+                        <img :src="userProfile?.pictureUrl" class="w-14 h-14 rounded-full border-2 border-white shadow-sm" onerror="this.src='https://cdn-icons-png.flaticon.com/512/9368/9368192.png'">
+                        <div class="flex-1 min-w-0">
+                            <div class="font-bold text-slate-800 truncate">{{ memberData?.first_name ? `${memberData.first_name} ${memberData.last_name||''}`.trim() : userProfile?.displayName }}</div>
+                            <div class="text-xs text-slate-500 truncate">{{ userProfile?.displayName }}</div>
+                            <div class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-bold text-white" :style="{ background: tierGradient }">{{ currentTierObj?.name || 'Member' }}</div>
+                        </div>
+                    </div>
+
+                    <!-- Menu items -->
+                    <div class="space-y-1">
+                        <button @click="showSettings = false; currentTab = 'profile'" class="w-full p-3 flex items-center gap-3 rounded-xl hover:bg-slate-50 active:bg-slate-100 text-left">
+                            <div class="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center"><i class="fa-solid fa-user"></i></div>
+                            <div class="flex-1">
+                                <div class="font-bold text-sm text-slate-800">ข้อมูลส่วนตัว</div>
+                                <div class="text-[11px] text-slate-500">ชื่อ · เบอร์ · ที่อยู่</div>
+                            </div>
+                            <i class="fa-solid fa-chevron-right text-slate-300 text-xs"></i>
+                        </button>
+
+                        <button @click="showSettings = false; openKeyCard()" class="w-full p-3 flex items-center gap-3 rounded-xl hover:bg-slate-50 active:bg-slate-100 text-left">
+                            <div class="w-10 h-10 rounded-xl bg-cyan-100 text-cyan-600 flex items-center justify-center"><i class="fa-solid fa-id-card"></i></div>
+                            <div class="flex-1">
+                                <div class="font-bold text-sm text-slate-800">คีย์การ์ด</div>
+                                <div class="text-[11px] text-slate-500">{{ keyCards.length }} ใบ · ยืนยันตัวตน</div>
+                            </div>
+                            <span v-if="keyCardPendingCount > 0" class="text-[10px] font-bold bg-rose-500 text-white px-2 py-0.5 rounded-full">{{ keyCardPendingCount }}</span>
+                            <i class="fa-solid fa-chevron-right text-slate-300 text-xs ml-1"></i>
+                        </button>
+
+                        <button @click="showSettings = false; openPayments()" class="w-full p-3 flex items-center gap-3 rounded-xl hover:bg-slate-50 active:bg-slate-100 text-left">
+                            <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center"><i class="fa-solid fa-house-chimney"></i></div>
+                            <div class="flex-1">
+                                <div class="font-bold text-sm text-slate-800">ค่าส่วนกลาง</div>
+                                <div class="text-[11px] text-slate-500">ประวัติการจ่าย · Streak</div>
+                            </div>
+                            <span v-if="paymentStreak.streak >= 3" class="text-[10px] font-bold bg-amber-500 text-white px-2 py-0.5 rounded-full">🔥{{ paymentStreak.streak }}</span>
+                            <i class="fa-solid fa-chevron-right text-slate-300 text-xs ml-1"></i>
+                        </button>
+
+                        <button @click="showSettings = false; currentTab = 'history'" class="w-full p-3 flex items-center gap-3 rounded-xl hover:bg-slate-50 active:bg-slate-100 text-left">
+                            <div class="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center"><i class="fa-solid fa-clock-rotate-left"></i></div>
+                            <div class="flex-1">
+                                <div class="font-bold text-sm text-slate-800">ประวัติแต้ม</div>
+                                <div class="text-[11px] text-slate-500">การเคลื่อนไหวคะแนน</div>
+                            </div>
+                            <i class="fa-solid fa-chevron-right text-slate-300 text-xs"></i>
+                        </button>
+
+                        <div class="pt-3 mt-3 border-t border-slate-100">
+                            <button @click="logout" class="w-full p-3 flex items-center gap-3 rounded-xl hover:bg-rose-50 active:bg-rose-100 text-left">
+                                <div class="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center"><i class="fa-solid fa-right-from-bracket"></i></div>
+                                <div class="flex-1">
+                                    <div class="font-bold text-sm text-rose-600">ออกจากระบบ</div>
+                                </div>
+                            </button>
+                        </div>
+
+                        <div class="text-center text-[10px] text-slate-400 mt-2 font-mono">v1.0 · CRM Pro</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════ KeyCard Confirm Modal ═══════ -->
+        <div v-if="cardConfirmModal" @click.self="closeCardConfirmModal" class="fixed inset-0 modal-bg z-50 flex items-end md:items-center justify-center p-3">
+            <div class="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl slide-up">
+                <div class="flex justify-between items-start mb-3">
+                    <h3 class="text-lg font-extrabold text-slate-800">{{ cardConfirmIsEdit ? 'แก้ไขข้อมูลคีย์การ์ด' : 'ยืนยันคีย์การ์ด' }}</h3>
+                    <button @click="closeCardConfirmModal" class="text-slate-400 text-2xl">&times;</button>
+                </div>
+                <div class="bg-cyan-50 border border-cyan-200 rounded-xl p-3 mb-4 flex items-center gap-3">
+                    <i class="fa-solid fa-id-card text-cyan-500 text-xl"></i>
+                    <div>
+                        <div class="text-[10px] text-cyan-600 font-bold">หมายเลขบัตร</div>
+                        <div class="font-mono font-extrabold text-slate-800">{{ formatKeycardNumber(cardConfirmModal?.front_number, cardConfirmModal?.back_number) }}</div>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-xs font-bold text-slate-700 mb-1.5">ผู้ใช้บัตรนี้คือใคร?</label>
+                    <select v-model="cardConfirmRole" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                        <option value="เจ้าของบ้าน">เจ้าของบ้าน</option>
+                        <option value="สมาชิกในบ้าน">สมาชิกในบ้าน</option>
+                        <option value="คนทำงาน/แม่บ้าน">คนทำงาน/แม่บ้าน</option>
+                        <option value="ผู้เช่า">ผู้เช่า</option>
+                    </select>
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-xs font-bold text-slate-700 mb-1.5">{{ cardConfirmIsEdit ? 'อัปโหลดรูปใหม่ (ถ้าต้องการเปลี่ยน)' : 'รูปสำเนาบัตรประชาชน *' }}</label>
+                    <div v-if="cardPhotoPreview || cardConfirmModal?.img" class="relative mb-2">
+                        <img :src="cardPhotoPreview || cardConfirmModal?.img" class="w-full max-h-48 object-cover rounded-xl">
+                        <button @click="cardPhotoPreview = null; cardCapturedPhoto = null" class="absolute top-2 right-2 w-7 h-7 bg-rose-500 text-white rounded-full text-xs">&times;</button>
+                    </div>
+                    <input ref="cardPhotoInput" type="file" accept="image/*" capture="environment" @change="onCardPhotoSelect" class="w-full text-xs file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:bg-cyan-500 file:text-white file:font-bold">
+                    <p class="text-[10px] text-rose-500 mt-1" v-if="cardPhotoError">{{ cardPhotoError }}</p>
+                    <p class="text-[10px] text-slate-400 mt-1">รูปจะถูกบีบอัดเหลือ ≤800px เพื่อประหยัดพื้นที่</p>
+                </div>
+
+                <div class="flex gap-2">
+                    <button @click="closeCardConfirmModal" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold">ยกเลิก</button>
+                    <button @click="submitCardConfirm" :disabled="cardConfirmSaving" class="flex-1 py-3 bg-cyan-500 hover:bg-cyan-600 disabled:bg-slate-300 text-white rounded-2xl font-bold flex items-center justify-center gap-2">
+                        <i v-if="!cardConfirmSaving" class="fa-solid fa-check"></i>
+                        <i v-else class="fa-solid fa-spinner fa-spin"></i>
+                        บันทึก
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════ House Edit Modal ═══════ -->
+        <div v-if="houseEditModal" @click.self="houseEditModal = false" class="fixed inset-0 modal-bg z-50 flex items-end md:items-center justify-center p-3">
+            <div class="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl slide-up">
+                <h3 class="text-lg font-extrabold text-slate-800 mb-4">แก้ไขข้อมูลครัวเรือน</h3>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1.5">เจ้าของบ้าน</label>
+                        <input v-model="houseEditForm.fullname" type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1.5">เบอร์โทร</label>
+                        <input v-model="houseEditForm.phone" type="tel" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1.5">จำนวนสมาชิกในบ้าน</label>
+                        <input v-model.number="houseEditForm.member_count" type="number" min="1" max="20" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
+                    </div>
+                </div>
+                <div class="flex gap-2 mt-5">
+                    <button @click="houseEditModal = false" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold">ยกเลิก</button>
+                    <button @click="saveHouseEdit" :disabled="houseEditSaving" class="flex-1 py-3 bg-cyan-500 hover:bg-cyan-600 disabled:bg-slate-300 text-white rounded-2xl font-bold flex items-center justify-center gap-2">
+                        <i v-if="!houseEditSaving" class="fa-solid fa-save"></i>
+                        <i v-else class="fa-solid fa-spinner fa-spin"></i>
+                        บันทึก
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Image viewer -->
+        <div v-if="cardViewerImage" @click="cardViewerImage = null" class="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
+            <img :src="cardViewerImage" class="max-w-full max-h-full rounded-2xl">
+            <button @click="cardViewerImage = null" class="absolute top-5 right-5 w-10 h-10 bg-white/20 backdrop-blur text-white rounded-full">&times;</button>
+        </div>
 
         <!-- Bottom Nav (5 tabs - profile is now last instead of chat) -->
         <nav v-if="!loading" class="fixed bottom-0 left-0 right-0 bottom-nav pb-safe z-40">
@@ -774,7 +1060,7 @@
         const { createApp } = Vue;
         const { createClient } = supabase;
 
-              // ⚠️ ใส่ค่า SUPABASE + LIFF ID ของคุณ
+          // ⚠️ ใส่ค่า SUPABASE + LIFF ID ของคุณ
         const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
         const LIFF_ID = '2009022424-9o19KWRH';
@@ -805,6 +1091,15 @@
                     agmEventsList: [], agmMyHouse: null,
                     agmDetailEvent: null, agmAgendas: [], agmMyVotes: [],
                     paymentHistory: [], paymentStreak: { streak: 0, house_no: null, next_milestone: 3, months_to_next: 3 },
+                    // ─── Settings + Key Card ───
+                    showSettings: false,
+                    keyCards: [], keyCardHouse: null, keyCardLoading: false, keyCardError: null,
+                    keyCardPendingCount: 0,
+                    cardConfirmModal: null, cardConfirmIsEdit: false, cardConfirmRole: 'สมาชิกในบ้าน',
+                    cardPhotoPreview: null, cardCapturedPhoto: null, cardPhotoError: null,
+                    cardConfirmSaving: false,
+                    cardViewerImage: null,
+                    houseEditModal: false, houseEditForm: { fullname: '', phone: '', member_count: 1 }, houseEditSaving: false,
                     profileForm: {
                         first_name: '', last_name: '', phone: '', email: '', birthday: '', gender: '',
                         house_no: '', soi: '', street: '', subdistrict: '', district: '', province: '', postcode: ''
@@ -881,7 +1176,7 @@
                     if (typeof liff === 'undefined') {
                         throw new Error('LIFF SDK ไม่ได้โหลด — ตรวจ network');
                     }
-                    if (!LIFF_ID || LIFF_ID === 'YOUR-LIFF-ID') {
+                    if (!LIFF_ID || LIFF_ID === '2009022424-9o19KWRH') {
                         throw new Error('LIFF_ID ยังไม่ได้ตั้งค่า');
                     }
 
@@ -1037,6 +1332,19 @@
                         .then(r => r.ok ? r.json() : null)
                         .then(d => { if (d) this.paymentStreak = d.streak || this.paymentStreak; })
                         .catch(() => {});
+
+                    // Pre-fetch keycard count → badge ใน home grid + settings sheet
+                    (async () => {
+                        try {
+                            const { data: home } = await this.supabase.from('userhome').select('house_no').eq('uid', profile.userId).limit(1);
+                            if (home?.[0]?.house_no) {
+                                const { data: cards } = await this.supabase.from('rfid')
+                                    .select('id, status').eq('house_number', home[0].house_no.trim());
+                                this.keyCards = cards || [];
+                                this.keyCardPendingCount = (cards || []).filter(c => c.status === 'pending').length;
+                            }
+                        } catch (e) { /* silent */ }
+                    })();
                 },
 
                 async syncUser(profile) {
@@ -1308,6 +1616,225 @@
                     } catch (e) {
                         console.warn('openPayments', e);
                         this.paymentHistory = [];
+                    }
+                },
+
+                // ════════════════════════════════════════════════════════════
+                // 📇 KEY CARD MANAGEMENT (port จาก kyecard.html)
+                // ════════════════════════════════════════════════════════════
+                keyCardStatusLabel(status) {
+                    return { pending: 'รอยืนยัน', reviewing: 'รอตรวจสอบ', active: 'ใช้งานได้', cancelled: 'ระงับ' }[status] || status;
+                },
+
+                formatKeycardNumber(front, back) {
+                    const f = (front || '').toString().padStart(4, '0');
+                    const b = (back || '').toString().padStart(4, '0');
+                    return `${f}-${b}`;
+                },
+
+                async openKeyCard() {
+                    this.currentTab = 'keycard';
+                    await this.loadKeyCardData();
+                },
+
+                async loadKeyCardData() {
+                    if (!this.userProfile?.userId) return;
+                    this.keyCardLoading = true;
+                    this.keyCardError = null;
+                    try {
+                        // 1) หาบ้านของ user จาก userhome
+                        const { data: homes, error: hErr } = await this.supabase
+                            .from('userhome').select('*').eq('uid', this.userProfile.userId).limit(1);
+                        if (hErr) throw new Error('ไม่สามารถโหลดข้อมูลบ้านได้: ' + hErr.message);
+
+                        const home = homes?.[0];
+                        if (!home || !home.house_no) {
+                            this.keyCardError = 'ยังไม่ได้ลงทะเบียนบ้าน';
+                            this.keyCardHouse = null;
+                            this.keyCards = [];
+                            return;
+                        }
+
+                        const houseNo = home.house_no.trim();
+                        this.keyCardHouse = {
+                            house_number: houseNo,
+                            owner_name: home.fullname || '',
+                            phone: home.phone || '',
+                            members_count: home.member_count || 1,
+                            _userhome_id: home.id
+                        };
+
+                        // 2) ดึงคีย์การ์ดของบ้านนี้
+                        const { data: cards, error: cErr } = await this.supabase
+                            .from('rfid').select('*')
+                            .eq('house_number', houseNo)
+                            .order('created_at', { ascending: false });
+                        if (cErr) throw new Error('ไม่สามารถโหลดคีย์การ์ดได้: ' + cErr.message);
+
+                        this.keyCards = cards || [];
+                        this.keyCardPendingCount = this.keyCards.filter(c => c.status === 'pending').length;
+                    } catch (e) {
+                        console.error('loadKeyCardData', e);
+                        this.keyCardError = e.message;
+                    } finally {
+                        this.keyCardLoading = false;
+                    }
+                },
+
+                openCardConfirmModal(card, isEdit) {
+                    this.cardConfirmModal = card;
+                    this.cardConfirmIsEdit = !!isEdit;
+                    this.cardConfirmRole = card.holder_name || 'สมาชิกในบ้าน';
+                    this.cardPhotoPreview = null;
+                    this.cardCapturedPhoto = null;
+                    this.cardPhotoError = null;
+                },
+
+                closeCardConfirmModal() {
+                    this.cardConfirmModal = null;
+                    this.cardCapturedPhoto = null;
+                    this.cardPhotoPreview = null;
+                    this.cardPhotoError = null;
+                    this.cardConfirmSaving = false;
+                },
+
+                onCardPhotoSelect(event) {
+                    const file = event.target.files?.[0];
+                    if (!file) return;
+                    if (!file.type.startsWith('image/')) {
+                        this.cardPhotoError = 'กรุณาเลือกไฟล์รูปภาพ';
+                        return;
+                    }
+                    if (file.size > 10 * 1024 * 1024) {
+                        this.cardPhotoError = 'ไฟล์ใหญ่เกิน 10MB';
+                        return;
+                    }
+                    this.cardPhotoError = null;
+                    this.cardCapturedPhoto = file;
+                    const reader = new FileReader();
+                    reader.onload = e => { this.cardPhotoPreview = e.target.result; };
+                    reader.readAsDataURL(file);
+                },
+
+                async compressImage(file, maxWidth = 800, quality = 0.7) {
+                    return new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = e => {
+                            const img = new Image();
+                            img.onload = () => {
+                                let { width, height } = img;
+                                if (width > maxWidth) {
+                                    height = (height * maxWidth) / width;
+                                    width = maxWidth;
+                                }
+                                const canvas = document.createElement('canvas');
+                                canvas.width = width; canvas.height = height;
+                                canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+                                canvas.toBlob(blob => {
+                                    if (!blob) return reject(new Error('Compress failed'));
+                                    resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
+                                }, 'image/jpeg', quality);
+                            };
+                            img.onerror = () => reject(new Error('Image load failed'));
+                            img.src = e.target.result;
+                        };
+                        reader.onerror = () => reject(new Error('FileReader failed'));
+                        reader.readAsDataURL(file);
+                    });
+                },
+
+                async submitCardConfirm() {
+                    if (!this.cardConfirmModal) return;
+                    if (!this.cardConfirmIsEdit && !this.cardCapturedPhoto) {
+                        this.cardPhotoError = 'กรุณาถ่ายรูป/อัปโหลดบัตรประชาชน';
+                        return;
+                    }
+                    this.cardConfirmSaving = true;
+                    try {
+                        let imageUrl = this.cardConfirmModal.img;
+
+                        // Upload ถ้ามีรูปใหม่
+                        if (this.cardCapturedPhoto) {
+                            const compressed = await this.compressImage(this.cardCapturedPhoto, 800, 0.7);
+                            const fileName = `keycard_${this.cardConfirmModal.id}_${Date.now()}.jpg`;
+                            const { error: upErr } = await this.supabase.storage
+                                .from('keycard_images').upload(fileName, compressed, { upsert: true });
+                            if (upErr) throw new Error('อัปโหลดรูปล้มเหลว: ' + upErr.message);
+                            const { data: pub } = this.supabase.storage.from('keycard_images').getPublicUrl(fileName);
+                            imageUrl = pub.publicUrl;
+                        }
+
+                        // Update rfid
+                        const { error: updErr } = await this.supabase.from('rfid').update({
+                            status: 'reviewing',
+                            holder_name: this.cardConfirmRole,
+                            img: imageUrl
+                        }).eq('id', this.cardConfirmModal.id);
+                        if (updErr) throw new Error('อัปเดตข้อมูลล้มเหลว: ' + updErr.message);
+
+                        Swal.fire({
+                            icon: 'success', title: 'บันทึกสำเร็จ',
+                            text: 'รอนิติฯ ตรวจสอบและอนุมัติ',
+                            timer: 1800, showConfirmButton: false
+                        });
+                        this.closeCardConfirmModal();
+                        await this.loadKeyCardData();
+                    } catch (e) {
+                        Swal.fire('ไม่สำเร็จ', e.message, 'error');
+                    } finally {
+                        this.cardConfirmSaving = false;
+                    }
+                },
+
+                cancelKeyCard(card) {
+                    Swal.fire({
+                        title: 'ระงับคีย์การ์ดใบนี้?',
+                        html: `<b>${this.formatKeycardNumber(card.front_number, card.back_number)}</b><br><small class="text-rose-500">การระงับจะทำให้บัตรไม่สามารถใช้งานได้ทันที</small>`,
+                        icon: 'warning', showCancelButton: true,
+                        confirmButtonColor: '#f43f5e', confirmButtonText: 'ระงับ', cancelButtonText: 'ยกเลิก'
+                    }).then(async r => {
+                        if (!r.isConfirmed) return;
+                        const { error } = await this.supabase.from('rfid').update({ status: 'cancelled' }).eq('id', card.id);
+                        if (error) return Swal.fire('ไม่สำเร็จ', error.message, 'error');
+                        Swal.fire({ icon: 'success', title: 'ระงับแล้ว', timer: 1200, showConfirmButton: false });
+                        this.loadKeyCardData();
+                    });
+                },
+
+                viewCardImage(card) {
+                    if (card.img) this.cardViewerImage = card.img;
+                },
+
+                openHouseEditModal() {
+                    if (!this.keyCardHouse) return;
+                    this.houseEditForm = {
+                        fullname: this.keyCardHouse.owner_name || '',
+                        phone: this.keyCardHouse.phone || '',
+                        member_count: this.keyCardHouse.members_count || 1
+                    };
+                    this.houseEditModal = true;
+                },
+
+                async saveHouseEdit() {
+                    if (!this.keyCardHouse?._userhome_id) return;
+                    if (!this.houseEditForm.fullname?.trim()) return Swal.fire('ข้อมูลไม่ครบ', 'กรุณากรอกชื่อเจ้าของบ้าน', 'warning');
+
+                    this.houseEditSaving = true;
+                    try {
+                        const { error } = await this.supabase.from('userhome').update({
+                            fullname: this.houseEditForm.fullname.trim(),
+                            phone: this.houseEditForm.phone?.trim() || null,
+                            member_count: parseInt(this.houseEditForm.member_count) || 1
+                        }).eq('id', this.keyCardHouse._userhome_id);
+                        if (error) throw error;
+
+                        Swal.fire({ icon: 'success', title: 'บันทึกสำเร็จ', timer: 1200, showConfirmButton: false });
+                        this.houseEditModal = false;
+                        await this.loadKeyCardData();
+                    } catch (e) {
+                        Swal.fire('ไม่สำเร็จ', e.message, 'error');
+                    } finally {
+                        this.houseEditSaving = false;
                     }
                 }
             }
