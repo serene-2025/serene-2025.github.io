@@ -504,7 +504,8 @@
                 <h3 class="font-bold text-slate-800 mb-3">🎉 กิจกรรมที่เปิดอยู่</h3>
                 <div v-if="activeEvents.length === 0" class="glass-card p-8 text-center text-slate-400">
                     <div class="text-5xl mb-2">🎈</div>
-                    <p class="font-bold">ยังไม่มีกิจกรรมที่เปิด</p>
+                    <p class="font-bold">ยังไม่มีกิจกรรมที่เปิดอยู่</p>
+                    <p class="text-xs mt-1">เมื่อมีกิจกรรม นิติฯ จะแจ้งรหัสให้ทราบ</p>
                 </div>
                 <div v-else class="space-y-3">
                     <div v-for="ev in activeEvents" :key="ev.id" class="glass-card p-4 flex items-center gap-3">
@@ -773,7 +774,7 @@
         const { createApp } = Vue;
         const { createClient } = supabase;
 
-        // ⚠️ ใส่ค่า SUPABASE + LIFF ID ของคุณ
+            // ⚠️ ใส่ค่า SUPABASE + LIFF ID ของคุณ
         const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
         const LIFF_ID = '2009022424-9o19KWRH';
@@ -853,19 +854,50 @@
             },
             async mounted() {
                 this.supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-                await Promise.all([this.fetchTiers(), this.fetchNews(), this.fetchRewards()]);
 
+                // ─── เริ่ม LIFF ก่อนเสมอ ไม่รอ data fetches ─────────────────
                 try {
                     await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
                     await liff.ready;
                     if (!liff.isLoggedIn()) {
                         liff.login({ redirectUri: window.location.href });
-                    } else {
-                        await this.handleLogin();
+                        return;  // browser will redirect
                     }
                 } catch (e) {
                     console.error('LIFF Init Error', e);
-                    Swal.fire('Error', 'LIFF Init Failed. Please reload.', 'error');
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'LIFF Init Failed',
+                        html: `<small>${e.message || 'Unknown error'}</small><br><br>กรุณาเปิดผ่าน LINE app เท่านั้น`,
+                        confirmButtonText: 'ลองใหม่'
+                    }).then(() => window.location.reload());
+                    this.loading = false;
+                    return;
+                }
+
+                // ─── โหลด data แบบ resilient — ถ้าตัวไหน fail ก็ไม่ block ────
+                await Promise.allSettled([
+                    this.fetchTiers().catch(e => console.warn('fetchTiers', e)),
+                    this.fetchNews().catch(e => console.warn('fetchNews', e)),
+                    this.fetchRewards().catch(e => console.warn('fetchRewards', e))
+                ]);
+
+                // ─── Login flow ────────────────────────────────────────────
+                try {
+                    await this.handleLogin();
+                } catch (e) {
+                    console.error('handleLogin error', e);
+                    Swal.fire({
+                        icon: 'warning',
+                        title: 'โหลดข้อมูลไม่สำเร็จ',
+                        html: `<small>${e.message || 'Unknown error'}</small><br>บางฟีเจอร์อาจใช้ไม่ได้`,
+                        confirmButtonText: 'ตกลง'
+                    });
+                    // ยังให้ใช้แอปได้ แม้ load profile fail
+                    try {
+                        const profile = await liff.getProfile();
+                        this.userProfile = profile;
+                    } catch (e2) { /* skip */ }
                     this.loading = false;
                 }
             },
@@ -910,17 +942,17 @@
                 async handleLogin() {
                     const profile = await liff.getProfile();
                     this.userProfile = profile;
-                    await this.syncUser(profile);
-                    await this.fetchMyData();
+                    try { await this.syncUser(profile); } catch (e) { console.warn('syncUser', e); }
+                    try { await this.fetchMyData(); } catch (e) { console.warn('fetchMyData', e); }
                     this.loading = false;
                     this.$nextTick(() => this.renderMemberBarcode());
 
-                    // Pre-fetch สำหรับ badge counters ใน home — ไม่ block UI
+                    // ─── Pre-fetch ทุกอย่างแบบ silent — ถ้า endpoint ยังไม่ deploy ก็ไม่เป็นไร ───
                     this.fetchActiveEvents().catch(() => {});
                     this.fetchAgmEvents().catch(() => {});
                     fetch(`${EDGE_FUNCTION_URL}/api/crm/my_payment_history?userId=${profile.userId}`)
-                        .then(r => r.json())
-                        .then(d => { this.paymentStreak = d.streak || this.paymentStreak; })
+                        .then(r => r.ok ? r.json() : null)
+                        .then(d => { if (d) this.paymentStreak = d.streak || this.paymentStreak; })
                         .catch(() => {});
                 },
 
@@ -1056,17 +1088,19 @@
                 async fetchActiveEvents() {
                     try {
                         const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/active_events?userId=${this.userProfile.userId}`);
+                        if (!res.ok) { this.activeEvents = []; return; }
                         const d = await res.json();
                         this.activeEvents = d.data || [];
-                    } catch (e) { console.warn('fetchActiveEvents', e); }
+                    } catch (e) { console.warn('fetchActiveEvents', e); this.activeEvents = []; }
                 },
 
                 async fetchMyEventHistory() {
                     try {
                         const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/my_event_history?userId=${this.userProfile.userId}`);
+                        if (!res.ok) { this.myEventHistory = []; return; }
                         const d = await res.json();
                         this.myEventHistory = d.data || [];
-                    } catch (e) { console.warn('fetchMyEventHistory', e); }
+                    } catch (e) { console.warn('fetchMyEventHistory', e); this.myEventHistory = []; }
                 },
 
                 async submitCheckin() {
@@ -1118,10 +1152,11 @@
                 async fetchAgmEvents() {
                     try {
                         const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/my_agm_events?userId=${this.userProfile.userId}`);
+                        if (!res.ok) { this.agmEventsList = []; return; }
                         const d = await res.json();
                         this.agmEventsList = d.data || [];
                         this.agmMyHouse = d.my_house;
-                    } catch (e) { console.warn('fetchAgmEvents', e); }
+                    } catch (e) { console.warn('fetchAgmEvents', e); this.agmEventsList = []; }
                 },
 
                 async openAgmEvent(ev) {
@@ -1174,10 +1209,23 @@
                     this.currentTab = 'payments';
                     try {
                         const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/my_payment_history?userId=${this.userProfile.userId}`);
+                        if (!res.ok) {
+                            // endpoint ยังไม่ deploy หรือมีปัญหา → แสดงข้อมูลเปล่า
+                            this.paymentHistory = [];
+                            if (res.status === 404) {
+                                Swal.fire({ icon: 'info', title: 'ระบบยังไม่พร้อม',
+                                    text: 'ฟีเจอร์ประวัติค่าส่วนกลางจะเปิดใช้เร็วๆ นี้',
+                                    confirmButtonText: 'ตกลง' });
+                            }
+                            return;
+                        }
                         const d = await res.json();
                         this.paymentHistory = d.history || [];
                         this.paymentStreak = d.streak || { streak: 0 };
-                    } catch (e) { console.warn('openPayments', e); }
+                    } catch (e) {
+                        console.warn('openPayments', e);
+                        this.paymentHistory = [];
+                    }
                 }
             }
         }).mount('#app');
