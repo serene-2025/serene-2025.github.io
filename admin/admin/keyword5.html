@@ -1944,6 +1944,17 @@ async function updateAllUserProfiles() {
             const str = String(text);
             return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
         }
+
+        // ─── Convert <input type="datetime-local"> value → ISO string with timezone ──
+        // input ให้ "2026-04-30T14:00" (no tz) → return "2026-04-30T07:00:00.000Z" (correct UTC)
+        function localDatetimeToISO(localStr) {
+            if (!localStr) return null;
+            // new Date("2026-04-30T14:00") = parsed as LOCAL time (browser timezone)
+            // .toISOString() = converts to UTC correctly
+            const d = new Date(localStr);
+            if (isNaN(d.getTime())) return null;
+            return d.toISOString();
+        }
         async function syncRichMenus() {
             showConfirmModal('Sync Rich Menu', 'ต้องการ Sync ข้อมูล Rich Menu จาก LINE หรือไม่? (ข้อมูลเก่าที่มี ID ตรงกันจะถูกอัปเดต)', async () => {
                 const btn = document.querySelector('button[onclick="syncRichMenus()"]');
@@ -6818,18 +6829,29 @@ async function updateAllUserProfiles() {
             const btn = document.getElementById('agm-save-btn');
             const title = document.getElementById('agm-title').value.trim();
             if (!title) return showToast('กรุณากรอกชื่อ', 'warning');
+
+            const startsAt = localDatetimeToISO(document.getElementById('agm-start').value);
+            const endsAt   = localDatetimeToISO(document.getElementById('agm-end').value);
+            if (!startsAt || !endsAt) return showToast('กรุณากรอกวันเวลาให้ครบ', 'warning');
+            if (new Date(endsAt) <= new Date(startsAt)) return showToast('เวลาปิดต้องหลังเวลาเริ่ม', 'warning');
+
             setBtnLoading(btn, true);
             const { error } = await supabaseClient.from('agm_events').insert({
                 title,
                 description: document.getElementById('agm-desc').value.trim(),
-                starts_at: document.getElementById('agm-start').value,
-                ends_at: document.getElementById('agm-end').value,
+                starts_at: startsAt,
+                ends_at: endsAt,
                 quorum_pct: parseInt(document.getElementById('agm-quorum').value) || 50,
                 total_houses: parseInt(document.getElementById('agm-total').value) || null,
                 status: 'draft'
             });
             setBtnLoading(btn, false);
-            if (error) return showToast(error.message, 'error');
+            if (error) {
+                if (error.code === '42P01' || (error.message?.includes('relation') && error.message?.includes('agm'))) {
+                    return showToast('ตาราง agm_events ไม่มีในฐานข้อมูล — ต้องรัน migration_3features.sql ก่อน', 'error');
+                }
+                return showToast(error.message, 'error');
+            }
             showToast('สร้าง AGM สำเร็จ! กดเข้าจัดการเพื่อเพิ่มวาระ', 'success');
             closeModal();
             renderAgmAdminView();
@@ -7408,6 +7430,11 @@ async function saveCheckInEvent() {
     if (!name) return showToast('กรุณากรอกชื่อกิจกรรม', 'warning');
     if (!code || code.length < 4) return showToast('รหัสต้องมีอย่างน้อย 4 ตัวอักษร', 'warning');
 
+    const startsAt = localDatetimeToISO(document.getElementById('ck-start').value);
+    const endsAt   = localDatetimeToISO(document.getElementById('ck-end').value);
+    if (!startsAt || !endsAt) return showToast('กรุณากรอกวันเวลาให้ครบ', 'warning');
+    if (new Date(endsAt) <= new Date(startsAt)) return showToast('เวลาปิดต้องหลังเวลาเริ่ม', 'warning');
+
     setBtnLoading(btn, true);
     const payload = {
         name,
@@ -7415,8 +7442,8 @@ async function saveCheckInEvent() {
         icon: document.getElementById('ck-icon').value,
         points: parseInt(document.getElementById('ck-points').value) || 50,
         location: document.getElementById('ck-location').value.trim(),
-        starts_at: document.getElementById('ck-start').value,
-        ends_at: document.getElementById('ck-end').value,
+        starts_at: startsAt,
+        ends_at: endsAt,
         max_checkins: parseInt(document.getElementById('ck-max').value) || null,
         is_active: true
     };
@@ -7424,6 +7451,10 @@ async function saveCheckInEvent() {
     setBtnLoading(btn, false);
     if (error) {
         if (error.code === '23505') return showToast('รหัสนี้ใช้ไปแล้ว กรุณาเปลี่ยน', 'error');
+        // ตาราง events ไม่มี → migration ยังไม่ได้รัน
+        if (error.code === '42P01' || error.message?.includes('relation') && error.message?.includes('events')) {
+            return showToast('ตาราง events ไม่มีในฐานข้อมูล — ต้องรัน migration_events_checkin.sql ก่อน', 'error');
+        }
         return showToast(error.message, 'error');
     }
     showToast('สร้าง Event สำเร็จ! ลูกบ้านเช็คอินได้แล้ว', 'success');
