@@ -3150,7 +3150,19 @@ async function updateAllUserProfiles() {
                                 <h3 class="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                                     <i data-lucide="users" class="w-5 h-5 text-indigo-500"></i> เลือกกลุ่มเป้าหมาย
                                 </h3>
-                                <div class="space-y-4">
+
+                                <!-- Push Mode Tabs -->
+                                <div class="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl mb-4">
+                                    <button onclick="switchPushMode('group')" id="pushmode-group-btn" class="py-2 px-3 rounded-lg text-xs font-bold bg-white text-slate-700 shadow-sm">
+                                        <i data-lucide="users-2" class="w-3.5 h-3.5 inline"></i> Audience Group
+                                    </button>
+                                    <button onclick="switchPushMode('users')" id="pushmode-users-btn" class="py-2 px-3 rounded-lg text-xs font-bold text-slate-500 hover:text-slate-700">
+                                        <i data-lucide="user-check" class="w-3.5 h-3.5 inline"></i> Specific Users
+                                    </button>
+                                </div>
+
+                                <!-- Mode A: Audience Group -->
+                                <div id="pushmode-group-content" class="space-y-4">
                                     <div>
                                         <label class="text-xs font-bold text-slate-500 mb-1.5 block">Audience Group (LINE)</label>
                                         <select id="nc-audience-select" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-2 focus:ring-indigo-500 transition-all outline-none">
@@ -3161,6 +3173,23 @@ async function updateAllUserProfiles() {
                                         <div class="text-[10px] uppercase tracking-wider text-indigo-400 font-bold mb-1">รายละเอียดกลุ่ม</div>
                                         <div id="nc-audience-desc" class="text-sm font-bold text-indigo-700"></div>
                                         <div id="nc-audience-count" class="text-[11px] text-indigo-500 mt-0.5"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Mode B: Specific Users (multi-select) -->
+                                <div id="pushmode-users-content" class="space-y-3 hidden">
+                                    <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-700">
+                                        <i data-lucide="info" class="w-3.5 h-3.5 inline"></i>
+                                        <b>Push API</b> ส่งข้อความตรงไปหาเฉพาะ user ที่เลือก (ไม่ต้องสร้าง audience)
+                                    </div>
+                                    <input type="text" id="pu-search" oninput="filterPushUsers()" placeholder="🔍 ค้นหาชื่อ / บ้านเลขที่ / เบอร์..." class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+                                    <div class="flex items-center gap-2 text-xs">
+                                        <button onclick="pushSelectAll(true)" class="text-indigo-600 font-bold hover:underline">เลือกทั้งหมด</button>
+                                        <button onclick="pushSelectAll(false)" class="text-slate-500 hover:underline">ล้าง</button>
+                                        <span class="ml-auto font-bold text-indigo-600">เลือก <span id="pu-count">0</span> คน</span>
+                                    </div>
+                                    <div id="pu-list" class="border border-slate-200 rounded-xl bg-white max-h-72 overflow-y-auto p-1 space-y-0.5">
+                                        <div class="text-center text-slate-400 text-xs py-6">กำลังโหลดสมาชิก...</div>
                                     </div>
                                 </div>
                             </div>
@@ -3296,6 +3325,97 @@ async function updateAllUserProfiles() {
             narrowcastBalloons[index].content = content;
         }
 
+        // ─── Push Mode (group / users) ───────────────────────────────
+        let pushMode = 'group';   // 'group' | 'users'
+        let pushUsersList = [];   // โหลดทั้งหมด
+        let pushSelectedUids = new Set();
+
+        function switchPushMode(mode) {
+            pushMode = mode;
+            ['group', 'users'].forEach(m => {
+                const btn = document.getElementById(`pushmode-${m}-btn`);
+                const content = document.getElementById(`pushmode-${m}-content`);
+                if (m === mode) {
+                    btn.classList.add('bg-white', 'text-slate-700', 'shadow-sm');
+                    btn.classList.remove('text-slate-500');
+                    content.classList.remove('hidden');
+                } else {
+                    btn.classList.remove('bg-white', 'text-slate-700', 'shadow-sm');
+                    btn.classList.add('text-slate-500');
+                    content.classList.add('hidden');
+                }
+            });
+            if (mode === 'users' && pushUsersList.length === 0) loadPushUsers();
+        }
+
+        async function loadPushUsers() {
+            try {
+                const { data, error } = await supabaseClient
+                    .from('user_profiles')
+                    .select('userId, displayName, first_name, last_name, house_no, phone, points')
+                    .order('displayName')
+                    .limit(2000);
+                if (error) throw error;
+                pushUsersList = data || [];
+                renderPushUserList(pushUsersList);
+            } catch (e) {
+                document.getElementById('pu-list').innerHTML = `<div class="text-rose-500 text-xs p-3">${e.message}</div>`;
+            }
+        }
+
+        function renderPushUserList(list) {
+            const wrap = document.getElementById('pu-list');
+            if (!list || list.length === 0) {
+                wrap.innerHTML = '<div class="text-center text-slate-400 text-xs py-6">ไม่พบสมาชิก</div>';
+                return;
+            }
+            wrap.innerHTML = list.map(u => {
+                const fullName = u.first_name ? `${u.first_name} ${u.last_name||''}`.trim() : (u.displayName || '—');
+                const checked = pushSelectedUids.has(u.userId);
+                return `<label class="flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-indigo-50 cursor-pointer pu-row" data-search="${escapeHtml((fullName + ' ' + (u.house_no||'') + ' ' + (u.phone||'')).toLowerCase())}">
+                    <input type="checkbox" class="pu-checkbox w-4 h-4 accent-indigo-500" data-uid="${escapeHtml(u.userId)}" ${checked ? 'checked' : ''} onchange="onPushUserToggle(this)">
+                    <div class="flex-1 min-w-0">
+                        <div class="text-xs font-bold text-slate-800 truncate">${escapeHtml(fullName)}</div>
+                        <div class="text-[10px] text-slate-400 truncate">${u.house_no ? '🏠 ' + escapeHtml(u.house_no) + ' · ' : ''}${escapeHtml((u.userId||'').slice(-12))}</div>
+                    </div>
+                    <span class="text-[9px] text-slate-400 font-bold">${(u.points||0).toLocaleString()}</span>
+                </label>`;
+            }).join('');
+            updatePushCount();
+        }
+
+        function onPushUserToggle(cb) {
+            const uid = cb.dataset.uid;
+            if (cb.checked) pushSelectedUids.add(uid);
+            else pushSelectedUids.delete(uid);
+            updatePushCount();
+        }
+
+        function pushSelectAll(check) {
+            const visibleRows = document.querySelectorAll('.pu-row:not(.hidden) .pu-checkbox');
+            visibleRows.forEach(cb => {
+                cb.checked = check;
+                const uid = cb.dataset.uid;
+                if (check) pushSelectedUids.add(uid);
+                else pushSelectedUids.delete(uid);
+            });
+            updatePushCount();
+        }
+
+        function updatePushCount() {
+            const el = document.getElementById('pu-count');
+            if (el) el.innerText = pushSelectedUids.size;
+        }
+
+        function filterPushUsers() {
+            const q = document.getElementById('pu-search').value.toLowerCase().trim();
+            document.querySelectorAll('.pu-row').forEach(row => {
+                const txt = row.dataset.search || '';
+                if (!q || txt.includes(q)) row.classList.remove('hidden');
+                else row.classList.add('hidden');
+            });
+        }
+
         async function sendNarrowcast() {
             const audienceId = document.getElementById('nc-audience-select').value;
 
@@ -3322,6 +3442,40 @@ async function updateAllUserProfiles() {
                 showModal('ไม่มีข้อความ', 'กรุณาระบุข้อความอย่างน้อย 1 บอลลูนครับ');
                 return;
             }
+
+            // ═══ Mode B: Push to Specific Users ═══
+            if (pushMode === 'users') {
+                const uids = Array.from(pushSelectedUids);
+                if (uids.length === 0) {
+                    showModal('ยังไม่ได้เลือก', 'กรุณาเลือกสมาชิกอย่างน้อย 1 คน');
+                    return;
+                }
+                showConfirmModal(
+                    'ยืนยันการส่ง Push',
+                    `จะส่งข้อความไปยัง <b>${uids.length}</b> คน ผ่าน LINE Push API<br><small class="text-slate-500">ใช้ค่าโควต้าตามจำนวนคน × จำนวนบอลลูน</small>`,
+                    async () => {
+                        showToast('กำลังส่ง Push...', 'loading');
+                        try {
+                            const res = await fetch(`${API_BASE_URL}/api/admin/audience/targeted_push`, {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ userIds: uids, messages })
+                            });
+                            const result = await res.json();
+                            if (!res.ok) throw new Error(result.error || 'ส่งไม่สำเร็จ');
+                            hideToast();
+                            showModal('✅ ส่งสำเร็จ', `ส่งข้อความให้ ${result.sent || uids.length} คน · ล้มเหลว ${result.failed || 0} คน`);
+                            pushSelectedUids.clear();
+                            renderPushUserList(pushUsersList);
+                        } catch (e) {
+                            hideToast();
+                            showModal('❌ ส่งไม่สำเร็จ', e.message);
+                        }
+                    }
+                );
+                return;
+            }
+
+            // ═══ Mode A: Audience Group (Narrowcast) ═══
 
             const confirmMsg = audienceId
                 ? `คุณกำลังจะส่งบรอดแคสต์ไปยังกลุ่มเป้าหมายจำนวน ${availableAudienceGroups.find(g => g.audienceGroupId == audienceId)?.audienceCount || '...'} คน\n\nยืนยันการเริ่มส่งหรือไม่?`
