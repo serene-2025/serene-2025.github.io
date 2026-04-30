@@ -774,10 +774,10 @@
         const { createApp } = Vue;
         const { createClient } = supabase;
 
-            // ⚠️ ใส่ค่า SUPABASE + LIFF ID ของคุณ
+              // ⚠️ ใส่ค่า SUPABASE + LIFF ID ของคุณ
         const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
-        const LIFF_ID = '2000143615-bm1lkBYI';
+        const LIFF_ID = '2009022424-9o19KWRH';
         const EDGE_FUNCTION_URL = 'https://kiumelolsilduqnvrekf.supabase.co/functions/v1/line-webhook';
 
         const _origFetch = window.fetch.bind(window);
@@ -857,7 +857,42 @@
 
                 // ─── เริ่ม LIFF ก่อนเสมอ ไม่รอ data fetches ─────────────────
                 try {
-                    await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
+                    // ตรวจ LIFF SDK โหลดมาได้ไหม
+                    if (typeof liff === 'undefined') {
+                        throw new Error('LIFF SDK ไม่ได้โหลด — ตรวจ network');
+                    }
+                    if (!LIFF_ID || LIFF_ID === 'YOUR-LIFF-ID') {
+                        throw new Error('LIFF_ID ยังไม่ได้ตั้งค่า');
+                    }
+
+                    // ─── 🔧 Workaround: บาง user (โดยเฉพาะ Android) เจอ "Failed to fetch"
+                    // เพราะ LINE app cache manifest.json เสียหาย
+                    // วิธีแก้: preload manifest พร้อม cache:reload เพื่อบังคับโหลดใหม่
+                    // ที่มา: https://narongdej.dev/blog/th/2024/04/04/...
+                    try {
+                        await fetch('https://liffsdk.line-scdn.net/xlt/manifest.json', { cache: 'reload' });
+                    } catch (preloadErr) {
+                        console.warn('Manifest preload failed (continuing):', preloadErr);
+                    }
+
+                    // Retry up to 2 times — handle transient cache issues
+                    let initErr = null;
+                    for (let attempt = 1; attempt <= 2; attempt++) {
+                        try {
+                            await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
+                            initErr = null;
+                            break;
+                        } catch (e) {
+                            initErr = e;
+                            console.warn(`liff.init attempt ${attempt} failed:`, e.message);
+                            if (attempt < 2) {
+                                // รอ 500ms ก่อน retry + reload manifest อีกครั้ง
+                                await new Promise(r => setTimeout(r, 500));
+                                try { await fetch('https://liffsdk.line-scdn.net/xlt/manifest.json', { cache: 'reload' }); } catch {}
+                            }
+                        }
+                    }
+                    if (initErr) throw initErr;
                     await liff.ready;
                     if (!liff.isLoggedIn()) {
                         liff.login({ redirectUri: window.location.href });
@@ -865,10 +900,30 @@
                     }
                 } catch (e) {
                     console.error('LIFF Init Error', e);
+                    // ─── แสดง diagnostic info ที่ละเอียด ──────────────────
+                    const diag = {
+                        message: e.message || 'Unknown',
+                        code: e.code || '—',
+                        liff_id: LIFF_ID || '(ยังไม่ตั้ง)',
+                        url: window.location.href,
+                        in_client: (typeof liff !== 'undefined' && liff.isInClient) ? liff.isInClient() : '—',
+                        os: (typeof liff !== 'undefined' && liff.getOS) ? liff.getOS() : '—',
+                        version: (typeof liff !== 'undefined' && liff.getVersion) ? liff.getVersion() : '—',
+                        ua_short: navigator.userAgent.slice(0, 80)
+                    };
                     Swal.fire({
                         icon: 'error',
                         title: 'LIFF Init Failed',
-                        html: `<small>${e.message || 'Unknown error'}</small><br><br>กรุณาเปิดผ่าน LINE app เท่านั้น`,
+                        html: `
+                            <div style="text-align:left; font-size:11px; background:#fef2f2; padding:10px; border-radius:8px; margin:10px 0;">
+                                <b style="color:#dc2626">Error:</b> ${diag.message}<br>
+                                <b>LIFF ID:</b> <code>${diag.liff_id}</code><br>
+                                <b>URL:</b> <code style="word-break:break-all">${diag.url}</code><br>
+                                <b>In LINE app:</b> ${diag.in_client}<br>
+                                <b>LIFF version:</b> ${diag.version}<br>
+                            </div>
+                            <small>กรุณา screenshot รูปนี้แล้วส่งให้ admin</small>
+                        `,
                         confirmButtonText: 'ลองใหม่'
                     }).then(() => window.location.reload());
                     this.loading = false;
