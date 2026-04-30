@@ -855,6 +855,26 @@
             async mounted() {
                 this.supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+                // ─── 🧹 Clean stale OAuth tokens จาก URL (ป้องกัน "Failed to fetch" ครั้งที่ 2) ───
+                // หลัง LIFF login สำเร็จ tokens จะติดอยู่ใน URL — รอบที่ 2 LIFF อาจคิดว่าเป็น login flow ใหม่
+                // และพยายาม verify tokens เก่าที่หมดอายุ → fail
+                // วิธีแก้: ลบ query params ที่เป็น token ออกก่อน liff.init()
+                const cleanStaleAuthParams = () => {
+                    const url = new URL(window.location.href);
+                    const staleParams = ['code', 'access_token', 'id_token', 'feature_token',
+                                         'mst_challenge', 'liff.state', 'state', 'liffClientId',
+                                         'liffRedirectUri', 'client_id'];
+                    let modified = false;
+                    staleParams.forEach(p => {
+                        if (url.searchParams.has(p)) { url.searchParams.delete(p); modified = true; }
+                    });
+                    if (modified) {
+                        // ใช้ replaceState — ไม่ reload page, ไม่เพิ่ม history
+                        const newUrl = url.pathname + (url.search ? url.search : '') + url.hash;
+                        history.replaceState({}, '', newUrl);
+                    }
+                };
+
                 // ─── เริ่ม LIFF ก่อนเสมอ ไม่รอ data fetches ─────────────────
                 try {
                     // ตรวจ LIFF SDK โหลดมาได้ไหม
@@ -868,7 +888,6 @@
                     // ─── 🔧 Workaround: บาง user (โดยเฉพาะ Android) เจอ "Failed to fetch"
                     // เพราะ LINE app cache manifest.json เสียหาย
                     // วิธีแก้: preload manifest พร้อม cache:reload เพื่อบังคับโหลดใหม่
-                    // ที่มา: https://narongdej.dev/blog/th/2024/04/04/...
                     try {
                         await fetch('https://liffsdk.line-scdn.net/xlt/manifest.json', { cache: 'reload' });
                     } catch (preloadErr) {
@@ -893,9 +912,18 @@
                         }
                     }
                     if (initErr) throw initErr;
+
+                    // ✅ liff.init สำเร็จแล้ว → ทำความสะอาด URL ทันที
+                    cleanStaleAuthParams();
+
                     await liff.ready;
                     if (!liff.isLoggedIn()) {
-                        liff.login({ redirectUri: window.location.href });
+                        // ใช้ URL ที่ clean แล้วเป็น redirect target
+                        const cleanUrl = new URL(window.location.href);
+                        ['code', 'access_token', 'id_token', 'feature_token',
+                         'mst_challenge', 'liff.state', 'state', 'liffClientId',
+                         'liffRedirectUri', 'client_id'].forEach(p => cleanUrl.searchParams.delete(p));
+                        liff.login({ redirectUri: cleanUrl.toString() });
                         return;  // browser will redirect
                     }
                 } catch (e) {
