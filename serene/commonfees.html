@@ -260,14 +260,9 @@
 
         async function callApi(action, data = {}) {
             try {
-                // ตรวจสอบการเปิดไฟล์แบบ file://
+                // แจ้งเตือนหากใช้งานผ่าน file://
                 if (window.location.protocol === 'file:') {
-                    Swal.fire({
-                        icon: 'warning',
-                        title: 'ข้อควรระวัง',
-                        text: 'คุณกำลังเปิดไฟล์จากเครื่องโดยตรง ระบบอาจทำงานได้ไม่สมบูรณ์ แนะนำให้ใช้งานผ่านลิงก์ GitHub Pages หรือ Web Server',
-                        confirmButtonText: 'รับทราบ'
-                    });
+                    console.warn("Running from file origin. Network requests may be blocked.");
                 }
 
                 const r = await fetch(API_URL, {
@@ -276,18 +271,15 @@
                     headers: { "Content-Type": "text/plain;charset=utf-8" }
                 });
                 
-                const result = await r.json();
+                if (!r.ok) throw new Error(`HTTP Error: ${r.status}`);
                 
-                // ตรวจสอบว่าเซิร์ฟเวอร์ส่ง Error กลับมาหรือไม่
-                if (result.error) {
-                    throw new Error(result.error);
-                }
+                const result = await r.json();
+                if (result.error) throw new Error(result.error);
                 
                 return result;
             } catch (err) {
-                console.error("API Error:", err);
-                Swal.fire('ข้อผิดพลาดจากระบบ', err.message || 'ไม่สามารถติดต่อเซิร์ฟเวอร์ได้', 'error');
-                loading(false);
+                console.error("API Error Detail:", err);
+                // ขว้าง Error ไปให้ฟังก์ชันหลักจัดการ เพื่อไม่ให้แสดง Swal ซ้อนกัน
                 throw err;
             }
         }
@@ -310,7 +302,10 @@
                 masterData = d;
                 render(d);
                 loading(false);
-            }).catch(() => loading(false));
+            }).catch(err => {
+                Swal.fire('ข้อผิดพลาด', 'ไม่สามารถโหลดข้อมูลจากฐานข้อมูลได้', 'error');
+                loading(false);
+            });
         }
 
         function render(data) {
@@ -346,28 +341,29 @@
             
             loading(true);
             let successCount = 0;
-            let failCount = 0;
+            let failMessages = [];
 
-            try {
-                for (let id of ids) {
-                    try {
-                        await callApi('runPDF', { id, inspector: currentUser.name });
-                        successCount++;
-                    } catch (e) {
-                        console.error(`Failed ID ${id}:`, e);
-                        failCount++;
-                    }
+            for (let id of ids) {
+                try {
+                    await callApi('runPDF', { id, inspector: currentUser.name });
+                    successCount++;
+                } catch (e) {
+                    console.error(`Failed ID ${id}:`, e);
+                    failMessages.push(`ID ${id}: ${e.message}`);
                 }
-                
-                if (failCount === 0) {
-                    Swal.fire('สำเร็จ', `สร้างใบเสร็จเรียบร้อยแล้วจำนวน ${successCount} รายการ`, 'success');
-                } else {
-                    Swal.fire('ดำเนินการเสร็จสิ้น', `สำเร็จ: ${successCount}, ผิดพลาด: ${failCount} (โปรดตรวจสอบสิทธิ์โฟลเดอร์ใน Code.gs)`, 'warning');
-                }
-                refresh();
-            } catch (e) {
-                loading(false);
             }
+            
+            loading(false);
+            if (failMessages.length === 0) {
+                Swal.fire('สำเร็จ', `สร้างใบเสร็จเรียบร้อยแล้วจำนวน ${successCount} รายการ`, 'success');
+            } else {
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'สร้าง PDF ไม่สมบูรณ์',
+                    html: `<div class="text-start small text-danger">สำเร็จ: ${successCount} รายการ<br>พบข้อผิดพลาด:<br>${failMessages.join('<br>')}</div><hr><div class="small">โปรดตรวจสอบไอดีโฟลเดอร์ใน Code.gs</div>`,
+                });
+            }
+            refresh();
         }
 
         async function deleteSelected() {
@@ -385,6 +381,7 @@
                         Swal.fire('ลบข้อมูลแล้ว', '', 'success');
                         refresh();
                     } catch (e) {
+                        Swal.fire('ผิดพลาด', 'ไม่สามารถลบข้อมูลบางรายการได้', 'error');
                         loading(false);
                     }
                 }
@@ -414,7 +411,8 @@
                 Swal.fire('สำเร็จ', 'บันทึกข้อมูลเรียบร้อย', 'success');
                 refresh();
                 $('#add').show(); $('#add2').hide();
-            }).catch(() => {
+            }).catch(err => {
+                Swal.fire('บันทึกล้มเหลว', err.message, 'error');
                 $('#add').show(); $('#add2').hide();
             });
         }
@@ -453,10 +451,15 @@
             Swal.fire({ title: 'ยืนยันการลบ?', icon: 'warning', showCancelButton: true }).then(async (res) => {
                 if (res.isConfirmed) {
                     loading(true);
-                    const row = masterData.find(x => x[0] == id);
-                    await callApi('delRecord', { record: id, oldfile: row[11] });
-                    Swal.fire('ลบข้อมูลแล้ว', '', 'success');
-                    refresh();
+                    try {
+                        const row = masterData.find(x => x[0] == id);
+                        await callApi('delRecord', { record: id, oldfile: row[11] });
+                        Swal.fire('ลบข้อมูลแล้ว', '', 'success');
+                        refresh();
+                    } catch (e) {
+                        Swal.fire('ผิดพลาด', e.message, 'error');
+                        loading(false);
+                    }
                 }
             });
         }
@@ -492,7 +495,10 @@
                             loading(false);
                             Swal.fire('Login Failed', 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง', 'error');
                         }
-                    }).catch(() => loading(false));
+                    }).catch(err => {
+                        Swal.fire('ผิดพลาด', 'ไม่สามารถติดต่อระบบล็อกอินได้', 'error');
+                        loading(false);
+                    });
                 }
             });
         }
