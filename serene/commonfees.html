@@ -61,6 +61,15 @@
             align-items: center; justify-content: center;
             border-radius: 8px;
         }
+
+        .slip-img {
+            transition: transform 0.2s;
+            cursor: pointer;
+        }
+        .slip-img:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2) !important;
+        }
     </style>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
@@ -120,7 +129,8 @@
                         <tr class="bg-light">
                             <th class="text-center"><input type="checkbox" id="selectAll" onclick="toggleAll(this)" class="form-check-input"></th>
                             <th>บ้านเลขที่</th>
-                            <th>เดือน/ปี</th>
+                            <th>เดือน</th>
+                            <th>ปี</th>
                             <th>สถานะ</th>
                             <th>หลักฐาน (สลิป)</th>
                             <th>ผู้บันทึก</th>
@@ -246,6 +256,20 @@
         </div>
     </div>
 
+    <!-- Modal สำหรับดูรูปภาพสลิป -->
+    <div class="modal fade" id="imagePreviewModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content bg-transparent border-0 shadow-none">
+                <div class="modal-header border-0 pb-0 justify-content-end">
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" style="background-color: rgba(0,0,0,0.6); padding: 0.8rem; border-radius: 50%;"></button>
+                </div>
+                <div class="modal-body text-center pt-2">
+                    <img id="previewImage" src="" class="img-fluid rounded shadow-lg" style="max-height: 85vh; border: 3px solid white;">
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.datatables.net/1.11.4/js/jquery.dataTables.min.js"></script>
@@ -310,6 +334,12 @@
             });
         }
 
+        // ฟังก์ชันแสดงรูปภาพสลิปใน Modal
+        function showImage(imageUrl) {
+            $('#previewImage').attr('src', imageUrl);
+            $('#imagePreviewModal').modal('show');
+        }
+
         // ฟังก์ชันสร้างตาราง
         function render(data) {
             let html = "";
@@ -318,9 +348,10 @@
                 html += `<tr>
                     <td class="text-center"><input type="checkbox" class="rowCheckbox form-check-input" value="${r[0]}"></td>
                     <td class="fw-bold">${r[4]}</td>
-                    <td>${r[5]} / ${r[6]}</td>
+                    <td>${r[5]}</td>
+                    <td>${r[6]}</td>
                     <td><span class="status-badge ${badge}">${r[13]}</span></td>
-                    <td>${r[11] ? `<a href="${r[11]}" target="_blank"><img src="${r[11]}" height="35" class="rounded border shadow-sm"></a>` : '-'}</td>
+                    <td>${r[11] ? `<img src="${r[11]}" height="35" class="rounded border shadow-sm slip-img" onclick="showImage('${r[11]}')" title="คลิกเพื่อดูสลิปขนาดเต็ม">` : '-'}</td>
                     <td>${r[3]}</td>
                     <td class="text-muted">${r[12] || '-'}</td>
                     <td class="text-center">${r[15] ? `<a href="${r[15]}" target="_blank"><i class="fas fa-file-pdf fa-2xl text-success"></i></a>` : '-'}</td>
@@ -342,20 +373,36 @@
             let ids = $('.rowCheckbox:checked').map(function() { return $(this).val(); }).get();
             if (ids.length === 0) return Swal.fire('เลือกข้อมูล', 'กรุณาเลือกรายการที่ต้องการสร้าง PDF', 'info');
             
-            loading(true);
+            Swal.fire({
+                title: 'กำลังสร้างใบเสร็จ...',
+                html: 'ประมวลผลพร้อมกัน เพื่อความรวดเร็ว<br>กรุณารอสักครู่...',
+                allowOutsideClick: false,
+                didOpen: () => { Swal.showLoading(); }
+            });
+            
             let successCount = 0;
             let failMessages = [];
 
-            for (let id of ids) {
-                try {
-                    await callApi('runPDF', { id, inspector: currentUser.name });
-                    successCount++;
-                } catch (e) {
-                    failMessages.push(`ID ${id}: ${e.message}`);
-                }
+            // ทำงานพร้อมกันทีละ 3 ไฟล์ (Concurrent processing) เพื่อลดเวลาทำงานลง 3 เท่า
+            const chunkSize = 3; 
+            for (let i = 0; i < ids.length; i += chunkSize) {
+                const chunk = ids.slice(i, i + chunkSize);
+                
+                // สร้างคำสั่งยิงไปที่ GAS พร้อมๆ กันในกลุ่มนี้
+                const promises = chunk.map(async (id) => {
+                    try {
+                        await callApi('runPDF', { id, inspector: currentUser.name });
+                        successCount++;
+                    } catch (e) {
+                        failMessages.push(`ID ${id}: ${e.message}`);
+                    }
+                });
+                
+                // รอให้ทั้ง 3 ไฟล์นี้เสร็จก่อน แล้วค่อยไปชุดต่อไป (ป้องกันเซิร์ฟเวอร์ Google ทำงานหนักเกินไป)
+                await Promise.all(promises);
             }
             
-            loading(false);
+            Swal.close();
             if (failMessages.length === 0) {
                 Swal.fire('สำเร็จ', `ออกใบเสร็จเรียบร้อย จำนวน ${successCount} รายการ`, 'success');
             } else {
