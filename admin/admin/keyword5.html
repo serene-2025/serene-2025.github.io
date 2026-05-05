@@ -7626,9 +7626,9 @@ async function syncOneUser(uid, name) {
     showConfirmModal(
         '🔄 Sync ข้อมูลคนนี้?',
         `<b>${escapeHtml(name) || '(ไม่ระบุ)'}</b><br><br>
-         ระบบจะตรวจ <code>userhome</code> ↔ <code>user_profiles</code><br>
-         ถ้า field ใดว่าง จะดึงจากอีกตารางมาเติมให้<br>
-         <small class="text-slate-500">ไม่ทับข้อมูลที่มีอยู่</small>`,
+         <span class="text-purple-700">①</span> userhome → user_profiles: <b>fill missing only</b><br>
+         <span class="text-rose-700">②</span> user_profiles → userhome: <b>overwrite</b> 🎯 <span class="text-rose-600">[master]</span><br>
+         <small class="text-slate-500">user_profiles เป็น master — ค่า conflict จะถูกทับด้วยข้อมูล CRM</small>`,
         async () => {
             try {
                 const res = await fetch(`${API_BASE_URL}/api/admin/audience/sync_user`, {
@@ -7640,13 +7640,13 @@ async function syncOneUser(uid, name) {
 
                 const changes = d.changes || {};
                 if (Object.keys(changes).length === 0) {
-                    showToast('ไม่มีอะไรต้อง sync (ข้อมูลครบทั้งคู่แล้ว)', 'info');
+                    showToast('ไม่มีอะไรต้อง sync (ข้อมูลตรงกันแล้ว)', 'info');
                 } else {
                     let msg = '✓ Sync สำเร็จ';
-                    if (changes.userhome_created) msg += ' · สร้าง userhome';
-                    if (changes.user_profiles_created) msg += ' · สร้าง user_profiles';
-                    if (changes.userhome_updated) msg += ` · อัปเดต userhome ${Object.keys(changes.userhome_updated).length} ฟิลด์`;
-                    if (changes.user_profiles_updated) msg += ` · อัปเดต user_profiles ${Object.keys(changes.user_profiles_updated).length} ฟิลด์`;
+                    if (changes.userhome_created)        msg += ' · สร้าง userhome';
+                    if (changes.user_profiles_created)   msg += ' · สร้าง user_profiles';
+                    if (changes.user_profiles_filled)    msg += ` · เติม profiles ${Object.keys(changes.user_profiles_filled).length} ฟิลด์`;
+                    if (changes.userhome_overwritten)    msg += ` · ทับ userhome ${Object.keys(changes.userhome_overwritten).length} ฟิลด์`;
                     showToast(msg, 'success');
                     loadUserhomeData();
                 }
@@ -7662,17 +7662,27 @@ function openSyncAllModal() {
     document.getElementById('modal-content').innerHTML = `
         <div class="space-y-4">
             <div class="bg-purple-50 border border-purple-200 rounded-2xl p-4">
-                <div class="text-sm font-bold text-purple-900 mb-2">⚙️ ระบบจะ:</div>
-                <ul class="text-xs text-purple-800 space-y-1 list-disc pl-4">
-                    <li>ตรวจทุก uid จาก <code>userhome</code> + <code>user_profiles</code></li>
-                    <li>ถ้า field ว่างใน table หนึ่ง แต่อีก table มี → copy มา <b>(fill missing)</b></li>
-                    <li>ถ้าไม่มีใน user_profiles เลย → สร้างให้อัตโนมัติ</li>
-                    <li>ถ้าไม่มีใน userhome เลย แต่มี house_no → สร้างให้</li>
-                    <li><b>ไม่ overwrite ข้อมูลที่มีอยู่</b> (safe)</li>
-                </ul>
+                <div class="text-sm font-bold text-purple-900 mb-2">⚙️ Logic การ Sync:</div>
+                <div class="text-xs text-purple-800 space-y-2">
+                    <div class="flex items-start gap-2">
+                        <span class="font-bold text-purple-700">①</span>
+                        <div><b>userhome → user_profiles</b><br>
+                        <span class="text-purple-600">FILL MISSING ONLY — ถ้า field ว่างใน user_profiles เท่านั้น (ไม่ทับ master)</span></div>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="font-bold text-rose-700">②</span>
+                        <div><b>user_profiles → userhome</b> 🎯 <span class="text-rose-700 font-bold">[MASTER]</span><br>
+                        <span class="text-purple-600">OVERWRITE — ถ้าค่าต่างกัน user_profiles ชนะเสมอ</span></div>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="font-bold text-blue-700">③</span>
+                        <div><b>Auto-create</b><br>
+                        <span class="text-purple-600">ถ้าขาดในตารางใด → สร้างให้อัตโนมัติ</span></div>
+                    </div>
+                </div>
             </div>
             <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
-                <b>⚠️ Field ที่ sync:</b> fullname/displayName ↔ first_name+last_name · phone · email · house_no · soi · profile/pictureUrl
+                <b>📋 Field ที่ sync:</b> fullname/displayName ↔ first_name+last_name · phone · email · house_no · soi · profile/pictureUrl
             </div>
             <div>
                 <label class="block text-sm font-bold text-slate-700 mb-1.5">จำนวนสูงสุด (max 2,000)</label>
@@ -7705,9 +7715,14 @@ async function runSyncAll(btn) {
                 <div class="font-bold text-emerald-800 mb-3">✅ ${escapeHtml(d.message || 'สำเร็จ')}</div>
                 <div class="grid grid-cols-2 gap-2 text-center text-xs">
                     <div class="bg-white rounded-lg p-2"><div class="text-slate-500">ตรวจสอบ</div><div class="text-xl font-bold text-slate-700">${d.processed || 0}</div></div>
-                    <div class="bg-white rounded-lg p-2"><div class="text-slate-500">อัปเดต</div><div class="text-xl font-bold text-emerald-600">${d.changed || 0}</div></div>
-                    <div class="bg-white rounded-lg p-2"><div class="text-slate-500">สร้างใน userhome</div><div class="text-xl font-bold text-cyan-600">${d.userhome_created || 0}</div></div>
-                    <div class="bg-white rounded-lg p-2"><div class="text-slate-500">สร้างใน profiles</div><div class="text-xl font-bold text-blue-600">${d.user_profiles_created || 0}</div></div>
+                    <div class="bg-white rounded-lg p-2"><div class="text-slate-500">มีการเปลี่ยนแปลง</div><div class="text-xl font-bold text-emerald-600">${d.changed || 0}</div></div>
+                    <div class="bg-white rounded-lg p-2" title="user_profiles ได้รับข้อมูลที่ขาดจาก userhome"><div class="text-slate-500 text-[10px]">①ใส่ใน profiles</div><div class="text-lg font-bold text-purple-600">${d.user_profiles_filled || 0}</div></div>
+                    <div class="bg-white rounded-lg p-2" title="userhome ถูก overwrite ด้วยข้อมูล master"><div class="text-slate-500 text-[10px]">②ทับ userhome</div><div class="text-lg font-bold text-rose-600">${d.userhome_overwritten || 0}</div></div>
+                    <div class="bg-white rounded-lg p-2"><div class="text-slate-500 text-[10px]">③สร้าง userhome</div><div class="text-lg font-bold text-cyan-600">${d.userhome_created || 0}</div></div>
+                    <div class="bg-white rounded-lg p-2"><div class="text-slate-500 text-[10px]">③สร้าง profiles</div><div class="text-lg font-bold text-blue-600">${d.user_profiles_created || 0}</div></div>
+                </div>
+                <div class="text-[10px] text-slate-500 mt-3 pt-2 border-t border-emerald-100">
+                    🎯 <b>user_profiles เป็น master</b> — เมื่อข้อมูลขัดแย้ง userhome จะถูกทับ
                 </div>
             </div>`;
         showToast(d.message, 'success');
@@ -9128,6 +9143,7 @@ async function runBackfill() {
         }
     };
 })();
+
 // ============================================================================
         // ชุดโค้ดเปิดระบบ "จัดการ Rich Menu ขั้นสูง (Pro)" แบบหน้าต่างซ้อน (Iframe Modal)
 // ============================================================================
