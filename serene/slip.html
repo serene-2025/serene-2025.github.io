@@ -949,37 +949,60 @@
       }
     }
 
-    function sendFlexMessage(uid, uname, picture, name, name1, name2_string, name3, uploadedImageUrl) {
+    async function sendFlexMessage(uid, uname, picture, name, name1, year, selectedMonths, monthImageMap, slipMode) {
       if (!liff.isInClient()) return; 
 
-      const displayImage = uploadedImageUrl || picture || "https://cdn-icons-png.flaticon.com/512/1571/1571031.png";
+      let bubbles = [];
+
+      if (slipMode === 'single') {
+          // โหมดสลิปเดียว (ยอดรวม)
+          const allMonthsString = selectedMonths.join(", ");
+          const imageUrl = monthImageMap[selectedMonths[0]] || picture || "https://cdn-icons-png.flaticon.com/512/1571/1571031.png";
+          bubbles.push(createFlexBubble(imageUrl, name, name1, year, allMonthsString, uid, uname, "โอนยอดรวม (1 สลิป)"));
+      } else {
+          // โหมดหลายสลิป (แยกยอด) - ทำเป็น Carousel เลื่อนซ้ายขวา (สูงสุด 10 หน้าปัดตามข้อจำกัด LINE)
+          for (let i = 0; i < selectedMonths.length; i++) {
+              if (i >= 10) break; 
+              const month = selectedMonths[i];
+              const imageUrl = monthImageMap[month] || picture || "https://cdn-icons-png.flaticon.com/512/1571/1571031.png";
+              bubbles.push(createFlexBubble(imageUrl, name, name1, year, month, uid, uname, `โอนแยกยอด (${i+1}/${selectedMonths.length})`));
+          }
+      }
 
       const flexMessage = {
-        type: "flex",
-        altText: "บันทึกค่าส่วนกลางสำเร็จ",
-        contents: {
+          type: "flex",
+          altText: "บันทึกค่าส่วนกลางสำเร็จ",
+          contents: { type: "carousel", contents: bubbles }
+      };
+
+      // ถ้ามีแค่หน้าปัดเดียว (Single) ให้ส่งแบบ Bubble ธรรมดาเพื่อความสวยงาม
+      if (bubbles.length === 1) {
+          flexMessage.contents = bubbles[0];
+      }
+
+      try {
+          await liff.sendMessages([flexMessage]);
+      } catch (err) {
+          console.error("Error sending FlexMessage:", err);
+      }
+    }
+
+    function createFlexBubble(imageUrl, name, houseNo, year, monthStr, uid, uname, modeText) {
+        return {
           "type": "bubble",
           "hero": {
             "type": "image",
-            "url": displayImage, 
+            "url": imageUrl, 
             "size": "full",
             "aspectRatio": "20:22",
             "aspectMode": "cover",
-            "action": {
-              "type": "uri",
-              "uri": displayImage
-            }
+            "action": { "type": "uri", "uri": imageUrl }
           },
           "body": {
             "type": "box",
             "layout": "vertical",
             "contents": [
-              {
-                "type": "text",
-                "text": "💴 บันทึกส่วนกลางสำเร็จ",
-                "weight": "bold",
-                "size": "xl"
-              },
+              { "type": "text", "text": "💴 บันทึกส่วนกลางสำเร็จ", "weight": "bold", "size": "xl" },
               {
                 "type": "box",
                 "layout": "vertical",
@@ -987,86 +1010,48 @@
                 "spacing": "sm",
                 "contents": [
                   {
-                    "type": "box",
-                    "layout": "baseline",
-                    "spacing": "sm",
+                    "type": "box", "layout": "baseline", "spacing": "sm",
+                    "contents": [
+                      { "type": "text", "text": "รูปแบบ : ", "color": "#aaaaaa", "size": "sm", "flex": 2 },
+                      { "type": "text", "text": modeText, "wrap": true, "color": "#198754", "size": "xs", "flex": 5, "weight": "bold" }
+                    ]
+                  },
+                  {
+                    "type": "box", "layout": "baseline", "spacing": "sm",
                     "contents": [
                       { "type": "text", "text": "วันที่ : ", "color": "#aaaaaa", "size": "sm", "flex": 2 },
                       { "type": "text", "text": "" + new Date().toLocaleString('th-TH'), "wrap": true, "color": "#666666", "size": "xs", "flex": 5 }
                     ]
                   },
+                  { "type": "separator", "margin": "md" },
                   {
-                    "type": "box",
-                    "layout": "baseline",
-                    "spacing": "sm",
+                    "type": "box", "layout": "baseline", "spacing": "sm", "margin": "md",
                     "contents": [
-                      { "type": "text", "text": "ชื่อไลน์ : ", "color": "#aaaaaa", "size": "sm", "flex": 2 },
-                      { "type": "text", "text": "" + (uname || "ไม่ระบุ"), "wrap": true, "color": "#666666", "size": "xs", "flex": 5 }
+                      { "type": "text", "text": "🏡 บ้านเลขที่ : ", "color": "#aaaaaa", "size": "sm", "flex": 3 },
+                      { "type": "text", "text": houseNo, "wrap": true, "color": "#666666", "size": "sm", "flex": 5, "align": "end", "weight": "bold" }
                     ]
                   },
                   {
-                    "type": "box",
-                    "layout": "baseline",
-                    "spacing": "sm",
+                    "type": "box", "layout": "baseline", "spacing": "sm",
                     "contents": [
-                      { "type": "text", "text": "Uid : ", "color": "#aaaaaa", "size": "sm", "flex": 2 },
-                      { "type": "text", "text": "" + uid, "wrap": true, "color": "#666666", "size": "sm", "flex": 5 }
-                    ]
-                  },
-                  { "type": "separator" },
-                  {
-                    "type": "box",
-                    "layout": "baseline",
-                    "spacing": "sm",
-                    "contents": [
-                      { "type": "text", "text": "🤵‍♂️ ชื่อ : ", "color": "#aaaaaa", "size": "sm", "wrap": true, "flex": 3, "margin": "md", "gravity": "center" },
-                      { "type": "text", "text": "" + name, "wrap": true, "color": "#666666", "size": "sm", "flex": 5, "align": "end", "gravity": "center" }
+                      { "type": "text", "text": "🗓 ปี : ", "color": "#aaaaaa", "size": "sm", "flex": 3 },
+                      { "type": "text", "text": year, "wrap": true, "color": "#666666", "size": "sm", "flex": 5, "align": "end" }
                     ]
                   },
                   {
-                    "type": "box",
-                    "layout": "baseline",
-                    "spacing": "sm",
+                    "type": "box", "layout": "baseline", "spacing": "sm",
                     "contents": [
-                      { "type": "text", "text": "🏡 บ้านเลขที่ : ", "color": "#aaaaaa", "size": "sm", "wrap": true, "flex": 3, "margin": "md", "gravity": "center" },
-                      { "type": "text", "text": "" + name1, "wrap": true, "color": "#666666", "size": "sm", "flex": 5, "align": "end", "gravity": "center" }
+                      { "type": "text", "text": "📆 เดือน : ", "color": "#aaaaaa", "size": "sm", "flex": 3 },
+                      { "type": "text", "text": monthStr, "wrap": true, "color": "#198754", "weight": "bold", "size": "sm", "flex": 5, "align": "end" }
                     ]
                   },
-                  {
-                    "type": "box",
-                    "layout": "baseline",
-                    "spacing": "sm",
-                    "contents": [
-                      { "type": "text", "text": "🗓 ปี : ", "color": "#aaaaaa", "size": "sm", "wrap": true, "flex": 3, "margin": "md", "gravity": "center" },
-                      { "type": "text", "text": "" + name3, "wrap": true, "color": "#666666", "size": "sm", "flex": 5, "align": "end", "gravity": "center" }
-                    ]
-                  },
-                  {
-                    "type": "box",
-                    "layout": "baseline",
-                    "spacing": "sm",
-                    "contents": [
-                      { "type": "text", "text": "📆 เดือน : ", "color": "#aaaaaa", "size": "sm", "wrap": true, "flex": 3, "margin": "md", "gravity": "center" },
-                      { "type": "text", "text": "" + name2_string, "wrap": true, "color": "#198754", "weight": "bold", "size": "sm", "flex": 5, "align": "end", "gravity": "center" }
-                    ]
-                  },
-                  { "type": "separator" },
-                  {
-                    "type": "text", "text": " ", "wrap": true, "size": "xs", "color": "#8C8C8C",
-                    "contents": [ { "type": "span", "text": "โปรดตรวจสอบข้อมูลของท่านเพื่อความถูกต้อง" } ]
-                  },
-                  {
-                    "type": "text", "text": " ", "wrap": true, "size": "xs", "color": "#8C8C8C",
-                    "contents": [ { "type": "span", "text": "ถ้าข้อมูลไม่ถูกต้องติดต่อ : แอดมิน ทันที" } ]
-                  }
+                  { "type": "separator", "margin": "md" },
+                  { "type": "text", "text": "โปรดตรวจสอบข้อมูลของท่าน", "wrap": true, "size": "xs", "color": "#8C8C8C", "margin": "md", "align": "center" }
                 ]
               }
             ]
           }
-        }
-      };
-
-      liff.sendMessages([flexMessage]).catch((err) => console.error("Error sending FlexMessage:", err));
+        };
     }
 
     const preventCloseHandler = (e) => {
@@ -1397,7 +1382,7 @@
               document.getElementById('saveSubText').innerHTML = "ระบบส่งข้อมูลไปอัปเดตเบื้องหลังแล้ว...";
           }
 
-          setTimeout(() => {
+          setTimeout(async () => {
               window.removeEventListener('beforeunload', preventCloseHandler);
               $("#btn_2").hide(); $("#btn_1").show();
               
@@ -1412,6 +1397,9 @@
               document.getElementById('name1_suffix').value = "";
               
               checkFormValidity(); updateMonthStatus(); 
+
+              // 🌟 รอให้ส่ง Flex Message เสร็จ 100% ค่อยแสดงป๊อปอัปให้กดปิด 🌟
+              await sendFlexMessage(uid, uname, picture, name, name1Hidden, name3, selectedMonths, monthImageMap, mode);
 
               Swal.fire({
                 title: 'ขอบคุณที่จ่ายค่าส่วนกลาง',
