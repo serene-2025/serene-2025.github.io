@@ -526,6 +526,7 @@
                             <button onclick="loadView('crmDash');" id="nav-crmDash" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="layout-dashboard" class="w-5 h-5 text-green-500"></i> <span>CRM Dashboard</span></button>
                             <button onclick="loadView('crmTiers');" id="nav-crmTiers" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="award" class="w-5 h-5 text-indigo-500"></i> <span>จัดการ Level (Tiers)</span></button>
                             <button onclick="loadView('crmMembers');" id="nav-crmMembers" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="users-round" class="w-5 h-5 text-emerald-500"></i> <span>สมาชิก &amp; แต้ม</span></button>
+                            <button onclick="loadView('userhome');" id="nav-userhome" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="house-plus" class="w-5 h-5 text-teal-500"></i> <span>ทะเบียนบ้าน &amp; สมาชิก</span></button>
                             <button onclick="loadView('crmRewards');" id="nav-crmRewards" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="gift" class="w-5 h-5 text-rose-500"></i> <span>รางวัล / คูปอง</span></button>
                             <button onclick="loadView('crmNews');" id="nav-crmNews" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="megaphone" class="w-5 h-5 text-amber-500"></i> <span>ข่าว / โปรโมชั่น</span></button>
                             <button onclick="loadView('crmVerify');" id="nav-crmVerify" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="scan-line" class="w-5 h-5 text-violet-500"></i> <span>Scan คูปอง</span></button>
@@ -619,6 +620,7 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'crmDash')    await renderCrmDashView();
             else if (viewName === 'crmTiers')   await renderCrmTiersView();
             else if (viewName === 'crmMembers') await renderCrmMembersView();
+            else if (viewName === 'userhome') await renderUserhomeView();
             else if (viewName === 'crmRewards') await renderCrmRewardsView();
             else if (viewName === 'crmNews')    await renderCrmNewsView();
             else if (viewName === 'crmVerify')  await renderCrmVerifyView();
@@ -7188,6 +7190,459 @@ async function updateAllUserProfiles() {
         }
 
    // ============================================================================
+// 🏠 ทะเบียนบ้าน & สมาชิก (Userhome Management)
+// ============================================================================
+
+let userhomeData = [];        // ทั้งหมด (จาก fetch)
+let userhomeFiltered = [];    // หลัง filter
+let userhomePage = 1;
+const USERHOME_PER_PAGE = 50;
+
+async function renderUserhomeView() {
+    document.getElementById('content-area').innerHTML = `
+        <div class="slide-in p-2">
+            <div class="mb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+                <div>
+                    <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">
+                        <span class="bg-teal-100 text-teal-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="house-plus" class="w-8 h-8"></i></span>
+                        ทะเบียนบ้าน &amp; สมาชิก
+                    </h1>
+                    <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">ข้อมูลสมาชิกที่ลงทะเบียนบ้านในระบบ · เชื่อมต่อกับ LINE</p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="exportUserhomeCSV()" class="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-2xl font-bold shadow-sm flex items-center gap-2 text-sm">
+                        <i data-lucide="download" class="w-4 h-4"></i> Export CSV
+                    </button>
+                    <button onclick="loadUserhomeData()" class="px-4 py-2.5 bg-teal-500 hover:bg-teal-600 text-white rounded-2xl font-bold shadow-md flex items-center gap-2 text-sm">
+                        <i data-lucide="refresh-cw" class="w-4 h-4"></i> รีเฟรช
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div id="uh-stats" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+                <div class="bg-white rounded-2xl p-4 border border-slate-100 text-center"><div class="text-xs text-slate-500 font-bold">ทั้งหมด</div><div class="text-3xl font-extrabold text-slate-800 mt-1" id="uh-stat-total">—</div></div>
+                <div class="bg-emerald-50 rounded-2xl p-4 border border-emerald-100 text-center"><div class="text-xs text-emerald-700 font-bold">เจ้าของบ้าน</div><div class="text-3xl font-extrabold text-emerald-600 mt-1" id="uh-stat-owner">—</div></div>
+                <div class="bg-blue-50 rounded-2xl p-4 border border-blue-100 text-center"><div class="text-xs text-blue-700 font-bold">ผู้อาศัย</div><div class="text-3xl font-extrabold text-blue-600 mt-1" id="uh-stat-resident">—</div></div>
+                <div class="bg-amber-50 rounded-2xl p-4 border border-amber-100 text-center"><div class="text-xs text-amber-700 font-bold">ผู้เช่า</div><div class="text-3xl font-extrabold text-amber-600 mt-1" id="uh-stat-tenant">—</div></div>
+                <div class="bg-purple-50 rounded-2xl p-4 border border-purple-100 text-center"><div class="text-xs text-purple-700 font-bold">ใช้งาน 7 วัน</div><div class="text-3xl font-extrabold text-purple-600 mt-1" id="uh-stat-active">—</div></div>
+            </div>
+
+            <!-- Filters -->
+            <div class="glass rounded-3xl p-4 shadow-sm mb-5">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div class="md:col-span-2">
+                        <input id="uh-search" oninput="applyUserhomeFilters()" type="text" placeholder="🔍 ค้นหา ชื่อ / บ้าน / ซอย / เบอร์ / email / line..."
+                               class="w-full rounded-2xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-teal-400 outline-none">
+                    </div>
+                    <select id="uh-soi" onchange="applyUserhomeFilters()" class="rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                        <option value="">ทุกซอย</option>
+                    </select>
+                    <select id="uh-status" onchange="applyUserhomeFilters()" class="rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                        <option value="">ทุกสถานะ</option>
+                        <option value="เจ้าของบ้าน">เจ้าของบ้าน</option>
+                        <option value="ผู้อาศัย">ผู้อาศัย</option>
+                        <option value="ผู้เช่า">ผู้เช่า</option>
+                        <option value="เจ้าของร่วม">เจ้าของร่วม</option>
+                        <option value="อื่นๆ">อื่นๆ</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Result count -->
+            <div id="uh-result-count" class="text-xs text-slate-500 mb-2"></div>
+
+            <!-- Table -->
+            <div class="glass rounded-3xl overflow-hidden shadow-sm">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-slate-50 text-slate-600">
+                            <tr>
+                                <th class="text-left p-3 font-bold w-12"></th>
+                                <th class="text-left p-3 font-bold">สมาชิก</th>
+                                <th class="text-left p-3 font-bold">บ้าน / ซอย</th>
+                                <th class="text-center p-3 font-bold">สถานะ</th>
+                                <th class="text-center p-3 font-bold">สมาชิก</th>
+                                <th class="text-left p-3 font-bold">ติดต่อ</th>
+                                <th class="text-center p-3 font-bold">เข้าใช้</th>
+                                <th class="text-center p-3 font-bold">ลงทะเบียน</th>
+                                <th class="text-center p-3 font-bold">จัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="uh-tbody"><tr><td colspan="9" class="p-12 text-center text-slate-400">กำลังโหลด...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Pagination -->
+            <div id="uh-pagination" class="flex justify-center items-center gap-2 mt-4"></div>
+        </div>`;
+    lucide.createIcons();
+    loadUserhomeData();
+}
+
+async function loadUserhomeData() {
+    document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="9" class="p-12 text-center text-slate-400">กำลังโหลด...</td></tr>`;
+    try {
+        const { data, error } = await supabaseClient
+            .from('userhome')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(2000);
+        if (error) throw error;
+
+        userhomeData = data || [];
+        renderUserhomeStats(userhomeData);
+
+        // populate ซอย dropdown
+        const sois = [...new Set(userhomeData.map(r => r.soi).filter(Boolean))].sort();
+        const soiSel = document.getElementById('uh-soi');
+        soiSel.innerHTML = '<option value="">ทุกซอย</option>' + sois.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+
+        applyUserhomeFilters();
+    } catch (e) {
+        document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="9" class="p-12 text-center text-rose-500 font-bold">${escapeHtml(e.message)}</td></tr>`;
+    }
+}
+
+function renderUserhomeStats(list) {
+    const total = list.length;
+    const owner = list.filter(r => r.living_status === 'เจ้าของบ้าน').length;
+    const resident = list.filter(r => r.living_status === 'ผู้อาศัย').length;
+    const tenant = list.filter(r => r.living_status === 'ผู้เช่า').length;
+    const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
+    const active = list.filter(r => r.updated_at && new Date(r.updated_at).getTime() > sevenDaysAgo).length;
+
+    document.getElementById('uh-stat-total').innerText = total.toLocaleString();
+    document.getElementById('uh-stat-owner').innerText = owner.toLocaleString();
+    document.getElementById('uh-stat-resident').innerText = resident.toLocaleString();
+    document.getElementById('uh-stat-tenant').innerText = tenant.toLocaleString();
+    document.getElementById('uh-stat-active').innerText = active.toLocaleString();
+}
+
+function applyUserhomeFilters() {
+    const q = (document.getElementById('uh-search')?.value || '').toLowerCase().trim();
+    const soi = document.getElementById('uh-soi')?.value || '';
+    const status = document.getElementById('uh-status')?.value || '';
+
+    userhomeFiltered = userhomeData.filter(r => {
+        if (soi && r.soi !== soi) return false;
+        if (status && r.living_status !== status) return false;
+        if (q) {
+            const haystack = [r.fullname, r.line_name, r.house_no, r.soi, r.phone, r.email, r.line_id, r.uid]
+                .filter(Boolean).join(' ').toLowerCase();
+            if (!haystack.includes(q)) return false;
+        }
+        return true;
+    });
+    userhomePage = 1;
+    renderUserhomeTable();
+}
+
+function renderUserhomeTable() {
+    document.getElementById('uh-result-count').innerText = `แสดง ${userhomeFiltered.length.toLocaleString()} รายการ จาก ${userhomeData.length.toLocaleString()} ทั้งหมด`;
+
+    if (userhomeFiltered.length === 0) {
+        document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="9" class="p-12 text-center text-slate-400"><div class="text-5xl mb-2">🔍</div>ไม่พบข้อมูล</td></tr>`;
+        document.getElementById('uh-pagination').innerHTML = '';
+        return;
+    }
+
+    const total = userhomeFiltered.length;
+    const totalPages = Math.ceil(total / USERHOME_PER_PAGE);
+    const startIdx = (userhomePage - 1) * USERHOME_PER_PAGE;
+    const pageData = userhomeFiltered.slice(startIdx, startIdx + USERHOME_PER_PAGE);
+
+    const statusColor = (s) => ({
+        'เจ้าของบ้าน': 'bg-emerald-100 text-emerald-700',
+        'ผู้อาศัย': 'bg-blue-100 text-blue-700',
+        'ผู้เช่า': 'bg-amber-100 text-amber-700',
+        'เจ้าของร่วม': 'bg-purple-100 text-purple-700',
+        'อื่นๆ': 'bg-slate-100 text-slate-600'
+    })[s] || 'bg-slate-100 text-slate-600';
+
+    document.getElementById('uh-tbody').innerHTML = pageData.map(r => {
+        const phoneFormatted = r.phone ? (r.phone.length === 10 ? r.phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : r.phone) : '';
+        return `<tr class="border-t border-slate-100 hover:bg-white/60">
+            <td class="p-3">
+                <img src="${r.profile || 'https://cdn-icons-png.flaticon.com/512/9368/9368192.png'}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/9368/9368192.png'" class="w-10 h-10 rounded-full border border-slate-200 object-cover">
+            </td>
+            <td class="p-3">
+                <div class="font-bold text-slate-800 text-sm">${escapeHtml(r.fullname || '—')}</div>
+                <div class="text-[11px] text-slate-500">LINE: ${escapeHtml(r.line_name || '—')}</div>
+            </td>
+            <td class="p-3">
+                <div class="font-bold text-slate-700 text-sm">${escapeHtml(r.house_no || '—')}</div>
+                <div class="text-[11px] text-slate-500">${escapeHtml(r.soi || '—')}</div>
+            </td>
+            <td class="p-3 text-center">
+                <span class="text-[10px] font-bold ${statusColor(r.living_status)} px-2 py-0.5 rounded-md whitespace-nowrap">${escapeHtml(r.living_status || '—')}</span>
+            </td>
+            <td class="p-3 text-center">
+                <span class="text-sm font-bold text-slate-700">${escapeHtml(r.member_count || 1)}</span>
+                <span class="text-[10px] text-slate-400">คน</span>
+            </td>
+            <td class="p-3 text-[11px]">
+                ${r.phone ? `<div class="text-slate-700"><i class="fas fa-phone text-[8px]"></i> ${escapeHtml(phoneFormatted)}</div>` : ''}
+                ${r.email ? `<div class="text-slate-500 truncate max-w-[150px]" title="${escapeHtml(r.email)}"><i class="fas fa-envelope text-[8px]"></i> ${escapeHtml(r.email)}</div>` : ''}
+                ${!r.phone && !r.email ? '<span class="text-slate-300">—</span>' : ''}
+            </td>
+            <td class="p-3 text-center">
+                <span class="text-sm font-bold text-slate-700">${(r.visit_count || 0).toLocaleString()}</span>
+                <span class="text-[10px] text-slate-400 block">ครั้ง</span>
+            </td>
+            <td class="p-3 text-center text-[11px] text-slate-500">${r.created_at ? new Date(r.created_at).toLocaleDateString('th-TH', {year:'2-digit', month:'short', day:'numeric'}) : '—'}</td>
+            <td class="p-3 text-center">
+                <div class="flex gap-1 justify-center">
+                    <button onclick="viewUserhomeDetail('${escapeHtml(r.uid)}')" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg" title="ดูข้อมูล"><i data-lucide="eye" class="w-4 h-4"></i></button>
+                    <button onclick="editUserhome('${escapeHtml(r.uid)}')" class="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="แก้ไข"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
+                    <button onclick="quickPushUser('${escapeHtml(r.uid)}', '${escapeHtml(r.fullname || r.line_name || '').replace(/'/g, '&apos;')}')" class="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg" title="ส่งข้อความ"><i data-lucide="send" class="w-4 h-4"></i></button>
+                    <button onclick="deleteUserhome('${escapeHtml(r.uid)}', '${escapeHtml(r.fullname || '').replace(/'/g, '&apos;')}')" class="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg" title="ลบ"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+
+    // Pagination
+    const pagWrap = document.getElementById('uh-pagination');
+    if (totalPages <= 1) { pagWrap.innerHTML = ''; lucide.createIcons(); return; }
+    let pagHtml = `<button ${userhomePage === 1 ? 'disabled' : ''} onclick="userhomeGoPage(${userhomePage - 1})" class="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-bold ${userhomePage === 1 ? 'opacity-40' : 'hover:bg-slate-50'}">‹</button>`;
+    pagHtml += `<span class="text-sm text-slate-600 px-2">หน้า <b>${userhomePage}</b> / ${totalPages}</span>`;
+    pagHtml += `<button ${userhomePage === totalPages ? 'disabled' : ''} onclick="userhomeGoPage(${userhomePage + 1})" class="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-bold ${userhomePage === totalPages ? 'opacity-40' : 'hover:bg-slate-50'}">›</button>`;
+    pagWrap.innerHTML = pagHtml;
+    lucide.createIcons();
+}
+
+function userhomeGoPage(p) {
+    userhomePage = p;
+    renderUserhomeTable();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ─── Detail Modal ─────────────────────────────────────────────
+function viewUserhomeDetail(uid) {
+    const r = userhomeData.find(x => x.uid === uid);
+    if (!r) return;
+    document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="user" class="w-5 h-5 text-teal-500"></i> ข้อมูลสมาชิก</div>';
+    document.getElementById('modal-content').innerHTML = `
+        <div class="space-y-4">
+            <div class="flex items-center gap-4 bg-gradient-to-br from-teal-50 to-cyan-50 rounded-2xl p-4">
+                <img src="${r.profile || 'https://cdn-icons-png.flaticon.com/512/9368/9368192.png'}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/9368/9368192.png'" class="w-20 h-20 rounded-full border-4 border-white shadow-md">
+                <div class="flex-1 min-w-0">
+                    <div class="font-extrabold text-xl text-slate-800 truncate">${escapeHtml(r.fullname || '—')}</div>
+                    <div class="text-sm text-slate-500">LINE: <b>${escapeHtml(r.line_name || '—')}</b></div>
+                    <div class="inline-block mt-1.5 px-3 py-0.5 rounded-full bg-white text-teal-700 text-[10px] font-bold border border-teal-200">${escapeHtml(r.living_status || '—')}</div>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-2 text-sm">
+                ${detailRow('🏠 บ้านเลขที่', r.house_no)}
+                ${detailRow('🛣️ ซอย', r.soi)}
+                ${detailRow('👥 จำนวนสมาชิก', `${r.member_count || 1} คน`)}
+                ${detailRow('📞 เบอร์โทร', r.phone)}
+                ${detailRow('✉️ อีเมล', r.email)}
+                ${detailRow('🆔 LINE ID', r.line_id)}
+                ${detailRow('📅 ลงทะเบียน', r.created_at ? new Date(r.created_at).toLocaleString('th-TH') : '—')}
+                ${detailRow('🔄 อัปเดต', r.updated_at ? new Date(r.updated_at).toLocaleString('th-TH') : '—')}
+                ${detailRow('🌐 เข้าใช้', `${(r.visit_count || 0).toLocaleString()} ครั้ง`)}
+                ${detailRow('🤖 AI Mode', r.check_mode || 'ออโต้')}
+            </div>
+            <details class="bg-slate-50 rounded-xl">
+                <summary class="px-3 py-2 cursor-pointer text-[10px] text-slate-500 font-bold uppercase tracking-wider">เทคนิค</summary>
+                <div class="p-3 space-y-1 text-[10px] font-mono text-slate-600">
+                    <div><span class="text-slate-400">UID:</span> ${escapeHtml(r.uid)}</div>
+                    <div><span class="text-slate-400">RichMenu:</span> ${escapeHtml(r.richmenu || '—')}</div>
+                    <div><span class="text-slate-400">AI Model:</span> ${escapeHtml(r.preferred_ai_model || '—')}</div>
+                </div>
+            </details>
+            <div class="flex gap-2 pt-2 border-t border-slate-100">
+                <button onclick="closeModal(); editUserhome('${escapeHtml(uid)}')" class="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2"><i data-lucide="edit-3" class="w-4 h-4"></i> แก้ไข</button>
+                <button onclick="closeModal(); quickPushUser('${escapeHtml(uid)}', '${escapeHtml(r.fullname || '').replace(/'/g, '&apos;')}')" class="flex-1 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2"><i data-lucide="send" class="w-4 h-4"></i> ส่งข้อความ</button>
+            </div>
+        </div>`;
+    openModal();
+    lucide.createIcons();
+}
+
+function detailRow(label, value) {
+    return `<div class="bg-white rounded-xl p-2.5 border border-slate-100">
+        <div class="text-[10px] text-slate-500 font-bold">${label}</div>
+        <div class="text-sm text-slate-800 font-bold truncate">${escapeHtml(value || '—')}</div>
+    </div>`;
+}
+
+// ─── Edit Modal ───────────────────────────────────────────────
+function editUserhome(uid) {
+    const r = userhomeData.find(x => x.uid === uid);
+    if (!r) return;
+
+    document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="edit-3" class="w-5 h-5 text-emerald-500"></i> แก้ไขข้อมูลสมาชิก</div>';
+    document.getElementById('modal-content').innerHTML = `
+        <div class="space-y-3">
+            <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
+                <i data-lucide="alert-triangle" class="w-3.5 h-3.5 inline"></i>
+                <b>หมายเหตุ:</b> uid และ line_name มาจาก LINE — แก้ไขไม่ได้
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">ชื่อ-นามสกุล *</label>
+                    <input id="uhe-fullname" type="text" value="${escapeHtml(r.fullname || '')}" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">เบอร์โทร</label>
+                    <input id="uhe-phone" type="tel" value="${escapeHtml(r.phone || '')}" maxlength="10" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">บ้านเลขที่ *</label>
+                    <input id="uhe-house" type="text" value="${escapeHtml(r.house_no || '')}" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">ซอย</label>
+                    <input id="uhe-soi" type="text" value="${escapeHtml(r.soi || '')}" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">สถานะ</label>
+                    <select id="uhe-status" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                        ${['เจ้าของบ้าน','เจ้าของร่วม','ผู้อาศัย','ผู้เช่า','อื่นๆ'].map(s =>
+                            `<option value="${s}" ${r.living_status === s ? 'selected' : ''}>${s}</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">จำนวนสมาชิก</label>
+                    <input id="uhe-members" type="number" min="1" max="20" value="${r.member_count || 1}" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-xs font-bold text-slate-700 mb-1">อีเมล</label>
+                    <input id="uhe-email" type="email" value="${escapeHtml(r.email || '')}" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
+                </div>
+            </div>
+            <div class="flex gap-2 pt-3 border-t border-slate-100">
+                <button onclick="closeModal()" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold">ยกเลิก</button>
+                <button onclick="saveUserhomeEdit('${escapeHtml(uid)}', this)" id="uhe-save-btn" class="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> บันทึก</button>
+            </div>
+        </div>`;
+    openModal();
+    lucide.createIcons();
+}
+
+async function saveUserhomeEdit(uid, btn) {
+    const fullname = document.getElementById('uhe-fullname').value.trim();
+    const houseNo  = document.getElementById('uhe-house').value.trim();
+    if (!fullname) return showToast('กรุณากรอกชื่อ', 'warning');
+    if (!houseNo)  return showToast('กรุณากรอกบ้านเลขที่', 'warning');
+
+    setBtnLoading(btn, true);
+    const payload = {
+        fullname,
+        house_no: houseNo,
+        soi: document.getElementById('uhe-soi').value.trim() || null,
+        living_status: document.getElementById('uhe-status').value,
+        member_count: parseInt(document.getElementById('uhe-members').value) || 1,
+        phone: document.getElementById('uhe-phone').value.trim() || null,
+        email: document.getElementById('uhe-email').value.trim() || null,
+        updated_at: new Date().toISOString()
+    };
+    try {
+        const { error } = await supabaseClient.from('userhome').update(payload).eq('uid', uid);
+        if (error) throw error;
+        showToast('บันทึกสำเร็จ', 'success');
+        closeModal();
+        loadUserhomeData();
+    } catch (e) {
+        showToast(e.message, 'error');
+    } finally {
+        setBtnLoading(btn, false);
+    }
+}
+
+// ─── Delete ───────────────────────────────────────────────────
+function deleteUserhome(uid, name) {
+    showConfirmModal(
+        '⚠️ ลบสมาชิก?',
+        `จะลบ <b>${escapeHtml(name) || '(ไม่ระบุชื่อ)'}</b> ออกจากระบบ<br><small class="text-rose-500">การลบไม่สามารถกู้คืนได้ · ข้อมูล LINE userId และ chat history จะไม่ถูกลบ</small>`,
+        async () => {
+            try {
+                const { error } = await supabaseClient.from('userhome').delete().eq('uid', uid);
+                if (error) throw error;
+                showToast('ลบแล้ว', 'success');
+                loadUserhomeData();
+            } catch (e) {
+                showToast(e.message, 'error');
+            }
+        }
+    );
+}
+
+// ─── Quick Push Modal — ส่งข้อความ LINE หา user คนเดียว ───────
+function quickPushUser(uid, name) {
+    document.getElementById('modal-title').innerHTML = `<div class="flex items-center gap-2"><i data-lucide="send" class="w-5 h-5 text-indigo-500"></i> ส่งข้อความถึง ${escapeHtml(name) || 'สมาชิก'}</div>`;
+    document.getElementById('modal-content').innerHTML = `
+        <div class="space-y-3">
+            <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-700">
+                <i data-lucide="info" class="w-3.5 h-3.5 inline"></i> ส่งผ่าน LINE Push API ตรงถึง user คนเดียว
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">ข้อความ *</label>
+                <textarea id="qp-text" rows="5" placeholder="พิมพ์ข้อความ..." class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></textarea>
+            </div>
+            <div class="flex gap-2 pt-3 border-t border-slate-100">
+                <button onclick="closeModal()" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold">ยกเลิก</button>
+                <button onclick="sendQuickPush('${escapeHtml(uid)}', this)" id="qp-send-btn" class="flex-1 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2"><i data-lucide="send" class="w-4 h-4"></i> ส่ง</button>
+            </div>
+        </div>`;
+    openModal();
+    lucide.createIcons();
+}
+
+async function sendQuickPush(uid, btn) {
+    const text = document.getElementById('qp-text').value.trim();
+    if (!text) return showToast('กรุณาพิมพ์ข้อความ', 'warning');
+    setBtnLoading(btn, true);
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/targeted_push`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userIds: [uid], messages: [{ type: 'text', text }] })
+        });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || 'ส่งไม่สำเร็จ');
+        if (d.failed > 0) {
+            showToast(`ส่งไม่สำเร็จ: ${(d.errors || ['unknown']).join(', ').slice(0, 100)}`, 'error');
+        } else {
+            showToast('ส่งสำเร็จ', 'success');
+            closeModal();
+        }
+    } catch (e) {
+        showToast(e.message, 'error');
+    } finally {
+        setBtnLoading(btn, false);
+    }
+}
+
+// ─── Export CSV ───────────────────────────────────────────────
+function exportUserhomeCSV() {
+    if (userhomeFiltered.length === 0) return showToast('ไม่มีข้อมูลให้ export', 'warning');
+
+    const headers = ['created_at','uid','line_name','fullname','house_no','soi','living_status','member_count','phone','email','line_id','visit_count','updated_at'];
+    const csv = [
+        headers.join(','),
+        ...userhomeFiltered.map(r => headers.map(h => {
+            const v = r[h];
+            if (v === null || v === undefined) return '';
+            const s = String(v).replace(/"/g, '""');
+            return /[,"\n]/.test(s) ? `"${s}"` : s;
+        }).join(','))
+    ].join('\n');
+
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `userhome_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast(`ดาวน์โหลด ${userhomeFiltered.length} รายการ`, 'success');
+}
+
+   // ============================================================================
 // 💰 ให้แต้มอัตโนมัติ — Award Points System (B + C)
 // ============================================================================
 
@@ -8570,7 +9025,6 @@ async function runBackfill() {
         }
     };
 })();
-
         // ============================================================================
 // ชุดโค้ดเปิดระบบ "จัดการ Rich Menu ขั้นสูง (Pro)" แบบหน้าต่างซ้อน (Iframe Modal)
 // ============================================================================
