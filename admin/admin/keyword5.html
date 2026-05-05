@@ -7210,6 +7210,9 @@ async function renderUserhomeView() {
                     <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">ข้อมูลสมาชิกที่ลงทะเบียนบ้านในระบบ · เชื่อมต่อกับ LINE</p>
                 </div>
                 <div class="flex gap-2">
+                    <button onclick="openSyncAllModal()" class="px-4 py-2.5 bg-purple-500 hover:bg-purple-600 text-white rounded-2xl font-bold shadow-md flex items-center gap-2 text-sm">
+                        <i data-lucide="git-merge" class="w-4 h-4"></i> Sync ข้อมูลทั้งหมด
+                    </button>
                     <button onclick="exportUserhomeCSV()" class="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-2xl font-bold shadow-sm flex items-center gap-2 text-sm">
                         <i data-lucide="download" class="w-4 h-4"></i> Export CSV
                     </button>
@@ -7395,6 +7398,7 @@ function renderUserhomeTable() {
             <td class="p-3 text-center">
                 <div class="flex gap-1 justify-center">
                     <button onclick="viewUserhomeDetail('${escapeHtml(r.uid)}')" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg" title="ดูข้อมูล"><i data-lucide="eye" class="w-4 h-4"></i></button>
+                    <button onclick="syncOneUser('${escapeHtml(r.uid)}', '${escapeHtml(r.fullname || '').replace(/'/g, '&apos;')}')" class="p-1.5 text-purple-600 hover:bg-purple-50 rounded-lg" title="Sync ข้อมูล"><i data-lucide="git-merge" class="w-4 h-4"></i></button>
                     <button onclick="editUserhome('${escapeHtml(r.uid)}')" class="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="แก้ไข"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
                     <button onclick="quickPushUser('${escapeHtml(r.uid)}', '${escapeHtml(r.fullname || r.line_name || '').replace(/'/g, '&apos;')}')" class="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg" title="ส่งข้อความ"><i data-lucide="send" class="w-4 h-4"></i></button>
                     <button onclick="deleteUserhome('${escapeHtml(r.uid)}', '${escapeHtml(r.fullname || '').replace(/'/g, '&apos;')}')" class="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg" title="ลบ"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
@@ -7611,6 +7615,105 @@ async function sendQuickPush(uid, btn) {
             closeModal();
         }
     } catch (e) {
+        showToast(e.message, 'error');
+    } finally {
+        setBtnLoading(btn, false);
+    }
+}
+
+// ─── 🔄 Sync Functions ────────────────────────────────────────
+async function syncOneUser(uid, name) {
+    showConfirmModal(
+        '🔄 Sync ข้อมูลคนนี้?',
+        `<b>${escapeHtml(name) || '(ไม่ระบุ)'}</b><br><br>
+         ระบบจะตรวจ <code>userhome</code> ↔ <code>user_profiles</code><br>
+         ถ้า field ใดว่าง จะดึงจากอีกตารางมาเติมให้<br>
+         <small class="text-slate-500">ไม่ทับข้อมูลที่มีอยู่</small>`,
+        async () => {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/sync_user`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId: uid })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'Sync ล้มเหลว');
+
+                const changes = d.changes || {};
+                if (Object.keys(changes).length === 0) {
+                    showToast('ไม่มีอะไรต้อง sync (ข้อมูลครบทั้งคู่แล้ว)', 'info');
+                } else {
+                    let msg = '✓ Sync สำเร็จ';
+                    if (changes.userhome_created) msg += ' · สร้าง userhome';
+                    if (changes.user_profiles_created) msg += ' · สร้าง user_profiles';
+                    if (changes.userhome_updated) msg += ` · อัปเดต userhome ${Object.keys(changes.userhome_updated).length} ฟิลด์`;
+                    if (changes.user_profiles_updated) msg += ` · อัปเดต user_profiles ${Object.keys(changes.user_profiles_updated).length} ฟิลด์`;
+                    showToast(msg, 'success');
+                    loadUserhomeData();
+                }
+            } catch (e) {
+                showToast(e.message, 'error');
+            }
+        }
+    );
+}
+
+function openSyncAllModal() {
+    document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="git-merge" class="w-5 h-5 text-purple-500"></i> Sync ข้อมูลทั้งหมด</div>';
+    document.getElementById('modal-content').innerHTML = `
+        <div class="space-y-4">
+            <div class="bg-purple-50 border border-purple-200 rounded-2xl p-4">
+                <div class="text-sm font-bold text-purple-900 mb-2">⚙️ ระบบจะ:</div>
+                <ul class="text-xs text-purple-800 space-y-1 list-disc pl-4">
+                    <li>ตรวจทุก uid จาก <code>userhome</code> + <code>user_profiles</code></li>
+                    <li>ถ้า field ว่างใน table หนึ่ง แต่อีก table มี → copy มา <b>(fill missing)</b></li>
+                    <li>ถ้าไม่มีใน user_profiles เลย → สร้างให้อัตโนมัติ</li>
+                    <li>ถ้าไม่มีใน userhome เลย แต่มี house_no → สร้างให้</li>
+                    <li><b>ไม่ overwrite ข้อมูลที่มีอยู่</b> (safe)</li>
+                </ul>
+            </div>
+            <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
+                <b>⚠️ Field ที่ sync:</b> fullname/displayName ↔ first_name+last_name · phone · email · house_no · soi · profile/pictureUrl
+            </div>
+            <div>
+                <label class="block text-sm font-bold text-slate-700 mb-1.5">จำนวนสูงสุด (max 2,000)</label>
+                <input id="sa-limit" type="number" value="500" min="1" max="2000" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm">
+            </div>
+            <div class="flex gap-3 pt-3 border-t border-slate-100">
+                <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">ยกเลิก</button>
+                <button onclick="runSyncAll(this)" id="sa-run-btn" class="flex-1 py-3 bg-purple-500 hover:bg-purple-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="play" class="w-4 h-4"></i> เริ่ม Sync</button>
+            </div>
+            <div id="sa-result"></div>
+        </div>`;
+    openModal();
+    lucide.createIcons();
+}
+
+async function runSyncAll(btn) {
+    const limit = parseInt(document.getElementById('sa-limit').value) || 500;
+    setBtnLoading(btn, true);
+    document.getElementById('sa-result').innerHTML = '<div class="text-center text-slate-400 py-3 text-sm">⚙️ กำลัง sync... อย่าปิดหน้านี้</div>';
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/sync_all_users`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limit })
+        });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || 'Sync ล้มเหลว');
+
+        document.getElementById('sa-result').innerHTML = `
+            <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
+                <div class="font-bold text-emerald-800 mb-3">✅ ${escapeHtml(d.message || 'สำเร็จ')}</div>
+                <div class="grid grid-cols-2 gap-2 text-center text-xs">
+                    <div class="bg-white rounded-lg p-2"><div class="text-slate-500">ตรวจสอบ</div><div class="text-xl font-bold text-slate-700">${d.processed || 0}</div></div>
+                    <div class="bg-white rounded-lg p-2"><div class="text-slate-500">อัปเดต</div><div class="text-xl font-bold text-emerald-600">${d.changed || 0}</div></div>
+                    <div class="bg-white rounded-lg p-2"><div class="text-slate-500">สร้างใน userhome</div><div class="text-xl font-bold text-cyan-600">${d.userhome_created || 0}</div></div>
+                    <div class="bg-white rounded-lg p-2"><div class="text-slate-500">สร้างใน profiles</div><div class="text-xl font-bold text-blue-600">${d.user_profiles_created || 0}</div></div>
+                </div>
+            </div>`;
+        showToast(d.message, 'success');
+        loadUserhomeData();
+    } catch (e) {
+        document.getElementById('sa-result').innerHTML = `<div class="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-rose-700 font-bold text-sm">${escapeHtml(e.message)}</div>`;
         showToast(e.message, 'error');
     } finally {
         setBtnLoading(btn, false);
@@ -9025,8 +9128,8 @@ async function runBackfill() {
         }
     };
 })();
-        // ============================================================================
-// ชุดโค้ดเปิดระบบ "จัดการ Rich Menu ขั้นสูง (Pro)" แบบหน้าต่างซ้อน (Iframe Modal)
+// ============================================================================
+        // ชุดโค้ดเปิดระบบ "จัดการ Rich Menu ขั้นสูง (Pro)" แบบหน้าต่างซ้อน (Iframe Modal)
 // ============================================================================
 
 const proManagerStyle = document.createElement('style');
