@@ -3429,10 +3429,40 @@ async function updateAllUserProfiles() {
                 } else if (b.type === 'image') {
                     messages.push({ type: 'image', originalContentUrl: b.content, previewImageUrl: b.content });
                 } else if (b.type === 'json') {
+                    let parsed;
                     try {
-                        messages.push(JSON.parse(b.content));
+                        parsed = JSON.parse(b.content);
                     } catch (e) {
-                        showModal('JSON ผิดพลาด', `บอลลูนแผ่นที่ ${narrowcastBalloons.indexOf(b) + 1} มีรูปแบบ JSON ไม่ถูกต้องครับ`);
+                        showModal('JSON ผิดพลาด', `บอลลูนแผ่นที่ ${narrowcastBalloons.indexOf(b) + 1}: ${e.message}`);
+                        return;
+                    }
+
+                    // ─── Auto-wrap: ถ้า user paste bubble/carousel มาตรงๆ → wrap เป็น flex message ───
+                    if (parsed.type === 'bubble' || parsed.type === 'carousel') {
+                        // หา altText จาก first text element
+                        let altText = 'ข้อความใหม่';
+                        try {
+                            const firstText = (parsed.body?.contents || []).find(c => c.type === 'text');
+                            if (firstText?.text) altText = firstText.text.slice(0, 400);
+                        } catch {}
+                        messages.push({ type: 'flex', altText, contents: parsed });
+                    }
+                    // ─── ถ้า user ใส่ flex message format ครบแล้ว → ใช้ตรงๆ ───
+                    else if (parsed.type === 'flex') {
+                        if (!parsed.altText) parsed.altText = 'ข้อความใหม่';
+                        if (!parsed.contents) {
+                            showModal('JSON ผิดพลาด', 'flex message ต้องมี contents (bubble หรือ carousel)');
+                            return;
+                        }
+                        messages.push(parsed);
+                    }
+                    // ─── รองรับ template, image, sticker, audio, video ที่ paste มาตรงๆ ───
+                    else if (['text', 'image', 'video', 'audio', 'location', 'sticker', 'imagemap', 'template'].includes(parsed.type)) {
+                        messages.push(parsed);
+                    }
+                    // ─── ไม่รู้จัก type ───
+                    else {
+                        showModal('JSON ผิดพลาด', `บอลลูนแผ่นที่ ${narrowcastBalloons.indexOf(b) + 1}: ไม่รู้จัก message type "${parsed.type || '(ไม่มี)'}"<br><br>ที่รองรับ: bubble, carousel, flex, text, image, template, sticker, video, audio, location, imagemap`);
                         return;
                     }
                 }
@@ -8540,6 +8570,7 @@ async function runBackfill() {
         }
     };
 })();
+
         // ============================================================================
 // ชุดโค้ดเปิดระบบ "จัดการ Rich Menu ขั้นสูง (Pro)" แบบหน้าต่างซ้อน (Iframe Modal)
 // ============================================================================
