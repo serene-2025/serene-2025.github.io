@@ -201,6 +201,37 @@
                     </div>
                 </div>
 
+                <!-- ☀️ Daily Check-in Card -->
+                <div v-if="dailyStatus?.enabled" class="glass-card p-4 mb-4 bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 relative overflow-hidden">
+                    <!-- decorative circle -->
+                    <div class="absolute -top-8 -right-8 w-32 h-32 bg-emerald-200 rounded-full opacity-20"></div>
+
+                    <div class="relative z-10">
+                        <div v-if="!dailyStatus.already_today" class="flex items-center gap-3">
+                            <div class="text-4xl">☀️</div>
+                            <div class="flex-1 min-w-0">
+                                <div class="text-xs text-emerald-700 font-bold mb-0.5">เช็คอินวันนี้รับ</div>
+                                <div class="text-2xl font-extrabold text-emerald-700">+{{ dailyStatus.next_points }} แต้ม</div>
+                                <div class="text-[11px] text-slate-500" v-if="dailyStatus.current_streak > 0">
+                                    🔥 streak {{ dailyStatus.current_streak }} วัน · ต่อจะเป็นวันที่ {{ dailyStatus.next_streak }}
+                                </div>
+                            </div>
+                            <button @click="doDailyCheckin" :disabled="dailyCheckingIn" class="px-5 py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-300 text-white rounded-2xl font-bold shadow-md flex items-center gap-2 active:scale-95 transition-transform">
+                                <i class="fa-solid fa-sun" v-if="!dailyCheckingIn"></i>
+                                <i class="fa-solid fa-spinner fa-spin" v-else></i>
+                                เช็คอิน
+                            </button>
+                        </div>
+                        <div v-else class="flex items-center gap-3">
+                            <div class="text-4xl">✅</div>
+                            <div class="flex-1">
+                                <div class="text-sm font-bold text-emerald-700">เช็คอินวันนี้แล้ว · streak {{ dailyStatus.current_streak }} วัน 🔥</div>
+                                <div class="text-[11px] text-slate-500">กลับมาพรุ่งนี้รับแต้มต่อ</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Quick Actions (6 ปุ่ม 2 แถว) -->
                 <div class="grid grid-cols-3 gap-3 mb-6">
                     <button @click="currentTab = 'rewards'" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95">
@@ -1124,6 +1155,8 @@
                     agmEventsList: [], agmMyHouse: null,
                     agmDetailEvent: null, agmAgendas: [], agmMyVotes: [],
                     paymentHistory: [], paymentStreak: { streak: 0, house_no: null, next_milestone: 3, months_to_next: 3 },
+                    // ─── Daily Check-in ───
+                    dailyStatus: null, dailyCheckingIn: false,
                     // ─── Settings + Key Card ───
                     showSettings: false,
                     keyCards: [], keyCardHouse: null, keyCardLoading: false, keyCardError: null,
@@ -1379,6 +1412,55 @@
                             }
                         } catch (e) { /* silent */ }
                     })();
+
+                    // Pre-fetch daily check-in status
+                    this.fetchDailyStatus().catch(() => {});
+                },
+
+                // ════════════════════════════════════════════════════════════
+                // ☀️ DAILY CHECK-IN
+                // ════════════════════════════════════════════════════════════
+                async fetchDailyStatus() {
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/daily_status?userId=${this.userProfile.userId}`);
+                        if (!res.ok) { this.dailyStatus = { enabled: false }; return; }
+                        const d = await res.json();
+                        this.dailyStatus = d || { enabled: false };
+                    } catch (e) { this.dailyStatus = { enabled: false }; }
+                },
+
+                async doDailyCheckin() {
+                    if (this.dailyCheckingIn) return;
+                    this.dailyCheckingIn = true;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/daily_checkin`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ userId: this.userProfile.userId })
+                        });
+                        const d = await res.json();
+                        if (!res.ok) throw new Error(d.error || 'fail');
+
+                        // Celebration
+                        const milestoneEmojis = { 1:'🌱', 2:'🌿', 3:'🌳', 7:'⭐', 14:'🏆', 30:'👑' };
+                        const emoji = milestoneEmojis[d.milestone] || '🔥';
+                        Swal.fire({
+                            icon: 'success',
+                            title: `${emoji} เช็คอินสำเร็จ!`,
+                            html: `<div style="font-size:48px;margin:8px 0">${emoji}</div>
+                                   <div style="font-size:24px;font-weight:900;color:#10b981">+${d.points} แต้ม</div>
+                                   <div style="font-size:14px;color:#64748b;margin-top:8px">streak ${d.streak} วัน 🔥</div>
+                                   ${d.next_milestone ? `<div style="font-size:11px;color:#94a3b8;margin-top:4px">อีก ${d.next_milestone - d.streak} วันถึง milestone ถัดไป</div>` : ''}`,
+                            confirmButtonColor: '#10b981',
+                            timer: 3000
+                        });
+
+                        await this.fetchDailyStatus();
+                        await this.fetchMyData();   // refresh แต้ม
+                    } catch (e) {
+                        Swal.fire('ไม่สำเร็จ', e.message, 'error');
+                    } finally {
+                        this.dailyCheckingIn = false;
+                    }
                 },
 
                 async syncUser(profile) {
