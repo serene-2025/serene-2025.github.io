@@ -534,6 +534,7 @@
                             <button onclick="loadView('crmAwardFee');" id="nav-crmAwardFee" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="coins" class="w-5 h-5 text-emerald-500"></i> <span>ให้แต้ม จ่ายตรงเวลา</span></button>
                             <button onclick="loadView('crmAwardEvent');" id="nav-crmAwardEvent" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="party-popper" class="w-5 h-5 text-pink-500"></i> <span>ให้แต้ม กิจกรรม</span></button>
                             <button onclick="loadView('commonFees');" id="nav-commonFees" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="receipt" class="w-5 h-5 text-blue-500"></i> <span>การจ่ายค่าส่วนกลาง</span></button>
+                            <button onclick="loadView('pointsSettings');" id="nav-pointsSettings" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="sliders" class="w-5 h-5 text-fuchsia-500"></i> <span>ตั้งค่าระบบแต้ม</span></button>
                             <button onclick="loadView('leaderboard');" id="nav-leaderboard" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="trophy" class="w-5 h-5 text-amber-500"></i> <span>Leaderboard</span></button>
                             <button onclick="loadView('agm');" id="nav-agm" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="vote" class="w-5 h-5 text-rose-500"></i> <span>AGM Voting</span></button>
 
@@ -628,6 +629,7 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'crmAwardFee') await renderCrmAwardFeeView();
             else if (viewName === 'crmAwardEvent') await renderCrmAwardEventView();
             else if (viewName === 'commonFees') await renderCommonFeesView();
+            else if (viewName === 'pointsSettings') await renderPointsSettingsView();
             else if (viewName === 'leaderboard') await renderLeaderboardAdminView();
             else if (viewName === 'agm') await renderAgmAdminView();
             else if (viewName === 'kanban') await renderKanbanView();
@@ -8741,6 +8743,490 @@ async function submitEventAward() {
 }
 
    // ============================================================================
+// 🎯 Points Settings — Master config for all point-awarding features
+// ============================================================================
+
+let pointsSettingsCache = [];
+
+async function renderPointsSettingsView() {
+    document.getElementById('content-area').innerHTML = `
+        <div class="slide-in p-2">
+            <div class="mb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+                <div>
+                    <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">
+                        <span class="bg-fuchsia-100 text-fuchsia-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="sliders" class="w-8 h-8"></i></span>
+                        ตั้งค่าระบบแต้ม
+                    </h1>
+                    <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">ตั้งจำนวนแต้มที่จะให้สำหรับแต่ละกิจกรรม · มีผลกับทั้งระบบทันที</p>
+                </div>
+                <div class="flex gap-2 flex-wrap">
+                    <button onclick="openBulkAdjustModal()" class="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl font-bold text-sm shadow-md flex items-center gap-2"><i data-lucide="users-2" class="w-4 h-4"></i> Bulk Adjust</button>
+                    <button onclick="triggerPointExpiry()" class="px-4 py-2.5 bg-slate-600 hover:bg-slate-700 text-white rounded-2xl font-bold text-sm shadow-md flex items-center gap-2"><i data-lucide="hourglass" class="w-4 h-4"></i> รัน Expiry</button>
+                    <button onclick="triggerBirthdayCheck()" class="px-4 py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold text-sm shadow-md flex items-center gap-2"><i data-lucide="cake" class="w-4 h-4"></i> รัน Birthday</button>
+                    <button onclick="triggerTierNotify()" class="px-4 py-2.5 bg-violet-500 hover:bg-violet-600 text-white rounded-2xl font-bold text-sm shadow-md flex items-center gap-2"><i data-lucide="bell" class="w-4 h-4"></i> ส่งแจ้งเตือน Tier</button>
+                </div>
+            </div>
+
+            <div id="ps-content"><div class="glass rounded-3xl p-12 text-center text-slate-400">กำลังโหลด...</div></div>
+
+            <!-- Sticky save bar -->
+            <div id="ps-savebar" class="fixed bottom-4 right-4 hidden z-30">
+                <div class="bg-fuchsia-600 text-white rounded-2xl px-5 py-3 shadow-2xl flex items-center gap-3">
+                    <span id="ps-changes-count" class="text-sm font-bold">0 การเปลี่ยนแปลง</span>
+                    <button onclick="discardPointsSettings()" class="px-3 py-1 rounded-lg text-xs bg-white/20 hover:bg-white/30 font-bold">ยกเลิก</button>
+                    <button onclick="savePointsSettings(this)" class="px-4 py-2 rounded-lg text-sm bg-white text-fuchsia-600 font-bold hover:bg-fuchsia-50">💾 บันทึกทั้งหมด</button>
+                </div>
+            </div>
+        </div>`;
+    lucide.createIcons();
+    await loadPointsSettings();
+}
+
+async function loadPointsSettings() {
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/points_settings_list`);
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || 'load fail');
+        pointsSettingsCache = d.data || [];
+        renderPointsSettingsForm();
+    } catch (e) {
+        document.getElementById('ps-content').innerHTML = `<div class="glass rounded-3xl p-6 text-rose-600 text-center">${escapeHtml(e.message)}<br><small class="text-slate-400 mt-2 block">รัน migration_points_phase1.sql ก่อน</small></div>`;
+    }
+}
+
+function renderPointsSettingsForm() {
+    const groups = {};
+    pointsSettingsCache.forEach(s => {
+        if (!groups[s.category]) groups[s.category] = [];
+        groups[s.category].push(s);
+    });
+
+    const categoryMeta = {
+        maintenance: { icon: '🏠', name: 'ค่าส่วนกลาง', color: 'blue' },
+        agm: { icon: '🗳️', name: 'AGM (โหวต)', color: 'rose' },
+        event: { icon: '🎉', name: 'กิจกรรม', color: 'pink' },
+        daily: { icon: '📅', name: 'Daily Check-in', color: 'emerald' },
+        birthday: { icon: '🎂', name: 'วันเกิด', color: 'rose' },
+        social: { icon: '💬', name: 'กิจกรรมชุมชน', color: 'amber' },
+        notification: { icon: '🔔', name: 'การแจ้งเตือน', color: 'violet' },
+        expiry: { icon: '⏰', name: 'หมดอายุแต้ม', color: 'slate' }
+    };
+
+    let html = '<div class="grid grid-cols-1 md:grid-cols-2 gap-5">';
+    Object.entries(groups).forEach(([cat, items]) => {
+        const meta = categoryMeta[cat] || { icon: '⚙️', name: cat, color: 'slate' };
+        html += `<div class="glass rounded-3xl p-5 shadow-sm border-l-4 border-${meta.color}-400">
+            <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
+                <span class="text-2xl">${meta.icon}</span> ${escapeHtml(meta.name)}
+            </h3>
+            <div class="space-y-3">
+                ${items.map(s => renderSettingRow(s)).join('')}
+            </div>
+        </div>`;
+    });
+    html += '</div>';
+
+    document.getElementById('ps-content').innerHTML = html;
+    lucide.createIcons();
+}
+
+function renderSettingRow(s) {
+    const val = s.value;
+    const isBool = (val === true || val === false);
+    const isNumber = typeof val === 'number' || (!isBool && !isNaN(parseInt(val)));
+
+    let input;
+    if (isBool) {
+        input = `<label class="inline-flex items-center cursor-pointer">
+            <input type="checkbox" data-key="${escapeHtml(s.key)}" oninput="onSettingChange('${escapeHtml(s.key)}', this.checked, true)" ${val ? 'checked' : ''} class="sr-only peer">
+            <div class="relative w-11 h-6 bg-slate-200 peer-focus:ring-4 peer-focus:ring-fuchsia-100 rounded-full peer peer-checked:after:translate-x-5 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-fuchsia-500"></div>
+            <span class="ml-2 text-sm font-bold text-slate-700" id="ps-bool-${escapeHtml(s.key)}">${val ? 'เปิด' : 'ปิด'}</span>
+        </label>`;
+    } else {
+        input = `<input type="number" data-key="${escapeHtml(s.key)}" oninput="onSettingChange('${escapeHtml(s.key)}', this.value, false)" value="${val}" class="w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold text-fuchsia-600 text-right focus:ring-2 focus:ring-fuchsia-300 outline-none">`;
+    }
+
+    return `<div class="flex items-center justify-between gap-3 py-2 border-b border-slate-50 last:border-0 ps-row" data-row-key="${escapeHtml(s.key)}">
+        <div class="flex-1 min-w-0">
+            <div class="text-sm font-bold text-slate-700">${escapeHtml(s.description || s.key)}</div>
+            <div class="text-[10px] text-slate-400 font-mono truncate">${escapeHtml(s.key)}</div>
+        </div>
+        <div class="shrink-0">${input}</div>
+    </div>`;
+}
+
+const pointsSettingsChanges = new Map();
+
+function onSettingChange(key, rawVal, isBool) {
+    const setting = pointsSettingsCache.find(s => s.key === key);
+    if (!setting) return;
+
+    let newVal;
+    if (isBool) {
+        newVal = !!rawVal;
+        const lbl = document.getElementById(`ps-bool-${key}`);
+        if (lbl) lbl.innerText = newVal ? 'เปิด' : 'ปิด';
+    } else {
+        newVal = parseInt(rawVal) || 0;
+    }
+
+    if (newVal === setting.value) {
+        pointsSettingsChanges.delete(key);
+    } else {
+        pointsSettingsChanges.set(key, newVal);
+    }
+
+    // Highlight row
+    const row = document.querySelector(`.ps-row[data-row-key="${CSS.escape(key)}"]`);
+    if (row) {
+        if (pointsSettingsChanges.has(key)) row.classList.add('bg-fuchsia-50');
+        else row.classList.remove('bg-fuchsia-50');
+    }
+
+    // Update save bar
+    const cnt = pointsSettingsChanges.size;
+    document.getElementById('ps-changes-count').innerText = `${cnt} การเปลี่ยนแปลง`;
+    document.getElementById('ps-savebar').classList.toggle('hidden', cnt === 0);
+}
+
+function discardPointsSettings() {
+    pointsSettingsChanges.clear();
+    renderPointsSettingsForm();
+    document.getElementById('ps-savebar').classList.add('hidden');
+}
+
+async function savePointsSettings(btn) {
+    if (pointsSettingsChanges.size === 0) return;
+
+    const updates = Array.from(pointsSettingsChanges.entries()).map(([key, value]) => ({ key, value }));
+    setBtnLoading(btn, true);
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/points_settings_save`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates })
+        });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || 'save fail');
+        showToast(`บันทึก ${d.saved} ค่าสำเร็จ`, 'success');
+        pointsSettingsChanges.clear();
+        document.getElementById('ps-savebar').classList.add('hidden');
+        await loadPointsSettings();
+    } catch (e) {
+        showToast(e.message, 'error');
+    } finally {
+        setBtnLoading(btn, false);
+    }
+}
+
+async function triggerBirthdayCheck() {
+    showConfirmModal(
+        '🎂 รัน Birthday Bonus วันนี้?',
+        'ระบบจะตรวจวันเกิด user ที่ตรงกับวันนี้ → ให้แต้ม + push LINE notification<br><small class="text-slate-500">ป้องกันให้ซ้ำในปีเดียวกันอัตโนมัติ</small>',
+        async () => {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/process_birthdays`, { method: 'POST' });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'fail');
+                showModal('✅ รันสำเร็จ', `<div class="text-sm space-y-1">
+                    <div>📅 วันที่: <b>${d.date || 'วันนี้'}</b></div>
+                    <div>🎁 ให้แต้ม: <b class="text-emerald-600">${d.awarded || 0} คน</b></div>
+                    <div>⏭️ ข้าม: <b class="text-slate-500">${d.skipped || 0} คน</b> (ได้ในปีนี้แล้ว)</div>
+                    <div>📨 LINE Push: <b class="text-blue-600">${d.pushed || 0} ครั้ง</b></div>
+                </div>`);
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+    );
+}
+
+async function triggerTierNotify() {
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/process_tier_notifications`, { method: 'POST' });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || 'fail');
+        if (d.pending === 0) showToast('ไม่มี queue รอส่ง', 'info');
+        else showToast(`ส่งแจ้งเตือน ${d.pushed} / ${d.pending} คน`, 'success');
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🎯 Phase 2: Bulk Adjust + Point Expiry
+// ════════════════════════════════════════════════════════════
+
+async function triggerPointExpiry() {
+    showConfirmModal(
+        '⏰ รัน Point Expiry?',
+        `<div class="space-y-2 text-left text-sm">
+            <p>ระบบจะตรวจ <b>point lots</b> ที่หมดอายุแล้ว → หักแต้มออก + log ใน history</p>
+            <div class="bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-700">
+                ⚠️ ใช้ได้เฉพาะกรณีเปิด <code>expiry_enabled = true</code><br>
+                ถ้าปิดอยู่ → ระบบจะ skip
+            </div>
+        </div>`,
+        async () => {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/process_point_expiry`, { method: 'POST' });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'fail');
+                if (d.skipped) {
+                    showToast(`Skipped: ${d.skipped}`, 'info');
+                } else {
+                    showModal('✅ รัน Expiry สำเร็จ', `<div class="text-sm space-y-1">
+                        <div>📦 Lots ที่หมดอายุ: <b class="text-rose-600">${d.lots_expired || 0}</b></div>
+                        <div>💎 แต้มที่หาย: <b class="text-rose-600">${(d.points_expired || 0).toLocaleString()}</b></div>
+                        <div>👥 ผู้ใช้ที่กระทบ: <b>${d.users_affected || 0}</b> คน</div>
+                    </div>`);
+                }
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+    );
+}
+
+let bulkAdjustUsers = [];
+let bulkAdjustSelected = new Set();
+
+async function openBulkAdjustModal() {
+    document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="users-2" class="w-6 h-6 text-orange-500"></i> Bulk Points Adjustment</div>';
+    document.getElementById('modal-content').innerHTML = `
+        <div class="space-y-4">
+            <div class="bg-orange-50 border border-orange-200 rounded-2xl p-3 text-xs text-orange-700">
+                <i data-lucide="info" class="w-3.5 h-3.5 inline"></i>
+                ปรับแต้มหลายคนพร้อมกัน — ติ๊กเลือก, อัปโหลด CSV (ช่อง userId), หรือเลือกตาม tier/soi
+            </div>
+
+            <!-- Mode tabs -->
+            <div class="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl text-xs">
+                <button onclick="bulkSwitchMode('select')" id="bulk-mode-select" class="py-2 rounded-lg bg-white shadow-sm font-bold">เลือกรายคน</button>
+                <button onclick="bulkSwitchMode('csv')" id="bulk-mode-csv" class="py-2 rounded-lg font-bold text-slate-500">📄 CSV</button>
+                <button onclick="bulkSwitchMode('filter')" id="bulk-mode-filter" class="py-2 rounded-lg font-bold text-slate-500">🔍 ตาม Filter</button>
+            </div>
+
+            <!-- A) Select mode -->
+            <div id="bulk-content-select">
+                <input type="text" id="bulk-search" oninput="bulkFilterList()" placeholder="🔍 ค้นหา..." class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm mb-2">
+                <div class="flex items-center gap-2 text-xs mb-2">
+                    <button onclick="bulkSelectVisible(true)" class="text-orange-600 font-bold">เลือกหน้าปัจจุบัน</button>
+                    <button onclick="bulkSelectVisible(false)" class="text-slate-500">ล้าง</button>
+                    <span class="ml-auto font-bold text-orange-600">เลือก <span id="bulk-count">0</span> คน</span>
+                </div>
+                <div id="bulk-user-list" class="border border-slate-200 rounded-xl bg-white max-h-56 overflow-y-auto p-1"></div>
+            </div>
+
+            <!-- B) CSV mode -->
+            <div id="bulk-content-csv" class="hidden">
+                <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs space-y-2">
+                    <p>อัปโหลดไฟล์ CSV ที่มีคอลัมน์ <code class="bg-white px-1 rounded">userId</code> (1 คอลัมน์ พอ)</p>
+                    <input type="file" accept=".csv" onchange="bulkLoadCsv(event)" class="w-full text-xs">
+                    <div id="bulk-csv-info" class="text-orange-600 font-bold"></div>
+                </div>
+            </div>
+
+            <!-- C) Filter mode -->
+            <div id="bulk-content-filter" class="hidden">
+                <div class="space-y-2">
+                    <select id="bulk-filter-tier" onchange="bulkApplyFilter()" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white">
+                        <option value="">-- ทุก Tier --</option>
+                    </select>
+                    <select id="bulk-filter-status" onchange="bulkApplyFilter()" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white">
+                        <option value="">-- ทุกสถานะ --</option>
+                        <option value="เจ้าของบ้าน">เจ้าของบ้าน</option>
+                        <option value="ผู้อาศัย">ผู้อาศัย</option>
+                        <option value="ผู้เช่า">ผู้เช่า</option>
+                    </select>
+                    <div class="text-xs text-slate-600">เลือกแล้ว: <b id="bulk-filter-count" class="text-orange-600">0</b> คน</div>
+                </div>
+            </div>
+
+            <!-- Form -->
+            <div class="border-t border-slate-100 pt-3 space-y-3">
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="document.getElementById('bulk-points').value = Math.abs(+document.getElementById('bulk-points').value)" class="px-3 py-2 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-bold">+ เพิ่มแต้ม</button>
+                    <button onclick="document.getElementById('bulk-points').value = -Math.abs(+document.getElementById('bulk-points').value)" class="px-3 py-2 rounded-xl bg-rose-50 text-rose-700 text-xs font-bold">- หักแต้ม</button>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">จำนวนแต้ม * (ต่อคน)</label>
+                        <input id="bulk-points" type="number" value="50" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">เหตุผล * (ปรากฏใน history)</label>
+                        <input id="bulk-reason" type="text" placeholder="เช่น โบนัสปีใหม่, แก้ไขข้อมูล" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                    </div>
+                </div>
+                <div class="flex gap-3 pt-3">
+                    <button onclick="closeModal()" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold">ยกเลิก</button>
+                    <button onclick="runBulkAdjust(this)" id="bulk-run-btn" class="flex-1 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2"><i data-lucide="zap" class="w-4 h-4"></i> ปรับแต้ม</button>
+                </div>
+            </div>
+        </div>`;
+    openModal();
+    lucide.createIcons();
+    bulkAdjustSelected.clear();
+    await bulkLoadUserList();
+}
+
+async function bulkLoadUserList() {
+    const { data } = await supabaseClient.from('user_profiles')
+        .select('userId, displayName, first_name, last_name, house_no, tier_name, points')
+        .order('points', { ascending: false }).limit(2000);
+    bulkAdjustUsers = data || [];
+
+    // populate tier filter
+    const tiers = [...new Set(bulkAdjustUsers.map(u => u.tier_name).filter(Boolean))];
+    const tierSel = document.getElementById('bulk-filter-tier');
+    if (tierSel) tierSel.innerHTML = '<option value="">-- ทุก Tier --</option>' + tiers.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+
+    bulkRenderUserList();
+}
+
+function bulkRenderUserList() {
+    const list = document.getElementById('bulk-user-list');
+    if (!list) return;
+    const q = (document.getElementById('bulk-search')?.value || '').toLowerCase().trim();
+    const filtered = bulkAdjustUsers.filter(u => {
+        if (!q) return true;
+        const hay = (u.displayName + ' ' + (u.first_name||'') + ' ' + (u.last_name||'') + ' ' + (u.house_no||'')).toLowerCase();
+        return hay.includes(q);
+    });
+
+    list.innerHTML = filtered.map(u => {
+        const name = u.first_name ? `${u.first_name} ${u.last_name||''}`.trim() : u.displayName;
+        const checked = bulkAdjustSelected.has(u.userId);
+        return `<label class="flex items-center gap-2 px-2 py-1.5 hover:bg-orange-50 cursor-pointer">
+            <input type="checkbox" class="bulk-cb w-4 h-4 accent-orange-500" data-uid="${escapeHtml(u.userId)}" ${checked ? 'checked' : ''} onchange="onBulkUserToggle(this)">
+            <div class="flex-1 min-w-0">
+                <div class="text-xs font-bold truncate">${escapeHtml(name)}</div>
+                <div class="text-[10px] text-slate-400">${u.house_no ? '🏠 '+escapeHtml(u.house_no)+' · ' : ''}${escapeHtml(u.tier_name || '—')} · ${(u.points||0).toLocaleString()}p</div>
+            </div>
+        </label>`;
+    }).join('');
+    bulkUpdateCount();
+}
+
+function onBulkUserToggle(cb) {
+    if (cb.checked) bulkAdjustSelected.add(cb.dataset.uid);
+    else bulkAdjustSelected.delete(cb.dataset.uid);
+    bulkUpdateCount();
+}
+
+function bulkUpdateCount() {
+    const el = document.getElementById('bulk-count');
+    if (el) el.innerText = bulkAdjustSelected.size;
+}
+
+function bulkSelectVisible(check) {
+    document.querySelectorAll('.bulk-cb').forEach(cb => {
+        cb.checked = check;
+        if (check) bulkAdjustSelected.add(cb.dataset.uid);
+        else bulkAdjustSelected.delete(cb.dataset.uid);
+    });
+    bulkUpdateCount();
+}
+
+function bulkFilterList() { bulkRenderUserList(); }
+
+function bulkSwitchMode(mode) {
+    ['select', 'csv', 'filter'].forEach(m => {
+        document.getElementById(`bulk-content-${m}`).classList.toggle('hidden', m !== mode);
+        const btn = document.getElementById(`bulk-mode-${m}`);
+        if (btn) {
+            btn.classList.toggle('bg-white', m === mode);
+            btn.classList.toggle('shadow-sm', m === mode);
+            btn.classList.toggle('text-slate-500', m !== mode);
+        }
+    });
+}
+
+async function bulkLoadCsv(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    if (lines.length === 0) return;
+
+    // หา column userId (case-insensitive)
+    const headers = lines[0].split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
+    const uidColIdx = headers.findIndex(h => /^(userid|uid|user_id)$/i.test(h));
+    if (uidColIdx === -1) {
+        document.getElementById('bulk-csv-info').innerHTML = '<span class="text-rose-600">❌ ไม่พบคอลัมน์ userId</span>';
+        return;
+    }
+
+    const uids = [];
+    for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
+        const uid = cols[uidColIdx];
+        if (uid && uid.startsWith('U')) uids.push(uid);
+    }
+
+    bulkAdjustSelected.clear();
+    uids.forEach(u => bulkAdjustSelected.add(u));
+    document.getElementById('bulk-csv-info').innerHTML = `✅ โหลด <b>${uids.length}</b> รายการ`;
+    bulkUpdateCount();
+}
+
+function bulkApplyFilter() {
+    const tier = document.getElementById('bulk-filter-tier').value;
+    const status = document.getElementById('bulk-filter-status').value;
+
+    bulkAdjustSelected.clear();
+    bulkAdjustUsers.forEach(u => {
+        if (tier && u.tier_name !== tier) return;
+        // status filter ต้อง join userhome → ตอนนี้ใช้ tier+ทั้งหมดก่อน
+        bulkAdjustSelected.add(u.userId);
+    });
+    document.getElementById('bulk-filter-count').innerText = bulkAdjustSelected.size;
+}
+
+async function runBulkAdjust(btn) {
+    const points = parseInt(document.getElementById('bulk-points').value);
+    const reason = document.getElementById('bulk-reason').value.trim();
+
+    if (!points || points === 0) return showToast('กรุณากรอกแต้ม (≠ 0)', 'warning');
+    if (!reason || reason.length < 3) return showToast('กรุณากรอกเหตุผล ≥3 ตัว', 'warning');
+    if (bulkAdjustSelected.size === 0) return showToast('ยังไม่ได้เลือกผู้ใช้', 'warning');
+
+    const userIds = Array.from(bulkAdjustSelected);
+    const totalPoints = points * userIds.length;
+    const op = points > 0 ? 'เพิ่ม' : 'หัก';
+
+    const proceed = await new Promise(resolve => {
+        showConfirmModal(
+            `ยืนยัน Bulk Adjust?`,
+            `<div class="text-left space-y-2">
+                <div>🎯 จะ<b>${op}</b>แต้ม <b class="${points > 0 ? 'text-emerald-600' : 'text-rose-600'}">${points > 0 ? '+' : ''}${points}</b> ต่อคน</div>
+                <div>👥 จำนวน: <b>${userIds.length}</b> คน</div>
+                <div>💎 รวม: <b class="${points > 0 ? 'text-emerald-600' : 'text-rose-600'}">${points > 0 ? '+' : ''}${totalPoints.toLocaleString()}</b> แต้ม</div>
+                <div>📝 เหตุผล: <i>${escapeHtml(reason)}</i></div>
+            </div>`,
+            () => resolve(true),
+            () => resolve(false)
+        );
+    });
+    if (!proceed) return;
+
+    setBtnLoading(btn, true);
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/bulk_adjust`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userIds, points, reason })
+        });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || 'fail');
+
+        showModal('✅ Bulk Adjust สำเร็จ', `<div class="text-sm space-y-1">
+            <div>✅ สำเร็จ: <b class="text-emerald-600">${d.success_count || 0}</b> คน</div>
+            <div>❌ ล้มเหลว: <b class="text-rose-600">${d.failed_count || 0}</b> คน</div>
+            ${d.errors ? `<details class="mt-2"><summary class="text-xs cursor-pointer">ดู errors</summary><pre class="text-[10px] bg-rose-50 p-2 rounded mt-1 max-h-32 overflow-y-auto">${escapeHtml(JSON.stringify(d.errors, null, 2))}</pre></details>` : ''}
+        </div>`);
+        bulkAdjustSelected.clear();
+    } catch (e) {
+        showToast(e.message, 'error');
+    } finally {
+        setBtnLoading(btn, false);
+    }
+}
+
+   // ============================================================================
 // 💰 การจ่ายค่าส่วนกลาง (Common Fees Management)
 // ============================================================================
 async function renderCommonFeesView() {
@@ -9582,66 +10068,6 @@ async function runBackfill() {
         }
     };
 })();
-
-// ============================================================================
-        // ชุดโค้ดเปิดระบบ "จัดการ Rich Menu ขั้นสูง (Pro)" แบบหน้าต่างซ้อน (Iframe Modal)
-// ============================================================================
-
-const proManagerStyle = document.createElement('style');
-proManagerStyle.textContent = `
-    #proManagerModal { transition: opacity 0.3s ease; opacity: 0; pointer-events: none; z-index: 9999; }
-    #proManagerModal.active { opacity: 1; pointer-events: auto; }
-    .pro-modal-content { transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); transform: scale(0.95); }
-    #proManagerModal.active .pro-modal-content { transform: scale(1); }
-`;
-document.head.appendChild(proManagerStyle);
-
-window.openRichMenuProManager = () => {
-    // ตรวจสอบว่าเคยสร้างหน้าต่างนี้ไว้หรือยัง ถ้ายังให้สร้างใหม่
-    if (!document.getElementById('proManagerModal')) {
-        const modalHtml = `
-            <div id="proManagerModal" class="fixed inset-0 flex items-center justify-center p-2 sm:p-4 bg-slate-900/80 backdrop-blur-sm">
-                <div class="pro-modal-content bg-[#0f172a] w-full max-w-7xl h-[95vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-700 relative">
-                    
-                    <div class="flex justify-between items-center p-4 bg-slate-800/80 border-b border-slate-700">
-                        <h3 class="text-white font-bold text-lg flex items-center gap-2">
-                            <i data-lucide="layout-dashboard" class="w-5 h-5 text-indigo-400"></i> 
-                            ระบบแผงควบคุม Rich Menu ขั้นสูง (Advanced CMS)
-                        </h3>
-                        <button onclick="closeRichMenuProManager()" class="text-slate-400 hover:text-white bg-slate-700 hover:bg-red-500 rounded-lg p-2 transition-colors" title="ปิดหน้าต่าง">
-                            <i data-lucide="x" class="w-5 h-5"></i>
-                        </button>
-                    </div>
-
-                    <div class="flex-1 w-full relative bg-[#0f172a]">
-                        <div id="proManagerLoading" class="absolute inset-0 flex flex-col items-center justify-center text-slate-400 z-0">
-                            <i data-lucide="loader-2" class="w-8 h-8 animate-spin mb-3 text-indigo-500"></i>
-                            <p class="font-medium tracking-wide animate-pulse">กำลังโหลดระบบจัดการขั้นสูง...</p>
-                        </div>
-                        <iframe src="richmenumanager.html" class="w-full h-full border-0 relative z-10" onload="document.getElementById('proManagerLoading').style.display='none'"></iframe>
-                    </div>
-
-                </div>
-            </div>
-        `;
-        document.body.insertAdjacentHTML('beforeend', modalHtml);
-        lucide.createIcons();
-    }
-    
-    // เปิดหน้าต่าง
-    document.getElementById('proManagerModal').classList.add('active');
-    document.body.style.overflow = 'hidden'; // ล็อคการเลื่อนหน้าจอด้านหลัง
-};
-
-window.closeRichMenuProManager = () => {
-    const modal = document.getElementById('proManagerModal');
-    if (modal) {
-        modal.classList.remove('active');
-        document.body.style.overflow = ''; // ปลดล็อคหน้าจอ
-        // สั่งรีเฟรชตาราง Rich Menu ด้านหลัง เผื่อมีการอัปเดตหรือลบเมนูจากระบบขั้นสูง
-        if (typeof syncRichMenus === 'function') syncRichMenus(); 
-    }
-};
 // ============================================================================
 // ============================================================================
   </script>
