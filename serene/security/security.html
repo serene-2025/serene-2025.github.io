@@ -624,6 +624,7 @@
                 // การตรวจสอบ LIFF ID และ Login แบบบังคับ
                 statusText.innerText = "กำลังเชื่อมต่อระบบ LINE...";
                 await initLiffSafely();
+                sessionStorage.removeItem('liff_reload_count'); // clear reload counter เมื่อสำเร็จ
 
                 statusText.innerText = "กำลังดึงข้อมูลโครงการ...";
                 // 🟢 แก้ไข: ใช้ .limit(1) แทน .single() เพื่อป้องกัน Error 406 กรณีที่ตารางยังไม่มีข้อมูล
@@ -664,22 +665,53 @@
             }
         });
 
-        // ฟังก์ชันเริ่ม LIFF (ป้องกันการแสดงผลจอขาว)
+        // รอให้ LIFF SDK โหลดเสร็จก่อน (ป้องกัน crash ครั้งแรก)
+        function waitForLiff(timeout = 10000) {
+            return new Promise((resolve, reject) => {
+                if (typeof liff !== 'undefined') return resolve();
+                const start = Date.now();
+                const check = setInterval(() => {
+                    if (typeof liff !== 'undefined') { clearInterval(check); resolve(); }
+                    else if (Date.now() - start > timeout) { clearInterval(check); reject(new Error('LIFF SDK โหลดไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต')); }
+                }, 100);
+            });
+        }
+
+        // ฟังก์ชันเริ่ม LIFF พร้อม retry อัตโนมัติ
         async function initLiffSafely() {
             if (!LIFF_ID || LIFF_ID.trim() === '') {
                 throw new Error("กรุณาตั้งค่า LIFF ID ในโค้ดก่อนใช้งาน");
             }
-            try {
-                await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
-                if (!liff.isLoggedIn()) {
-                    liff.login();
-                    // หยุดการทำงานของ Thread นี้เพื่อรอ Login
-                    await new Promise(() => {});
+
+            // รอ SDK พร้อมก่อนเสมอ
+            await waitForLiff();
+
+            const MAX_RETRY = 3;
+            for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
+                try {
+                    await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
+                    if (!liff.isLoggedIn()) {
+                        liff.login();
+                        await new Promise(() => {}); // หยุดรอ redirect
+                    }
+                    actualLineProfile = await liff.getProfile();
+                    return; // สำเร็จ ออกจาก loop
+                } catch (e) {
+                    console.warn(`LIFF init attempt ${attempt} failed:`, e);
+                    if (attempt === MAX_RETRY) {
+                        // ลอง fallback: reload หน้าอัตโนมัติ 1 ครั้ง
+                        const reloadKey = 'liff_reload_count';
+                        const reloadCount = parseInt(sessionStorage.getItem(reloadKey) || '0');
+                        if (reloadCount < 1) {
+                            sessionStorage.setItem(reloadKey, reloadCount + 1);
+                            window.location.reload();
+                            await new Promise(() => {}); // รอ reload
+                        }
+                        throw new Error("การเชื่อมต่อบัญชี LINE ล้มเหลว กรุณาปิดแล้วเปิดลิงก์ใหม่อีกครั้ง");
+                    }
+                    // รอก่อน retry
+                    await new Promise(r => setTimeout(r, 800 * attempt));
                 }
-                actualLineProfile = await liff.getProfile();
-            } catch (e) {
-                console.error("LIFF Error:", e);
-                throw new Error("การเชื่อมต่อบัญชี LINE ล้มเหลว โปรดตรวจสอบว่าคุณเปิดลิงก์นี้จากในแอปพลิเคชัน LINE หรือเบราว์เซอร์ที่รองรับหรือไม่");
             }
         }
 
