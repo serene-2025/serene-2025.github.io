@@ -1994,6 +1994,236 @@ async function updateAllUserProfiles() {
             });
         }
 
+        // ════════════════════════════════════════════════════════════════
+        // 🔀 Rich Menu Alias Manager
+        //
+        // Aliases ใช้กับ richmenuswitch action ให้สลับเมนูได้
+        // ────────────────────────────────────────────────────────────────
+        async function openAliasManager() {
+            document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="git-fork" class="w-6 h-6 text-purple-500"></i> จัดการ Rich Menu Aliases</div>';
+            document.getElementById('modal-content').innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-purple-50 border border-purple-200 rounded-2xl p-4">
+                        <div class="text-sm font-bold text-purple-900 mb-2 flex items-center gap-2">
+                            <i data-lucide="info" class="w-4 h-4"></i> Alias คืออะไร?
+                        </div>
+                        <div class="text-xs text-purple-800 space-y-1">
+                            <p>Alias = "ชื่อเล่น" ของ Rich Menu — ใช้คู่กับ <code class="bg-white px-1 rounded">richmenuswitch</code> action</p>
+                            <p>เช่น Tab A และ B กดสลับกันได้ → ใช้ alias <code class="bg-white px-1 rounded">tab-a</code> และ <code class="bg-white px-1 rounded">tab-b</code></p>
+                            <p class="text-purple-600">💡 อนาคตเปลี่ยน Rich Menu ที่ alias ชี้ไปได้ โดยไม่ต้องแก้ปุ่มใน menu อื่น</p>
+                        </div>
+                    </div>
+
+                    <div id="alias-manager-content">
+                        <div class="text-center py-8 text-slate-400 text-sm">
+                            <div class="inline-block w-8 h-8 border-4 border-purple-200 border-t-purple-500 rounded-full animate-spin mb-2"></div>
+                            <div>กำลังโหลด aliases จาก LINE...</div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-slate-100">
+                        <button onclick="openCreateAliasForm()" class="w-full py-3 bg-purple-500 hover:bg-purple-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2">
+                            <i data-lucide="plus" class="w-4 h-4"></i> สร้าง Alias ใหม่
+                        </button>
+                    </div>
+                </div>`;
+            openModal();
+            lucide.createIcons();
+            await loadAliases();
+        }
+
+        async function loadAliases() {
+            const wrap = document.getElementById('alias-manager-content');
+            try {
+                // ดึง aliases + rich_menus parallel
+                const [aliasRes, rmListRes] = await Promise.all([
+                    fetch(`${API_BASE_URL}/api/admin/richmenus`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'alias_list' })
+                    }),
+                    supabaseClient.from('rich_menus').select('rich_menu_id, name, image_url')
+                ]);
+                const aliasData = await aliasRes.json();
+                if (!aliasRes.ok) throw new Error(aliasData.error || 'load alias fail');
+
+                const aliases = aliasData.aliases || [];
+                const richMenus = rmListRes.data || [];
+                const rmById = new Map(richMenus.map(r => [r.rich_menu_id, r]));
+
+                if (aliases.length === 0) {
+                    wrap.innerHTML = `<div class="text-center py-8 text-slate-400">
+                        <div class="text-5xl mb-2">🔀</div>
+                        <p class="font-bold text-slate-600">ยังไม่มี Alias</p>
+                        <p class="text-xs mt-1">กดปุ่ม "สร้าง Alias ใหม่" เพื่อเริ่ม</p>
+                    </div>`;
+                    return;
+                }
+
+                wrap.innerHTML = `<div class="space-y-2">${aliases.map(a => {
+                    const rm = rmById.get(a.richMenuId);
+                    const rmName = rm?.name || '<span class="text-rose-600 font-bold">⚠️ Rich Menu ไม่อยู่ในระบบ</span>';
+                    return `<div class="bg-white border border-slate-200 rounded-2xl p-3 flex items-center gap-3">
+                        ${rm?.image_url
+                            ? `<img src="${escapeHtml(rm.image_url)}" class="w-14 h-9 object-cover rounded-md border border-slate-100">`
+                            : '<div class="w-14 h-9 bg-slate-100 rounded-md flex items-center justify-center"><i data-lucide="image-off" class="w-4 h-4 text-slate-300"></i></div>'}
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <span class="font-mono font-bold text-purple-700 text-sm">${escapeHtml(a.richMenuAliasId)}</span>
+                                <button onclick="copyToClipboard('${escapeHtml(a.richMenuAliasId)}')" class="text-slate-400 hover:text-slate-700" title="คัดลอก"><i data-lucide="copy" class="w-3 h-3"></i></button>
+                            </div>
+                            <div class="text-xs text-slate-500 truncate flex items-center gap-1">
+                                <i data-lucide="arrow-right" class="w-3 h-3"></i>
+                                ${rmName}
+                            </div>
+                            <div class="text-[10px] text-slate-400 font-mono truncate">${escapeHtml(a.richMenuId)}</div>
+                        </div>
+                        <div class="flex gap-1 shrink-0">
+                            <button onclick='openEditAliasForm(${JSON.stringify(a).replace(/'/g, "&apos;")})' class="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg" title="แก้ไข Rich Menu ที่ชี้"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
+                            <button onclick="deleteAlias('${escapeHtml(a.richMenuAliasId)}')" class="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg" title="ลบ"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                        </div>
+                    </div>`;
+                }).join('')}</div>`;
+                lucide.createIcons();
+            } catch (e) {
+                wrap.innerHTML = `<div class="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-rose-700 font-bold text-sm">${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        async function openCreateAliasForm() {
+            const { data: richMenus } = await supabaseClient.from('rich_menus').select('rich_menu_id, name').order('name');
+            document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="plus-circle" class="w-6 h-6 text-purple-500"></i> สร้าง Alias ใหม่</div>';
+            document.getElementById('modal-content').innerHTML = `
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 mb-1.5">Alias ID *</label>
+                        <input id="alias-id" type="text" placeholder="เช่น tab-a, menu-night, vip-menu" pattern="[a-zA-Z0-9_-]{4,}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-mono focus:ring-2 focus:ring-purple-400 outline-none">
+                        <p class="text-[11px] text-slate-500 mt-1">ใช้ a-z A-Z 0-9 _ - เท่านั้น (≥4 ตัว) · ใช้ใน <code>richmenuswitch.richMenuAliasId</code></p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 mb-1.5">ชี้ไปยัง Rich Menu *</label>
+                        <select id="alias-rmid" class="w-full rounded-2xl border border-slate-200 px-3 py-3 text-sm bg-white focus:ring-2 focus:ring-purple-400">
+                            <option value="">-- เลือก Rich Menu --</option>
+                            ${(richMenus || []).map(rm => `<option value="${escapeHtml(rm.rich_menu_id)}">${escapeHtml(rm.name)} (${escapeHtml((rm.rich_menu_id||'').slice(-8))})</option>`).join('')}
+                        </select>
+                        <p class="text-[11px] text-slate-500 mt-1">ถ้าไม่เห็นเมนูที่ต้องการ → กด "Sync from LINE" ก่อน</p>
+                    </div>
+                    <div class="flex gap-3 pt-3 border-t border-slate-100">
+                        <button onclick="openAliasManager()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">← กลับ</button>
+                        <button onclick="saveAlias(false, this)" id="alias-save-btn" class="flex-1 py-3 bg-purple-500 hover:bg-purple-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> สร้าง Alias</button>
+                    </div>
+                </div>`;
+            lucide.createIcons();
+            document.getElementById('alias-id').focus();
+        }
+
+        async function openEditAliasForm(alias) {
+            const { data: richMenus } = await supabaseClient.from('rich_menus').select('rich_menu_id, name').order('name');
+            document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="edit-3" class="w-6 h-6 text-blue-500"></i> แก้ไข Alias</div>';
+            document.getElementById('modal-content').innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs text-amber-700">
+                        <i data-lucide="info" class="w-3.5 h-3.5 inline"></i>
+                        <b>Alias ID:</b> <code class="bg-white px-1 rounded font-mono">${escapeHtml(alias.richMenuAliasId)}</code> (เปลี่ยนไม่ได้ — ถ้าต้องการเปลี่ยนชื่อให้ลบแล้วสร้างใหม่)
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 mb-1.5">เปลี่ยนเป็นชี้ไปยัง Rich Menu *</label>
+                        <select id="alias-rmid" class="w-full rounded-2xl border border-slate-200 px-3 py-3 text-sm bg-white focus:ring-2 focus:ring-blue-400">
+                            ${(richMenus || []).map(rm => `<option value="${escapeHtml(rm.rich_menu_id)}" ${rm.rich_menu_id === alias.richMenuId ? 'selected' : ''}>${escapeHtml(rm.name)} (${escapeHtml((rm.rich_menu_id||'').slice(-8))})</option>`).join('')}
+                        </select>
+                        <div class="text-[10px] text-slate-400 font-mono mt-1">ปัจจุบัน: ${escapeHtml(alias.richMenuId)}</div>
+                    </div>
+                    <input type="hidden" id="alias-id" value="${escapeHtml(alias.richMenuAliasId)}">
+                    <div class="flex gap-3 pt-3 border-t border-slate-100">
+                        <button onclick="openAliasManager()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">← กลับ</button>
+                        <button onclick="saveAlias(true, this)" id="alias-save-btn" class="flex-1 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> บันทึก</button>
+                    </div>
+                </div>`;
+            lucide.createIcons();
+        }
+
+        async function saveAlias(isEdit, btn) {
+            const aliasId = document.getElementById('alias-id').value.trim();
+            const rmId = document.getElementById('alias-rmid').value.trim();
+            if (!aliasId) return showToast('กรุณากรอก Alias ID', 'warning');
+            if (!rmId) return showToast('กรุณาเลือก Rich Menu', 'warning');
+            if (!isEdit && !/^[a-zA-Z0-9_-]{4,}$/.test(aliasId)) {
+                return showToast('Alias ID ต้องเป็น a-z A-Z 0-9 _ - และยาว 4+ ตัว', 'warning');
+            }
+
+            setBtnLoading(btn, true);
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/richmenus`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: isEdit ? 'alias_update' : 'alias_create',
+                        richMenuAliasId: aliasId,
+                        richMenuId: rmId
+                    })
+                });
+                const d = await res.json();
+                if (!res.ok) {
+                    // Parse common LINE errors
+                    let errMsg = d.error || 'บันทึกไม่สำเร็จ';
+                    if (errMsg.includes('alias is already used')) errMsg = `Alias "${aliasId}" มีอยู่แล้ว — กดแก้ไขแทน`;
+                    else if (errMsg.includes('rich menu not found')) errMsg = 'Rich Menu ที่เลือกไม่มีใน LINE — ลอง Sync from LINE ก่อน';
+                    throw new Error(errMsg);
+                }
+                showToast(isEdit ? 'แก้ไข Alias สำเร็จ' : 'สร้าง Alias สำเร็จ', 'success');
+                openAliasManager();   // กลับไปหน้า list
+            } catch (e) {
+                showToast(e.message, 'error');
+            } finally {
+                setBtnLoading(btn, false);
+            }
+        }
+
+        // Quick: open create-alias form pre-filled with rich menu id (จาก ปุ่ม per-row)
+        function openCreateAliasFromRichMenu(rmId, rmName) {
+            document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="git-fork" class="w-6 h-6 text-purple-500"></i> สร้าง Alias สำหรับเมนู</div>';
+            document.getElementById('modal-content').innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-purple-50 border border-purple-200 rounded-2xl p-4 text-xs">
+                        <div class="text-purple-900 font-bold mb-1">Rich Menu ที่เลือก:</div>
+                        <div class="text-slate-700 font-bold">${escapeHtml(rmName)}</div>
+                        <div class="text-slate-400 font-mono text-[10px] truncate">${escapeHtml(rmId)}</div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 mb-1.5">Alias ID *</label>
+                        <input id="alias-id" type="text" placeholder="เช่น tab-a, menu-night" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-mono focus:ring-2 focus:ring-purple-400 outline-none">
+                        <p class="text-[11px] text-slate-500 mt-1">ใช้ a-z A-Z 0-9 _ - เท่านั้น (≥4 ตัว)</p>
+                    </div>
+                    <input type="hidden" id="alias-rmid" value="${escapeHtml(rmId)}">
+                    <div class="flex gap-3 pt-3 border-t border-slate-100">
+                        <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">ยกเลิก</button>
+                        <button onclick="saveAlias(false, this)" id="alias-save-btn" class="flex-1 py-3 bg-purple-500 hover:bg-purple-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> สร้าง</button>
+                    </div>
+                </div>`;
+            openModal();
+            lucide.createIcons();
+            document.getElementById('alias-id').focus();
+        }
+
+        async function deleteAlias(aliasId) {
+            showConfirmModal(
+                'ลบ Alias?',
+                `จะลบ <code class="bg-slate-100 px-2 py-0.5 rounded font-mono text-rose-600">${escapeHtml(aliasId)}</code> ออกจาก LINE<br><br><div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">⚠️ ปุ่มที่ใช้ richmenuswitch ชี้ alias นี้ จะกดไม่ทำงาน</div>`,
+                async () => {
+                    try {
+                        const res = await fetch(`${API_BASE_URL}/api/admin/richmenus`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ action: 'alias_delete', richMenuAliasId: aliasId })
+                        });
+                        const d = await res.json();
+                        if (!res.ok) throw new Error(d.error || 'ลบไม่สำเร็จ');
+                        showToast('ลบ Alias แล้ว', 'success');
+                        openAliasManager();
+                    } catch (e) {
+                        showToast(e.message, 'error');
+                    }
+                }
+            );
+        }
+
         async function renderRichMenusTable() {
             const from = (currentPage - 1) * ITEMS_PER_PAGE;
             const to = from + ITEMS_PER_PAGE - 1;
@@ -2035,6 +2265,9 @@ async function updateAllUserProfiles() {
                         </div>
                         <button onclick="syncRichMenus()" class="bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-200 font-bold text-sm active:scale-95 group whitespace-nowrap">
                             <i data-lucide="refresh-cw" class="w-5 h-5 group-hover:rotate-180 transition-transform"></i> Sync from LINE
+                        </button>
+                        <button onclick="openAliasManager()" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-purple-200 font-bold text-sm active:scale-95 group whitespace-nowrap">
+                            <i data-lucide="git-fork" class="w-5 h-5 group-hover:rotate-12 transition-transform"></i> จัดการ Aliases
                         </button>
                         <button onclick="openRichMenuModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-200 font-semibold text-sm active:scale-95 group whitespace-nowrap">
                             <i data-lucide="plus" class="w-5 h-5 group-hover:scale-110 transition-transform"></i> เพิ่ม Rich Menu
@@ -2084,6 +2317,7 @@ async function updateAllUserProfiles() {
                             </td>
                             <td class="px-8 py-5 text-right">
                                 <div class="flex justify-end gap-3 transition-opacity">
+                                    <button onclick="openCreateAliasFromRichMenu('${item.rich_menu_id}', '${escapeHtml(item.name).replace(/'/g, '&apos;')}')" class="p-2 text-purple-600 bg-purple-50/50 rounded-xl hover:bg-purple-100 transition-all" title="สร้าง Alias สำหรับเมนูนี้"><i data-lucide="git-fork" class="w-4 h-4"></i></button>
                                     <button onclick="openRichMenuModal(${item.id})" class="p-2 text-indigo-600 bg-indigo-50/50 rounded-xl hover:bg-indigo-100 transition-all"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
                                     <button onclick="deleteRichMenu(${item.id})" class="p-2 text-rose-500 bg-rose-50/50 rounded-xl hover:bg-rose-100 transition-all"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
                                 </div>
@@ -3563,14 +3797,14 @@ async function updateAllUserProfiles() {
             }, 10);
         }
 
-        function showConfirmModal(title, message, onConfirm) {
+        function showConfirmModal(title, message, onConfirm, onCancel) {
             document.getElementById('modal-title').innerText = title;
             document.getElementById('modal-content').innerHTML = `
                 <div class="flex flex-col items-center text-center py-4">
                     <div class="text-amber-500 mb-4"><i data-lucide="help-circle" class="w-16 h-16"></i></div>
                     <p class="text-slate-600 mb-6 font-medium whitespace-pre-line">${message}</p>
                     <div class="flex gap-3 w-full">
-                        <button onclick="closeModal()" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all">
+                        <button id="modal-cancel-btn" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all">
                             ยกเลิก
                         </button>
                         <button id="modal-confirm-btn" class="flex-1 py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all">
@@ -3581,7 +3815,11 @@ async function updateAllUserProfiles() {
             `;
             document.getElementById('modal-confirm-btn').onclick = () => {
                 closeModal();
-                onConfirm();
+                if (typeof onConfirm === 'function') onConfirm();
+            };
+            document.getElementById('modal-cancel-btn').onclick = () => {
+                closeModal();
+                if (typeof onCancel === 'function') onCancel();
             };
 
             document.getElementById('modal-overlay').classList.remove('hidden');
@@ -6401,7 +6639,11 @@ async function updateAllUserProfiles() {
                                             <div class="text-2xl font-extrabold text-rose-600">${r.points_cost.toLocaleString()}<span class="text-xs font-normal text-slate-400 ml-1">แต้ม</span></div>
                                             <div class="text-[10px] text-slate-400 mt-0.5">แลกไปแล้ว ${r.total_claimed} ครั้ง${r.stock ? ` / เหลือ ${r.stock - r.total_claimed}` : ''}</div>
                                         </div>
-                                        <button onclick="toggleReward('${r.id}', ${!r.is_active})" class="text-xs font-bold text-slate-400 hover:text-rose-500 transition-colors">${r.is_active ? 'ปิดใช้' : 'เปิดใช้'}</button>
+                                        <div class="flex items-center gap-1">
+                                            <button onclick="toggleReward('${r.id}', ${!r.is_active})" class="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="${r.is_active ? 'ปิดใช้' : 'เปิดใช้'}"><i data-lucide="${r.is_active ? 'eye-off' : 'eye'}" class="w-4 h-4"></i></button>
+                                            <button onclick='openRewardModal(${JSON.stringify(r).replace(/'/g, "&apos;")})' class="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors" title="แก้ไข"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
+                                            <button onclick="deleteReward('${r.id}', '${escapeHtml(r.name).replace(/'/g, '&apos;')}')" class="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="ลบ"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>`).join('') || '<div class="col-span-full text-center py-12 text-slate-400">ยังไม่มีรางวัล กดปุ่ม "เพิ่มรางวัล" เพื่อสร้าง</div>'}
@@ -6410,45 +6652,62 @@ async function updateAllUserProfiles() {
             lucide.createIcons();
         }
 
-        function openRewardModal() {
-            document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="gift" class="w-6 h-6 text-rose-500"></i> เพิ่มรางวัลใหม่</div>';
+        function openRewardModal(editing) {
+            const isEdit = !!editing;
+            document.getElementById('modal-title').innerHTML = `<div class="flex items-center gap-2"><i data-lucide="gift" class="w-6 h-6 text-rose-500"></i> ${isEdit ? 'แก้ไขรางวัล' : 'เพิ่มรางวัลใหม่'}</div>`;
             document.getElementById('modal-content').innerHTML = `
                 <div class="space-y-4">
-                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">ชื่อรางวัล *</label><input id="rw-name" type="text" placeholder="เช่น คูปองลด 100 บาท" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none"></div>
-                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">รายละเอียด</label><textarea id="rw-desc" rows="2" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none resize-none"></textarea></div>
+                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">ชื่อรางวัล *</label><input id="rw-name" type="text" value="${isEdit ? escapeHtml(editing.name) : ''}" placeholder="เช่น คูปองลด 100 บาท" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none"></div>
+                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">รายละเอียด</label><textarea id="rw-desc" rows="2" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none resize-none">${isEdit ? escapeHtml(editing.description || '') : ''}</textarea></div>
                     <div class="grid grid-cols-2 gap-3">
-                        <div><label class="block text-sm font-bold text-slate-700 mb-1.5">ใช้แต้ม *</label><input id="rw-cost" type="number" placeholder="100" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none"></div>
-                        <div><label class="block text-sm font-bold text-slate-700 mb-1.5">สต็อก (ว่างไว้ = ไม่จำกัด)</label><input id="rw-stock" type="number" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none"></div>
+                        <div><label class="block text-sm font-bold text-slate-700 mb-1.5">ใช้แต้ม *</label><input id="rw-cost" type="number" value="${isEdit ? editing.points_cost : ''}" placeholder="100" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none"></div>
+                        <div><label class="block text-sm font-bold text-slate-700 mb-1.5">สต็อก (ว่างไว้ = ไม่จำกัด)</label><input id="rw-stock" type="number" value="${isEdit && editing.stock ? editing.stock : ''}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none"></div>
                     </div>
-                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">URL รูปภาพ</label><input id="rw-image" type="url" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none"></div>
-                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">เงื่อนไขการใช้</label><textarea id="rw-terms" rows="2" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none resize-none"></textarea></div>
+                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">URL รูปภาพ</label><input id="rw-image" type="url" value="${isEdit ? escapeHtml(editing.image_url || '') : ''}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none"></div>
+                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">เงื่อนไขการใช้</label><textarea id="rw-terms" rows="2" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none resize-none">${isEdit ? escapeHtml(editing.terms || '') : ''}</textarea></div>
                     <div class="flex gap-3 pt-4 border-t border-slate-100">
                         <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">ยกเลิก</button>
-                        <button onclick="saveReward()" id="rw-save-btn" class="flex-1 py-3 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> บันทึก</button>
+                        <button onclick="saveReward('${isEdit ? editing.id : ''}')" id="rw-save-btn" class="flex-1 py-3 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> ${isEdit ? 'บันทึก' : 'เพิ่มรางวัล'}</button>
                     </div>
                 </div>`;
             openModal();
             lucide.createIcons();
         }
 
-        async function saveReward() {
+        async function saveReward(editId) {
             const btn = document.getElementById('rw-save-btn');
             const name = document.getElementById('rw-name').value.trim();
             const cost = parseInt(document.getElementById('rw-cost').value);
             if (!name || !cost) return showToast('กรุณากรอกชื่อและแต้ม', 'warning');
             setBtnLoading(btn, true);
             const stock = document.getElementById('rw-stock').value;
-            const { error } = await supabaseClient.from('rewards').insert({
+            const payload = {
                 name, description: document.getElementById('rw-desc').value.trim(),
                 image_url: document.getElementById('rw-image').value.trim() || null,
                 points_cost: cost, stock: stock ? parseInt(stock) : null,
                 terms: document.getElementById('rw-terms').value.trim()
-            });
+            };
+            const { error } = editId
+                ? await supabaseClient.from('rewards').update(payload).eq('id', editId)
+                : await supabaseClient.from('rewards').insert(payload);
             setBtnLoading(btn, false);
             if (error) return showToast(error.message, 'error');
-            showToast('เพิ่มรางวัลสำเร็จ!', 'success');
+            showToast(editId ? 'แก้ไขสำเร็จ!' : 'เพิ่มรางวัลสำเร็จ!', 'success');
             closeModal();
             renderCrmRewardsView();
+        }
+
+        async function deleteReward(id, name) {
+            showConfirmModal(
+                'ลบรางวัล?',
+                `จะลบ <b>${escapeHtml(name)}</b> ถาวร<br><small class="text-rose-500">⚠️ ประวัติการแลกของลูกค้าจะยังอยู่</small>`,
+                async () => {
+                    const { error } = await supabaseClient.from('rewards').delete().eq('id', id);
+                    if (error) return showToast(error.message, 'error');
+                    showToast('ลบแล้ว', 'success');
+                    renderCrmRewardsView();
+                }
+            );
         }
 
         async function toggleReward(id, newStatus) {
@@ -6484,7 +6743,8 @@ async function updateAllUserProfiles() {
                                     <p class="text-xs text-slate-500 line-clamp-2 mb-3">${escapeHtml(n.description || '')}</p>
                                     <div class="flex gap-2 pt-3 border-t border-slate-100">
                                         <button onclick="toggleNews('${n.id}', ${!n.is_active})" class="flex-1 text-xs font-bold py-1.5 rounded-xl ${n.is_active ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200'}">${n.is_active ? 'ปิด' : 'เปิด'}</button>
-                                        <button onclick="deleteNews('${n.id}')" class="flex-1 text-xs font-bold py-1.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100">ลบ</button>
+                                        <button onclick='openNewsModal(${JSON.stringify(n).replace(/'/g, "&apos;")})' class="flex-1 text-xs font-bold py-1.5 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100">แก้ไข</button>
+                                        <button onclick="deleteNews('${n.id}', '${escapeHtml(n.title).replace(/'/g, '&apos;')}')" class="flex-1 text-xs font-bold py-1.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100">ลบ</button>
                                     </div>
                                 </div>
                             </div>`).join('') || '<div class="col-span-full text-center py-12 text-slate-400">ยังไม่มีข่าว</div>'}
@@ -6493,45 +6753,49 @@ async function updateAllUserProfiles() {
             lucide.createIcons();
         }
 
-        function openNewsModal() {
-            document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="megaphone" class="w-6 h-6 text-amber-500"></i> เพิ่มข่าว / โปรโมชั่น</div>';
+        function openNewsModal(editing) {
+            const isEdit = !!editing;
+            document.getElementById('modal-title').innerHTML = `<div class="flex items-center gap-2"><i data-lucide="megaphone" class="w-6 h-6 text-amber-500"></i> ${isEdit ? 'แก้ไขข่าว' : 'เพิ่มข่าว / โปรโมชั่น'}</div>`;
             document.getElementById('modal-content').innerHTML = `
                 <div class="space-y-4">
-                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">หัวข้อ *</label><input id="n-title" type="text" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none"></div>
-                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">รายละเอียด</label><textarea id="n-desc" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none resize-none"></textarea></div>
+                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">หัวข้อ *</label><input id="n-title" type="text" value="${isEdit ? escapeHtml(editing.title) : ''}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none"></div>
+                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">รายละเอียด</label><textarea id="n-desc" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none resize-none">${isEdit ? escapeHtml(editing.description || '') : ''}</textarea></div>
                     <div class="grid grid-cols-2 gap-3">
                         <div><label class="block text-sm font-bold text-slate-700 mb-1.5">หมวด</label>
                             <select id="n-category" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-amber-400 outline-none bg-white">
-                                <option value="promotion">โปรโมชั่น</option><option value="event">กิจกรรม</option><option value="news">ข่าวสาร</option><option value="general">ทั่วไป</option>
+                                ${['promotion','event','news','general'].map(c => `<option value="${c}" ${isEdit && editing.category === c ? 'selected' : ''}>${{promotion:'โปรโมชั่น',event:'กิจกรรม',news:'ข่าวสาร',general:'ทั่วไป'}[c]}</option>`).join('')}
                             </select></div>
-                        <div><label class="block text-sm font-bold text-slate-700 mb-1.5">Priority</label><input id="n-priority" type="number" value="0" class="w-full rounded-2xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-amber-400 outline-none"></div>
+                        <div><label class="block text-sm font-bold text-slate-700 mb-1.5">Priority</label><input id="n-priority" type="number" value="${isEdit ? (editing.priority || 0) : 0}" class="w-full rounded-2xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-amber-400 outline-none"></div>
                     </div>
-                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">URL รูป</label><input id="n-image" type="url" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none"></div>
-                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">ลิงก์เพิ่มเติม</label><input id="n-link" type="url" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none"></div>
+                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">URL รูป</label><input id="n-image" type="url" value="${isEdit ? escapeHtml(editing.image_url || '') : ''}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none"></div>
+                    <div><label class="block text-sm font-bold text-slate-700 mb-1.5">ลิงก์เพิ่มเติม</label><input id="n-link" type="url" value="${isEdit ? escapeHtml(editing.link_url || '') : ''}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-amber-400 outline-none"></div>
                     <div class="flex gap-3 pt-4 border-t border-slate-100">
                         <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">ยกเลิก</button>
-                        <button onclick="saveNews()" id="n-save-btn" class="flex-1 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> บันทึก</button>
+                        <button onclick="saveNews('${isEdit ? editing.id : ''}')" id="n-save-btn" class="flex-1 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> ${isEdit ? 'บันทึก' : 'เพิ่มข่าว'}</button>
                     </div>
                 </div>`;
             openModal();
             lucide.createIcons();
         }
 
-        async function saveNews() {
+        async function saveNews(editId) {
             const btn = document.getElementById('n-save-btn');
             const title = document.getElementById('n-title').value.trim();
             if (!title) return showToast('กรุณากรอกหัวข้อ', 'warning');
             setBtnLoading(btn, true);
-            const { error } = await supabaseClient.from('news_promotions').insert({
+            const payload = {
                 title, description: document.getElementById('n-desc').value.trim(),
                 image_url: document.getElementById('n-image').value.trim() || null,
                 link_url: document.getElementById('n-link').value.trim() || null,
                 category: document.getElementById('n-category').value,
                 priority: parseInt(document.getElementById('n-priority').value) || 0
-            });
+            };
+            const { error } = editId
+                ? await supabaseClient.from('news_promotions').update(payload).eq('id', editId)
+                : await supabaseClient.from('news_promotions').insert(payload);
             setBtnLoading(btn, false);
             if (error) return showToast(error.message, 'error');
-            showToast('เพิ่มสำเร็จ!', 'success');
+            showToast(editId ? 'แก้ไขสำเร็จ!' : 'เพิ่มสำเร็จ!', 'success');
             closeModal();
             renderCrmNewsView();
         }
@@ -6541,12 +6805,17 @@ async function updateAllUserProfiles() {
             renderCrmNewsView();
         }
 
-        async function deleteNews(id) {
-            showConfirmModal('ลบข่าว?', 'ลบแล้วนำกลับไม่ได้', async () => {
-                await supabaseClient.from('news_promotions').delete().eq('id', id);
-                showToast('ลบแล้ว', 'success');
-                renderCrmNewsView();
-            });
+        async function deleteNews(id, title) {
+            showConfirmModal(
+                'ลบข่าว?',
+                title ? `จะลบ <b>${escapeHtml(title)}</b> ถาวร` : 'ลบแล้วนำกลับไม่ได้',
+                async () => {
+                    const { error } = await supabaseClient.from('news_promotions').delete().eq('id', id);
+                    if (error) return showToast(error.message, 'error');
+                    showToast('ลบแล้ว', 'success');
+                    renderCrmNewsView();
+                }
+            );
         }
 
         // ─── Scan / Verify Coupon ──────────────────────────
@@ -6959,10 +7228,12 @@ async function updateAllUserProfiles() {
                                         <p class="text-xs text-slate-500 mt-1">${escapeHtml(e.description || '')}</p>
                                         <div class="text-[11px] text-slate-400 mt-2 font-mono">เริ่ม: ${new Date(e.starts_at).toLocaleString('th-TH')} · ปิด: ${new Date(e.ends_at).toLocaleString('th-TH')}</div>
                                     </div>
-                                    <div class="flex gap-2 shrink-0">
+                                    <div class="flex gap-2 shrink-0 flex-wrap">
                                         <button onclick="manageAgmEvent('${e.id}')" class="px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5"><i data-lucide="settings" class="w-3.5 h-3.5"></i> จัดการ</button>
                                         ${e.status === 'draft' ? `<button onclick="changeAgmStatus('${e.id}','open')" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold">เปิดโหวต</button>` : ''}
                                         ${e.status === 'open' ? `<button onclick="changeAgmStatus('${e.id}','closed')" class="px-4 py-2 bg-slate-500 hover:bg-slate-600 text-white rounded-xl text-xs font-bold">ปิดโหวต</button>` : ''}
+                                        ${e.status === 'draft' ? `<button onclick='openAgmModal(${JSON.stringify(e).replace(/'/g, "&apos;")})' class="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl text-xs font-bold inline-flex items-center gap-1" title="แก้ไข"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>` : ''}
+                                        <button onclick="deleteAgmEvent('${e.id}', '${escapeHtml(e.title).replace(/'/g, '&apos;')}', '${e.status}')" class="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-bold inline-flex items-center gap-1" title="ลบ"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
                                     </div>
                                 </div>
                             </div>`;
@@ -6972,50 +7243,60 @@ async function updateAllUserProfiles() {
             lucide.createIcons();
         }
 
-        function openAgmModal() {
-            document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="vote" class="w-6 h-6 text-rose-500"></i> สร้าง AGM Event</div>';
-            const tomorrow = new Date(Date.now() + 24*3600*1000).toISOString().slice(0,16);
-            const next7days = new Date(Date.now() + 7*24*3600*1000).toISOString().slice(0,16);
+        function openAgmModal(editing) {
+            const isEdit = !!editing;
+            document.getElementById('modal-title').innerHTML = `<div class="flex items-center gap-2"><i data-lucide="vote" class="w-6 h-6 text-rose-500"></i> ${isEdit ? 'แก้ไข AGM Event' : 'สร้าง AGM Event'}</div>`;
+
+            // datetime-local แปลง ISO → local string ตามไทม์โซน browser
+            const toLocalInput = (isoStr) => {
+                if (!isoStr) return '';
+                const d = new Date(isoStr);
+                const tz = d.getTimezoneOffset() * 60000;
+                return new Date(d - tz).toISOString().slice(0, 16);
+            };
+            const startVal = isEdit ? toLocalInput(editing.starts_at) : new Date(Date.now() + 24*3600*1000 - new Date().getTimezoneOffset()*60000).toISOString().slice(0,16);
+            const endVal   = isEdit ? toLocalInput(editing.ends_at)   : new Date(Date.now() + 7*24*3600*1000 - new Date().getTimezoneOffset()*60000).toISOString().slice(0,16);
+
             document.getElementById('modal-content').innerHTML = `
                 <div class="space-y-4">
                     <div>
                         <label class="block text-sm font-bold text-slate-700 mb-1.5">ชื่อ AGM *</label>
-                        <input id="agm-title" type="text" placeholder="เช่น ประชุมใหญ่สามัญประจำปี 2569" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
+                        <input id="agm-title" type="text" value="${isEdit ? escapeHtml(editing.title) : ''}" placeholder="เช่น ประชุมใหญ่สามัญประจำปี 2569" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
                     </div>
                     <div>
                         <label class="block text-sm font-bold text-slate-700 mb-1.5">รายละเอียด</label>
-                        <textarea id="agm-desc" rows="2" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none resize-none"></textarea>
+                        <textarea id="agm-desc" rows="2" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none resize-none">${isEdit ? escapeHtml(editing.description || '') : ''}</textarea>
                     </div>
                     <div class="grid grid-cols-2 gap-3">
                         <div>
                             <label class="block text-sm font-bold text-slate-700 mb-1.5">วันเริ่มโหวต *</label>
-                            <input id="agm-start" type="datetime-local" value="${tomorrow}" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
+                            <input id="agm-start" type="datetime-local" value="${startVal}" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
                         </div>
                         <div>
                             <label class="block text-sm font-bold text-slate-700 mb-1.5">วันปิดโหวต *</label>
-                            <input id="agm-end" type="datetime-local" value="${next7days}" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
+                            <input id="agm-end" type="datetime-local" value="${endVal}" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
                         </div>
                     </div>
                     <div class="grid grid-cols-2 gap-3">
                         <div>
                             <label class="block text-sm font-bold text-slate-700 mb-1.5">องค์ประชุม (%)</label>
-                            <input id="agm-quorum" type="number" min="1" max="100" value="50" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
+                            <input id="agm-quorum" type="number" min="1" max="100" value="${isEdit ? (editing.quorum_pct || 50) : 50}" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
                         </div>
                         <div>
                             <label class="block text-sm font-bold text-slate-700 mb-1.5">จำนวนบ้านในโครงการ</label>
-                            <input id="agm-total" type="number" min="1" placeholder="เช่น 245" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
+                            <input id="agm-total" type="number" min="1" value="${isEdit && editing.total_houses ? editing.total_houses : ''}" placeholder="เช่น 245" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
                         </div>
                     </div>
                     <div class="flex gap-3 pt-4 border-t border-slate-100">
                         <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">ยกเลิก</button>
-                        <button onclick="saveAgmEvent()" id="agm-save-btn" class="flex-1 py-3 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> สร้าง</button>
+                        <button onclick="saveAgmEvent('${isEdit ? editing.id : ''}')" id="agm-save-btn" class="flex-1 py-3 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> ${isEdit ? 'บันทึก' : 'สร้าง'}</button>
                     </div>
                 </div>`;
             openModal();
             lucide.createIcons();
         }
 
-        async function saveAgmEvent() {
+        async function saveAgmEvent(editId) {
             const btn = document.getElementById('agm-save-btn');
             const title = document.getElementById('agm-title').value.trim();
             if (!title) return showToast('กรุณากรอกชื่อ', 'warning');
@@ -7026,15 +7307,20 @@ async function updateAllUserProfiles() {
             if (new Date(endsAt) <= new Date(startsAt)) return showToast('เวลาปิดต้องหลังเวลาเริ่ม', 'warning');
 
             setBtnLoading(btn, true);
-            const { error } = await supabaseClient.from('agm_events').insert({
+            const payload = {
                 title,
                 description: document.getElementById('agm-desc').value.trim(),
                 starts_at: startsAt,
                 ends_at: endsAt,
                 quorum_pct: parseInt(document.getElementById('agm-quorum').value) || 50,
-                total_houses: parseInt(document.getElementById('agm-total').value) || null,
-                status: 'draft'
-            });
+                total_houses: parseInt(document.getElementById('agm-total').value) || null
+            };
+            // เฉพาะตอนสร้างใหม่ที่ตั้ง status=draft
+            if (!editId) payload.status = 'draft';
+
+            const { error } = editId
+                ? await supabaseClient.from('agm_events').update(payload).eq('id', editId)
+                : await supabaseClient.from('agm_events').insert(payload);
             setBtnLoading(btn, false);
             if (error) {
                 if (error.code === '42P01' || (error.message?.includes('relation') && error.message?.includes('agm'))) {
@@ -7042,9 +7328,25 @@ async function updateAllUserProfiles() {
                 }
                 return showToast(error.message, 'error');
             }
-            showToast('สร้าง AGM สำเร็จ! กดเข้าจัดการเพื่อเพิ่มวาระ', 'success');
+            showToast(editId ? 'แก้ไข AGM สำเร็จ' : 'สร้าง AGM สำเร็จ! กดเข้าจัดการเพื่อเพิ่มวาระ', 'success');
             closeModal();
             renderAgmAdminView();
+        }
+
+        async function deleteAgmEvent(eventId, title, status) {
+            const warn = (status === 'open' || status === 'closed')
+                ? '<div class="mt-2 text-rose-600 font-bold">⚠️ AGM นี้เปิดโหวตแล้ว/ปิดแล้ว</div><div class="text-xs text-slate-500">การลบจะลบ <b>วาระ + คะแนนโหวตทั้งหมด</b> ด้วย</div>'
+                : '<div class="text-xs text-slate-500">วาระทั้งหมดของ AGM นี้จะถูกลบด้วย</div>';
+            showConfirmModal(
+                'ลบ AGM Event?',
+                `จะลบ <b>${escapeHtml(title)}</b> ถาวร${warn}`,
+                async () => {
+                    const { error } = await supabaseClient.from('agm_events').delete().eq('id', eventId);
+                    if (error) return showToast(error.message, 'error');
+                    showToast('ลบแล้ว', 'success');
+                    renderAgmAdminView();
+                }
+            );
         }
 
         async function changeAgmStatus(eventId, newStatus) {
@@ -7089,7 +7391,10 @@ async function updateAllUserProfiles() {
                                         <h3 class="font-bold text-slate-800 mt-2">${escapeHtml(a.title)}</h3>
                                         <p class="text-xs text-slate-500 mt-1">${escapeHtml(a.description || '')}</p>
                                     </div>
-                                    <button onclick="deleteAgenda('${a.id}', '${eventId}')" class="text-slate-400 hover:text-rose-500"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                    <div class="flex items-center gap-1 shrink-0">
+                                        <button onclick='openAgendaModal("${eventId}", ${JSON.stringify(a).replace(/'/g, "&apos;")})' class="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg" title="แก้ไข"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
+                                        <button onclick="deleteAgenda('${a.id}', '${eventId}', '${escapeHtml(a.title).replace(/'/g, '&apos;')}', ${totalVoted})" class="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg" title="ลบ"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                    </div>
                                 </div>
                                 <div class="space-y-2 mt-3">
                                     ${optionsArr.map(opt => {
@@ -7109,38 +7414,47 @@ async function updateAllUserProfiles() {
             lucide.createIcons();
         }
 
-        function openAgendaModal(eventId) {
-            document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="list" class="w-6 h-6 text-rose-500"></i> เพิ่มวาระ</div>';
+        function openAgendaModal(eventId, editing) {
+            const isEdit = !!editing;
+            document.getElementById('modal-title').innerHTML = `<div class="flex items-center gap-2"><i data-lucide="list" class="w-6 h-6 text-rose-500"></i> ${isEdit ? 'แก้ไขวาระ' : 'เพิ่มวาระ'}</div>`;
+
+            // ดึง options เป็นบรรทัดถ้าเป็น multi_choice
+            const initialType = isEdit ? (editing.vote_type || 'yes_no') : 'yes_no';
+            const initialOptionsText = (isEdit && initialType === 'multi_choice' && Array.isArray(editing.options))
+                ? editing.options.map(o => o.label).join('\n')
+                : '';
+
             document.getElementById('modal-content').innerHTML = `
                 <div class="space-y-4">
                     <div>
                         <label class="block text-sm font-bold text-slate-700 mb-1.5">หัวข้อวาระ *</label>
-                        <input id="ag-title" type="text" placeholder="เช่น อนุมัติงบประมาณประจำปี 2570" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
+                        <input id="ag-title" type="text" value="${isEdit ? escapeHtml(editing.title) : ''}" placeholder="เช่น อนุมัติงบประมาณประจำปี 2570" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
                     </div>
                     <div>
                         <label class="block text-sm font-bold text-slate-700 mb-1.5">รายละเอียด</label>
-                        <textarea id="ag-desc" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none resize-none"></textarea>
+                        <textarea id="ag-desc" rows="3" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none resize-none">${isEdit ? escapeHtml(editing.description || '') : ''}</textarea>
                     </div>
                     <div class="grid grid-cols-2 gap-3">
                         <div>
                             <label class="block text-sm font-bold text-slate-700 mb-1.5">ลำดับ</label>
-                            <input id="ag-order" type="number" min="1" value="1" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
+                            <input id="ag-order" type="number" min="1" value="${isEdit ? (editing.order_no || 1) : 1}" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-400 outline-none">
                         </div>
                         <div>
                             <label class="block text-sm font-bold text-slate-700 mb-1.5">รูปแบบ</label>
                             <select id="ag-type" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
-                                <option value="yes_no">เห็นด้วย / ไม่เห็น / งดออก</option>
-                                <option value="multi_choice">ตัวเลือกหลายข้อ</option>
+                                <option value="yes_no" ${initialType === 'yes_no' ? 'selected' : ''}>เห็นด้วย / ไม่เห็น / งดออก</option>
+                                <option value="multi_choice" ${initialType === 'multi_choice' ? 'selected' : ''}>ตัวเลือกหลายข้อ</option>
                             </select>
                         </div>
                     </div>
-                    <div id="ag-options-wrap" style="display:none;">
+                    <div id="ag-options-wrap" style="display:${initialType === 'multi_choice' ? '' : 'none'};">
                         <label class="block text-sm font-bold text-slate-700 mb-1.5">ตัวเลือก (1 บรรทัด/ตัวเลือก)</label>
-                        <textarea id="ag-options" rows="4" placeholder="นาย ก.&#10;นาง ข.&#10;นาย ค." class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none resize-none"></textarea>
+                        <textarea id="ag-options" rows="4" placeholder="นาย ก.&#10;นาง ข.&#10;นาย ค." class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-rose-400 outline-none resize-none">${escapeHtml(initialOptionsText)}</textarea>
+                        ${isEdit ? '<p class="text-[10px] text-amber-600 mt-1">⚠️ ถ้าแก้ตัวเลือก โหวตเดิมที่ใช้ตัวเลือกที่ลบจะนับไม่ได้</p>' : ''}
                     </div>
                     <div class="flex gap-3 pt-4 border-t border-slate-100">
                         <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">ยกเลิก</button>
-                        <button onclick="saveAgenda('${eventId}')" id="ag-save-btn" class="flex-1 py-3 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> บันทึก</button>
+                        <button onclick="saveAgenda('${eventId}', '${isEdit ? editing.id : ''}')" id="ag-save-btn" class="flex-1 py-3 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> ${isEdit ? 'บันทึก' : 'เพิ่มวาระ'}</button>
                     </div>
                 </div>`;
             openModal();
@@ -7150,7 +7464,7 @@ async function updateAllUserProfiles() {
             });
         }
 
-        async function saveAgenda(eventId) {
+        async function saveAgenda(eventId, editId) {
             const btn = document.getElementById('ag-save-btn');
             const title = document.getElementById('ag-title').value.trim();
             if (!title) return showToast('กรุณากรอกหัวข้อ', 'warning');
@@ -7166,27 +7480,38 @@ async function updateAllUserProfiles() {
             }
 
             setBtnLoading(btn, true);
-            const { error } = await supabaseClient.from('agm_agendas').insert({
+            const payload = {
                 event_id: eventId,
                 order_no: parseInt(document.getElementById('ag-order').value) || 1,
                 title,
                 description: document.getElementById('ag-desc').value.trim(),
                 vote_type: voteType,
                 options
-            });
+            };
+            const { error } = editId
+                ? await supabaseClient.from('agm_agendas').update(payload).eq('id', editId)
+                : await supabaseClient.from('agm_agendas').insert(payload);
             setBtnLoading(btn, false);
             if (error) return showToast(error.message, 'error');
-            showToast('เพิ่มวาระสำเร็จ', 'success');
+            showToast(editId ? 'แก้ไขวาระสำเร็จ' : 'เพิ่มวาระสำเร็จ', 'success');
             closeModal();
             manageAgmEvent(eventId);
         }
 
-        async function deleteAgenda(agendaId, eventId) {
-            showConfirmModal('ลบวาระนี้?', 'การลบจะลบโหวตทั้งหมดของวาระนี้ด้วย', async () => {
-                await supabaseClient.from('agm_agendas').delete().eq('id', agendaId);
-                showToast('ลบแล้ว', 'success');
-                manageAgmEvent(eventId);
-            });
+        async function deleteAgenda(agendaId, eventId, title, voteCount) {
+            const warn = (voteCount > 0)
+                ? `<div class="mt-2 text-rose-600 font-bold">⚠️ มีโหวตแล้ว ${voteCount} เสียง</div><div class="text-xs text-slate-500">การลบจะลบ <b>โหวตทั้งหมด</b> ของวาระนี้ด้วย</div>`
+                : '<div class="text-xs text-slate-500">ยังไม่มีโหวต ลบได้ปลอดภัย</div>';
+            showConfirmModal(
+                'ลบวาระ?',
+                `${title ? `จะลบ <b>${escapeHtml(title)}</b>` : 'ลบวาระนี้'}${warn}`,
+                async () => {
+                    const { error } = await supabaseClient.from('agm_agendas').delete().eq('id', agendaId);
+                    if (error) return showToast(error.message, 'error');
+                    showToast('ลบแล้ว', 'success');
+                    manageAgmEvent(eventId);
+                }
+            );
         }
 
    // ============================================================================
@@ -8068,8 +8393,10 @@ async function loadActiveEvents() {
                             <div class="text-[9px] opacity-70 font-bold">CODE</div>
                             <div class="text-base font-mono font-extrabold tracking-wider">${escapeHtml(e.code)}</div>
                         </div>
-                        <button onclick="showEventQR('${e.id}', '${escapeHtml(e.code).replace(/'/g, '&apos;')}', '${escapeHtml(e.name).replace(/'/g, '&apos;')}')" class="p-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-700"><i data-lucide="qr-code" class="w-4 h-4"></i></button>
-                        <button onclick="toggleEventActive('${e.id}', ${!e.is_active})" class="p-2.5 ${e.is_active ? 'bg-rose-100 hover:bg-rose-200 text-rose-600' : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-600'} rounded-xl"><i data-lucide="${e.is_active ? 'pause' : 'play'}" class="w-4 h-4"></i></button>
+                        <button onclick="showEventQR('${e.id}', '${escapeHtml(e.code).replace(/'/g, '&apos;')}', '${escapeHtml(e.name).replace(/'/g, '&apos;')}')" class="p-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-700" title="QR Code"><i data-lucide="qr-code" class="w-4 h-4"></i></button>
+                        <button onclick="toggleEventActive('${e.id}', ${!e.is_active})" class="p-2.5 ${e.is_active ? 'bg-rose-100 hover:bg-rose-200 text-rose-600' : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-600'} rounded-xl" title="${e.is_active ? 'ปิดใช้' : 'เปิดใช้'}"><i data-lucide="${e.is_active ? 'pause' : 'play'}" class="w-4 h-4"></i></button>
+                        <button onclick='openCheckInEventModal(${JSON.stringify(e).replace(/'/g, "&apos;")})' class="p-2.5 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl" title="แก้ไข"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
+                        <button onclick="deleteCheckInEvent('${e.id}', '${escapeHtml(e.name).replace(/'/g, '&apos;')}', ${checkinCnt})" class="p-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl" title="ลบ"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
                     </div>
                 </div>
             </div>`;
@@ -8109,82 +8436,92 @@ function showEventQR(eventId, code, name) {
     lucide.createIcons();
 }
 
-async function openCheckInEventModal() {
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const now = new Date();
-    const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-    const next4h = new Date(now.getTime() + 4*3600*1000 - now.getTimezoneOffset()*60000).toISOString().slice(0, 16);
+async function openCheckInEventModal(editing) {
+    const isEdit = !!editing;
+    const code = isEdit ? editing.code : Math.random().toString(36).substring(2, 8).toUpperCase();
 
-    document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="qr-code" class="w-6 h-6 text-emerald-500"></i> สร้าง Self Check-in Event</div>';
+    const toLocalInput = (isoStr) => {
+        if (!isoStr) return '';
+        const d = new Date(isoStr);
+        const tz = d.getTimezoneOffset() * 60000;
+        return new Date(d - tz).toISOString().slice(0, 16);
+    };
+    const now = new Date();
+    const todayStr = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    const next4h = new Date(now.getTime() + 4*3600*1000 - now.getTimezoneOffset()*60000).toISOString().slice(0, 16);
+    const startVal = isEdit ? toLocalInput(editing.starts_at) : todayStr;
+    const endVal   = isEdit ? toLocalInput(editing.ends_at)   : next4h;
+
+    const iconOptions = [
+        ['🎉','กิจกรรม'], ['🌳','จิตอาสา'], ['🎊','ประเพณี'],
+        ['🏃','กีฬา'], ['🎓','อบรม'], ['🎂','วันเกิด'],
+        ['🎄','ปีใหม่'], ['💧','สงกรานต์'], ['🪔','ลอยกระทง']
+    ];
+    const currentIcon = isEdit ? (editing.icon || '🎉') : '🎉';
+
+    document.getElementById('modal-title').innerHTML = `<div class="flex items-center gap-2"><i data-lucide="qr-code" class="w-6 h-6 text-emerald-500"></i> ${isEdit ? 'แก้ไข Self Check-in' : 'สร้าง Self Check-in Event'}</div>`;
     document.getElementById('modal-content').innerHTML = `
         <div class="space-y-4">
-            <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
+            ${!isEdit ? `<div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
                 <div class="text-sm font-bold text-emerald-800 mb-1">💡 ลูกบ้าน check-in เองได้</div>
                 <div class="text-xs text-emerald-700">เปิด Mini App → Tab "Check-in" → กรอกรหัส 6 หลัก หรือ scan QR → ได้แต้มอัตโนมัติ ไม่ต้องให้ admin มาติ๊กชื่อ</div>
-            </div>
+            </div>` : ''}
 
             <div>
                 <label class="block text-sm font-bold text-slate-700 mb-1.5">ชื่อกิจกรรม *</label>
-                <input id="ck-name" type="text" placeholder="เช่น สงกรานต์ 2569, จิตอาสา 1 พ.ค." class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-emerald-400 outline-none">
+                <input id="ck-name" type="text" value="${isEdit ? escapeHtml(editing.name) : ''}" placeholder="เช่น สงกรานต์ 2569, จิตอาสา 1 พ.ค." class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-emerald-400 outline-none">
             </div>
             <div class="grid grid-cols-2 gap-3">
                 <div>
                     <label class="block text-sm font-bold text-slate-700 mb-1.5">Icon</label>
                     <select id="ck-icon" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
-                        <option value="🎉">🎉 กิจกรรม</option>
-                        <option value="🌳">🌳 จิตอาสา</option>
-                        <option value="🎊">🎊 ประเพณี</option>
-                        <option value="🏃">🏃 กีฬา</option>
-                        <option value="🎓">🎓 อบรม</option>
-                        <option value="🎂">🎂 วันเกิด</option>
-                        <option value="🎄">🎄 ปีใหม่</option>
-                        <option value="💧">💧 สงกรานต์</option>
-                        <option value="🪔">🪔 ลอยกระทง</option>
+                        ${iconOptions.map(([emoji, name]) => `<option value="${emoji}" ${currentIcon === emoji ? 'selected' : ''}>${emoji} ${name}</option>`).join('')}
                     </select>
                 </div>
                 <div>
                     <label class="block text-sm font-bold text-emerald-600 mb-1.5">แต้มต่อคน *</label>
-                    <input id="ck-points" type="number" min="1" value="50" class="w-full rounded-2xl border border-emerald-200 px-3 py-2.5 text-sm bg-emerald-50 font-bold text-emerald-600">
+                    <input id="ck-points" type="number" min="1" value="${isEdit ? (editing.points || 50) : 50}" class="w-full rounded-2xl border border-emerald-200 px-3 py-2.5 text-sm bg-emerald-50 font-bold text-emerald-600">
                 </div>
             </div>
             <div>
                 <label class="block text-sm font-bold text-slate-700 mb-1.5">สถานที่</label>
-                <input id="ck-location" type="text" placeholder="เช่น ลานเอนกประสงค์ของหมู่บ้าน" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm">
+                <input id="ck-location" type="text" value="${isEdit ? escapeHtml(editing.location || '') : ''}" placeholder="เช่น ลานเอนกประสงค์ของหมู่บ้าน" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm">
             </div>
             <div class="grid grid-cols-2 gap-3">
                 <div>
                     <label class="block text-sm font-bold text-slate-700 mb-1.5">เริ่มเช็คอิน *</label>
-                    <input id="ck-start" type="datetime-local" value="${today}" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm">
+                    <input id="ck-start" type="datetime-local" value="${startVal}" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm">
                 </div>
                 <div>
                     <label class="block text-sm font-bold text-slate-700 mb-1.5">หมดเขตเช็คอิน *</label>
-                    <input id="ck-end" type="datetime-local" value="${next4h}" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm">
+                    <input id="ck-end" type="datetime-local" value="${endVal}" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm">
                 </div>
             </div>
             <div class="grid grid-cols-2 gap-3">
                 <div>
-                    <label class="block text-sm font-bold text-slate-700 mb-1.5">รหัส (auto-gen)</label>
+                    <label class="block text-sm font-bold text-slate-700 mb-1.5">รหัส${isEdit ? '' : ' (auto-gen)'}</label>
                     <div class="flex gap-2">
-                        <input id="ck-code" type="text" value="${code}" maxlength="6" class="flex-1 rounded-2xl border border-slate-200 px-3 py-2.5 text-sm font-mono font-bold tracking-widest text-center bg-slate-900 text-white">
+                        <input id="ck-code" type="text" value="${escapeHtml(code)}" maxlength="6" ${isEdit ? '' : ''} class="flex-1 rounded-2xl border border-slate-200 px-3 py-2.5 text-sm font-mono font-bold tracking-widest text-center bg-slate-900 text-white">
                         <button type="button" onclick="document.getElementById('ck-code').value=Math.random().toString(36).substring(2,8).toUpperCase()" class="px-3 bg-slate-100 rounded-xl"><i data-lucide="refresh-cw" class="w-4 h-4"></i></button>
                     </div>
+                    ${isEdit ? '<p class="text-[10px] text-amber-600 mt-1">⚠️ เปลี่ยนรหัสแล้วของเดิมใช้ไม่ได้</p>' : ''}
                 </div>
                 <div>
                     <label class="block text-sm font-bold text-slate-700 mb-1.5">จำนวนคน (เว้นว่าง = ไม่จำกัด)</label>
-                    <input id="ck-max" type="number" min="1" placeholder="เช่น 100" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm">
+                    <input id="ck-max" type="number" min="1" value="${isEdit && editing.max_checkins ? editing.max_checkins : ''}" placeholder="เช่น 100" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm">
                 </div>
             </div>
 
             <div class="flex gap-3 pt-4 border-t border-slate-100">
                 <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">ยกเลิก</button>
-                <button onclick="saveCheckInEvent()" id="ck-save-btn" class="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> สร้าง Event</button>
+                <button onclick="saveCheckInEvent('${isEdit ? editing.id : ''}')" id="ck-save-btn" class="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> ${isEdit ? 'บันทึก' : 'สร้าง Event'}</button>
             </div>
         </div>`;
     openModal();
     lucide.createIcons();
 }
 
-async function saveCheckInEvent() {
+async function saveCheckInEvent(editId) {
     const btn = document.getElementById('ck-save-btn');
     const name = document.getElementById('ck-name').value.trim();
     const code = document.getElementById('ck-code').value.trim().toUpperCase();
@@ -8198,30 +8535,47 @@ async function saveCheckInEvent() {
 
     setBtnLoading(btn, true);
     const payload = {
-        name,
-        code,
+        name, code,
         icon: document.getElementById('ck-icon').value,
         points: parseInt(document.getElementById('ck-points').value) || 50,
         location: document.getElementById('ck-location').value.trim(),
         starts_at: startsAt,
         ends_at: endsAt,
-        max_checkins: parseInt(document.getElementById('ck-max').value) || null,
-        is_active: true
+        max_checkins: parseInt(document.getElementById('ck-max').value) || null
     };
-    const { error } = await supabaseClient.from('events').insert(payload);
+    if (!editId) payload.is_active = true;  // ตอนสร้าง default = active
+
+    const { error } = editId
+        ? await supabaseClient.from('events').update(payload).eq('id', editId)
+        : await supabaseClient.from('events').insert(payload);
     setBtnLoading(btn, false);
     if (error) {
         if (error.code === '23505') return showToast('รหัสนี้ใช้ไปแล้ว กรุณาเปลี่ยน', 'error');
-        // ตาราง events ไม่มี → migration ยังไม่ได้รัน
-        if (error.code === '42P01' || error.message?.includes('relation') && error.message?.includes('events')) {
+        if (error.code === '42P01' || (error.message?.includes('relation') && error.message?.includes('events'))) {
             return showToast('ตาราง events ไม่มีในฐานข้อมูล — ต้องรัน migration_events_checkin.sql ก่อน', 'error');
         }
         return showToast(error.message, 'error');
     }
-    showToast('สร้าง Event สำเร็จ! ลูกบ้านเช็คอินได้แล้ว', 'success');
+    showToast(editId ? 'แก้ไข Event สำเร็จ' : 'สร้าง Event สำเร็จ! ลูกบ้านเช็คอินได้แล้ว', 'success');
     closeModal();
-    switchEventTab('checkin');
+    if (!editId) switchEventTab('checkin');
     loadActiveEvents();
+}
+
+async function deleteCheckInEvent(eventId, name, checkinCount) {
+    const warn = (checkinCount > 0)
+        ? `<div class="mt-2 text-rose-600 font-bold">⚠️ มีคนเช็คอินแล้ว ${checkinCount} คน</div><div class="text-xs text-slate-500">การลบจะลบ <b>ประวัติเช็คอินทั้งหมด</b> (แต้มที่ให้ไปแล้วไม่ถูกถอน)</div>`
+        : '<div class="text-xs text-slate-500">ยังไม่มีใครเช็คอิน ลบได้ปลอดภัย</div>';
+    showConfirmModal(
+        'ลบ Event?',
+        `จะลบ <b>${escapeHtml(name)}</b> ถาวร${warn}`,
+        async () => {
+            const { error } = await supabaseClient.from('events').delete().eq('id', eventId);
+            if (error) return showToast(error.message, 'error');
+            showToast('ลบแล้ว', 'success');
+            loadActiveEvents();
+        }
+    );
 }
 
 async function loadEventHistory() {
@@ -9112,6 +9466,59 @@ async function runBackfill() {
         if (rmDrawData.boxes.length === 0) { if (window.showToast) showToast('กรุณาวาดอย่างน้อย 1 ปุ่ม', 'warning'); return; }
         if (rmDrawData.boxes.length > RM_MAX_AREAS) { if (window.showToast) showToast(`เกิน ${RM_MAX_AREAS} ปุ่ม`, 'error'); return; }
 
+        // ─── 🔍 Auto-detect alias IDs จาก boxes ที่เป็น richmenuswitch ───
+        const usedAliases = [...new Set(
+            rmDrawData.boxes
+                .filter(b => b.type === 'richmenuswitch' && b.val && b.val.trim())
+                .map(b => b.val.trim())
+        )];
+
+        // ตรวจ alias ที่ยังไม่ได้ register ใน LINE
+        let missingAliases = [];
+        if (usedAliases.length > 0) {
+            try {
+                const aliasRes = await fetch(`${API_BASE_URL}/api/admin/richmenus`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'alias_list' })
+                });
+                const aliasData = await aliasRes.json();
+                if (aliasRes.ok) {
+                    const existingIds = new Set((aliasData.aliases || []).map(a => a.richMenuAliasId));
+                    missingAliases = usedAliases.filter(id => !existingIds.has(id));
+                }
+            } catch (e) { console.warn('alias_list check failed:', e); }
+        }
+
+        // ─── ถ้ามี missing aliases → ถามผู้ใช้ก่อน ───
+        let aliasesToCreate = [];
+        if (missingAliases.length > 0) {
+            const proceed = await new Promise((resolve) => {
+                showConfirmModal(
+                    '🔀 พบ Alias ที่ยังไม่ได้ register',
+                    `<div class="text-left text-sm space-y-2">
+                        <div>Builder ตรวจพบปุ่ม <code class="bg-slate-100 px-1 rounded">richmenuswitch</code> ใช้ alias เหล่านี้แต่ยังไม่มีใน LINE:</div>
+                        <ul class="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1">
+                            ${missingAliases.map(id => `<li class="font-mono text-amber-800 text-xs">• ${id}</li>`).join('')}
+                        </ul>
+                        <div class="text-xs text-slate-600">หลังสร้าง Rich Menu ระบบจะสร้าง alias เหล่านี้ให้ <b>ชี้ไปยัง Rich Menu ใหม่นี้</b> อัตโนมัติ</div>
+                        <div class="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded p-2 mt-2">
+                            💡 <b>ใช้กรณี Self-loop</b> — เมนูชี้กลับมาตัวเอง เช่น Tab A กดปุ่ม "Tab A" จะ refresh ตัวเอง<br>
+                            ⚠️ <b>ถ้าต้องการให้ชี้ไปเมนูอื่น</b> — กดยกเลิก แล้วไปสร้าง alias ผ่านหน้า "จัดการ Aliases" ก่อน
+                        </div>
+                    </div>`,
+                    () => resolve('create'),
+                    () => resolve('skip')
+                );
+            });
+
+            if (proceed === 'create') {
+                aliasesToCreate = [...missingAliases];
+            } else {
+                if (window.showToast) showToast('ยกเลิก — กรุณาสร้าง alias ก่อน หรือเปลี่ยนค่า richmenuswitch', 'info');
+                return;
+            }
+        }
+
         const payload = buildPayload();
         if (window.setBtnLoading) setBtnLoading(btn, true);
         try {
@@ -9129,13 +9536,45 @@ async function runBackfill() {
                 })
             });
             const data = await res.json();
-            if (data.success) {
-                if (window.showToast) showToast('สร้าง Rich Menu สำเร็จ!', 'success');
-                closeModal();
-                if (typeof syncRichMenus === 'function') syncRichMenus();
+            if (!data.success) throw new Error(data.error || 'สร้างไม่สำเร็จ');
+
+            const newRichMenuId = data.richMenuId;
+
+            // ─── สร้าง aliases ที่ missing ─────────────────────────
+            if (aliasesToCreate.length > 0 && newRichMenuId) {
+                let aliasOk = 0, aliasFail = 0;
+                const aliasErrors = [];
+                for (const aliasId of aliasesToCreate) {
+                    try {
+                        const aRes = await fetch(`${API_BASE_URL}/api/admin/richmenus`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                action: 'alias_create',
+                                richMenuAliasId: aliasId,
+                                richMenuId: newRichMenuId
+                            })
+                        });
+                        if (aRes.ok) aliasOk++;
+                        else {
+                            aliasFail++;
+                            const aErr = await aRes.json().catch(() => ({}));
+                            aliasErrors.push(`${aliasId}: ${aErr.error || 'unknown'}`);
+                        }
+                    } catch (e) {
+                        aliasFail++;
+                        aliasErrors.push(`${aliasId}: ${e.message}`);
+                    }
+                }
+                let summary = `✓ สร้าง Rich Menu สำเร็จ`;
+                if (aliasOk > 0)   summary += ` · สร้าง alias ${aliasOk} ตัว`;
+                if (aliasFail > 0) summary += ` · alias ล้มเหลว ${aliasFail} ตัว`;
+                if (window.showToast) showToast(summary, aliasFail > 0 ? 'warning' : 'success');
+                if (aliasErrors.length > 0) console.warn('Alias creation errors:', aliasErrors);
             } else {
-                throw new Error(data.error || 'สร้างไม่สำเร็จ');
+                if (window.showToast) showToast('สร้าง Rich Menu สำเร็จ!', 'success');
             }
+            closeModal();
+            if (typeof syncRichMenus === 'function') syncRichMenus();
         } catch (e) {
             if (window.showToast) showToast(e.message, 'error');
         } finally {
@@ -9143,6 +9582,8 @@ async function runBackfill() {
         }
     };
 })();
+// ============================================================================
+
 
 // ============================================================================
         // ชุดโค้ดเปิดระบบ "จัดการ Rich Menu ขั้นสูง (Pro)" แบบหน้าต่างซ้อน (Iframe Modal)
