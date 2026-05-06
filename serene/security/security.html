@@ -656,7 +656,6 @@
                 // การตรวจสอบ LIFF ID และ Login แบบบังคับ
                 statusText.innerText = "กำลังเชื่อมต่อระบบ LINE...";
                 await initLiffSafely();
-                sessionStorage.removeItem('liff_reload_count'); // clear reload counter เมื่อสำเร็จ
 
                 statusText.innerText = "กำลังดึงข้อมูลโครงการ...";
                 // 🟢 แก้ไข: ใช้ .limit(1) แทน .single() เพื่อป้องกัน Error 406 กรณีที่ตารางยังไม่มีข้อมูล
@@ -692,8 +691,19 @@
 
             } catch (err) {
                 console.error("Init Error:", err);
-                statusText.innerText = "❌ เกิดข้อผิดพลาด";
-                showCustomAlert('ระบบขัดข้อง', err.message, 'error');
+                // แสดง UI ลองใหม่ใน splash screen แทน modal เพื่อไม่รบกวน session
+                const statusSection = document.getElementById('loginStatusSection');
+                statusSection.innerHTML = `
+                    <div class="text-center px-4">
+                        <div class="text-5xl mb-4">⚠️</div>
+                        <p class="text-sm font-bold text-red-600 mb-2">เชื่อมต่อไม่สำเร็จ</p>
+                        <p class="text-xs text-gray-500 mb-6 leading-relaxed">${err.message}</p>
+                        <button onclick="window.location.href=window.location.href" 
+                            class="w-full bg-indigo-600 text-white font-bold py-4 rounded-2xl text-sm shadow-lg active:scale-95 transition mb-3">
+                            🔄 ลองเชื่อมต่อใหม่
+                        </button>
+                        <p class="text-[10px] text-gray-400">หากยังไม่ได้ กรุณาปิดแล้วเปิดลิงก์ใหม่จากแชท LINE</p>
+                    </div>`;
             }
         });
 
@@ -709,7 +719,7 @@
             });
         }
 
-        // ฟังก์ชันเริ่ม LIFF พร้อม retry อัตโนมัติ
+        // ฟังก์ชันเริ่ม LIFF พร้อม retry อัตโนมัติ (ไม่ใช้ reload เพื่อป้องกัน cache ข้ามเว็บ)
         async function initLiffSafely() {
             if (!LIFF_ID || LIFF_ID.trim() === '') {
                 throw new Error("กรุณาตั้งค่า LIFF ID ในโค้ดก่อนใช้งาน");
@@ -719,6 +729,7 @@
             await waitForLiff();
 
             const MAX_RETRY = 3;
+            let lastError = null;
             for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
                 try {
                     await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
@@ -727,24 +738,17 @@
                         await new Promise(() => {}); // หยุดรอ redirect
                     }
                     actualLineProfile = await liff.getProfile();
-                    return; // สำเร็จ ออกจาก loop
+                    return; // สำเร็จ
                 } catch (e) {
+                    lastError = e;
                     console.warn(`LIFF init attempt ${attempt} failed:`, e);
-                    if (attempt === MAX_RETRY) {
-                        // ลอง fallback: reload หน้าอัตโนมัติ 1 ครั้ง
-                        const reloadKey = 'liff_reload_count';
-                        const reloadCount = parseInt(sessionStorage.getItem(reloadKey) || '0');
-                        if (reloadCount < 1) {
-                            sessionStorage.setItem(reloadKey, reloadCount + 1);
-                            window.location.reload();
-                            await new Promise(() => {}); // รอ reload
-                        }
-                        throw new Error("การเชื่อมต่อบัญชี LINE ล้มเหลว กรุณาปิดแล้วเปิดลิงก์ใหม่อีกครั้ง");
+                    if (attempt < MAX_RETRY) {
+                        await new Promise(r => setTimeout(r, 800 * attempt));
                     }
-                    // รอก่อน retry
-                    await new Promise(r => setTimeout(r, 800 * attempt));
                 }
             }
+            // retry ครบแล้วยังไม่ได้ — แสดงปุ่มให้กดลองใหม่เองแทน auto-reload
+            throw new Error("การเชื่อมต่อบัญชี LINE ล้มเหลว กรุณาปิดแล้วเปิดลิงก์ใหม่อีกครั้ง");
         }
 
         // ==========================================
