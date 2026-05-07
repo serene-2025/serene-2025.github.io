@@ -2,8 +2,17 @@
 <!--
     ============================================
     Admin Panel - ระบบค่าส่วนกลาง โกลเด้นแลนด์ ซีรีน
-    Version: 2.0 (IIFE-wrapped)
-    Updated: 2025-05 (รวม commonfees + admincheck)
+    Version: 3.0 (เพิ่ม 8 ฟีเจอร์ใหม่)
+    Updated: 2025-05
+    Features:
+        ✅ A2: หน้าแรก/Dashboard สรุปรวม
+        ✅ A3: ปุ่มปฏิเสธสลิป
+        ✅ A4: เปรียบสลิปกับยอดค้าง
+        ✅ A5: Export ใบเสร็จ ZIP
+        ✅ B1: กราฟเปรียบเทียบรายปี
+        ✅ B2: Top บ้านจ่ายตรงเวลา
+        ✅ C6: Dark Mode
+        ✅ C7: Global Search (Ctrl+K)
     ============================================
     เปิด console (F12) ตรวจสอบเวอร์ชันที่บรรทัดถัดไป:
 -->
@@ -17,6 +26,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
+            darkMode: 'class',
             theme: {
                 extend: {
                     fontFamily: { sans: ['Kanit', 'sans-serif'] }
@@ -43,12 +53,41 @@
     <!-- Supabase -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
+    <!-- JSZip + FileSaver (สำหรับ Export ZIP) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
     <style>
-        body { font-family: 'Kanit', sans-serif; background-color: #f8fafc; }
+        body { font-family: 'Kanit', sans-serif; background-color: #f8fafc; transition: background 0.2s; }
+
+        /* Dark Mode */
+        html.dark body { background-color: #0f172a; color: #e2e8f0; }
+        html.dark .bg-white { background-color: #1e293b !important; }
+        html.dark .bg-slate-50 { background-color: #0f172a !important; }
+        html.dark .bg-slate-100 { background-color: #1e293b !important; }
+        html.dark .bg-slate-200 { background-color: #334155 !important; }
+        html.dark .border-slate-200 { border-color: #334155 !important; }
+        html.dark .border-slate-300 { border-color: #475569 !important; }
+        html.dark .text-slate-800 { color: #f1f5f9 !important; }
+        html.dark .text-slate-700 { color: #e2e8f0 !important; }
+        html.dark .text-slate-600 { color: #cbd5e1 !important; }
+        html.dark .text-slate-500 { color: #94a3b8 !important; }
+        html.dark .text-slate-400 { color: #64748b !important; }
+        html.dark input, html.dark select, html.dark textarea {
+            background-color: #1e293b !important; color: #e2e8f0 !important; border-color: #475569 !important;
+        }
+        html.dark .admin-table th { background-color: #1e293b !important; }
+        html.dark .hover\\:bg-slate-50:hover { background-color: #334155 !important; }
+        html.dark .hover\\:bg-slate-100:hover { background-color: #334155 !important; }
+        html.dark .divide-slate-100 > * + * { border-color: #334155 !important; }
+        html.dark .nav-btn:hover { background-color: #334155 !important; }
+
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        html.dark ::-webkit-scrollbar-track { background: #1e293b; }
+        html.dark ::-webkit-scrollbar-thumb { background: #475569; }
 
         /* Status badges */
         .status-cell {
@@ -105,6 +144,15 @@
             animation: spin 1s linear infinite;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Command Palette */
+        .cmd-item.selected { background-color: #4f46e5 !important; color: white !important; }
+        .cmd-item.selected .cmd-meta { color: rgba(255,255,255,0.8) !important; }
+        .kbd {
+            display: inline-block; padding: 1px 5px; background: #e2e8f0; color: #475569;
+            border-radius: 4px; font-size: 11px; font-family: monospace; border: 1px solid #cbd5e1;
+        }
+        html.dark .kbd { background: #334155; color: #cbd5e1; border-color: #475569; }
     </style>
 </head>
 <body>
@@ -169,6 +217,17 @@
             </div>
 
             <div class="flex items-center gap-2 md:gap-3">
+                <button onclick="openCommandPalette()" id="cmdBtn"
+                    class="hidden sm:flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors text-sm text-slate-600">
+                    <i data-lucide="search" class="w-4 h-4"></i>
+                    <span class="hidden md:inline">ค้นหา</span>
+                    <span class="kbd hidden lg:inline">Ctrl+K</span>
+                </button>
+                <button onclick="toggleDarkMode()" id="darkModeBtn"
+                    class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" title="สลับโหมดมืด/สว่าง">
+                    <i data-lucide="moon" class="w-5 h-5 dark:hidden"></i>
+                    <i data-lucide="sun" class="w-5 h-5 hidden dark:block"></i>
+                </button>
                 <button onclick="handleGlobalSync()" id="syncBtn"
                     class="hidden sm:flex items-center gap-2 px-3 py-2 bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-colors text-sm font-medium">
                     <i data-lucide="refresh-cw" class="w-4 h-4"></i>
@@ -190,7 +249,11 @@
         <!-- Sidebar -->
         <aside id="sidebar" class="w-64 bg-white border-r border-slate-200 min-h-[calc(100vh-65px)] p-4 hidden md:block">
             <nav class="space-y-1">
-                <button data-view="dashboard" class="nav-btn active w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-left text-sm font-medium hover:bg-slate-100 transition-colors">
+                <button data-view="home" class="nav-btn active w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-left text-sm font-medium hover:bg-slate-100 transition-colors">
+                    <i data-lucide="home" class="w-5 h-5"></i>
+                    หน้าแรก
+                </button>
+                <button data-view="dashboard" class="nav-btn w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-left text-sm font-medium hover:bg-slate-100 transition-colors">
                     <i data-lucide="layout-dashboard" class="w-5 h-5"></i>
                     Dashboard
                 </button>
@@ -223,9 +286,115 @@
             <div id="viewContainer">
 
                 <!-- ============================================== -->
+                <!-- VIEW 0: HOME (สรุปรวมหน้าแรก)                  -->
+                <!-- ============================================== -->
+                <section id="view-home" class="view-section active animate-fade-up">
+                    <!-- Welcome banner -->
+                    <div class="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-2xl p-6 mb-6 text-white shadow-lg">
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div>
+                                <h1 class="text-2xl font-bold">สวัสดี <span id="welcomeName">Admin</span> 👋</h1>
+                                <p class="text-white/80 mt-1 text-sm">นี่คือภาพรวมของระบบในวันที่ <span id="todayDate"></span></p>
+                            </div>
+                            <button onclick="fetchAllData()" class="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-bold backdrop-blur flex items-center gap-2 self-start">
+                                <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                                รีเฟรช
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 6 KPI Cards -->
+                    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+                        <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer" onclick="switchView('pending')">
+                            <div class="flex items-center justify-between mb-1">
+                                <span class="text-xs text-slate-500">รอตรวจสอบ</span>
+                                <i data-lucide="clock" class="w-4 h-4 text-orange-500"></i>
+                            </div>
+                            <div class="text-2xl font-bold text-orange-600" id="kpiPending">0</div>
+                            <div class="text-xs text-slate-400">รายการ</div>
+                        </div>
+                        <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer" onclick="switchView('overdue')">
+                            <div class="flex items-center justify-between mb-1">
+                                <span class="text-xs text-slate-500">บ้านค้างชำระ</span>
+                                <i data-lucide="alert-triangle" class="w-4 h-4 text-red-500"></i>
+                            </div>
+                            <div class="text-2xl font-bold text-red-600" id="kpiOverdueHouses">0</div>
+                            <div class="text-xs text-slate-400">หลัง</div>
+                        </div>
+                        <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow">
+                            <div class="flex items-center justify-between mb-1">
+                                <span class="text-xs text-slate-500">ยอดเก็บได้ปีนี้</span>
+                                <i data-lucide="trending-up" class="w-4 h-4 text-green-500"></i>
+                            </div>
+                            <div class="text-2xl font-bold text-green-600" id="kpiPaidYTD">฿0</div>
+                            <div class="text-xs text-slate-400" id="kpiPaidPct">0% ของเป้า</div>
+                        </div>
+                        <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow">
+                            <div class="flex items-center justify-between mb-1">
+                                <span class="text-xs text-slate-500">ยอดค้างทั้งหมด</span>
+                                <i data-lucide="x-circle" class="w-4 h-4 text-red-500"></i>
+                            </div>
+                            <div class="text-2xl font-bold text-red-600" id="kpiUnpaidTotal">฿0</div>
+                            <div class="text-xs text-slate-400" id="kpiUnpaidMonths">0 เดือน-บ้าน</div>
+                        </div>
+                    </div>
+
+                    <!-- Quick Actions -->
+                    <div class="bg-white rounded-2xl border border-slate-200 p-4 mb-6">
+                        <h3 class="font-bold text-slate-700 text-sm mb-3 flex items-center gap-2">
+                            <i data-lucide="zap" class="w-4 h-4 text-yellow-500"></i>
+                            ทางลัด
+                        </h3>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                            <button onclick="switchView('pending')" class="px-3 py-2 bg-orange-50 hover:bg-orange-100 text-orange-700 rounded-lg text-sm font-medium flex items-center gap-2">
+                                <i data-lucide="clock" class="w-4 h-4"></i>
+                                ตรวจสลิป
+                            </button>
+                            <button onclick="switchView('transactions')" class="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium flex items-center gap-2">
+                                <i data-lucide="receipt" class="w-4 h-4"></i>
+                                ออกใบเสร็จ
+                            </button>
+                            <button onclick="switchView('analytics')" class="px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg text-sm font-medium flex items-center gap-2">
+                                <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
+                                Analytics
+                            </button>
+                            <button onclick="exportYearReceiptsZip()" class="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium flex items-center gap-2">
+                                <i data-lucide="archive" class="w-4 h-4"></i>
+                                Export ZIP
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 2 Column Layout -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <!-- Recent Activity -->
+                        <div class="bg-white rounded-2xl border border-slate-200 p-5">
+                            <h3 class="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                                <i data-lucide="activity" class="w-5 h-5 text-indigo-500"></i>
+                                กิจกรรมล่าสุด
+                            </h3>
+                            <div id="recentActivity" class="space-y-2 max-h-80 overflow-y-auto">
+                                <div class="text-center text-slate-400 py-8 text-sm">กำลังโหลด...</div>
+                            </div>
+                        </div>
+
+                        <!-- Top On-time Houses (B2) -->
+                        <div class="bg-white rounded-2xl border border-slate-200 p-5">
+                            <h3 class="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                                <i data-lucide="award" class="w-5 h-5 text-yellow-500"></i>
+                                Top บ้านจ่ายตรงเวลา 🏆
+                            </h3>
+                            <div id="topOnTimeHouses" class="space-y-2">
+                                <div class="text-center text-slate-400 py-8 text-sm">กำลังโหลด...</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ============================================== -->
                 <!-- VIEW 1: DASHBOARD                              -->
                 <!-- ============================================== -->
-                <section id="view-dashboard" class="view-section active animate-fade-up">
+                <section id="view-dashboard" class="view-section animate-fade-up">
                     <!-- Stats Cards -->
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                         <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
@@ -389,6 +558,16 @@
                 <!-- ============================================== -->
                 <section id="view-analytics" class="view-section animate-fade-up">
                     <div class="space-y-6">
+                        <!-- กราฟเทียบรายปี (B1) -->
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                            <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
+                                <i data-lucide="trending-up" class="w-5 h-5 text-purple-600"></i>
+                                เปรียบเทียบรายปี
+                            </h2>
+                            <div id="yearComparison" class="space-y-3"></div>
+                            <div class="text-xs text-slate-400 mt-3">💡 ตัวเลขที่แสดงคือยอดที่ <b>เก็บได้</b> ของแต่ละปี</div>
+                        </div>
+
                         <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                             <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
                                 <i data-lucide="bar-chart-3" class="w-5 h-5 text-indigo-600"></i>
@@ -509,6 +688,104 @@
 <!-- MODALS                                         -->
 <!-- ============================================== -->
 
+<!-- Command Palette (Ctrl+K) -->
+<div id="cmdPalette" class="hidden fixed inset-0 z-[130] flex items-start justify-center p-4 pt-20 bg-black/50 backdrop-blur-sm" onclick="if(event.target===this) closeCommandPalette()">
+    <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden">
+        <div class="border-b border-slate-200 dark:border-slate-700 p-3 flex items-center gap-3">
+            <i data-lucide="search" class="w-5 h-5 text-slate-400"></i>
+            <input type="text" id="cmdInput" placeholder="ค้นหาเมนู, บ้าน, หรือคำสั่ง..."
+                class="flex-1 outline-none text-sm bg-transparent text-slate-800 dark:text-slate-100">
+            <span class="kbd">ESC</span>
+        </div>
+        <div id="cmdResults" class="max-h-96 overflow-y-auto p-2"></div>
+        <div class="border-t border-slate-200 dark:border-slate-700 px-3 py-2 text-xs text-slate-400 flex items-center justify-between">
+            <span><span class="kbd">↑↓</span> เลือก <span class="kbd">↵</span> เปิด</span>
+            <span class="kbd">Ctrl+K</span>
+        </div>
+    </div>
+</div>
+
+<!-- Slip Comparison Modal (A4) -->
+<div id="slipCompareModal" class="hidden fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto" onclick="if(event.target===this) closeSlipCompare()">
+    <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-5xl my-4 max-h-[95vh] flex flex-col">
+        <div class="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-700">
+            <h3 class="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <i data-lucide="file-search" class="w-5 h-5 text-indigo-600"></i>
+                ตรวจสลิป + เปรียบเทียบกับยอดค้าง
+            </h3>
+            <button onclick="closeSlipCompare()" class="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 overflow-y-auto">
+            <!-- Slip Image -->
+            <div class="bg-slate-50 dark:bg-slate-900 rounded-xl p-3 flex flex-col">
+                <div class="text-xs text-slate-500 mb-2 font-bold">📷 รูปสลิปที่แจ้ง</div>
+                <img id="compareSlipImg" src="" class="w-full rounded-lg border border-slate-200 dark:border-slate-600 object-contain max-h-[60vh]">
+                <div id="compareSlipInfo" class="mt-3 text-sm space-y-1"></div>
+            </div>
+            <!-- Compare Table -->
+            <div class="bg-slate-50 dark:bg-slate-900 rounded-xl p-3 flex flex-col">
+                <div class="text-xs text-slate-500 mb-2 font-bold">📋 สถานะของบ้านนี้ทั้งปี</div>
+                <div id="compareHouseInfo" class="text-sm mb-3"></div>
+                <div id="compareGrid" class="grid grid-cols-3 sm:grid-cols-4 gap-2 mb-3"></div>
+                <div id="compareSummary" class="bg-white dark:bg-slate-800 rounded-lg p-3 text-sm space-y-1 mt-auto"></div>
+            </div>
+        </div>
+        <div class="border-t border-slate-200 dark:border-slate-700 p-4 flex flex-wrap justify-end gap-2 bg-slate-50 dark:bg-slate-900 rounded-b-2xl">
+            <button onclick="closeSlipCompare()" class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-100 rounded-lg hover:bg-slate-300 font-medium text-sm">ปิด</button>
+            <button id="compareRejectBtn" onclick="openRejectModal()" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 font-bold text-sm flex items-center gap-2">
+                <i data-lucide="x-circle" class="w-4 h-4"></i> ปฏิเสธสลิป
+            </button>
+            <button id="compareApproveBtn" onclick="approveFromCompare()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm flex items-center gap-2">
+                <i data-lucide="check" class="w-4 h-4"></i> อนุมัติ + ออกใบเสร็จ
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Reject Slip Modal (A3) -->
+<div id="rejectModal" class="hidden fixed inset-0 z-[125] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+    <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-md">
+        <div class="bg-red-500 text-white p-4 rounded-t-2xl">
+            <h3 class="font-bold flex items-center gap-2">
+                <i data-lucide="x-circle" class="w-5 h-5"></i>
+                ปฏิเสธสลิป
+            </h3>
+        </div>
+        <div class="p-5 space-y-4">
+            <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 text-sm text-red-700 dark:text-red-300">
+                <i data-lucide="alert-triangle" class="w-4 h-4 inline mr-1"></i>
+                สลิปจะถูกเปลี่ยนสถานะเป็น <b>"ยกเลิก"</b>
+            </div>
+            <div>
+                <label class="block text-sm font-bold text-slate-700 dark:text-slate-200 mb-2">เหตุผลที่ปฏิเสธ *</label>
+                <select id="rejectReasonSelect" class="w-full px-3 py-2 rounded-lg border border-slate-300 mb-2 bg-white dark:bg-slate-700 text-sm">
+                    <option value="">-- เลือกเหตุผล --</option>
+                    <option>ยอดเงินไม่ตรงกับที่ค้าง</option>
+                    <option>โอนผิดบัญชี</option>
+                    <option>สลิปไม่ชัด/อ่านไม่ออก</option>
+                    <option>สลิปซ้ำ (เคยใช้แล้ว)</option>
+                    <option>โอนผิดเดือน</option>
+                    <option>อื่นๆ (ระบุข้างล่าง)</option>
+                </select>
+                <textarea id="rejectReasonText" rows="3" placeholder="หมายเหตุเพิ่มเติม (ถ้ามี)"
+                    class="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white dark:bg-slate-700 text-sm"></textarea>
+            </div>
+            <label class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                <input type="checkbox" id="rejectNotifyLine" class="w-4 h-4">
+                ส่ง LINE แจ้งลูกบ้านพร้อมเหตุผล
+            </label>
+        </div>
+        <div class="border-t border-slate-200 dark:border-slate-700 p-4 flex justify-end gap-2">
+            <button onclick="closeRejectModal()" class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-100 rounded-lg hover:bg-slate-300 font-medium text-sm">ยกเลิก</button>
+            <button onclick="confirmRejectSlip()" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 font-bold text-sm">
+                ยืนยันปฏิเสธ
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- Image Preview Modal -->
 <div id="imageModal" class="hidden fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
     <div class="relative max-w-4xl max-h-[90vh] w-full">
@@ -623,7 +900,7 @@
 (function() {
 'use strict';
 
-console.log('%c🏠 Admin Panel v2.0 loaded (IIFE-wrapped)', 'color:#16a34a;font-weight:bold;font-size:14px');
+console.log('%c🏠 Admin Panel v3.0 loaded — 8 new features!', 'color:#16a34a;font-weight:bold;font-size:14px');
 
 // =============== CONFIG ===============
 const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
@@ -639,6 +916,8 @@ let allData = [];          // Supabase house_payments
 let pendingFees = [];       // GAS pending
 let allTransactions = [];   // GAS all transactions for tx view
 let dataTable = null;
+let currentSlipCompare = null;  // เก็บข้อมูล slip ที่กำลังเปรียบเทียบ
+let cmdSelectedIdx = 0;          // index ที่เลือกใน command palette
 
 const monthMap = { 'มกราคม':'jan', 'กุมภาพันธ์':'feb', 'มีนาคม':'mar', 'เมษายน':'apr', 'พฤษภาคม':'may', 'มิถุนายน':'jun', 'กรกฎาคม':'jul', 'สิงหาคม':'aug', 'กันยายน':'sep', 'ตุลาคม':'oct', 'พฤศจิกายน':'nov', 'ธันวาคม':'dec' };
 const months = [
@@ -759,6 +1038,11 @@ async function initApp() {
     // Init Supabase
     sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+    // Init Dark Mode + Keyboard
+    initDarkMode();
+    initKeyboardShortcuts();
+    initCommandPalette();
+
     // Setup nav
     document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.addEventListener('click', () => switchView(btn.dataset.view));
@@ -795,16 +1079,49 @@ async function initApp() {
 
 function switchView(viewName) {
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    document.querySelector(`.nav-btn[data-view="${viewName}"]`).classList.add('active');
+    const navBtn = document.querySelector(`.nav-btn[data-view="${viewName}"]`);
+    if (navBtn) navBtn.classList.add('active');
     document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
-    document.getElementById(`view-${viewName}`).classList.add('active');
+    const section = document.getElementById(`view-${viewName}`);
+    if (section) section.classList.add('active');
     lucide.createIcons();
 
     // Re-render specific views
+    if (viewName === 'home') renderHome();
     if (viewName === 'transactions') renderTransactions();
     if (viewName === 'analytics') renderAnalytics();
     if (viewName === 'overdue') renderOverdue();
     if (viewName === 'pending') renderPending();
+}
+
+// =============== DARK MODE (C6) ===============
+function toggleDarkMode() {
+    const html = document.documentElement;
+    const isDark = html.classList.toggle('dark');
+    localStorage.setItem('darkMode', isDark ? '1' : '0');
+}
+
+function initDarkMode() {
+    if (localStorage.getItem('darkMode') === '1') {
+        document.documentElement.classList.add('dark');
+    }
+}
+
+// =============== KEYBOARD SHORTCUTS ===============
+function initKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        // Ctrl+K / Cmd+K → Command Palette
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+            e.preventDefault();
+            openCommandPalette();
+        }
+        // ESC → Close all modals
+        if (e.key === 'Escape') {
+            closeCommandPalette();
+            const slipModal = document.getElementById('slipCompareModal');
+            if (slipModal && !slipModal.classList.contains('hidden')) closeSlipCompare();
+        }
+    });
 }
 
 // =============== FETCH DATA ===============
@@ -826,6 +1143,7 @@ async function fetchAllData() {
         yearFilter.innerHTML = '<option value="all">ทุกปี</option>' + years.map(y => `<option value="${y}">${y}</option>`).join('');
 
         renderDashboard();
+        renderHome();
         updatePendingBadge();
         Swal.close();
     } catch (err) {
@@ -1024,8 +1342,142 @@ window.addEventListener('DOMContentLoaded', () => {
         currentUser = { user: savedUser, name: savedName };
         showAdminPage();
     }
+    initDarkMode();
     lucide.createIcons();
 });
+
+// =============== HOME VIEW (A2 + B2) ===============
+function renderHome() {
+    const today = new Date();
+    const todayStr = today.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
+    document.getElementById('todayDate').textContent = todayStr;
+    document.getElementById('welcomeName').textContent = currentUser ? currentUser.name : 'Admin';
+
+    // คำนวณ KPI
+    const currentBYear = today.getFullYear() + 543;
+    const currentDataYear = allData.filter(d => d.year == currentBYear);
+
+    let paidYTD = 0, totalUnpaid = 0, unpaidMonths = 0;
+    let overdueHouses = new Set();
+
+    allData.forEach(item => {
+        months.forEach(m => {
+            const s = item[m.key] || '';
+            if (item.year == currentBYear && (s.includes('จ่ายแล้ว') || s.includes('ชำระแล้ว') || s.includes('ล่วงหน้า'))) {
+                paidYTD += 300;
+            }
+            if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) {
+                totalUnpaid += 300;
+                unpaidMonths++;
+                overdueHouses.add(item.house_numbe);
+            }
+        });
+    });
+
+    // เป้าปีนี้ = จำนวนบ้าน × 12 เดือน × 300
+    const targetYTD = currentDataYear.length * 12 * 300;
+    const paidPct = targetYTD > 0 ? Math.round((paidYTD / targetYTD) * 100) : 0;
+
+    document.getElementById('kpiPending').textContent = pendingFees.length.toLocaleString();
+    document.getElementById('kpiOverdueHouses').textContent = overdueHouses.size.toLocaleString();
+    document.getElementById('kpiPaidYTD').textContent = '฿' + paidYTD.toLocaleString();
+    document.getElementById('kpiPaidPct').textContent = `${paidPct}% ของเป้า ${currentBYear}`;
+    document.getElementById('kpiUnpaidTotal').textContent = '฿' + totalUnpaid.toLocaleString();
+    document.getElementById('kpiUnpaidMonths').textContent = `${unpaidMonths.toLocaleString()} เดือน-บ้าน`;
+
+    renderRecentActivity();
+    renderTopOnTimeHouses();
+    lucide.createIcons();
+}
+
+function renderRecentActivity() {
+    const list = document.getElementById('recentActivity');
+    // ใช้ transactions ที่เพิ่งอัปเดตล่าสุด 10 รายการ
+    const recent = [...allTransactions]
+        .filter(t => t.reported_at)
+        .sort((a, b) => new Date(b.reported_at) - new Date(a.reported_at))
+        .slice(0, 10);
+
+    if (recent.length === 0) {
+        list.innerHTML = '<div class="text-center text-slate-400 py-8 text-sm">ยังไม่มีกิจกรรม</div>';
+        return;
+    }
+
+    list.innerHTML = recent.map(t => {
+        let icon = 'circle', color = 'text-slate-400';
+        if (t.status === 'ตรวจสอบแล้ว') { icon = 'check-circle'; color = 'text-green-500'; }
+        else if (t.status === 'รอตรวจสอบ') { icon = 'clock'; color = 'text-orange-500'; }
+        else if (t.status === 'ยกเลิก' || t.status === 'โอนคืน') { icon = 'x-circle'; color = 'text-red-500'; }
+
+        const dateStr = t.reported_at && t.reported_at !== '-' ?
+            new Date(t.reported_at).toLocaleDateString('th-TH', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) : '-';
+
+        return `<div class="flex items-start gap-2 p-2 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg text-sm">
+            <i data-lucide="${icon}" class="w-4 h-4 ${color} flex-shrink-0 mt-0.5"></i>
+            <div class="flex-1 min-w-0">
+                <div class="font-medium text-slate-700 dark:text-slate-200 truncate">บ้าน ${t.house_number} - ${t.month} ${t.year}</div>
+                <div class="text-xs text-slate-500 truncate">${t.status} • ${dateStr}</div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+// B2: Top บ้านจ่ายตรงเวลา
+function renderTopOnTimeHouses() {
+    const houseScore = {};
+
+    allData.forEach(item => {
+        if (!houseScore[item.house_numbe]) {
+            houseScore[item.house_numbe] = {
+                houseNo: item.house_numbe,
+                ownerName: item.owner_name,
+                soi: item.soi,
+                paidCount: 0,
+                unpaidCount: 0,
+                totalMonths: 0
+            };
+        }
+        months.forEach(m => {
+            const s = item[m.key] || '';
+            if (s.includes('จ่ายแล้ว') || s.includes('ชำระแล้ว') || s.includes('ล่วงหน้า')) {
+                houseScore[item.house_numbe].paidCount++;
+                houseScore[item.house_numbe].totalMonths++;
+            } else if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) {
+                houseScore[item.house_numbe].unpaidCount++;
+                houseScore[item.house_numbe].totalMonths++;
+            }
+        });
+    });
+
+    const ranking = Object.values(houseScore)
+        .filter(h => h.totalMonths >= 6)  // เฉพาะบ้านที่มีข้อมูลพอ
+        .map(h => ({ ...h, rate: h.paidCount / h.totalMonths }))
+        .filter(h => h.rate >= 0.95)        // จ่ายตรงเวลา ≥ 95%
+        .sort((a, b) => b.rate - a.rate || b.paidCount - a.paidCount)
+        .slice(0, 10);
+
+    const list = document.getElementById('topOnTimeHouses');
+    if (ranking.length === 0) {
+        list.innerHTML = '<div class="text-center text-slate-400 py-8 text-sm">ยังไม่มีข้อมูลพอจัดอันดับ</div>';
+        return;
+    }
+
+    const medals = ['🥇', '🥈', '🥉'];
+    list.innerHTML = ranking.map((h, i) => {
+        const medal = medals[i] || `#${i+1}`;
+        return `<div class="flex items-center gap-3 p-2 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg text-sm">
+            <div class="text-2xl w-10 text-center">${medal}</div>
+            <div class="flex-1 min-w-0">
+                <div class="font-bold text-slate-800 dark:text-slate-100">บ้าน ${h.houseNo} <span class="text-xs text-slate-400">${h.soi || ''}</span></div>
+                <div class="text-xs text-slate-500 truncate">${h.ownerName || '-'}</div>
+            </div>
+            <div class="text-right">
+                <div class="font-bold text-green-600">${Math.round(h.rate*100)}%</div>
+                <div class="text-xs text-slate-400">${h.paidCount}/${h.totalMonths} เดือน</div>
+            </div>
+        </div>`;
+    }).join('');
+}
 
 // =============== PENDING VIEW ===============
 function renderPending() {
@@ -1065,10 +1517,10 @@ function renderPending() {
                         <span class="text-slate-500">วันที่แจ้ง:</span>
                         <span class="text-slate-600">${fee.reported_at && fee.reported_at !== '-' ? new Date(fee.reported_at).toLocaleDateString('th-TH') : '-'}</span>
                     </div>
-                    <div class="pt-3 grid grid-cols-2 gap-2">
-                        ${fee.image_url ? `<button onclick="openImageModal('${fee.image_url}')" class="py-2 bg-indigo-50 text-indigo-600 font-bold rounded-lg hover:bg-indigo-600 hover:text-white text-xs flex items-center justify-center gap-1"><i data-lucide="image" class="w-4 h-4"></i> ดูสลิป</button>`
-                            : `<div class="py-2 bg-slate-50 text-slate-400 text-xs text-center rounded-lg border border-dashed">ไม่มีสลิป</div>`}
-                        <button onclick="approvePending('${fee.id}')" class="py-2 bg-green-500 text-white font-bold rounded-lg hover:bg-green-600 text-xs flex items-center justify-center gap-1"><i data-lucide="check" class="w-4 h-4"></i> อนุมัติ + PDF</button>
+                    <div class="pt-3 grid grid-cols-3 gap-1.5">
+                        <button onclick="openSlipCompare('${fee.id}')" class="py-2 bg-indigo-50 text-indigo-600 font-bold rounded-lg hover:bg-indigo-600 hover:text-white text-xs flex items-center justify-center gap-1" title="ตรวจ + เทียบยอด"><i data-lucide="file-search" class="w-4 h-4"></i> ตรวจ</button>
+                        <button onclick="openRejectFromCard('${fee.id}')" class="py-2 bg-red-50 text-red-600 font-bold rounded-lg hover:bg-red-600 hover:text-white text-xs flex items-center justify-center gap-1" title="ปฏิเสธ"><i data-lucide="x" class="w-4 h-4"></i> ปฏิเสธ</button>
+                        <button onclick="approvePending('${fee.id}')" class="py-2 bg-green-500 text-white font-bold rounded-lg hover:bg-green-600 text-xs flex items-center justify-center gap-1" title="อนุมัติ"><i data-lucide="check" class="w-4 h-4"></i> ผ่าน</button>
                     </div>
                 </div>
             </div>`;
@@ -1096,6 +1548,364 @@ async function approvePending(id) {
     } catch (err) {
         Swal.fire('ผิดพลาด', err.message, 'error');
     }
+}
+
+// =============== SLIP COMPARE (A4) ===============
+function openSlipCompare(feeId) {
+    const fee = allTransactions.find(t => t.id == feeId);
+    if (!fee) return;
+    currentSlipCompare = fee;
+
+    // หาข้อมูลบ้านปีนั้น
+    const house = allData.find(h => h.house_numbe === fee.house_number && h.year == fee.year);
+
+    // รูปสลิป
+    const img = document.getElementById('compareSlipImg');
+    if (fee.image_url) { img.src = fee.image_url; img.style.display = 'block'; }
+    else { img.style.display = 'none'; }
+
+    // ข้อมูลสลิป
+    document.getElementById('compareSlipInfo').innerHTML = `
+        <div class="bg-white dark:bg-slate-800 rounded-lg p-3 space-y-1">
+            <div><b>บ้าน:</b> ${fee.house_number}</div>
+            <div><b>เดือน:</b> ${fee.month} ${fee.year}</div>
+            <div><b>ช่องทาง:</b> ${fee.channel || '-'}</div>
+            <div><b>ผู้แจ้ง:</b> ${fee.recorder || '-'}</div>
+            <div><b>วันที่แจ้ง:</b> ${fee.reported_at && fee.reported_at !== '-' ? new Date(fee.reported_at).toLocaleString('th-TH') : '-'}</div>
+            <div><b>ยอด:</b> <span class="text-green-600 font-bold">฿${(fee.amount||300).toLocaleString()}</span></div>
+            ${fee.note ? `<div><b>หมายเหตุ:</b> ${fee.note}</div>` : ''}
+        </div>`;
+
+    // ข้อมูลบ้าน
+    const houseInfoEl = document.getElementById('compareHouseInfo');
+    if (house) {
+        houseInfoEl.innerHTML = `<div class="bg-indigo-50 dark:bg-indigo-900/30 rounded-lg p-3">
+            <div class="font-bold">${house.owner_name || '-'}</div>
+            <div class="text-xs text-slate-500">ซอย ${house.soi || '-'} • ปี ${house.year}</div>
+        </div>`;
+    } else {
+        houseInfoEl.innerHTML = '<div class="bg-yellow-50 text-yellow-700 rounded-lg p-3 text-xs">⚠️ ไม่พบข้อมูลบ้านนี้ในตาราง house_payments</div>';
+    }
+
+    // Grid 12 เดือน
+    const grid = document.getElementById('compareGrid');
+    if (house) {
+        const billedMonth = fee.month;
+        grid.innerHTML = months.map(m => {
+            const status = house[m.key] || '-';
+            const isCurrentBill = m.th === billedMonth;
+            const cls = getStatusClass(status);
+            return `<div class="text-center p-2 rounded-lg ${isCurrentBill ? 'ring-2 ring-indigo-500' : ''}" title="${status}">
+                <div class="text-xs font-bold text-slate-500">${m.label}</div>
+                <div class="status-cell ${cls} mt-1" style="display:block;">${status}</div>
+            </div>`;
+        }).join('');
+    } else {
+        grid.innerHTML = '';
+    }
+
+    // สรุป
+    const summaryEl = document.getElementById('compareSummary');
+    if (house) {
+        const totals = calculateHouseTotal(house);
+        const overdueMonths = months.filter(m => {
+            const s = house[m.key] || '';
+            return s.includes('ยังไม่จ่าย') || s.includes('ค้าง');
+        });
+        const overdueLabels = overdueMonths.map(m => m.th).join(', ') || '-';
+
+        // ตรวจว่าเดือนที่จ่ายมา ตรงกับเดือนที่ค้างหรือไม่
+        const billedMonthIsOverdue = overdueMonths.some(m => m.th === fee.month);
+        const matchAlert = billedMonthIsOverdue
+            ? '<div class="bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 p-2 rounded text-xs flex items-center gap-2"><i data-lucide="check-circle" class="w-4 h-4"></i> เดือนที่จ่ายตรงกับยอดที่ค้าง ✓</div>'
+            : '<div class="bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300 p-2 rounded text-xs flex items-center gap-2"><i data-lucide="alert-triangle" class="w-4 h-4"></i> เดือนที่จ่ายไม่ตรงกับยอดที่ค้าง — กรุณาตรวจสอบ</div>';
+
+        summaryEl.innerHTML = `
+            ${matchAlert}
+            <div class="grid grid-cols-2 gap-2 mt-2 text-xs">
+                <div class="p-2 bg-green-50 dark:bg-green-900/20 rounded"><b>จ่ายแล้ว:</b> ฿${totals.paid.toLocaleString()}</div>
+                <div class="p-2 bg-red-50 dark:bg-red-900/20 rounded"><b>ค้าง:</b> ฿${totals.unpaid.toLocaleString()}</div>
+            </div>
+            <div class="text-xs mt-1"><b>เดือนที่ค้าง:</b> ${overdueLabels}</div>
+        `;
+    } else {
+        summaryEl.innerHTML = '';
+    }
+
+    document.getElementById('slipCompareModal').classList.remove('hidden');
+    lucide.createIcons();
+}
+
+function closeSlipCompare() {
+    document.getElementById('slipCompareModal').classList.add('hidden');
+    currentSlipCompare = null;
+}
+
+async function approveFromCompare() {
+    if (!currentSlipCompare) return;
+    const id = currentSlipCompare.id;
+    closeSlipCompare();
+    await approvePending(id);
+}
+
+// =============== REJECT SLIP (A3) ===============
+function openRejectFromCard(feeId) {
+    currentSlipCompare = allTransactions.find(t => t.id == feeId);
+    openRejectModal();
+}
+
+function openRejectModal() {
+    if (!currentSlipCompare) return;
+    document.getElementById('rejectReasonSelect').value = '';
+    document.getElementById('rejectReasonText').value = '';
+    document.getElementById('rejectNotifyLine').checked = false;
+    document.getElementById('rejectModal').classList.remove('hidden');
+    lucide.createIcons();
+}
+
+function closeRejectModal() {
+    document.getElementById('rejectModal').classList.add('hidden');
+}
+
+async function confirmRejectSlip() {
+    if (!currentSlipCompare) return;
+    const reasonSelect = document.getElementById('rejectReasonSelect').value;
+    const reasonText = document.getElementById('rejectReasonText').value.trim();
+    const notifyLine = document.getElementById('rejectNotifyLine').checked;
+
+    if (!reasonSelect) {
+        Swal.fire('โปรดเลือกเหตุผล', '', 'warning');
+        return;
+    }
+
+    const fullReason = reasonText ? `${reasonSelect} - ${reasonText}` : reasonSelect;
+    const fee = currentSlipCompare;
+
+    closeRejectModal();
+    closeSlipCompare();
+
+    Swal.fire({ title: 'กำลังปฏิเสธ...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    try {
+        // อัปเดต record ผ่าน updateRecord
+        const obj = {
+            numid: fee.id,
+            oldfile: fee.image_url || '',
+            datastud1: fee.recorder || '',
+            datastud2: fee.house_number || '',
+            datastud3: fee.month || '',
+            datastud4: fee.year || '',
+            datastud5: fee.channel || '',
+            datastud6: (fee.note || '') + ' | [ปฏิเสธ] ' + fullReason,
+            note: 'ยกเลิก',
+            datastud7: new Date().toISOString().split('T')[0],
+            datastud8: 'สามร้อยบาทถ้วน',
+            datastud9: '300',
+            fullname: currentUser.name
+        };
+        await callGas('updateRecord', { form: obj });
+
+        if (notifyLine) {
+            // จะใช้ใน Phase 2 เมื่อมี LINE Messaging API พร้อม
+            console.log('LINE notify (จะ implement ใน Phase 2):', fee.house_number, fullReason);
+        }
+
+        Swal.fire('ปฏิเสธเรียบร้อย', `บ้าน ${fee.house_number} - ${fee.month}`, 'success');
+        await fetchAllData();
+        renderPending();
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    }
+}
+
+// =============== EXPORT ZIP (A5) ===============
+async function exportYearReceiptsZip() {
+    // ให้เลือกปี
+    const years = [...new Set(allData.map(d => d.year))].sort((a,b) => b-a);
+    if (years.length === 0) return Swal.fire('ไม่มีข้อมูล', '', 'info');
+
+    const { value: selectedYear } = await Swal.fire({
+        title: 'Export ใบเสร็จเป็น ZIP',
+        input: 'select',
+        inputOptions: years.reduce((o, y) => { o[y] = `ปี ${y}`; return o; }, {}),
+        inputPlaceholder: 'เลือกปี',
+        showCancelButton: true,
+        confirmButtonText: 'ดาวน์โหลด ZIP'
+    });
+    if (!selectedYear) return;
+
+    const targets = allTransactions.filter(t =>
+        String(t.year) === String(selectedYear) &&
+        t.status === 'ตรวจสอบแล้ว' &&
+        t.pdf_url
+    );
+
+    if (targets.length === 0) {
+        return Swal.fire('ไม่มีใบเสร็จ', `ปี ${selectedYear} ยังไม่มีใบเสร็จที่ออกแล้ว`, 'info');
+    }
+
+    let completed = 0, failed = 0;
+    Swal.fire({
+        title: `กำลังดาวน์โหลด ${targets.length} ใบ`,
+        html: `
+            <div class="bg-slate-200 rounded-full h-6 mb-3 overflow-hidden">
+                <div id="zipBar" class="bg-emerald-500 h-full text-white text-sm font-bold flex items-center justify-center" style="width:0%">0%</div>
+            </div>
+            <div id="zipTxt" class="text-sm text-slate-600">0 / ${targets.length}</div>
+        `,
+        allowOutsideClick: false, showConfirmButton: false
+    });
+
+    const updateBar = () => {
+        const pct = Math.round((completed + failed) / targets.length * 100);
+        const bar = document.getElementById('zipBar');
+        const txt = document.getElementById('zipTxt');
+        if (bar) { bar.style.width = pct + '%'; bar.textContent = pct + '%'; }
+        if (txt) txt.textContent = `${completed + failed} / ${targets.length} ${failed > 0 ? `(พลาด ${failed})` : ''}`;
+    };
+
+    const zip = new JSZip();
+    const folder = zip.folder(`ใบเสร็จ_${selectedYear}`);
+
+    // ดาวน์โหลด PDF ครั้งละ 5 ตัว
+    const concurrency = 5;
+    for (let i = 0; i < targets.length; i += concurrency) {
+        const chunk = targets.slice(i, i + concurrency);
+        await Promise.all(chunk.map(async (t) => {
+            try {
+                const res = await fetch(t.pdf_url);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const blob = await res.blob();
+                const safeName = `${t.house_number}_${t.month}_${t.year}.pdf`.replace(/[\\/:*?"<>|]/g, '_');
+                folder.file(safeName, blob);
+                completed++;
+            } catch (e) {
+                failed++;
+                console.error('ดาวน์โหลดล้มเหลว:', t.id, e);
+            }
+            updateBar();
+        }));
+    }
+
+    Swal.fire({ title: 'กำลังบีบไฟล์ ZIP...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    try {
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        saveAs(zipBlob, `ใบเสร็จ_${selectedYear}.zip`);
+        Swal.fire('สำเร็จ', `ดาวน์โหลด ${completed} ใบ${failed > 0 ? ` (พลาด ${failed})` : ''}`, 'success');
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    }
+}
+
+// =============== COMMAND PALETTE (C7) ===============
+function openCommandPalette() {
+    cmdSelectedIdx = 0;
+    document.getElementById('cmdInput').value = '';
+    document.getElementById('cmdPalette').classList.remove('hidden');
+    setTimeout(() => document.getElementById('cmdInput').focus(), 50);
+    renderCmdResults('');
+    lucide.createIcons();
+}
+
+function closeCommandPalette() {
+    document.getElementById('cmdPalette').classList.add('hidden');
+}
+
+function getCmdItems() {
+    const items = [
+        { type: 'menu', label: '🏠 หน้าแรก', meta: 'Home', action: () => switchView('home') },
+        { type: 'menu', label: '📊 Dashboard', meta: 'ตารางบ้าน 12 เดือน', action: () => switchView('dashboard') },
+        { type: 'menu', label: '🧾 บันทึกรับชำระ', meta: 'รายการชำระทั้งหมด', action: () => switchView('transactions') },
+        { type: 'menu', label: '⏳ รอตรวจสอบ', meta: `${pendingFees.length} รายการ`, action: () => switchView('pending') },
+        { type: 'menu', label: '📈 Analytics', meta: 'กราฟวิเคราะห์', action: () => switchView('analytics') },
+        { type: 'menu', label: '⚠️ สรุปค้างชำระ', meta: 'บ้านที่ค้างจ่าย', action: () => switchView('overdue') },
+        { type: 'menu', label: '⚙️ Settings', meta: 'ตั้งค่าระบบ', action: () => switchView('settings') },
+        { type: 'action', label: '🔄 ซิงค์ข้อมูล', meta: 'sync GAS → Supabase', action: () => handleGlobalSync() },
+        { type: 'action', label: '🌙 สลับโหมดมืด/สว่าง', meta: 'Dark/Light mode', action: () => toggleDarkMode() },
+        { type: 'action', label: '📥 Export CSV', meta: 'ตารางบ้านปัจจุบัน', action: () => exportCSV() },
+        { type: 'action', label: '📦 Export ใบเสร็จ ZIP', meta: 'รวมใบเสร็จทั้งปี', action: () => exportYearReceiptsZip() },
+        { type: 'action', label: '🚪 ออกจากระบบ', meta: 'logout', action: () => handleLogout() },
+    ];
+    // เพิ่ม houses (top 50)
+    const housesAdded = new Set();
+    allData.forEach(h => {
+        if (housesAdded.has(h.house_numbe) || housesAdded.size >= 50) return;
+        housesAdded.add(h.house_numbe);
+        items.push({
+            type: 'house',
+            label: `🏘️ บ้าน ${h.house_numbe}`,
+            meta: `${h.owner_name || '-'} • ${h.soi || ''}`,
+            action: () => {
+                switchView('dashboard');
+                setTimeout(() => {
+                    const inp = document.getElementById('searchInput');
+                    inp.value = h.house_numbe;
+                    inp.dispatchEvent(new Event('input'));
+                }, 200);
+            }
+        });
+    });
+    return items;
+}
+
+function renderCmdResults(query) {
+    const all = getCmdItems();
+    const q = query.toLowerCase().trim();
+    const filtered = q
+        ? all.filter(i => (i.label + ' ' + i.meta).toLowerCase().includes(q))
+        : all.slice(0, 20);
+
+    if (cmdSelectedIdx >= filtered.length) cmdSelectedIdx = 0;
+
+    const html = filtered.map((it, idx) => `
+        <div class="cmd-item ${idx === cmdSelectedIdx ? 'selected' : ''} flex items-center justify-between p-2.5 rounded-lg cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 text-sm" data-idx="${idx}">
+            <div class="flex-1 min-w-0">
+                <div class="font-medium text-slate-800 dark:text-slate-100 truncate">${it.label}</div>
+                <div class="cmd-meta text-xs text-slate-500 truncate">${it.meta}</div>
+            </div>
+        </div>
+    `).join('') || '<div class="text-center text-slate-400 py-8 text-sm">ไม่พบรายการ</div>';
+
+    const resultsEl = document.getElementById('cmdResults');
+    resultsEl.innerHTML = html;
+
+    // bind click
+    resultsEl.querySelectorAll('.cmd-item').forEach((el, idx) => {
+        el.addEventListener('click', () => {
+            filtered[idx].action();
+            closeCommandPalette();
+        });
+        el.addEventListener('mouseenter', () => {
+            cmdSelectedIdx = idx;
+            renderCmdResults(query);
+        });
+    });
+
+    // เก็บ filtered สำหรับ keyboard navigation
+    window._cmdFiltered = filtered;
+}
+
+// init command palette listeners (เรียกครั้งเดียวจาก initApp)
+function initCommandPalette() {
+    const input = document.getElementById('cmdInput');
+    input.addEventListener('input', (e) => renderCmdResults(e.target.value));
+    input.addEventListener('keydown', (e) => {
+        const filtered = window._cmdFiltered || [];
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            cmdSelectedIdx = Math.min(cmdSelectedIdx + 1, filtered.length - 1);
+            renderCmdResults(input.value);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            cmdSelectedIdx = Math.max(cmdSelectedIdx - 1, 0);
+            renderCmdResults(input.value);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (filtered[cmdSelectedIdx]) {
+                filtered[cmdSelectedIdx].action();
+                closeCommandPalette();
+            }
+        }
+    });
 }
 
 // อนุมัติทั้งหมดใน pending (ใช้ batch_approve_pdf)
@@ -1424,6 +2234,54 @@ async function submitTxForm(e) {
 
 // =============== ANALYTICS VIEW ===============
 function renderAnalytics() {
+    renderYearComparison();   // B1
+    renderMonthlyChart();
+}
+
+// B1: เปรียบเทียบรายปี
+function renderYearComparison() {
+    const yearMap = {};
+    allData.forEach(item => {
+        if (!yearMap[item.year]) yearMap[item.year] = { paid: 0, unpaid: 0, waiting: 0, count: 0 };
+        const t = calculateHouseTotal(item);
+        yearMap[item.year].paid += t.paid;
+        yearMap[item.year].unpaid += t.unpaid;
+        yearMap[item.year].waiting += t.waiting;
+        yearMap[item.year].count++;
+    });
+
+    const years = Object.keys(yearMap).sort((a, b) => b - a);
+    const maxAmount = Math.max(...years.map(y => yearMap[y].paid + yearMap[y].unpaid + yearMap[y].waiting), 1);
+
+    const container = document.getElementById('yearComparison');
+    if (!container) return;
+
+    if (years.length === 0) {
+        container.innerHTML = '<p class="text-center text-slate-400 py-4">ไม่มีข้อมูล</p>';
+        return;
+    }
+
+    container.innerHTML = years.map(y => {
+        const d = yearMap[y];
+        const total = d.paid + d.unpaid + d.waiting;
+        const collectRate = total > 0 ? Math.round((d.paid / total) * 100) : 0;
+        const widthPct = (total / maxAmount) * 100;
+
+        return `<div>
+            <div class="flex justify-between text-sm mb-1">
+                <span class="font-bold text-slate-700 dark:text-slate-200">ปี ${y} <span class="text-xs text-slate-500">(${d.count} หลัง)</span></span>
+                <span class="text-xs">เก็บได้ <b class="text-green-600">${collectRate}%</b></span>
+            </div>
+            <div class="bg-slate-100 dark:bg-slate-700 rounded-full h-7 overflow-hidden flex" style="width:${widthPct}%; min-width: 30%;">
+                <div class="bg-green-500 h-full text-white text-xs font-bold flex items-center justify-center transition-all" style="width:${total > 0 ? (d.paid/total)*100 : 0}%" title="จ่ายแล้ว ฿${d.paid.toLocaleString()}">${d.paid > 0 ? '฿' + (d.paid/1000).toFixed(0) + 'k' : ''}</div>
+                <div class="bg-yellow-400 h-full text-white text-xs font-bold flex items-center justify-center" style="width:${total > 0 ? (d.waiting/total)*100 : 0}%" title="รอตรวจ ฿${d.waiting.toLocaleString()}">${d.waiting > 0 ? '฿' + (d.waiting/1000).toFixed(0) + 'k' : ''}</div>
+                <div class="bg-red-500 h-full text-white text-xs font-bold flex items-center justify-center" style="width:${total > 0 ? (d.unpaid/total)*100 : 0}%" title="ค้าง ฿${d.unpaid.toLocaleString()}">${d.unpaid > 0 ? '฿' + (d.unpaid/1000).toFixed(0) + 'k' : ''}</div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function renderMonthlyChart() {
     const filtered = getFilteredData();
     const monthlyData = months.map(m => ({ ...m, paid: 0, unpaid: 0, waiting: 0 }));
     const soiMap = {};
@@ -1443,7 +2301,6 @@ function renderAnalytics() {
 
     const maxAmount = Math.max(...monthlyData.map(d => d.paid + d.unpaid + d.waiting), 1);
 
-    // Render bar chart
     let chartHtml = '';
     monthlyData.forEach(m => {
         const total = m.paid + m.unpaid + m.waiting;
@@ -1689,6 +2546,20 @@ window.runSelectedPDFs = runSelectedPDFs;
 window.clearTxFilters = clearTxFilters;
 window.handleAdminUpdateStatus = handleAdminUpdateStatus;
 window.handleGenerateNewYearData = handleGenerateNewYearData;
+// Phase v2 - ฟังก์ชันใหม่
+window.toggleDarkMode = toggleDarkMode;
+window.openCommandPalette = openCommandPalette;
+window.closeCommandPalette = closeCommandPalette;
+window.openSlipCompare = openSlipCompare;
+window.closeSlipCompare = closeSlipCompare;
+window.approveFromCompare = approveFromCompare;
+window.openRejectFromCard = openRejectFromCard;
+window.openRejectModal = openRejectModal;
+window.closeRejectModal = closeRejectModal;
+window.confirmRejectSlip = confirmRejectSlip;
+window.exportYearReceiptsZip = exportYearReceiptsZip;
+window.fetchAllData = fetchAllData;
+window.switchView = switchView;
 
 })(); // ปิด IIFE
 </script>
