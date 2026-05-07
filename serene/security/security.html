@@ -3,15 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- ป้องกัน browser cache ไฟล์นี้ -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Smart Village Security</title>
     <!-- โหลด Tailwind -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- โหลด LIFF SDK แบบธรรมดา -->
-    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-    
-    <!-- โหลด Supabase SDK แบบ UMD (รองรับมือถือ 100% ไม่ใช้ Module) -->
+    <!-- โหลด Supabase SDK -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- *** LIFF SDK โหลดแบบ dynamic พร้อม cache-bust เพื่อป้องกันแคชเก่า *** -->
     
     <style>
         body { overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
@@ -691,48 +692,124 @@
 
             } catch (err) {
                 console.error("Init Error:", err);
-                // แสดง UI ลองใหม่ใน splash screen แทน modal เพื่อไม่รบกวน session
                 const statusSection = document.getElementById('loginStatusSection');
                 statusSection.innerHTML = `
                     <div class="text-center px-4">
                         <div class="text-5xl mb-4">⚠️</div>
                         <p class="text-sm font-bold text-red-600 mb-2">เชื่อมต่อไม่สำเร็จ</p>
                         <p class="text-xs text-gray-500 mb-6 leading-relaxed">${err.message}</p>
-                        <button onclick="window.location.href=window.location.href" 
+                        <button onclick="retryInit()" 
                             class="w-full bg-indigo-600 text-white font-bold py-4 rounded-2xl text-sm shadow-lg active:scale-95 transition mb-3">
-                            🔄 ลองเชื่อมต่อใหม่
+                            🔄 ลองเชื่อมต่อใหม่ (เคลียร์แคช)
                         </button>
                         <p class="text-[10px] text-gray-400">หากยังไม่ได้ กรุณาปิดแล้วเปิดลิงก์ใหม่จากแชท LINE</p>
                     </div>`;
             }
         });
 
-        // รอให้ LIFF SDK โหลดเสร็จก่อน (ป้องกัน crash ครั้งแรก)
+        // ฟังก์ชัน retry แบบเคลียร์แคชก่อน ไม่ reload หน้า
+        async function retryInit() {
+            clearLiffCache();
+            const statusSection = document.getElementById('loginStatusSection');
+            statusSection.innerHTML = `<div class="loader mb-4"></div><p class="text-sm font-bold text-gray-600 animate-pulse mt-4">กำลังเชื่อมต่อใหม่...</p>`;
+            try {
+                await initLiffSafely();
+                // LIFF สำเร็จ ไปดึงข้อมูลต่อ
+                const { data: settingsData } = await sbClient.from('system_settings').select('*').limit(1);
+                if (settingsData && settingsData.length > 0) {
+                    const s = settingsData[0];
+                    guardHouseLocation = { lat: s.guard_house_lat, lng: s.guard_house_lng };
+                    ALLOWED_RADIUS = s.allowed_radius;
+                    if(document.getElementById('homeProjectName')) document.getElementById('homeProjectName').innerText = s.project_name;
+                }
+                const { data: guardData, error: guardError } = await sbClient.from('guards').select('*').eq('line_uid', actualLineProfile.userId).single();
+                if (guardData) { currentUser = guardData; enterAppSequence(guardData); }
+                else { await loadGuardsForBinding(); }
+            } catch(e) {
+                statusSection.innerHTML = `
+                    <div class="text-center px-4">
+                        <div class="text-5xl mb-4">❌</div>
+                        <p class="text-sm font-bold text-red-600 mb-2">ยังไม่สำเร็จ</p>
+                        <p class="text-xs text-gray-500 mb-6 leading-relaxed">${e.message}</p>
+                        <button onclick="retryInit()" class="w-full bg-indigo-600 text-white font-bold py-4 rounded-2xl text-sm shadow-lg active:scale-95 transition mb-3">
+                            🔄 ลองอีกครั้ง
+                        </button>
+                        <p class="text-[10px] text-gray-400">กรุณาปิดแล้วเปิดลิงก์ใหม่จากแชท LINE</p>
+                    </div>`;
+            }
+        }
+
+        // ==========================================
+        // โหลด LIFF SDK แบบ dynamic + cache-busting
+        // ==========================================
+        function loadLiffSDK() {
+            return new Promise((resolve, reject) => {
+                if (typeof liff !== 'undefined') return resolve();
+                // ลบ script tag เก่าของ LIFF ถ้ามี (เคลียร์แคช)
+                document.querySelectorAll('script[src*="line-scdn"]').forEach(s => s.remove());
+                const script = document.createElement('script');
+                // เพิ่ม timestamp เพื่อบังคับโหลดใหม่ทุกครั้ง ไม่ใช้แคช
+                script.src = `https://static.line-scdn.net/liff/edge/2/sdk.js?v=${Date.now()}`;
+                script.charset = 'utf-8';
+                script.onload = () => resolve();
+                script.onerror = () => reject(new Error('โหลด LIFF SDK ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต'));
+                document.head.appendChild(script);
+            });
+        }
+
+        // เคลียร์แคชที่เกี่ยวกับ LIFF ทั้งหมด (ไม่แตะแคชของเว็บอื่น)
+        function clearLiffCache() {
+            try {
+                // ลบเฉพาะ key ที่ขึ้นต้นด้วย LIFF หรือ line เท่านั้น
+                const keysToRemove = [];
+                for(let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if(k && (k.startsWith('LIFF_') || k.startsWith('liff_') || k.startsWith('line_'))) {
+                        keysToRemove.push(k);
+                    }
+                }
+                keysToRemove.forEach(k => localStorage.removeItem(k));
+                for(let i = 0; i < sessionStorage.length; i++) {
+                    const k = sessionStorage.key(i);
+                    if(k && (k.startsWith('LIFF_') || k.startsWith('liff_') || k.startsWith('line_'))) {
+                        keysToRemove.push(k);
+                        sessionStorage.removeItem(k);
+                    }
+                }
+                console.log('LIFF cache cleared:', keysToRemove);
+            } catch(e) { console.warn('clearLiffCache error:', e); }
+        }
+
+        // รอให้ LIFF object พร้อมหลังโหลด SDK
         function waitForLiff(timeout = 10000) {
             return new Promise((resolve, reject) => {
                 if (typeof liff !== 'undefined') return resolve();
                 const start = Date.now();
                 const check = setInterval(() => {
                     if (typeof liff !== 'undefined') { clearInterval(check); resolve(); }
-                    else if (Date.now() - start > timeout) { clearInterval(check); reject(new Error('LIFF SDK โหลดไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต')); }
+                    else if (Date.now() - start > timeout) { clearInterval(check); reject(new Error('LIFF SDK โหลดไม่สำเร็จ')); }
                 }, 100);
             });
         }
 
-        // ฟังก์ชันเริ่ม LIFF พร้อม retry อัตโนมัติ (ไม่ใช้ reload เพื่อป้องกัน cache ข้ามเว็บ)
+        // ฟังก์ชันเริ่ม LIFF — โหลด SDK ใหม่ทุกครั้ง + เคลียร์แคช + retry
         async function initLiffSafely() {
             if (!LIFF_ID || LIFF_ID.trim() === '') {
                 throw new Error("กรุณาตั้งค่า LIFF ID ในโค้ดก่อนใช้งาน");
             }
 
-            // รอ SDK พร้อมก่อนเสมอ
-            await waitForLiff();
-
             const MAX_RETRY = 3;
-            let lastError = null;
             for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
                 try {
+                    // เคลียร์แคช LIFF ก่อนทุกครั้ง
+                    if (attempt > 1) clearLiffCache();
+
+                    // โหลด SDK ใหม่พร้อม cache-busting
+                    await loadLiffSDK();
+                    await waitForLiff();
+
                     await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
+
                     if (!liff.isLoggedIn()) {
                         liff.login();
                         await new Promise(() => {}); // หยุดรอ redirect
@@ -740,14 +817,13 @@
                     actualLineProfile = await liff.getProfile();
                     return; // สำเร็จ
                 } catch (e) {
-                    lastError = e;
                     console.warn(`LIFF init attempt ${attempt} failed:`, e);
                     if (attempt < MAX_RETRY) {
-                        await new Promise(r => setTimeout(r, 800 * attempt));
+                        // รอแล้วลองใหม่
+                        await new Promise(r => setTimeout(r, 1000 * attempt));
                     }
                 }
             }
-            // retry ครบแล้วยังไม่ได้ — แสดงปุ่มให้กดลองใหม่เองแทน auto-reload
             throw new Error("การเชื่อมต่อบัญชี LINE ล้มเหลว กรุณาปิดแล้วเปิดลิงก์ใหม่อีกครั้ง");
         }
 
