@@ -1,659 +1,1655 @@
 <!DOCTYPE html>
 <html lang="th">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ระบบออกใบเสร็จค่าส่วนกลาง</title>
-    <!-- CSS Dependencies -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.datatables.net/1.11.4/css/jquery.dataTables.min.css" rel="stylesheet">
-    <link href="https://cdn.datatables.net/responsive/2.2.9/css/responsive.dataTables.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.1/css/all.min.css" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
+    <title>Admin Panel | ระบบค่าส่วนกลาง โกลเด้นแลนด์ ซีรีน</title>
 
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;600&display=swap');
-
-        body {
-            font-family: 'Noto Sans Thai', sans-serif;
-            background-color: #f0f2f5;
-            color: #1c1e21;
-        }
-
-        .navbar {
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            background: linear-gradient(90deg, #0d6efd 0%, #0a58ca 100%);
-        }
-
-        .card {
-            border: none;
-            border-radius: 12px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-        }
-
-        #loading {
-            position: fixed;
-            top: 0; left: 0;
-            z-index: 9999;
-            background: rgba(255, 255, 255, 0.9);
-            height: 100vh; width: 100vw;
-            display: flex; flex-direction: column;
-            justify-content: center; align-items: center;
-        }
-
-        .status-badge {
-            padding: 6px 12px;
-            border-radius: 30px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            display: inline-block;
-        }
-
-        .status-done { background: #e6fcf5; color: #0ca678; border: 1px solid #0ca678; }
-        .status-wait { background: #fff9db; color: #f08c00; border: 1px solid #f08c00; }
-        .status-cancel { background: #fff5f5; color: #fa5252; border: 1px solid #fa5252; }
-
-        .btn-action {
-            width: 32px; height: 32px;
-            padding: 0;
-            display: inline-flex;
-            align-items: center; justify-content: center;
-            border-radius: 8px;
-        }
-
-        .slip-img {
-            transition: transform 0.2s;
-            cursor: pointer;
-        }
-        .slip-img:hover {
-            transform: scale(1.1);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2) !important;
-        }
-    </style>
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-</head>
-
-<body>
-    <!-- ระบบโหลดข้อมูล -->
-    <div id="loading" class="invisible">
-        <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status"></div>
-        <div class="mt-3 fw-bold">ระบบกำลังเชื่อมต่อฐานข้อมูล...</div>
-    </div>
-
-    <!-- เมนูด้านบน -->
-    <nav class="navbar navbar-expand-lg navbar-dark sticky-top mb-4">
-        <div class="container-fluid px-4">
-            <a class="navbar-brand fw-bold" href="#">
-                <i class="fas fa-file-invoice-dollar me-2"></i>ระบบออกใบเสร็จและแก้ไขข้อมูล
-            </a>
-            <div class="ms-auto d-flex align-items-center">
-                <div id="adminControls" style="display:none;" class="me-3">
-                    <button class="btn btn-light btn-sm fw-bold me-2" onclick="runSelectedPDFs()">
-                        <i class="fas fa-file-pdf me-1 text-danger"></i>สร้างใบเสร็จ (PDF)
-                    </button>
-                    <button class="btn btn-danger btn-sm fw-bold" onclick="deleteSelected()">
-                        <i class="fas fa-trash-alt me-1"></i>ลบที่เลือก
-                    </button>
-                </div>
-                <button class="btn btn-warning btn-sm fw-bold" id="btnlogin" onclick="formLogin()">
-                    <i class="fas fa-user-lock me-1"></i>แอดมินเข้าสู่ระบบ
-                </button>
-                <div class="logout-section" style="display:none;">
-                    <span class="text-white me-3 small fw-bold">
-                        ผู้ใช้งาน: <span id="msg-name" class="text-warning"></span>
-                    </span>
-                    <button class="btn btn-outline-light btn-sm" onclick="logout()" title="ออกจากระบบ">
-                        <i class="fas fa-sign-out-alt"></i>
-                    </button>
-                </div>
-            </div>
-        </div>
-    </nav>
-
-    <!-- ข้อมูลตารางหลัก -->
-    <div class="container-fluid px-4">
-        <div class="card p-4">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h5 class="m-0 fw-bold text-dark"><i class="fas fa-list me-2 text-primary"></i>รายการค่าส่วนกลางทั้งหมด (Supabase)</h5>
-            </div>
-
-            <!-- ตัวกรองข้อมูลขั้นสูง (Advanced Filters) -->
-            <div class="row mb-4 bg-light p-3 rounded border mx-0 align-items-end shadow-sm">
-                <div class="col-12 mb-2">
-                    <h6 class="fw-bold text-secondary m-0"><i class="fas fa-filter me-1"></i> ตัวกรองข้อมูล</h6>
-                </div>
-                <div class="col-md-3 mb-2 mb-md-0">
-                    <label class="form-label small fw-bold text-muted">สถานะการตรวจสอบ</label>
-                    <select id="filter-status" class="form-select form-select-sm border-secondary">
-                        <option value="">ทั้งหมด</option>
-                        <option value="ตรวจสอบแล้ว">ตรวจสอบแล้ว</option>
-                        <option value="รอตรวจสอบ">รอตรวจสอบ</option>
-                        <option value="ยกเลิก">ยกเลิก</option>
-                        <option value="โอนคืน">โอนคืน</option>
-                    </select>
-                </div>
-                <div class="col-md-3 mb-2 mb-md-0">
-                    <label class="form-label small fw-bold text-muted">เดือนที่ชำระ</label>
-                    <select id="filter-month" class="form-select form-select-sm border-secondary">
-                        <option value="">ทุกเดือน</option>
-                        <option value="มกราคม">มกราคม</option>
-                        <option value="กุมภาพันธ์">กุมภาพันธ์</option>
-                        <option value="มีนาคม">มีนาคม</option>
-                        <option value="เมษายน">เมษายน</option>
-                        <option value="พฤษภาคม">พฤษภาคม</option>
-                        <option value="มิถุนายน">มิถุนายน</option>
-                        <option value="กรกฎาคม">กรกฎาคม</option>
-                        <option value="สิงหาคม">สิงหาคม</option>
-                        <option value="กันยายน">กันยายน</option>
-                        <option value="ตุลาคม">ตุลาคม</option>
-                        <option value="พฤศจิกายน">พฤศจิกายน</option>
-                        <option value="ธันวาคม">ธันวาคม</option>
-                    </select>
-                </div>
-                <div class="col-md-3 mb-2 mb-md-0">
-                    <label class="form-label small fw-bold text-muted">ปี</label>
-                    <select id="filter-year" class="form-select form-select-sm border-secondary">
-                        <option value="">ทุกปี</option>
-                        <option value="2567">2567</option>
-                        <option value="2568">2568</option>
-                        <option value="2569">2569</option>
-                        <option value="2570">2570</option>
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <button class="btn btn-secondary btn-sm w-100 fw-bold shadow-sm" onclick="clearFilters()">
-                        <i class="fas fa-sync-alt me-1"></i> ล้างตัวกรอง
-                    </button>
-                </div>
-            </div>
-            
-            <div class="table-responsive">
-                <table id="datatable" class="display responsive nowrap w-100 table-hover border-0">
-                    <thead>
-                        <tr class="bg-light">
-                            <th class="text-center"><input type="checkbox" id="selectAll" onclick="toggleAll(this)" class="form-check-input"></th>
-                            <th>บ้านเลขที่</th>
-                            <th>เดือน</th>
-                            <th>ปี</th>
-                            <th>สถานะ</th>
-                            <th>หลักฐาน (สลิป)</th>
-                            <th>ผู้บันทึก</th>
-                            <th>ผู้ตรวจสอบ</th>
-                            <th class="text-center">ใบเสร็จ (PDF)</th>
-                            <th class="text-center">แก้ไข/ลบ</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tableBody"></tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <!-- ฟอร์มแก้ไขและเพิ่มข้อมูล -->
-    <div class="modal fade" id="Modaladd" data-bs-backdrop="static" tabindex="-1">
-        <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content border-0 shadow">
-                <div class="modal-header bg-primary text-white border-0">
-                    <h5 class="modal-title fw-bold" id="modalTitle">จัดการข้อมูล</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body p-4">
-                    <form id="myForm" onsubmit="submitForm(this)">
-                        <input type="hidden" id="numid" name="numid">
-                        <input type="hidden" id="fullname" name="fullname">
-                        
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <label class="form-label fw-bold text-secondary">ผู้บันทึกข้อมูล *</label>
-                                <input type="text" class="form-control" id="datastud1" name="datastud1" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label fw-bold text-secondary">บ้านเลขที่ *</label>
-                                <input type="text" class="form-control" id="datastud2" name="datastud2" required>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label fw-bold text-secondary">เดือนที่ชำระ *</label>
-                                <select class="form-select" id="datastud3" name="datastud3" required>
-                                    <option value="">ระบุเดือน</option>
-                                    <option>มกราคม</option><option>กุมภาพันธ์</option><option>มีนาคม</option>
-                                    <option>เมษายน</option><option>พฤษภาคม</option><option>มิถุนายน</option>
-                                    <option>กรกฎาคม</option><option>สิงหาคม</option><option>กันยายน</option>
-                                    <option>ตุลาคม</option><option>พฤศจิกายน</option><option>ธันวาคม</option>
-                                </select>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label fw-bold text-secondary">ปี *</label>
-                                <select class="form-select" id="datastud4" name="datastud4" required>
-                                    <option>2567</option><option>2568</option><option>2569</option><option>2570</option>
-                                </select>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label fw-bold text-secondary">ช่องทาง *</label><br>
-                                <div class="form-check form-check-inline mt-2">
-                                    <input class="form-check-input" type="radio" name="datastud5" id="p1" value="โอน" required>
-                                    <label class="form-check-label" for="p1">โอน</label>
-                                </div>
-                                <div class="form-check form-check-inline">
-                                    <input class="form-check-input" type="radio" name="datastud5" id="p2" value="จ่ายสด" required>
-                                    <label class="form-check-label" for="p2">เงินสด</label>
-                                </div>
-                            </div>
-
-                            <div class="col-12">
-                                <label class="form-label fw-bold text-secondary">แนบสลิปโอนเงิน</label>
-                                <input type="file" class="form-control" id="myFile" onchange="fileValidation()">
-                                <input type="hidden" id="oldfile" name="oldfile">
-                                <div id="pfile2" style="display:none" class="mt-2 text-center bg-light p-3 rounded">
-                                    <img id="oldfile2" src="" height="120" class="rounded mb-2 shadow-sm border border-secondary"><br>
-                                    <button class="btn btn-outline-primary btn-sm" type="button" onclick="pfile2()">เปลี่ยนรูปสลิป</button>
-                                </div>
-                                <div class="text-center mt-2">
-                                    <img id="img" style="max-height: 150px; display: none;" class="rounded shadow-sm border border-secondary">
-                                </div>
-                            </div>
-
-                            <div class="col-12">
-                                <label class="form-label fw-bold text-secondary">หมายเหตุเพิ่มเติม</label>
-                                <textarea class="form-control" id="datastud6" name="datastud6" rows="2" placeholder="เช่น จ่ายล่วงหน้า, ชำระส่วนที่ขาด ฯลฯ"></textarea>
-                            </div>
-
-                            <!-- ส่วนเฉพาะแอดมิน -->
-                            <div id="adminOnly" style="display:none;" class="col-12 bg-white p-3 rounded border border-info shadow-sm mt-3">
-                                <h6 class="text-info fw-bold mb-3"><i class="fas fa-shield-alt me-1"></i> ส่วนของเจ้าหน้าที่</h6>
-                                <div class="row g-2">
-                                    <div class="col-md-6">
-                                        <label class="form-label fw-bold small">สถานะการตรวจสอบ</label>
-                                        <select class="form-select" id="note" name="note">
-                                            <option>รอตรวจสอบ</option>
-                                            <option>ตรวจสอบแล้ว</option>
-                                            <option>ยกเลิก</option>
-                                            <option>โอนคืน</option>
-                                        </select>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <label class="form-label fw-bold small">วันที่ตรวจสอบ</label>
-                                        <input type="date" class="form-control" id="datastud7" name="datastud7">
-                                    </div>
-                                    <input type="hidden" id="datastud8" name="datastud8" value="สามร้อยบาทถ้วน">
-                                    <input type="hidden" id="datastud9" name="datastud9" value="300">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="mt-4 pt-3 border-top text-center">
-                            <button type="submit" class="btn btn-success px-5 fw-bold shadow-sm" id="add">บันทึกข้อมูลเข้าระบบ</button>
-                            <button class="btn btn-secondary px-5" id="add2" style="display:none" disabled>กำลังประมวลผล...</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ฟอร์มเข้าสู่ระบบ -->
-    <div id="loginTemplate" style="display: none;">
-        <div class="text-start p-2">
-            <label class="form-label fw-bold small">Username</label>
-            <input type="text" id="swal-user" class="form-control mb-3" placeholder="ระบุชื่อผู้ใช้">
-            <label class="form-label fw-bold small">Password</label>
-            <input type="password" id="swal-pass" class="form-control" placeholder="ระบุรหัสผ่าน">
-        </div>
-    </div>
-
-    <!-- Modal สำหรับดูรูปภาพสลิป -->
-    <div class="modal fade" id="imagePreviewModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered modal-lg">
-            <div class="modal-content bg-transparent border-0 shadow-none">
-                <div class="modal-header border-0 pb-0 justify-content-end">
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" style="background-color: rgba(0,0,0,0.6); padding: 0.8rem; border-radius: 50%;"></button>
-                </div>
-                <div class="modal-body text-center pt-2">
-                    <img id="previewImage" src="" class="img-fluid rounded shadow-lg" style="max-height: 85vh; border: 3px solid white;">
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Scripts -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.datatables.net/1.11.4/js/jquery.dataTables.min.js"></script>
-    <script src="https://cdn.datatables.net/responsive/2.2.9/js/dataTables.responsive.min.js"></script>
-
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
-        // ********** การตั้งค่า **********
-        // ⚠️ ต้องวางลิงก์ Web App (Deployment แบบใหม่) ตรงนี้
-        const API_URL = 'https://script.google.com/macros/s/AKfycbwVahPBPmcRNXKoHgHEdikZpVvA8IqC0XzWRTBiZmzrPnMNIq42cU5QUtECQ9JqB9IE/exec';
-        
-        let currentUser = null;
-        let masterData = [];
-
-        function loading(s) { s ? $('#loading').removeClass('invisible') : $('#loading').addClass('invisible'); }
-
-        async function callApi(action, data = {}) {
-            try {
-                const r = await fetch(API_URL, {
-                    method: "POST", mode: "cors",
-                    body: JSON.stringify({ action, ...data }),
-                    headers: { "Content-Type": "text/plain;charset=utf-8" }
-                });
-                
-                if (!r.ok) throw new Error(`HTTP Error: ${r.status}`);
-                
-                const result = await r.json();
-                
-                // ตรวจสอบข้อผิดพลาดจาก Backend
-                if (result.error) {
-                    // แปลงข้อความ Error ให้แอดมินเข้าใจง่ายขึ้น
-                    if (result.error.includes("P0001") && result.error.includes("User not found")) {
-                        throw new Error("ฐานข้อมูลปฏิเสธข้อมูล: ไม่พบไอดี LINE ของลูกบ้านรายนี้ในระบบเดิม (ติด Trigger เก่า)");
-                    }
-                    throw new Error(result.error);
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Kanit', 'sans-serif'] }
                 }
-                
-                return result;
-            } catch (err) {
-                console.error("API Error Detail:", err);
-                throw err;
-            }
-        }
-
-        // ********** เมื่อโหลดหน้าเว็บ **********
-        $(document).ready(() => {
-            loading(true);
-            const user = localStorage.getItem('userName');
-            if (user) {
-                currentUser = { user, name: localStorage.getItem('Name') };
-                $("#btnlogin").hide(); $(".logout-section").show();
-                $("#msg-name").text(currentUser.name);
-                $("#adminControls").show();
-            } else {
-                $("#selectAll").hide(); // ซ่อน checkbox เลือกทั้งหมดถ้าไม่ได้ล็อกอิน
-            }
-            refresh();
-
-            // === ผูก Event การกรองข้อมูลขั้นสูง ===
-            $('#filter-status').on('change', function() {
-                $('#datatable').DataTable().column(4).search(this.value).draw();
-            });
-            $('#filter-month').on('change', function() {
-                $('#datatable').DataTable().column(2).search(this.value).draw();
-            });
-            $('#filter-year').on('change', function() {
-                $('#datatable').DataTable().column(3).search(this.value).draw();
-            });
-        });
-
-        // ฟังก์ชันล้างตัวกรอง (Clear Filters)
-        function clearFilters() {
-            $('#filter-status, #filter-month, #filter-year').val('');
-            $('#datatable').DataTable().search('').columns().search('').draw();
-        }
-
-        // ฟังก์ชันดึงข้อมูลตาราง
-        function refresh() {
-            callApi('getData', { admin: currentUser ? currentUser.user : "" }).then(d => {
-                masterData = d;
-                render(d);
-                loading(false);
-            }).catch(err => {
-                Swal.fire('ข้อผิดพลาด', 'ไม่สามารถเชื่อมต่อระบบฐานข้อมูลได้', 'error');
-                loading(false);
-            });
-        }
-
-        // ฟังก์ชันแสดงรูปภาพสลิปใน Modal
-        function showImage(imageUrl) {
-            $('#previewImage').attr('src', imageUrl);
-            $('#imagePreviewModal').modal('show');
-        }
-
-        // ฟังก์ชันสร้างตาราง
-        function render(data) {
-            let html = "";
-            data.forEach(r => {
-                let badge = r[13] == 'ตรวจสอบแล้ว' ? 'status-done' : (r[13] == 'รอตรวจสอบ' ? 'status-wait' : 'status-cancel');
-                html += `<tr>
-                    <td class="text-center">${currentUser ? `<input type="checkbox" class="rowCheckbox form-check-input" value="${r[0]}">` : '-'}</td>
-                    <td class="fw-bold">${r[4]}</td>
-                    <td>${r[5]}</td>
-                    <td>${r[6]}</td>
-                    <td><span class="status-badge ${badge}">${r[13]}</span></td>
-                    <td>${r[11] ? `<img src="${r[11]}" height="35" class="rounded border shadow-sm slip-img" onclick="showImage('${r[11]}')" title="คลิกเพื่อดูสลิปขนาดเต็ม">` : '-'}</td>
-                    <td>${r[3]}</td>
-                    <td class="text-muted">${r[12] || '-'}</td>
-                    <td class="text-center">${r[15] ? `<a href="${r[15]}" target="_blank"><i class="fas fa-file-pdf fa-2xl text-success"></i></a>` : '-'}</td>
-                    <td class="text-center">
-                        ${currentUser ? `
-                        <button class="btn btn-warning btn-action me-1 shadow-sm" onclick="updateData('${r[0]}')" title="แก้ไข"><i class="fas fa-edit small text-dark"></i></button>
-                        <button class="btn btn-danger btn-action shadow-sm" onclick="delData('${r[0]}')" title="ลบ"><i class="fas fa-trash small"></i></button>
-                        ` : '-'}
-                    </td>
-                </tr>`;
-            });
-            $('#datatable').DataTable().destroy();
-            $('#tableBody').html(html);
-            $('#datatable').DataTable({ 
-                responsive: true, 
-                pageLength: 25, 
-                order: [[1, 'asc']] 
-            });
-            
-            // รีเซ็ตการกรองทุกครั้งที่มีการดึงข้อมูลใหม่ (ป้องกันการค้าง)
-            clearFilters();
-        }
-
-        function toggleAll(s) { $('.rowCheckbox').prop('checked', s.checked); }
-
-        // ********** คำสั่งลูปสร้าง PDF ทีละไฟล์ **********
-        async function runSelectedPDFs() {
-            let ids = $('.rowCheckbox:checked').map(function() { return $(this).val(); }).get();
-            if (ids.length === 0) return Swal.fire('เลือกข้อมูล', 'กรุณาเลือกรายการที่ต้องการสร้าง PDF', 'info');
-            
-            const totalFiles = ids.length;
-            let completedCount = 0;
-            let successCount = 0;
-            let failMessages = [];
-
-            // 1. แสดงหน้าต่างโหลดพร้อม Progress Bar
-            Swal.fire({
-                title: 'กำลังสร้างใบเสร็จ (PDF)',
-                html: `
-                    <div class="mt-3 mb-2 text-start small fw-bold text-secondary">ความคืบหน้า:</div>
-                    <div class="progress mb-3 shadow-sm" style="height: 25px; border-radius: 8px;">
-                        <div id="pdf-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-success fw-bold" role="progressbar" style="width: 0%; font-size: 1rem;">0%</div>
-                    </div>
-                    <div id="pdf-progress-text" class="fw-bold text-primary mb-2" style="font-size: 1.1rem;">ประมวลผลแล้ว: 0 / ${totalFiles} รายการ</div>
-                    <div class="small text-danger mt-3"><i class="fas fa-exclamation-triangle"></i> กรุณาอย่าปิดหน้าต่างนี้จนกว่าจะเสร็จสิ้น</div>
-                `,
-                allowOutsideClick: false,
-                showConfirmButton: false,
-                didOpen: () => { Swal.showLoading(); }
-            });
-
-            const updateProgressUI = () => {
-                let percent = Math.round((completedCount / totalFiles) * 100);
-                let bar = document.getElementById('pdf-progress-bar');
-                let txt = document.getElementById('pdf-progress-text');
-                if (bar) { bar.style.width = percent + '%'; bar.innerHTML = percent + '%'; }
-                if (txt) { txt.innerHTML = `ประมวลผลแล้ว: ${completedCount} / ${totalFiles} รายการ`; }
-            };
-
-            // 2. ทำงานพร้อมกันทีละ 3 ไฟล์ (Concurrent processing) เพื่อลดเวลา
-            const chunkSize = 3; 
-            for (let i = 0; i < ids.length; i += chunkSize) {
-                const chunk = ids.slice(i, i + chunkSize);
-                
-                const promises = chunk.map(async (id) => {
-                    try {
-                        await callApi('runPDF', { id, inspector: currentUser.name });
-                        successCount++;
-                    } catch (e) {
-                        failMessages.push(`<b>ID ${id}</b>: ${e.message}`);
-                    } finally {
-                        completedCount++;
-                        updateProgressUI();
-                    }
-                });
-                
-                await Promise.all(promises);
-            }
-            
-            // 3. สรุปผล
-            Swal.close();
-            if (failMessages.length === 0) {
-                Swal.fire('สำเร็จ', `ออกใบเสร็จเรียบร้อย จำนวน ${successCount} รายการ`, 'success');
-            } else {
-                Swal.fire({
-                    icon: 'warning',
-                    title: 'ออกใบเสร็จไม่สมบูรณ์',
-                    html: `<div class="text-start small text-danger">สำเร็จ: ${successCount} รายการ<br>ไม่สำเร็จ: ${failMessages.length} รายการ<br><br><b>สาเหตุ:</b><br><div style="max-height: 150px; overflow-y: auto; background: #fff5f5; padding: 5px; border-radius: 5px;">${failMessages.join('<br>')}</div></div>`,
-                });
-            }
-            refresh();
-        }
-
-        // ********** คำสั่งลบ **********
-        async function deleteSelected() {
-            let ids = $('.rowCheckbox:checked').map(function() { return $(this).val(); }).get();
-            if (ids.length === 0) return Swal.fire('ลบข้อมูล', 'กรุณาเลือกรายการที่จะลบ', 'info');
-            
-            Swal.fire({ title: 'ยืนยันการลบ?', text: 'ลบแล้วจะไม่สามารถกู้คืนได้!', icon: 'warning', showCancelButton: true }).then(async (r) => {
-                if (r.isConfirmed) {
-                    loading(true);
-                    try {
-                        for (let id of ids) {
-                            const row = masterData.find(x => x[0] == id);
-                            await callApi('delRecord', { record: id, oldfile: row[11] });
-                        }
-                        Swal.fire('ลบข้อมูลแล้ว', '', 'success');
-                        refresh();
-                    } catch (e) {
-                        Swal.fire('ผิดพลาด', 'ไม่สามารถลบได้: ' + e.message, 'error');
-                        loading(false);
-                    }
-                }
-            });
-        }
-
-        // ********** บันทึกและแก้ไขข้อมูล (เข้า Supabase ตรง) **********
-        async function submitForm(f) {
-            event.preventDefault();
-            $('#add').hide(); $('#add2').show();
-            const obj = Object.fromEntries(new FormData(f).entries());
-            obj.fullname = currentUser ? currentUser.name : "ลูกบ้าน";
-
-            const fileInput = document.getElementById('myFile');
-            if (fileInput.files.length > 0) {
-                const file = fileInput.files[0];
-                const base64 = await new Promise(res => {
-                    const reader = new FileReader();
-                    reader.onload = () => res(reader.result.split(',')[1]);
-                    reader.readAsDataURL(file);
-                });
-                obj.myFile = { name: file.name, mimeType: file.type, data: base64 };
-            }
-
-            const action = obj.numid == "" ? 'addRecord' : 'updateRecord';
-            callApi(action, { form: obj }).then(() => {
-                $('#Modaladd').modal('hide');
-                Swal.fire('สำเร็จ', 'บันทึกข้อมูลเข้าฐานข้อมูลแล้ว', 'success');
-                refresh();
-                $('#add').show(); $('#add2').hide();
-            }).catch(err => {
-                Swal.fire('บันทึกล้มเหลว', err.message, 'error');
-                $('#add').show(); $('#add2').hide();
-            });
-        }
-
-        function updateData(id) {
-            const r = masterData.find(x => x[0] == id);
-            if (!r) return;
-            $('#modalTitle').text('แก้ไขข้อมูล');
-            $('#numid').val(r[0]);
-            $('#datastud1').val(r[3]);
-            $('#datastud2').val(r[4]);
-            $('#datastud3').val(r[5]);
-            $('#datastud4').val(r[6]);
-            $(`input[name="datastud5"][value="${r[7]}"]`).prop('checked', true);
-            $('#datastud6').val(r[8]);
-            
-            if (currentUser) {
-                $('#adminOnly').show(); 
-                $('#note').val(r[13]);
-                $('#datastud7').val(r[14] || new Date().toISOString().split('T')[0]);
-            }
-            $('#oldfile').val(r[11]);
-            if (r[11]) { $('#oldfile2').attr('src', r[11]); $('#pfile2').show(); $('#myFile').hide(); }
-            $('#img').hide();
-            $('#Modaladd').modal('show');
-        }
-
-        function delData(id) {
-            Swal.fire({ title: 'ยืนยันการลบ?', icon: 'warning', showCancelButton: true }).then(async (res) => {
-                if (res.isConfirmed) {
-                    loading(true);
-                    try {
-                        const row = masterData.find(x => x[0] == id);
-                        await callApi('delRecord', { record: id, oldfile: row[11] });
-                        Swal.fire('ลบข้อมูลแล้ว', '', 'success');
-                        refresh();
-                    } catch (e) {
-                        Swal.fire('ผิดพลาด', e.message, 'error');
-                        loading(false);
-                    }
-                }
-            });
-        }
-
-        // ********** ระบบเข้าสู่ระบบ (จำลอง) **********
-        function formLogin() {
-            Swal.fire({
-                title: 'เข้าสู่ระบบแอดมิน',
-                html: $('#loginTemplate').html(),
-                showCancelButton: true,
-                confirmButtonText: 'เข้าสู่ระบบ',
-                cancelButtonText: 'ยกเลิก',
-                focusConfirm: false,
-                preConfirm: () => {
-                    const user = Swal.getPopup().querySelector('#swal-user').value;
-                    const pass = Swal.getPopup().querySelector('#swal-pass').value;
-                    if (!user || !pass) Swal.showValidationMessage('โปรดระบุ Username และ Password ให้ครบ');
-                    return { user, pass };
-                }
-            }).then(r => {
-                if (r.isConfirmed) {
-                    loading(true);
-                    callApi('checkLogin', { username: r.value.user, pwd: r.value.pass }).then(res => {
-                        if (res && res[0] !== 'null') {
-                            localStorage.setItem('userName', res[0]);
-                            localStorage.setItem('Name', res[1]);
-                            location.reload();
-                        } else {
-                            loading(false);
-                            Swal.fire('เข้าสู่ระบบล้มเหลว', 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง', 'error');
-                        }
-                    }).catch(err => {
-                        Swal.fire('เชื่อมต่อล้มเหลว', err.message, 'error');
-                        loading(false);
-                    });
-                }
-            });
-        }
-
-        function logout() { localStorage.clear(); location.reload(); }
-        function pfile2() { $('#myFile').show(); $('#pfile2').hide(); }
-        function fileValidation() {
-            const f = document.getElementById('myFile').files[0];
-            if (f) {
-                const reader = new FileReader();
-                reader.onload = e => { $('#img').show(); $('#img').attr('src', e.target.result); };
-                reader.readAsDataURL(f);
             }
         }
     </script>
-</body>
 
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+    <!-- SweetAlert2 -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+    <!-- DataTables (สำหรับหน้าบันทึกรับชำระ) -->
+    <link href="https://cdn.datatables.net/1.13.7/css/dataTables.tailwindcss.min.css" rel="stylesheet">
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.7/js/dataTables.tailwindcss.min.js"></script>
+
+    <!-- Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <style>
+        body { font-family: 'Kanit', sans-serif; background-color: #f8fafc; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* Status badges */
+        .status-cell {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: 9999px;
+            text-align: center;
+            display: inline-block;
+            min-width: 60px;
+        }
+        .status-paid { background-color: #dcfce7; color: #166534; }
+        .status-unpaid { background-color: #fee2e2; color: #991b1b; }
+        .status-pending-verification { background-color: #fef08a; color: #854d0e; cursor: pointer; border: 1px solid #facc15; }
+        .status-waiting-info { background-color: #ffedd5; color: #9a3412; }
+        .status-advance { background-color: #dbeafe; color: #1e40af; }
+        .status-empty { background-color: #f1f5f9; color: #64748b; }
+
+        /* Sticky table header */
+        .admin-table th {
+            position: sticky;
+            top: 0;
+            background-color: #f1f5f9;
+            z-index: 10;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        .admin-table td, .admin-table th { white-space: nowrap; }
+
+        /* Animations */
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-up { animation: fadeUp 0.4s ease-out forwards; }
+
+        @keyframes growUp { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+        .bar-grow { animation: growUp 0.8s ease-out forwards; transform-origin: bottom; }
+
+        /* Hide views by default */
+        .view-section { display: none; }
+        .view-section.active { display: block; }
+
+        /* Sidebar active state */
+        .nav-btn.active {
+            background-color: #4f46e5;
+            color: white;
+        }
+        .nav-btn.active:hover { background-color: #4338ca; }
+
+        /* Loading spinner */
+        .spinner {
+            border: 3px solid #f3f4f6;
+            border-top: 3px solid #4f46e5;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<!-- ============================================== -->
+<!-- หน้า LOGIN (แสดงตอนยังไม่ได้ login)             -->
+<!-- ============================================== -->
+<div id="loginPage" class="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-4">
+    <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+        <div class="text-center mb-6">
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-indigo-100 rounded-full mb-4">
+                <i data-lucide="shield-check" class="w-8 h-8 text-indigo-600"></i>
+            </div>
+            <h1 class="text-2xl font-bold text-slate-800">Admin Panel</h1>
+            <p class="text-slate-500 mt-1">ระบบจัดการค่าส่วนกลาง</p>
+            <p class="text-xs text-slate-400 mt-1">โกลเด้นแลนด์ ซีรีน</p>
+        </div>
+
+        <form id="loginForm" class="space-y-4">
+            <div>
+                <label class="block text-sm font-bold text-slate-700 mb-1">Username</label>
+                <input type="text" id="loginUser" required
+                    class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="ชื่อผู้ใช้">
+            </div>
+            <div>
+                <label class="block text-sm font-bold text-slate-700 mb-1">Password</label>
+                <input type="password" id="loginPass" required
+                    class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="รหัสผ่าน">
+            </div>
+            <button type="submit" id="loginBtn"
+                class="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition-colors shadow-md flex items-center justify-center gap-2">
+                <i data-lucide="log-in" class="w-5 h-5"></i>
+                เข้าสู่ระบบ
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- ============================================== -->
+<!-- หน้า ADMIN (แสดงหลัง login)                    -->
+<!-- ============================================== -->
+<div id="adminPage" class="hidden min-h-screen flex flex-col">
+
+    <!-- Top Navbar -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+        <div class="px-4 md:px-6 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <button id="mobileMenuBtn" class="md:hidden p-2 rounded-lg hover:bg-slate-100">
+                    <i data-lucide="menu" class="w-5 h-5"></i>
+                </button>
+                <div class="flex items-center gap-2">
+                    <div class="w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center">
+                        <i data-lucide="building-2" class="w-5 h-5 text-white"></i>
+                    </div>
+                    <div>
+                        <div class="font-bold text-slate-800 text-sm">Admin Panel</div>
+                        <div class="text-xs text-slate-500 hidden sm:block">โกลเด้นแลนด์ ซีรีน</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-2 md:gap-3">
+                <button onclick="handleGlobalSync()" id="syncBtn"
+                    class="hidden sm:flex items-center gap-2 px-3 py-2 bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-colors text-sm font-medium">
+                    <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                    <span class="hidden md:inline">ซิงค์ข้อมูล</span>
+                </button>
+                <div class="hidden md:flex items-center gap-2 px-3 py-2 bg-slate-100 rounded-lg">
+                    <i data-lucide="user-circle" class="w-4 h-4 text-slate-600"></i>
+                    <span class="text-sm font-medium text-slate-700" id="adminNameDisplay">Admin</span>
+                </div>
+                <button onclick="handleLogout()"
+                    class="p-2 rounded-lg text-red-600 hover:bg-red-50 transition-colors" title="ออกจากระบบ">
+                    <i data-lucide="log-out" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <div class="flex flex-1">
+        <!-- Sidebar -->
+        <aside id="sidebar" class="w-64 bg-white border-r border-slate-200 min-h-[calc(100vh-65px)] p-4 hidden md:block">
+            <nav class="space-y-1">
+                <button data-view="dashboard" class="nav-btn active w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-left text-sm font-medium hover:bg-slate-100 transition-colors">
+                    <i data-lucide="layout-dashboard" class="w-5 h-5"></i>
+                    Dashboard
+                </button>
+                <button data-view="transactions" class="nav-btn w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-left text-sm font-medium hover:bg-slate-100 transition-colors">
+                    <i data-lucide="receipt" class="w-5 h-5"></i>
+                    บันทึกรับชำระ
+                </button>
+                <button data-view="pending" class="nav-btn w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-left text-sm font-medium hover:bg-slate-100 transition-colors">
+                    <i data-lucide="clock" class="w-5 h-5"></i>
+                    รอตรวจสอบ
+                    <span id="pendingBadge" class="ml-auto bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full hidden">0</span>
+                </button>
+                <button data-view="analytics" class="nav-btn w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-left text-sm font-medium hover:bg-slate-100 transition-colors">
+                    <i data-lucide="trending-up" class="w-5 h-5"></i>
+                    Analytics
+                </button>
+                <button data-view="overdue" class="nav-btn w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-left text-sm font-medium hover:bg-slate-100 transition-colors">
+                    <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+                    สรุปค้างชำระ
+                </button>
+                <button data-view="settings" class="nav-btn w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-left text-sm font-medium hover:bg-slate-100 transition-colors">
+                    <i data-lucide="settings" class="w-5 h-5"></i>
+                    Settings
+                </button>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 p-4 md:p-6 overflow-x-hidden">
+            <div id="viewContainer">
+
+                <!-- ============================================== -->
+                <!-- VIEW 1: DASHBOARD                              -->
+                <!-- ============================================== -->
+                <section id="view-dashboard" class="view-section active animate-fade-up">
+                    <!-- Stats Cards -->
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+                        <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-sm text-slate-500">ยอดที่ชำระแล้ว</span>
+                                <i data-lucide="check-circle" class="w-5 h-5 text-green-500"></i>
+                            </div>
+                            <div class="text-2xl font-bold text-green-600" id="statPaid">฿0</div>
+                        </div>
+                        <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-sm text-slate-500">ยอดค้างชำระ</span>
+                                <i data-lucide="x-circle" class="w-5 h-5 text-red-500"></i>
+                            </div>
+                            <div class="text-2xl font-bold text-red-600" id="statUnpaid">฿0</div>
+                        </div>
+                        <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-sm text-slate-500">จำนวนบ้าน</span>
+                                <i data-lucide="home" class="w-5 h-5 text-indigo-500"></i>
+                            </div>
+                            <div class="text-2xl font-bold text-indigo-600" id="statCount">0</div>
+                        </div>
+                    </div>
+
+                    <!-- Filters -->
+                    <div class="bg-white rounded-t-2xl border border-slate-200 p-4">
+                        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                            <div class="relative">
+                                <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                                <input type="text" id="searchInput" placeholder="ค้นหาบ้านเลขที่ / ชื่อ / ซอย"
+                                    class="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                            </div>
+                            <select id="yearFilter" class="px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-white">
+                                <option value="all">ทุกปี</option>
+                            </select>
+                            <select id="statusFilter" class="px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-white">
+                                <option value="all">สถานะทั้งหมด</option>
+                                <option value="overdue">🔴 มีค้างชำระ</option>
+                                <option value="waiting">⏳ รอตรวจสอบ/ข้อมูล</option>
+                            </select>
+                            <button onclick="exportCSV()" class="px-4 py-2.5 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2 text-sm">
+                                <i data-lucide="download" class="w-4 h-4"></i>
+                                Export CSV
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Data Grid -->
+                    <div class="bg-white rounded-b-2xl border-x border-b border-slate-200 overflow-hidden">
+                        <div id="dashboardGrid" class="overflow-x-auto admin-table max-h-[60vh]">
+                            <!-- Table will be rendered here -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ============================================== -->
+                <!-- VIEW 2: TRANSACTIONS (บันทึกรับชำระ + PDF)      -->
+                <!-- ============================================== -->
+                <section id="view-transactions" class="view-section animate-fade-up">
+                    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="p-5 border-b border-slate-200 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                            <div>
+                                <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                    <i data-lucide="receipt" class="w-5 h-5 text-indigo-600"></i>
+                                    รายการบันทึกรับชำระทั้งหมด
+                                </h2>
+                                <p class="text-xs text-slate-500 mt-1">เลือกรายการเพื่อสร้างใบเสร็จ PDF หรือลบ</p>
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                                <button onclick="openAddModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-bold flex items-center gap-2">
+                                    <i data-lucide="plus" class="w-4 h-4"></i>
+                                    เพิ่มรายการ
+                                </button>
+                                <button onclick="runSelectedPDFs()" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm font-bold flex items-center gap-2">
+                                    <i data-lucide="file-text" class="w-4 h-4"></i>
+                                    ออกใบเสร็จ PDF
+                                </button>
+                                <button onclick="deleteSelected()" class="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 text-sm font-bold flex items-center gap-2">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                    ลบที่เลือก
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Filters -->
+                        <div class="p-4 bg-slate-50 border-b border-slate-200 grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <select id="txFilterStatus" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white">
+                                <option value="">สถานะทั้งหมด</option>
+                                <option value="ตรวจสอบแล้ว">ตรวจสอบแล้ว</option>
+                                <option value="รอตรวจสอบ">รอตรวจสอบ</option>
+                                <option value="ยกเลิก">ยกเลิก</option>
+                                <option value="โอนคืน">โอนคืน</option>
+                            </select>
+                            <select id="txFilterMonth" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white">
+                                <option value="">ทุกเดือน</option>
+                                <option>มกราคม</option><option>กุมภาพันธ์</option><option>มีนาคม</option>
+                                <option>เมษายน</option><option>พฤษภาคม</option><option>มิถุนายน</option>
+                                <option>กรกฎาคม</option><option>สิงหาคม</option><option>กันยายน</option>
+                                <option>ตุลาคม</option><option>พฤศจิกายน</option><option>ธันวาคม</option>
+                            </select>
+                            <select id="txFilterYear" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white">
+                                <option value="">ทุกปี</option>
+                                <option>2567</option><option>2568</option><option>2569</option><option>2570</option>
+                            </select>
+                            <button onclick="clearTxFilters()" class="px-3 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 text-sm font-medium flex items-center justify-center gap-2">
+                                <i data-lucide="x" class="w-4 h-4"></i>
+                                ล้างตัวกรอง
+                            </button>
+                        </div>
+
+                        <!-- DataTable -->
+                        <div class="p-4 overflow-x-auto">
+                            <table id="txTable" class="w-full text-sm">
+                                <thead class="bg-slate-100">
+                                    <tr>
+                                        <th class="px-3 py-3 text-center"><input type="checkbox" id="txSelectAll"></th>
+                                        <th class="px-3 py-3 text-left">บ้านเลขที่</th>
+                                        <th class="px-3 py-3 text-left">เดือน</th>
+                                        <th class="px-3 py-3 text-left">ปี</th>
+                                        <th class="px-3 py-3 text-left">สถานะ</th>
+                                        <th class="px-3 py-3 text-center">สลิป</th>
+                                        <th class="px-3 py-3 text-left">ผู้บันทึก</th>
+                                        <th class="px-3 py-3 text-left">ผู้ตรวจสอบ</th>
+                                        <th class="px-3 py-3 text-center">ใบเสร็จ</th>
+                                        <th class="px-3 py-3 text-center">จัดการ</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="txTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ============================================== -->
+                <!-- VIEW 3: PENDING                                -->
+                <!-- ============================================== -->
+                <section id="view-pending" class="view-section animate-fade-up">
+                    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="bg-orange-50 p-5 border-b border-slate-200 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+                            <h2 class="text-lg font-bold text-orange-800 flex items-center gap-2">
+                                <i data-lucide="clock" class="w-5 h-5"></i>
+                                รายการรอตรวจสอบสลิป
+                            </h2>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span id="pendingCount" class="bg-orange-500 text-white font-bold px-3 py-1 rounded-full text-sm">0 รายการ</span>
+                                <button onclick="approveAllPending()" id="approveAllBtn" class="px-4 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-bold flex items-center gap-2">
+                                    <i data-lucide="check-check" class="w-4 h-4"></i>
+                                    อนุมัติทั้งหมด
+                                </button>
+                            </div>
+                        </div>
+                        <div id="pendingList" class="p-5 bg-slate-50 min-h-[50vh]">
+                            <!-- Pending cards rendered here -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ============================================== -->
+                <!-- VIEW 4: ANALYTICS                              -->
+                <!-- ============================================== -->
+                <section id="view-analytics" class="view-section animate-fade-up">
+                    <div class="space-y-6">
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                            <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
+                                <i data-lucide="bar-chart-3" class="w-5 h-5 text-indigo-600"></i>
+                                ยอดชำระรายเดือน
+                            </h2>
+                            <div id="monthlyChart" class="h-72 flex items-end gap-2 px-2">
+                                <!-- Bar chart rendered here -->
+                            </div>
+                            <div class="flex flex-wrap gap-4 mt-4 text-xs">
+                                <span class="flex items-center gap-1.5"><span class="w-3 h-3 bg-green-500 rounded"></span>จ่ายแล้ว</span>
+                                <span class="flex items-center gap-1.5"><span class="w-3 h-3 bg-red-500 rounded"></span>ยังไม่จ่าย</span>
+                                <span class="flex items-center gap-1.5"><span class="w-3 h-3 bg-yellow-400 rounded"></span>รอตรวจสอบ</span>
+                            </div>
+                        </div>
+
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                            <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
+                                <i data-lucide="map-pin" class="w-5 h-5 text-indigo-600"></i>
+                                Top 10 ซอยที่ค้างชำระสูงสุด
+                            </h2>
+                            <div id="soiRanking" class="space-y-2"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ============================================== -->
+                <!-- VIEW 5: OVERDUE                                -->
+                <!-- ============================================== -->
+                <section id="view-overdue" class="view-section animate-fade-up">
+                    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="bg-red-50 p-5 border-b border-slate-200 flex justify-between items-center">
+                            <h2 class="text-lg font-bold text-red-800 flex items-center gap-2">
+                                <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+                                สรุปบ้านที่ค้างชำระ
+                            </h2>
+                            <button onclick="exportOverdueCSV()" class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-bold flex items-center gap-2">
+                                <i data-lucide="download" class="w-4 h-4"></i>
+                                Export CSV
+                            </button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead class="bg-slate-100">
+                                    <tr>
+                                        <th class="px-4 py-3 text-left">ลำดับ</th>
+                                        <th class="px-4 py-3 text-left">บ้านเลขที่</th>
+                                        <th class="px-4 py-3 text-left">ซอย</th>
+                                        <th class="px-4 py-3 text-left">เจ้าของบ้าน</th>
+                                        <th class="px-4 py-3 text-right">เดือนที่ค้าง</th>
+                                        <th class="px-4 py-3 text-right">ยอดค้าง (บาท)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="overdueTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ============================================== -->
+                <!-- VIEW 6: SETTINGS                               -->
+                <!-- ============================================== -->
+                <section id="view-settings" class="view-section animate-fade-up">
+                    <div class="space-y-6">
+                        <!-- อัปเดตสถานะรายเดือน -->
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div class="bg-slate-50 p-5 border-b border-slate-200">
+                                <h3 class="font-bold text-lg text-slate-800 flex items-center gap-2">
+                                    <i data-lucide="refresh-cw" class="w-5 h-5 text-indigo-600"></i>
+                                    อัปเดตสถานะรายเดือน
+                                </h3>
+                                <p class="text-slate-500 text-sm mt-1">เปลี่ยนสถานะ "รอข้อมูล" เป็น "ยังไม่จ่าย" สำหรับเดือน/ปีที่เลือก</p>
+                            </div>
+                            <div class="p-5 grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                                <div>
+                                    <label class="block text-sm font-bold text-slate-700 mb-1">ปี (พ.ศ.)</label>
+                                    <input type="number" id="updateTargetYear" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-bold text-slate-700 mb-1">เดือน</label>
+                                    <select id="updateTargetMonth" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"></select>
+                                </div>
+                                <button onclick="handleAdminUpdateStatus()" class="px-6 py-2.5 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 flex items-center justify-center gap-2">
+                                    <i data-lucide="save" class="w-4 h-4"></i>
+                                    อัปเดต
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- สร้างข้อมูลปีใหม่ -->
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div class="bg-slate-50 p-5 border-b border-slate-200">
+                                <h3 class="font-bold text-lg text-slate-800 flex items-center gap-2">
+                                    <i data-lucide="file-plus" class="w-5 h-5 text-emerald-600"></i>
+                                    สร้างข้อมูลสำหรับปีใหม่ (Rollover)
+                                </h3>
+                                <p class="text-slate-500 text-sm mt-1">คัดลอกรายชื่อบ้านจากปีล่าสุดเพื่อสร้างฐานข้อมูลสำหรับปีใหม่</p>
+                            </div>
+                            <div class="p-5 grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                                <div class="md:col-span-2">
+                                    <label class="block text-sm font-bold text-slate-700 mb-1">ปี พ.ศ. ที่ต้องการสร้าง</label>
+                                    <input type="number" id="newYearTarget" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="เช่น 2570">
+                                </div>
+                                <button onclick="handleGenerateNewYearData()" class="px-6 py-2.5 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 flex items-center justify-center gap-2">
+                                    <i data-lucide="file-plus" class="w-4 h-4"></i>
+                                    สร้างข้อมูล
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+            </div>
+        </main>
+    </div>
+</div>
+
+<!-- ============================================== -->
+<!-- MODALS                                         -->
+<!-- ============================================== -->
+
+<!-- Image Preview Modal -->
+<div id="imageModal" class="hidden fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
+    <div class="relative max-w-4xl max-h-[90vh] w-full">
+        <button onclick="closeImageModal()" class="absolute -top-12 right-0 text-white p-2 rounded-full hover:bg-white/10">
+            <i data-lucide="x" class="w-7 h-7"></i>
+        </button>
+        <img id="modalImage" src="" alt="Slip" class="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl mx-auto">
+        <div class="text-center mt-3">
+            <a id="modalImageLink" href="#" target="_blank" class="inline-flex items-center gap-2 text-white/80 hover:text-white text-sm bg-white/10 px-4 py-2 rounded-full">
+                <i data-lucide="external-link" class="w-4 h-4"></i>
+                เปิดรูปต้นฉบับ
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Transaction Modal -->
+<div id="txModal" class="hidden fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-8">
+        <div class="bg-indigo-600 text-white p-5 rounded-t-2xl flex items-center justify-between">
+            <h3 class="text-lg font-bold" id="txModalTitle">เพิ่มรายการรับชำระ</h3>
+            <button onclick="closeTxModal()" class="p-1 rounded-lg hover:bg-white/10"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <form id="txForm" class="p-6 space-y-4">
+            <input type="hidden" id="tx_numid">
+            <input type="hidden" id="tx_oldfile">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-1">ผู้บันทึกข้อมูล *</label>
+                    <input type="text" id="tx_recorder" required class="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-1">บ้านเลขที่ *</label>
+                    <input type="text" id="tx_house" required class="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-1">เดือนที่ชำระ *</label>
+                    <select id="tx_month" required class="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white">
+                        <option value="">ระบุเดือน</option>
+                        <option>มกราคม</option><option>กุมภาพันธ์</option><option>มีนาคม</option>
+                        <option>เมษายน</option><option>พฤษภาคม</option><option>มิถุนายน</option>
+                        <option>กรกฎาคม</option><option>สิงหาคม</option><option>กันยายน</option>
+                        <option>ตุลาคม</option><option>พฤศจิกายน</option><option>ธันวาคม</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-1">ปี *</label>
+                    <select id="tx_year" required class="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white">
+                        <option>2567</option><option>2568</option><option>2569</option><option>2570</option>
+                    </select>
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-bold text-slate-700 mb-1">ช่องทาง *</label>
+                    <div class="flex gap-4">
+                        <label class="flex items-center gap-2"><input type="radio" name="tx_channel" value="โอน" required>โอน</label>
+                        <label class="flex items-center gap-2"><input type="radio" name="tx_channel" value="จ่ายสด" required>เงินสด</label>
+                    </div>
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-bold text-slate-700 mb-1">แนบสลิป</label>
+                    <input type="file" id="tx_file" accept="image/*" class="w-full px-3 py-2 rounded-lg border border-slate-300">
+                    <div id="tx_oldFilePreview" class="hidden mt-2 text-center bg-slate-50 p-3 rounded-lg">
+                        <img id="tx_oldFileImg" src="" class="h-24 mx-auto rounded shadow border">
+                        <div class="text-xs text-slate-500 mt-1">รูปสลิปเดิม</div>
+                    </div>
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-bold text-slate-700 mb-1">หมายเหตุ</label>
+                    <textarea id="tx_note" rows="2" class="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="เช่น จ่ายล่วงหน้า, ชำระส่วนที่ขาด"></textarea>
+                </div>
+                <div class="md:col-span-2 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h4 class="font-bold text-blue-700 text-sm mb-2 flex items-center gap-2">
+                        <i data-lucide="shield" class="w-4 h-4"></i> ส่วนของแอดมิน
+                    </h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">สถานะ</label>
+                            <select id="tx_status" class="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm">
+                                <option>รอตรวจสอบ</option><option>ตรวจสอบแล้ว</option>
+                                <option>ยกเลิก</option><option>โอนคืน</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">วันที่ตรวจสอบ</label>
+                            <input type="date" id="tx_verifyDate" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="pt-4 border-t border-slate-200 flex justify-end gap-2">
+                <button type="button" onclick="closeTxModal()" class="px-5 py-2.5 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 font-bold">ยกเลิก</button>
+                <button type="submit" id="tx_submitBtn" class="px-5 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold flex items-center gap-2">
+                    <i data-lucide="save" class="w-4 h-4"></i>
+                    บันทึก
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Initialize Lucide icons -->
+<script>lucide.createIcons();</script>
+
+<!-- ============================================== -->
+<!-- MAIN APPLICATION SCRIPT                        -->
+<!-- ============================================== -->
+<script>
+// =============== CONFIG ===============
+const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
+
+// GAS API URL (ใช้ตัวเดียวจาก commonfees.html)
+const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbwVahPBPmcRNXKoHgHEdikZpVvA8IqC0XzWRTBiZmzrPnMNIq42cU5QUtECQ9JqB9IE/exec';
+
+// =============== STATE ===============
+let supabase = null;
+let currentUser = null;
+let allData = [];          // Supabase house_payments
+let pendingFees = [];       // GAS pending
+let allTransactions = [];   // GAS all transactions for tx view
+let dataTable = null;
+
+const monthMap = { 'มกราคม':'jan', 'กุมภาพันธ์':'feb', 'มีนาคม':'mar', 'เมษายน':'apr', 'พฤษภาคม':'may', 'มิถุนายน':'jun', 'กรกฎาคม':'jul', 'สิงหาคม':'aug', 'กันยายน':'sep', 'ตุลาคม':'oct', 'พฤศจิกายน':'nov', 'ธันวาคม':'dec' };
+const months = [
+    { key:'jan', label:'ม.ค.', th:'มกราคม' }, { key:'feb', label:'ก.พ.', th:'กุมภาพันธ์' },
+    { key:'mar', label:'มี.ค.', th:'มีนาคม' }, { key:'apr', label:'เม.ย.', th:'เมษายน' },
+    { key:'may', label:'พ.ค.', th:'พฤษภาคม' }, { key:'jun', label:'มิ.ย.', th:'มิถุนายน' },
+    { key:'jul', label:'ก.ค.', th:'กรกฎาคม' }, { key:'aug', label:'ส.ค.', th:'สิงหาคม' },
+    { key:'sep', label:'ก.ย.', th:'กันยายน' }, { key:'oct', label:'ต.ค.', th:'ตุลาคม' },
+    { key:'nov', label:'พ.ย.', th:'พฤศจิกายน' }, { key:'dec', label:'ธ.ค.', th:'ธันวาคม' }
+];
+
+// =============== API HELPERS ===============
+async function callGas(action, data = {}) {
+    const r = await fetch(GAS_API_URL, {
+        method: 'POST',
+        mode: 'cors',
+        body: JSON.stringify({ action, ...data }),
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const result = await r.json();
+    if (result && result.error) throw new Error(result.error);
+    return result;
+}
+
+// Supabase REST helper - ใช้สำหรับ read-only ผ่าน anon key
+// ⚠️ ห้ามใช้ service_role key ใน HTML เด็ดขาด!
+async function callSupabaseRest(path, options = {}) {
+    const url = `${SUPABASE_URL}/rest/v1/${path}`;
+    const r = await fetch(url, {
+        ...options,
+        headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+            ...(options.headers || {})
+        }
+    });
+    if (!r.ok) {
+        const text = await r.text();
+        throw new Error(`Supabase ${r.status}: ${text}`);
+    }
+    return await r.json();
+}
+
+// =============== HELPERS ===============
+function getStatusClass(status) {
+    if (!status || status.includes('ไม่เก็บ')) return 'status-empty';
+    if (status.includes('จ่ายแล้ว') || status.includes('ชำระแล้ว')) return 'status-paid';
+    if (status.includes('ยังไม่จ่าย') || status.includes('ค้าง')) return 'status-unpaid';
+    if (status.includes('รอตรวจสอบ')) return 'status-pending-verification';
+    if (status.includes('รอข้อมูล')) return 'status-waiting-info';
+    if (status.includes('ล่วงหน้า')) return 'status-advance';
+    return 'status-empty';
+}
+
+function calculateHouseTotal(house) {
+    let paid = 0, unpaid = 0, waiting = 0;
+    months.forEach(m => {
+        const s = house[m.key] || '';
+        if (s.includes('จ่ายแล้ว') || s.includes('ชำระแล้ว') || s.includes('ล่วงหน้า')) paid += 300;
+        else if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) unpaid += 300;
+        else if (s.includes('รอตรวจสอบ') || s.includes('รอข้อมูล')) waiting += 300;
+    });
+    return { paid, unpaid, waiting };
+}
+
+function showToast(icon, title) {
+    Swal.fire({ icon, title, toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
+}
+
+// =============== LOGIN ===============
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const user = document.getElementById('loginUser').value.trim();
+    const pass = document.getElementById('loginPass').value.trim();
+    if (!user || !pass) return;
+
+    const btn = document.getElementById('loginBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<div class="spinner" style="border-color: rgba(255,255,255,0.3); border-top-color: white; width: 20px; height: 20px;"></div> กำลังเข้าสู่ระบบ...';
+
+    try {
+        const res = await callGas('checkLogin', { username: user, pwd: pass });
+        if (res && res[0] !== 'null') {
+            localStorage.setItem('userName', res[0]);
+            localStorage.setItem('Name', res[1]);
+            currentUser = { user: res[0], name: res[1] };
+            showAdminPage();
+        } else {
+            Swal.fire('เข้าสู่ระบบล้มเหลว', 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง', 'error');
+        }
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="log-in" class="w-5 h-5"></i> เข้าสู่ระบบ';
+        lucide.createIcons();
+    }
+});
+
+function handleLogout() {
+    Swal.fire({
+        title: 'ออกจากระบบ?', icon: 'question',
+        showCancelButton: true, confirmButtonText: 'ใช่, ออกจากระบบ', cancelButtonText: 'ยกเลิก'
+    }).then(r => { if (r.isConfirmed) { localStorage.clear(); location.reload(); } });
+}
+
+function showAdminPage() {
+    document.getElementById('loginPage').classList.add('hidden');
+    document.getElementById('adminPage').classList.remove('hidden');
+    document.getElementById('adminNameDisplay').textContent = currentUser.name;
+    initApp();
+}
+
+// =============== INIT ===============
+async function initApp() {
+    // Init Supabase
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // Setup nav
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.addEventListener('click', () => switchView(btn.dataset.view));
+    });
+
+    // Setup filters
+    document.getElementById('searchInput').addEventListener('input', renderDashboard);
+    document.getElementById('yearFilter').addEventListener('change', renderDashboard);
+    document.getElementById('statusFilter').addEventListener('change', renderDashboard);
+    document.getElementById('txFilterStatus').addEventListener('change', applyTxFilters);
+    document.getElementById('txFilterMonth').addEventListener('change', applyTxFilters);
+    document.getElementById('txFilterYear').addEventListener('change', applyTxFilters);
+    document.getElementById('txSelectAll').addEventListener('change', (e) => {
+        document.querySelectorAll('.tx-row-check').forEach(c => c.checked = e.target.checked);
+    });
+    document.getElementById('txForm').addEventListener('submit', submitTxForm);
+
+    // Init settings defaults
+    const currentYear = new Date().getFullYear() + 543;
+    document.getElementById('updateTargetYear').value = currentYear;
+    document.getElementById('newYearTarget').value = currentYear + 1;
+    const monthSelect = document.getElementById('updateTargetMonth');
+    months.forEach((m, i) => {
+        const opt = document.createElement('option');
+        opt.value = m.key;
+        opt.textContent = m.th;
+        if (i === new Date().getMonth()) opt.selected = true;
+        monthSelect.appendChild(opt);
+    });
+
+    // Load data
+    await fetchAllData();
+}
+
+function switchView(viewName) {
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.nav-btn[data-view="${viewName}"]`).classList.add('active');
+    document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+    document.getElementById(`view-${viewName}`).classList.add('active');
+    lucide.createIcons();
+
+    // Re-render specific views
+    if (viewName === 'transactions') renderTransactions();
+    if (viewName === 'analytics') renderAnalytics();
+    if (viewName === 'overdue') renderOverdue();
+    if (viewName === 'pending') renderPending();
+}
+
+// =============== FETCH DATA ===============
+async function fetchAllData() {
+    Swal.fire({ title: 'กำลังโหลดข้อมูล...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    try {
+        // ดึงข้อมูลพร้อมกันจาก 2 ตาราง Supabase (เร็วกว่าผ่าน GAS มาก)
+        const [houseResult, feesResult] = await Promise.all([
+            fetchSupabaseHouses(),
+            fetchSupabaseCommonFees()
+        ]);
+        allData = houseResult;
+        allTransactions = feesResult;
+        pendingFees = allTransactions.filter(t => t.status && t.status.includes('รอ') && !t.status.includes('แล้ว'));
+
+        // Populate year filter
+        const years = [...new Set(allData.map(d => d.year))].sort((a,b) => b-a);
+        const yearFilter = document.getElementById('yearFilter');
+        yearFilter.innerHTML = '<option value="all">ทุกปี</option>' + years.map(y => `<option value="${y}">${y}</option>`).join('');
+
+        renderDashboard();
+        updatePendingBadge();
+        Swal.close();
+    } catch (err) {
+        Swal.fire('ผิดพลาด', 'ไม่สามารถโหลดข้อมูล: ' + err.message, 'error');
+    }
+}
+
+// ดึง common_fees จาก Supabase ตรง (แทนการเรียก GAS getData)
+async function fetchSupabaseCommonFees() {
+    let all = [];
+    let page = 0; const pageSize = 1000; let hasMore = true;
+    while (hasMore) {
+        const { data, error } = await supabase
+            .from('common_fees').select('*')
+            .order('reported_at', { ascending: false })
+            .range(page * pageSize, (page + 1) * pageSize - 1);
+        if (error) throw error;
+        if (data && data.length > 0) {
+            all = all.concat(data);
+            if (data.length < pageSize) hasMore = false;
+        } else hasMore = false;
+        page++;
+    }
+    // แปลงให้ตรงกับ schema เดิมที่ frontend ใช้อยู่
+    return all.map(r => ({
+        id: r.id,
+        reported_at: r.reported_at,
+        recorder: r.name,
+        house_number: r.house_number,
+        month: r.month,
+        year: r.year,
+        channel: r.payment_method,
+        note: r.remark,
+        amount: r.amount || 300,
+        amount_text: r.amount_text,
+        image_url: r.image_url,
+        inspector: r.inspector,
+        status: r.status,
+        verify_date: r.inspected_at ? new Date(r.inspected_at).toISOString().split('T')[0] : '',
+        pdf_url: r.pdf_url
+    }));
+}
+
+async function fetchSupabaseHouses() {
+    let allHouseData = [];
+    let page = 0; const pageSize = 1000; let hasMore = true;
+    while (hasMore) {
+        const { data, error } = await supabase
+            .from('house_payments').select('*')
+            .order('house_numbe', { ascending: true })
+            .order('year', { ascending: false })
+            .range(page * pageSize, (page + 1) * pageSize - 1);
+        if (error) throw error;
+        if (data && data.length > 0) {
+            allHouseData = allHouseData.concat(data);
+            if (data.length < pageSize) hasMore = false;
+        } else hasMore = false;
+        page++;
+    }
+    return allHouseData;
+}
+
+function updatePendingBadge() {
+    const badge = document.getElementById('pendingBadge');
+    if (pendingFees.length > 0) {
+        badge.textContent = pendingFees.length;
+        badge.classList.remove('hidden');
+    } else {
+        badge.classList.add('hidden');
+    }
+}
+
+// =============== DASHBOARD VIEW ===============
+function getFilteredData() {
+    let filtered = [...allData];
+    const yr = document.getElementById('yearFilter').value;
+    const sq = document.getElementById('searchInput').value.toLowerCase().trim();
+    const stat = document.getElementById('statusFilter').value;
+
+    if (yr !== 'all') filtered = filtered.filter(i => i.year.toString() === yr);
+    if (sq) filtered = filtered.filter(i =>
+        (i.house_numbe && i.house_numbe.toLowerCase() === sq) ||
+        (i.owner_name && i.owner_name.toLowerCase().includes(sq)) ||
+        (i.soi && i.soi.toLowerCase().includes(sq))
+    );
+    if (stat !== 'all') {
+        filtered = filtered.filter(i => {
+            const t = calculateHouseTotal(i);
+            if (stat === 'overdue') return t.unpaid > 0;
+            if (stat === 'waiting') return t.waiting > 0;
+            return true;
+        });
+    }
+    filtered.sort((a, b) => {
+        const c = String(a.house_numbe || '').localeCompare(String(b.house_numbe || ''), 'th', { numeric: true });
+        if (c !== 0) return c;
+        return parseInt(b.year || 0) - parseInt(a.year || 0);
+    });
+    return filtered;
+}
+
+function renderDashboard() {
+    const filtered = getFilteredData();
+
+    // Stats
+    let totalPaid = 0, totalUnpaid = 0;
+    filtered.forEach(h => { const t = calculateHouseTotal(h); totalPaid += t.paid; totalUnpaid += t.unpaid; });
+    document.getElementById('statPaid').textContent = '฿' + totalPaid.toLocaleString();
+    document.getElementById('statUnpaid').textContent = '฿' + totalUnpaid.toLocaleString();
+    document.getElementById('statCount').textContent = filtered.length;
+
+    // Table
+    const grid = document.getElementById('dashboardGrid');
+    if (filtered.length === 0) {
+        grid.innerHTML = '<div class="p-20 text-center text-slate-500">ไม่พบข้อมูล</div>';
+        return;
+    }
+    let html = '<table class="w-full text-left text-sm"><thead><tr class="text-slate-600 border-b-2 border-slate-200">';
+    html += '<th class="px-4 py-3 font-bold bg-slate-50 sticky left-0 z-20">บ้าน</th>';
+    html += '<th class="px-4 py-3 font-bold bg-slate-50 border-r border-slate-200">ปี</th>';
+    html += '<th class="px-4 py-3 font-bold">เจ้าของ</th>';
+    html += '<th class="px-4 py-3 font-bold text-center">ซอย</th>';
+    months.forEach(m => html += `<th class="px-2 py-3 font-bold text-center text-xs">${m.label}</th>`);
+    html += '<th class="px-4 py-3 font-bold text-right bg-green-50 text-green-700">ยอดจ่าย</th>';
+    html += '<th class="px-4 py-3 font-bold text-right bg-red-50 text-red-700">ยอดค้าง</th>';
+    html += '</tr></thead><tbody class="divide-y divide-slate-100">';
+
+    filtered.forEach(item => {
+        const totals = calculateHouseTotal(item);
+        html += '<tr class="hover:bg-slate-50 group">';
+        html += `<td class="px-4 py-3 font-extrabold text-slate-800 bg-white group-hover:bg-slate-50 sticky left-0 z-10">${item.house_numbe}</td>`;
+        html += `<td class="px-4 py-3 font-bold text-indigo-600 border-r border-slate-100">${item.year}</td>`;
+        html += `<td class="px-4 py-3 text-slate-600 max-w-[150px] truncate" title="${item.owner_name || ''}">${item.owner_name || '-'}</td>`;
+        html += `<td class="px-4 py-3 text-center text-slate-500">${item.soi || '-'}</td>`;
+        months.forEach(m => {
+            const status = item[m.key];
+            const isPending = status && status.includes('รอตรวจสอบ');
+            html += `<td class="px-2 py-3 text-center">`;
+            html += `<div class="status-cell ${getStatusClass(status)}" ${isPending ? `onclick="viewSlipFromGrid('${item.house_numbe}','${item.year}','${m.key}')" title="คลิกดูสลิป"` : ''}>${status || '-'}</div>`;
+            html += `</td>`;
+        });
+        html += `<td class="px-4 py-3 text-right font-bold text-green-600">${totals.paid > 0 ? '฿'+totals.paid.toLocaleString() : '-'}</td>`;
+        html += `<td class="px-4 py-3 text-right font-bold text-red-600">${totals.unpaid > 0 ? '฿'+totals.unpaid.toLocaleString() : '-'}</td>`;
+        html += '</tr>';
+    });
+    html += '</tbody></table>';
+    grid.innerHTML = html;
+}
+
+function viewSlipFromGrid(houseNumber, year, monthKey) {
+    const thaiMonth = Object.keys(monthMap).find(k => monthMap[k] === monthKey);
+    const slip = allTransactions.find(f =>
+        f.house_number === houseNumber && f.year.toString() === year.toString() &&
+        f.month === thaiMonth && f.image_url
+    );
+    if (slip) openImageModal(slip.image_url);
+    else Swal.fire('ไม่พบสลิป', 'ไม่พบรูปสลิปในระบบ', 'info');
+}
+
+// =============== MODALS ===============
+function openImageModal(url) {
+    document.getElementById('modalImage').src = url;
+    document.getElementById('modalImageLink').href = url;
+    document.getElementById('imageModal').classList.remove('hidden');
+}
+function closeImageModal() {
+    document.getElementById('imageModal').classList.add('hidden');
+}
+
+// =============== EXPORT CSV ===============
+function exportCSV() {
+    const filtered = getFilteredData();
+    const headers = ['บ้านเลขที่','ปี','เจ้าของ','ซอย', ...months.map(m => m.th), 'ยอดจ่าย','ยอดค้าง'];
+    const rows = filtered.map(i => {
+        const t = calculateHouseTotal(i);
+        return [i.house_numbe, i.year, i.owner_name || '', i.soi || '',
+            ...months.map(m => i[m.key] || '-'), t.paid, t.unpaid].map(v => `"${v}"`).join(',');
+    });
+    const csv = '\ufeff' + headers.join(',') + '\n' + rows.join('\n');
+    downloadCSV(csv, `Dashboard_${new Date().toISOString().slice(0,10)}.csv`);
+}
+
+function downloadCSV(csv, filename) {
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+}
+
+// =============== AUTO-LOGIN CHECK ===============
+window.addEventListener('DOMContentLoaded', () => {
+    const savedUser = localStorage.getItem('userName');
+    const savedName = localStorage.getItem('Name');
+    if (savedUser && savedName) {
+        currentUser = { user: savedUser, name: savedName };
+        showAdminPage();
+    }
+    lucide.createIcons();
+});
+
+// =============== PENDING VIEW ===============
+function renderPending() {
+    document.getElementById('pendingCount').textContent = pendingFees.length + ' รายการ';
+    const approveAllBtn = document.getElementById('approveAllBtn');
+    if (approveAllBtn) {
+        approveAllBtn.style.display = pendingFees.length > 0 ? 'flex' : 'none';
+    }
+    const list = document.getElementById('pendingList');
+    if (pendingFees.length === 0) {
+        list.innerHTML = `
+            <div class="text-center py-20 text-slate-500">
+                <i data-lucide="check-circle" class="w-12 h-12 text-green-400 mx-auto mb-3"></i>
+                <p class="text-lg font-medium">ไม่มีรายการรอตรวจสอบ</p>
+            </div>`;
+        lucide.createIcons();
+        return;
+    }
+    let html = '<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">';
+    pendingFees.forEach(fee => {
+        html += `
+            <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+                <div class="bg-gradient-to-r from-orange-400 to-orange-500 p-3 flex justify-between items-center text-white">
+                    <span class="font-bold flex items-center gap-2"><i data-lucide="home" class="w-4 h-4"></i> บ้าน ${fee.house_number}</span>
+                    <span class="text-xs bg-white/20 px-2 py-1 rounded-full font-semibold">ปี ${fee.year}</span>
+                </div>
+                <div class="p-4 space-y-2 text-sm">
+                    <div class="flex justify-between border-b border-slate-100 pb-2">
+                        <span class="text-slate-500">รอบเดือน:</span>
+                        <span class="font-bold bg-slate-100 px-2 py-0.5 rounded">${fee.month}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-slate-100 pb-2">
+                        <span class="text-slate-500">ยอดชำระ:</span>
+                        <span class="font-extrabold text-green-600">฿${(fee.amount || 300).toLocaleString()}</span>
+                    </div>
+                    <div class="flex justify-between text-xs">
+                        <span class="text-slate-500">วันที่แจ้ง:</span>
+                        <span class="text-slate-600">${fee.reported_at && fee.reported_at !== '-' ? new Date(fee.reported_at).toLocaleDateString('th-TH') : '-'}</span>
+                    </div>
+                    <div class="pt-3 grid grid-cols-2 gap-2">
+                        ${fee.image_url ? `<button onclick="openImageModal('${fee.image_url}')" class="py-2 bg-indigo-50 text-indigo-600 font-bold rounded-lg hover:bg-indigo-600 hover:text-white text-xs flex items-center justify-center gap-1"><i data-lucide="image" class="w-4 h-4"></i> ดูสลิป</button>`
+                            : `<div class="py-2 bg-slate-50 text-slate-400 text-xs text-center rounded-lg border border-dashed">ไม่มีสลิป</div>`}
+                        <button onclick="approvePending('${fee.id}')" class="py-2 bg-green-500 text-white font-bold rounded-lg hover:bg-green-600 text-xs flex items-center justify-center gap-1"><i data-lucide="check" class="w-4 h-4"></i> อนุมัติ + PDF</button>
+                    </div>
+                </div>
+            </div>`;
+    });
+    html += '</div>';
+    list.innerHTML = html;
+    lucide.createIcons();
+}
+
+async function approvePending(id) {
+    const result = await Swal.fire({
+        title: 'อนุมัติและออกใบเสร็จ?',
+        text: 'ระบบจะเปลี่ยนสถานะเป็น "ตรวจสอบแล้ว" และสร้างใบเสร็จ PDF',
+        icon: 'question', showCancelButton: true,
+        confirmButtonText: 'ใช่, อนุมัติ', cancelButtonText: 'ยกเลิก'
+    });
+    if (!result.isConfirmed) return;
+
+    Swal.fire({ title: 'กำลังประมวลผล...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    try {
+        await callGas('runPDF', { id, inspector: currentUser.name });
+        Swal.fire('สำเร็จ', 'อนุมัติและสร้างใบเสร็จเรียบร้อย', 'success');
+        await fetchAllData();
+        renderPending();
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    }
+}
+
+// อนุมัติทั้งหมดใน pending (ใช้ batch_approve_pdf)
+async function approveAllPending() {
+    if (pendingFees.length === 0) return;
+
+    const result = await Swal.fire({
+        title: `อนุมัติทั้งหมด ${pendingFees.length} รายการ?`,
+        html: `ระบบจะออกใบเสร็จ PDF และอัปเดตสถานะให้ทุกรายการ<br><span class="text-xs text-red-500">⚠️ กระบวนการนี้อาจใช้เวลาหลายนาที</span>`,
+        icon: 'question', showCancelButton: true,
+        confirmButtonText: 'ใช่, อนุมัติทั้งหมด', cancelButtonText: 'ยกเลิก',
+        confirmButtonColor: '#16a34a'
+    });
+    if (!result.isConfirmed) return;
+
+    const ids = pendingFees.map(f => f.id);
+    let totalSuccess = 0, totalFailed = 0, allErrors = [];
+    const BATCH_SIZE = 15;
+    const totalBatches = Math.ceil(ids.length / BATCH_SIZE);
+    let batchIndex = 0;
+
+    Swal.fire({
+        title: 'กำลังอนุมัติทั้งหมด',
+        html: `
+            <div class="text-start text-sm font-bold text-slate-600 mb-2">ความคืบหน้า:</div>
+            <div class="bg-slate-200 rounded-full h-6 mb-3 overflow-hidden">
+                <div id="apBar" class="bg-green-500 h-full text-white text-sm font-bold flex items-center justify-center transition-all" style="width:0%">0%</div>
+            </div>
+            <div id="apTxt" class="font-bold text-indigo-600">0 / ${ids.length} รายการ</div>
+            <div id="apBatchTxt" class="text-xs text-slate-500 mt-1">Batch 0 / ${totalBatches}</div>
+            <div class="text-xs text-red-500 mt-3">⚠️ กรุณาอย่าปิดหน้าต่างนี้</div>
+        `,
+        allowOutsideClick: false, showConfirmButton: false
+    });
+
+    const updateUI = () => {
+        const completed = totalSuccess + totalFailed;
+        const pct = Math.round((completed / ids.length) * 100);
+        const bar = document.getElementById('apBar');
+        const txt = document.getElementById('apTxt');
+        const btxt = document.getElementById('apBatchTxt');
+        if (bar) { bar.style.width = pct + '%'; bar.textContent = pct + '%'; }
+        if (txt) txt.textContent = `${completed} / ${ids.length} รายการ`;
+        if (btxt) btxt.textContent = `Batch ${batchIndex} / ${totalBatches}`;
+    };
+
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        batchIndex++;
+        const chunk = ids.slice(i, i + BATCH_SIZE);
+        try {
+            const res = await callGas('batch_approve_pdf', {
+                ids: chunk,
+                inspector: currentUser.name
+            });
+            totalSuccess += res.success || 0;
+            totalFailed += res.failed || 0;
+            if (res.errors && res.errors.length > 0) {
+                allErrors.push(...res.errors.map(e => `<b>${e.id}</b>: ${e.message}`));
+            }
+        } catch (e) {
+            totalFailed += chunk.length;
+            allErrors.push(`<b>Batch ${batchIndex}</b>: ${e.message}`);
+        }
+        updateUI();
+    }
+
+    if (allErrors.length === 0) {
+        Swal.fire('สำเร็จ', `อนุมัติเรียบร้อย ${totalSuccess} รายการ`, 'success');
+    } else {
+        Swal.fire({
+            icon: 'warning', title: 'อนุมัติไม่สมบูรณ์',
+            html: `<div class="text-start text-sm">สำเร็จ: ${totalSuccess} | ไม่สำเร็จ: ${totalFailed}<br><br><div class="bg-red-50 p-2 rounded max-h-40 overflow-y-auto text-xs">${allErrors.join('<br>')}</div></div>`
+        });
+    }
+    await fetchAllData();
+    renderPending();
+}
+
+// =============== TRANSACTIONS VIEW (PDF) ===============
+function renderTransactions() {
+    if ($.fn.DataTable.isDataTable('#txTable')) {
+        $('#txTable').DataTable().destroy();
+    }
+    const tbody = document.getElementById('txTableBody');
+    let html = '';
+    allTransactions.forEach(t => {
+        let badgeClass = 'bg-slate-200 text-slate-700';
+        if (t.status === 'ตรวจสอบแล้ว') badgeClass = 'bg-green-100 text-green-700 border border-green-300';
+        else if (t.status === 'รอตรวจสอบ') badgeClass = 'bg-yellow-100 text-yellow-700 border border-yellow-300';
+        else if (t.status === 'ยกเลิก' || t.status === 'โอนคืน') badgeClass = 'bg-red-100 text-red-700 border border-red-300';
+
+        html += `<tr class="border-b border-slate-100 hover:bg-slate-50">
+            <td class="px-3 py-2 text-center"><input type="checkbox" class="tx-row-check" value="${t.id}"></td>
+            <td class="px-3 py-2 font-bold">${t.house_number || '-'}</td>
+            <td class="px-3 py-2">${t.month || '-'}</td>
+            <td class="px-3 py-2">${t.year || '-'}</td>
+            <td class="px-3 py-2"><span class="px-2 py-1 rounded-full text-xs font-bold ${badgeClass}">${t.status || '-'}</span></td>
+            <td class="px-3 py-2 text-center">${t.image_url ? `<img src="${t.image_url}" onclick="openImageModal('${t.image_url}')" class="h-9 w-9 rounded border cursor-pointer hover:scale-110 transition-transform inline-block">` : '-'}</td>
+            <td class="px-3 py-2">${t.recorder || '-'}</td>
+            <td class="px-3 py-2 text-slate-500 text-xs">${t.inspector || '-'}</td>
+            <td class="px-3 py-2 text-center">${t.pdf_url ? `<a href="${t.pdf_url}" target="_blank" class="text-red-500 hover:text-red-700"><i data-lucide="file-text" class="w-5 h-5 inline"></i></a>` : '-'}</td>
+            <td class="px-3 py-2 text-center whitespace-nowrap">
+                <button onclick="editTx('${t.id}')" class="p-1.5 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200" title="แก้ไข"><i data-lucide="edit-2" class="w-4 h-4"></i></button>
+                <button onclick="deleteTx('${t.id}')" class="p-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200" title="ลบ"><i data-lucide="trash" class="w-4 h-4"></i></button>
+            </td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+    lucide.createIcons();
+
+    dataTable = $('#txTable').DataTable({
+        responsive: true, pageLength: 25, order: [[1, 'asc']],
+        language: {
+            search: 'ค้นหา:', lengthMenu: 'แสดง _MENU_ รายการ',
+            info: 'แสดง _START_ - _END_ จาก _TOTAL_',
+            paginate: { first:'แรก', last:'ท้าย', next:'ถัดไป', previous:'ก่อนหน้า' }
+        }
+    });
+}
+
+function applyTxFilters() {
+    if (!dataTable) return;
+    dataTable.column(2).search(document.getElementById('txFilterMonth').value).draw();
+    dataTable.column(3).search(document.getElementById('txFilterYear').value).draw();
+    dataTable.column(4).search(document.getElementById('txFilterStatus').value).draw();
+}
+function clearTxFilters() {
+    document.getElementById('txFilterMonth').value = '';
+    document.getElementById('txFilterYear').value = '';
+    document.getElementById('txFilterStatus').value = '';
+    if (dataTable) { dataTable.search('').columns().search('').draw(); }
+}
+
+async function runSelectedPDFs() {
+    const ids = Array.from(document.querySelectorAll('.tx-row-check:checked')).map(c => c.value);
+    if (ids.length === 0) return Swal.fire('เลือกข้อมูล', 'กรุณาเลือกรายการ', 'info');
+
+    let totalSuccess = 0, totalFailed = 0, allErrors = [];
+    const BATCH_SIZE = 15; // GAS timeout 6 นาที — แบ่ง batch ละ 15 ปลอดภัย
+    const totalBatches = Math.ceil(ids.length / BATCH_SIZE);
+    let batchIndex = 0;
+
+    Swal.fire({
+        title: 'กำลังสร้างใบเสร็จ PDF',
+        html: `
+            <div class="text-start text-sm font-bold text-slate-600 mb-2">ความคืบหน้า:</div>
+            <div class="bg-slate-200 rounded-full h-6 mb-3 overflow-hidden">
+                <div id="pdfBar" class="bg-green-500 h-full text-white text-sm font-bold flex items-center justify-center transition-all" style="width:0%">0%</div>
+            </div>
+            <div id="pdfTxt" class="font-bold text-indigo-600">0 / ${ids.length} รายการ</div>
+            <div id="pdfBatchTxt" class="text-xs text-slate-500 mt-1">Batch 0 / ${totalBatches}</div>
+            <div class="text-xs text-red-500 mt-3">⚠️ กรุณาอย่าปิดหน้าต่างนี้</div>
+        `,
+        allowOutsideClick: false, showConfirmButton: false
+    });
+
+    const updateUI = () => {
+        const completed = totalSuccess + totalFailed;
+        const pct = Math.round((completed / ids.length) * 100);
+        const bar = document.getElementById('pdfBar');
+        const txt = document.getElementById('pdfTxt');
+        const btxt = document.getElementById('pdfBatchTxt');
+        if (bar) { bar.style.width = pct + '%'; bar.textContent = pct + '%'; }
+        if (txt) txt.textContent = `${completed} / ${ids.length} รายการ`;
+        if (btxt) btxt.textContent = `Batch ${batchIndex} / ${totalBatches}`;
+    };
+
+    // เรียก batch_approve_pdf ทีละ batch (ส่งไปฝั่ง server ให้ loop เอง = เร็วกว่ามาก)
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        batchIndex++;
+        const chunk = ids.slice(i, i + BATCH_SIZE);
+        try {
+            const result = await callGas('batch_approve_pdf', {
+                ids: chunk,
+                inspector: currentUser.name
+            });
+            totalSuccess += result.success || 0;
+            totalFailed += result.failed || 0;
+            if (result.errors && result.errors.length > 0) {
+                allErrors.push(...result.errors.map(e => `<b>${e.id}</b>: ${e.message}`));
+            }
+        } catch (e) {
+            // ถ้า batch ทั้งก้อน fail ให้นับว่าทุกตัวใน chunk fail
+            totalFailed += chunk.length;
+            allErrors.push(`<b>Batch ${batchIndex}</b>: ${e.message}`);
+        }
+        updateUI();
+    }
+
+    if (allErrors.length === 0) {
+        Swal.fire('สำเร็จ', `ออกใบเสร็จ ${totalSuccess} รายการ`, 'success');
+    } else {
+        Swal.fire({
+            icon: 'warning', title: 'ออกใบเสร็จไม่สมบูรณ์',
+            html: `<div class="text-start text-sm">สำเร็จ: ${totalSuccess} | ไม่สำเร็จ: ${totalFailed}<br><br><div class="bg-red-50 p-2 rounded max-h-40 overflow-y-auto">${allErrors.join('<br>')}</div></div>`
+        });
+    }
+    await fetchAllData();
+    renderTransactions();
+}
+
+async function deleteSelected() {
+    const ids = Array.from(document.querySelectorAll('.tx-row-check:checked')).map(c => c.value);
+    if (ids.length === 0) return Swal.fire('เลือกข้อมูล', 'กรุณาเลือกรายการ', 'info');
+
+    const result = await Swal.fire({
+        title: `ลบ ${ids.length} รายการ?`, text: 'ลบแล้วไม่สามารถกู้คืนได้',
+        icon: 'warning', showCancelButton: true, confirmButtonText: 'ใช่, ลบ', cancelButtonText: 'ยกเลิก'
+    });
+    if (!result.isConfirmed) return;
+
+    Swal.fire({ title: 'กำลังลบ...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    try {
+        for (const id of ids) {
+            const row = allTransactions.find(t => t.id == id);
+            await callGas('delRecord', { record: id, oldfile: row ? row.image_url : '' });
+        }
+        Swal.fire('ลบเรียบร้อย', '', 'success');
+        await fetchAllData();
+        renderTransactions();
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    }
+}
+
+async function deleteTx(id) {
+    const result = await Swal.fire({
+        title: 'ยืนยันการลบ?', icon: 'warning', showCancelButton: true,
+        confirmButtonText: 'ใช่, ลบ', cancelButtonText: 'ยกเลิก'
+    });
+    if (!result.isConfirmed) return;
+    Swal.fire({ title: 'กำลังลบ...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    try {
+        const row = allTransactions.find(t => t.id == id);
+        await callGas('delRecord', { record: id, oldfile: row ? row.image_url : '' });
+        Swal.fire('ลบเรียบร้อย', '', 'success');
+        await fetchAllData();
+        renderTransactions();
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    }
+}
+
+function openAddModal() {
+    document.getElementById('txForm').reset();
+    document.getElementById('tx_numid').value = '';
+    document.getElementById('tx_oldfile').value = '';
+    document.getElementById('tx_oldFilePreview').classList.add('hidden');
+    document.getElementById('txModalTitle').textContent = 'เพิ่มรายการรับชำระ';
+    document.getElementById('tx_recorder').value = currentUser.name;
+    document.getElementById('tx_verifyDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('txModal').classList.remove('hidden');
+    lucide.createIcons();
+}
+function closeTxModal() {
+    document.getElementById('txModal').classList.add('hidden');
+}
+
+function editTx(id) {
+    const r = allTransactions.find(t => t.id == id);
+    if (!r) return;
+    document.getElementById('txForm').reset();
+    document.getElementById('txModalTitle').textContent = 'แก้ไขรายการ';
+    document.getElementById('tx_numid').value = r.id;
+    document.getElementById('tx_recorder').value = r.recorder || '';
+    document.getElementById('tx_house').value = r.house_number || '';
+    document.getElementById('tx_month').value = r.month || '';
+    document.getElementById('tx_year').value = r.year || '';
+    if (r.channel) {
+        const radio = document.querySelector(`input[name="tx_channel"][value="${r.channel}"]`);
+        if (radio) radio.checked = true;
+    }
+    document.getElementById('tx_note').value = r.note || '';
+    document.getElementById('tx_status').value = r.status || 'รอตรวจสอบ';
+    document.getElementById('tx_verifyDate').value = r.verify_date || new Date().toISOString().split('T')[0];
+    document.getElementById('tx_oldfile').value = r.image_url || '';
+    if (r.image_url) {
+        document.getElementById('tx_oldFileImg').src = r.image_url;
+        document.getElementById('tx_oldFilePreview').classList.remove('hidden');
+    }
+    document.getElementById('txModal').classList.remove('hidden');
+    lucide.createIcons();
+}
+
+async function submitTxForm(e) {
+    e.preventDefault();
+    const obj = {
+        numid: document.getElementById('tx_numid').value,
+        oldfile: document.getElementById('tx_oldfile').value,
+        datastud1: document.getElementById('tx_recorder').value,
+        datastud2: document.getElementById('tx_house').value,
+        datastud3: document.getElementById('tx_month').value,
+        datastud4: document.getElementById('tx_year').value,
+        datastud5: document.querySelector('input[name="tx_channel"]:checked')?.value || '',
+        datastud6: document.getElementById('tx_note').value,
+        note: document.getElementById('tx_status').value,
+        datastud7: document.getElementById('tx_verifyDate').value,
+        datastud8: 'สามร้อยบาทถ้วน',
+        datastud9: '300',
+        fullname: currentUser.name
+    };
+
+    const fileInput = document.getElementById('tx_file');
+    if (fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        const base64 = await new Promise(res => {
+            const reader = new FileReader();
+            reader.onload = () => res(reader.result.split(',')[1]);
+            reader.readAsDataURL(file);
+        });
+        obj.myFile = { name: file.name, mimeType: file.type, data: base64 };
+    }
+
+    Swal.fire({ title: 'กำลังบันทึก...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    try {
+        const action = obj.numid === '' ? 'addRecord' : 'updateRecord';
+        await callGas(action, { form: obj });
+        closeTxModal();
+        Swal.fire('สำเร็จ', 'บันทึกข้อมูลเรียบร้อย', 'success');
+        await fetchAllData();
+        renderTransactions();
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    }
+}
+
+// =============== ANALYTICS VIEW ===============
+function renderAnalytics() {
+    const filtered = getFilteredData();
+    const monthlyData = months.map(m => ({ ...m, paid: 0, unpaid: 0, waiting: 0 }));
+    const soiMap = {};
+
+    filtered.forEach(item => {
+        months.forEach((m, idx) => {
+            const s = item[m.key] || '';
+            if (s.includes('จ่ายแล้ว') || s.includes('ชำระแล้ว') || s.includes('ล่วงหน้า')) monthlyData[idx].paid += 300;
+            else if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) {
+                monthlyData[idx].unpaid += 300;
+                const soi = item.soi ? item.soi.trim() : 'ไม่ระบุ';
+                soiMap[soi] = (soiMap[soi] || 0) + 300;
+            }
+            else if (s.includes('รอตรวจสอบ') || s.includes('รอข้อมูล')) monthlyData[idx].waiting += 300;
+        });
+    });
+
+    const maxAmount = Math.max(...monthlyData.map(d => d.paid + d.unpaid + d.waiting), 1);
+
+    // Render bar chart
+    let chartHtml = '';
+    monthlyData.forEach(m => {
+        const total = m.paid + m.unpaid + m.waiting;
+        const totalPct = (total / maxAmount) * 100;
+        const paidPct = total > 0 ? (m.paid / total) * 100 : 0;
+        const unpaidPct = total > 0 ? (m.unpaid / total) * 100 : 0;
+        const waitingPct = total > 0 ? (m.waiting / total) * 100 : 0;
+        chartHtml += `
+            <div class="flex-1 flex flex-col items-center justify-end h-full gap-1" title="${m.label}: ฿${total.toLocaleString()}">
+                <div class="text-xs text-slate-500 font-bold">฿${(total/1000).toFixed(0)}k</div>
+                <div class="w-full flex flex-col bar-grow rounded-t overflow-hidden" style="height: ${totalPct}%; min-height: 2px;">
+                    <div class="bg-yellow-400" style="height: ${waitingPct}%"></div>
+                    <div class="bg-red-500" style="height: ${unpaidPct}%"></div>
+                    <div class="bg-green-500" style="height: ${paidPct}%"></div>
+                </div>
+                <div class="text-xs font-bold text-slate-600 mt-1">${m.label}</div>
+            </div>`;
+    });
+    document.getElementById('monthlyChart').innerHTML = chartHtml;
+
+    // Soi Ranking
+    const ranking = Object.entries(soiMap).map(([n,a]) => ({ name:n, amount:a })).sort((a,b)=>b.amount-a.amount).slice(0,10);
+    const maxSoi = Math.max(...ranking.map(r => r.amount), 1);
+    let rankHtml = '';
+    if (ranking.length === 0) {
+        rankHtml = '<p class="text-center text-slate-500 py-8">ไม่มีข้อมูลค้างชำระ</p>';
+    } else {
+        ranking.forEach((s, i) => {
+            const pct = (s.amount / maxSoi) * 100;
+            rankHtml += `
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="font-medium text-slate-700">${i+1}. ซอย ${s.name}</span>
+                        <span class="font-bold text-red-600">฿${s.amount.toLocaleString()}</span>
+                    </div>
+                    <div class="bg-slate-100 rounded-full h-2 overflow-hidden">
+                        <div class="bg-gradient-to-r from-red-400 to-red-600 h-full rounded-full" style="width:${pct}%"></div>
+                    </div>
+                </div>`;
+        });
+    }
+    document.getElementById('soiRanking').innerHTML = rankHtml;
+}
+
+// =============== OVERDUE VIEW ===============
+function getOverdueSummary() {
+    const summary = {};
+    allData.forEach(item => {
+        let overdueCount = 0;
+        months.forEach(m => {
+            const s = item[m.key] || '';
+            if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) overdueCount++;
+        });
+        if (overdueCount > 0) {
+            if (!summary[item.house_numbe]) {
+                summary[item.house_numbe] = { houseNo: item.house_numbe, ownerName: item.owner_name, soi: item.soi, totalMonths: 0, totalAmount: 0 };
+            }
+            summary[item.house_numbe].totalMonths += overdueCount;
+            summary[item.house_numbe].totalAmount += overdueCount * 300;
+        }
+    });
+    return Object.values(summary).sort((a,b) => b.totalMonths - a.totalMonths);
+}
+
+function renderOverdue() {
+    const data = getOverdueSummary();
+    const tbody = document.getElementById('overdueTableBody');
+    if (data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-12 text-center text-slate-500">ไม่มีบ้านที่ค้างชำระ 🎉</td></tr>';
+        return;
+    }
+    tbody.innerHTML = data.map((d, i) => `
+        <tr class="border-b border-slate-100 hover:bg-slate-50">
+            <td class="px-4 py-3">${i+1}</td>
+            <td class="px-4 py-3 font-bold">${d.houseNo}</td>
+            <td class="px-4 py-3">${d.soi || '-'}</td>
+            <td class="px-4 py-3">${d.ownerName || '-'}</td>
+            <td class="px-4 py-3 text-right font-bold text-red-600">${d.totalMonths} เดือน</td>
+            <td class="px-4 py-3 text-right font-bold text-red-600">฿${d.totalAmount.toLocaleString()}</td>
+        </tr>`).join('');
+}
+
+function exportOverdueCSV() {
+    const data = getOverdueSummary();
+    const headers = ['ลำดับ','บ้านเลขที่','ซอย','เจ้าของ','เดือนที่ค้าง','ยอดค้าง'];
+    const rows = data.map((d, i) => [i+1, d.houseNo, d.soi || '', d.ownerName || '', d.totalMonths, d.totalAmount].map(v => `"${v}"`).join(','));
+    const csv = '\ufeff' + headers.join(',') + '\n' + rows.join('\n');
+    downloadCSV(csv, `Overdue_${new Date().toISOString().slice(0,10)}.csv`);
+}
+
+// =============== SETTINGS ===============
+async function handleAdminUpdateStatus() {
+    const year = document.getElementById('updateTargetYear').value;
+    const monthKey = document.getElementById('updateTargetMonth').value;
+    if (!year || !monthKey) return;
+
+    const result = await Swal.fire({
+        title: `อัปเดตสถานะ?`,
+        text: `จะเปลี่ยน "รอข้อมูล/ว่าง" ของเดือน ${monthKey} ปี ${year} เป็น "ยังไม่จ่าย"`,
+        icon: 'question', showCancelButton: true,
+        confirmButtonText: 'ใช่', cancelButtonText: 'ยกเลิก'
+    });
+    if (!result.isConfirmed) return;
+
+    Swal.fire({ title: 'กำลังอัปเดต...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    try {
+        let allRows = [], page = 0, pageSize = 1000, hasMore = true;
+        while (hasMore) {
+            const { data, error } = await supabase.from('house_payments').select('*').eq('year', year).range(page*pageSize, (page+1)*pageSize-1);
+            if (error) throw error;
+            if (data && data.length > 0) { allRows = allRows.concat(data); if (data.length < pageSize) hasMore = false; } else hasMore = false;
+            page++;
+        }
+        let updated = 0;
+        for (const row of allRows) {
+            const cur = row[monthKey] ? String(row[monthKey]).trim() : '';
+            if (!cur || cur === 'รอข้อมูล' || cur === '-') {
+                const { error } = await supabase.from('house_payments').update({ [monthKey]: 'ยังไม่จ่าย' }).eq('house_numbe', row.house_numbe).eq('year', year);
+                if (!error) updated++;
+            }
+        }
+        Swal.fire('สำเร็จ', `อัปเดต ${updated} รายการ`, 'success');
+        await fetchAllData();
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    }
+}
+
+async function handleGenerateNewYearData() {
+    const newYear = document.getElementById('newYearTarget').value;
+    if (!newYear) return;
+
+    Swal.fire({ title: 'กำลังตรวจสอบ...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    try {
+        const { count, error: e1 } = await supabase.from('house_payments').select('*', { count: 'exact', head: true }).eq('year', newYear);
+        if (e1) throw e1;
+        if (count > 0) {
+            const r = await Swal.fire({
+                title: 'มีข้อมูลอยู่แล้ว', text: `ปี ${newYear} มี ${count} รายการ ต้องการสร้างทับซ้อนหรือไม่?`,
+                icon: 'warning', showCancelButton: true, confirmButtonText: 'สร้างต่อ', cancelButtonText: 'ยกเลิก'
+            });
+            if (!r.isConfirmed) return;
+        }
+
+        const years = [...new Set(allData.map(d => d.year))].sort((a,b) => b-a);
+        const maxYear = years[0];
+        let baseHouses = [], page = 0, pageSize = 1000, hasMore = true;
+        while (hasMore) {
+            const { data, error } = await supabase.from('house_payments').select('house_numbe,owner_name,soi').eq('year', maxYear).range(page*pageSize, (page+1)*pageSize-1);
+            if (error) throw error;
+            if (data && data.length > 0) { baseHouses = baseHouses.concat(data); if (data.length < pageSize) hasMore = false; } else hasMore = false;
+            page++;
+        }
+
+        const seen = new Set();
+        const unique = baseHouses.filter(h => { if (seen.has(h.house_numbe)) return false; seen.add(h.house_numbe); return true; });
+
+        const baseY = 2566;
+        const yPrefix = parseInt(newYear) > baseY ? parseInt(newYear) - baseY : 1;
+        const newRecords = unique.map((h, idx) => ({
+            house_numbe: h.house_numbe, owner_name: h.owner_name, soi: h.soi, year: newYear,
+            sequence_no: `INV${yPrefix}${String(idx+1).padStart(3,'0')}`,
+            jan:'รอข้อมูล',feb:'รอข้อมูล',mar:'รอข้อมูล',apr:'รอข้อมูล',may:'รอข้อมูล',jun:'รอข้อมูล',
+            jul:'รอข้อมูล',aug:'รอข้อมูล',sep:'รอข้อมูล',oct:'รอข้อมูล',nov:'รอข้อมูล',dec:'รอข้อมูล',
+            status: 'รอข้อมูล'
+        }));
+
+        Swal.fire({ title: 'กำลังบันทึก...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+        const { error: e2 } = await supabase.from('house_payments').insert(newRecords);
+        if (e2) throw e2;
+        Swal.fire('สำเร็จ', `สร้างข้อมูลปี ${newYear} จำนวน ${newRecords.length} หลัง`, 'success');
+        await fetchAllData();
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    }
+}
+
+// =============== GLOBAL SYNC ===============
+async function handleGlobalSync() {
+    const btn = document.getElementById('syncBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> กำลังซิงค์...';
+
+    try {
+        if (allData.length === 0) return;
+        const feesMap = {};
+        allTransactions.forEach(fee => {
+            const key = `${fee.house_number}-${fee.year}`;
+            if (!feesMap[key]) feesMap[key] = [];
+            feesMap[key].push(fee);
+        });
+        let updated = 0;
+        for (const house of allData) {
+            const key = `${house.house_numbe}-${house.year}`;
+            const fees = feesMap[key];
+            if (!fees) continue;
+            fees.sort((a,b) => new Date(a.reported_at) - new Date(b.reported_at));
+            const updates = {}; let hasChange = false;
+            fees.forEach(fee => {
+                const col = monthMap[fee.month];
+                if (!col) return;
+                const cur = house[col];
+                const isPending = (fee.status.includes('รอ') || fee.status.includes('ตรวจสอบ') || fee.status.includes('กำลัง')) && !fee.status.includes('แล้ว');
+                const isPaid = fee.status.includes('ตรวจสอบแล้ว') || fee.status.includes('อนุมัติ') || fee.status.includes('ถูกต้อง');
+                if (isPending && cur !== 'รอตรวจสอบ') { updates[col] = 'รอตรวจสอบ'; hasChange = true; }
+                else if (isPaid && cur !== 'จ่ายแล้ว') { updates[col] = 'จ่ายแล้ว'; hasChange = true; }
+            });
+            if (hasChange) {
+                await supabase.from('house_payments').update(updates).eq('house_numbe', house.house_numbe).eq('year', house.year);
+                updated++;
+            }
+        }
+        showToast('success', `ซิงค์เสร็จ อัปเดต ${updated} รายการ`);
+        if (updated > 0) await fetchAllData();
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="refresh-cw" class="w-4 h-4"></i> <span class="hidden md:inline">ซิงค์ข้อมูล</span>';
+        lucide.createIcons();
+    }
+}
+</script>
+
+</body>
 </html>
