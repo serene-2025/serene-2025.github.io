@@ -13,6 +13,9 @@
     <!-- โหลด Supabase SDK แบบ UMD (รองรับมือถือ 100% ไม่ใช้ Module) -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     
+    <!-- 🌟 โหลดไลบรารี html5-qrcode สำหรับระบบกล้องสำรอง -->
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    
     <style>
         body { overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; } 
         .pb-safe { padding-bottom: env(safe-area-inset-bottom); } 
@@ -32,6 +35,10 @@
         
         .loader { border: 4px solid #f3f3f3; border-top: 4px solid #4f46e5; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* สไตล์สำหรับกล้องสำรองสแกน QR */
+        #qr-reader { width: 100%; max-width: 400px; margin: 0 auto; border-radius: 1rem; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
+        #qr-reader__scan_region { background: white; }
     </style>
 </head>
 <body class="bg-slate-50 text-gray-800 font-sans antialiased h-screen flex flex-col overflow-hidden relative">
@@ -214,7 +221,7 @@
                     </div>
                 </div>
 
-                <!-- การ์ดต้อนรับ (เพิ่มข้อมูล เบอร์ และ รหัส) -->
+                <!-- การ์ดต้อนรับ -->
                 <div class="bg-animated-gradient p-6 rounded-3xl shadow-lg shadow-indigo-500/20 text-white relative overflow-hidden transform transition-all">
                     <div class="absolute top-0 right-0 w-40 h-40 bg-white opacity-10 rounded-full blur-2xl -mr-10 -mt-10"></div>
                     <div class="absolute bottom-0 left-0 w-32 h-32 bg-white opacity-10 rounded-full blur-xl -ml-8 -mb-8"></div>
@@ -341,27 +348,40 @@
             <!-- แท็บ: เดินตรวจ (Patrol) -->
             <div id="patrolView" class="hidden fade-in">
                 <!-- ส่วนสแกนจุดตรวจอัจฉริยะ -->
-                <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 mt-2">
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 mt-2 relative">
                     <div class="text-center mb-6 mt-2">
                         <h3 class="text-xl font-bold text-gray-800">ระบบเดินตรวจ</h3>
                         <p class="text-sm text-gray-500">บันทึกจุดตรวจโดยการสแกน QR Code</p>
                     </div>
 
-                    <!-- ปุ่มเปิดสแกน QR LINE -->
-                    <button onclick="scanCheckpointQR()" class="w-full bg-slate-800 hover:bg-slate-700 text-white py-6 rounded-2xl font-bold text-lg shadow-lg shadow-slate-300 flex flex-col justify-center items-center gap-2 transition active:scale-95 mb-2">
+                    <!-- 🌟 กล่องแสดงกล้องสแกน QR สำรอง (HTML5-QRCode Fallback) -->
+                    <div id="qrScannerContainer" class="hidden mb-6">
+                        <div id="qr-reader" class="mx-auto border-4 border-orange-200 rounded-2xl overflow-hidden shadow-inner"></div>
+                        <button onclick="stopQRScanner()" class="mt-3 w-full bg-slate-200 hover:bg-slate-300 text-slate-700 py-3 rounded-xl font-bold text-sm transition">
+                            ยกเลิกการสแกน
+                        </button>
+                    </div>
+
+                    <!-- ปุ่มเปิดสแกน QR -->
+                    <button id="startScanBtn" onclick="scanCheckpointQR()" class="w-full bg-slate-800 hover:bg-slate-700 text-white py-6 rounded-2xl font-bold text-lg shadow-lg shadow-slate-300 flex flex-col justify-center items-center gap-2 transition active:scale-95 mb-2">
                         <span class="text-4xl drop-shadow-md mb-1">📱</span> สแกน QR Code ประจำจุด
                     </button>
                     
                     <!-- ส่วนแจ้งเตือนและข้อความสถานะระหว่างรอสแกน -->
                     <div id="patrolScanStatus" class="bg-orange-50 border border-orange-100 rounded-xl p-4 text-center mt-4">
-                        <p class="text-sm text-orange-700 font-bold mb-1">⚠️ โปรดสแกน QR Code ประจำจุดตรวจ</p>
-                        <p class="text-xs text-orange-600">ระบบจะทำการเลือกจุดและเปิดกล้องให้อัตโนมัติเมื่อสแกนสำเร็จ</p>
+                        <p class="text-sm text-orange-700 font-bold mb-1">⚠️ คำแนะนำ</p>
+                        <p class="text-xs text-orange-600 mb-3">กดปุ่มสแกนด้านบนเพื่อตรวจสอบพิกัด หากกล้องมีปัญหาให้เลือกจุดตรวจด้วยตนเองด้านล่าง</p>
+                        <button onclick="showManualDropdown()" class="text-xs font-bold text-orange-700 underline px-2 py-1">เลือกจุดตรวจเอง (กรณีฉุกเฉิน)</button>
                     </div>
 
-                    <!-- ซ่อน dropdown เลือกจุด และ ปุ่มถ่ายรูปแบบแมนนวล แต่ยังเก็บไว้เผื่ออ้างอิงค่า -->
-                    <select id="checkpointSelect" class="hidden w-full border-2 border-gray-100 p-3.5 rounded-2xl mb-4 bg-slate-50 focus:outline-none focus:ring-4 focus:ring-orange-500/20 focus:border-orange-400 text-sm font-bold text-gray-700 shadow-inner appearance-none" onchange="handleCheckpointChange()">
-                        <option value="">-- กรุณาเลือกจุดตรวจ --</option>
-                    </select>
+                    <!-- Dropdown เลือกจุดแบบ Manual (กู้คืนมาแล้วเพื่อเป็น Fallback) -->
+                    <div id="manualDropdownContainer" class="hidden mt-4 p-4 bg-gray-50 rounded-xl border border-gray-200 fade-in">
+                        <label class="block text-xs font-semibold text-gray-500 mb-1">รายชื่อจุดตรวจ</label>
+                        <select id="checkpointSelect" class="w-full border-2 border-gray-200 p-3 rounded-xl mb-3 bg-white focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm font-bold text-gray-700 appearance-none" onchange="handleManualSelection()">
+                            <option value="">-- กรุณาเลือกจุดตรวจ --</option>
+                        </select>
+                        <button onclick="document.getElementById('manualDropdownContainer').classList.add('hidden'); document.getElementById('startScanBtn').classList.remove('hidden'); document.getElementById('patrolScanStatus').classList.remove('hidden');" class="text-[10px] text-gray-400 underline block text-center w-full">ซ่อนการเลือกแมนนวล</button>
+                    </div>
 
                     <input type="file" id="patrolCameraInput" accept="image/*" capture="environment" class="hidden" onchange="handlePhotoCapture(event, 'patrol')">
                 </div>
@@ -421,46 +441,6 @@
                     <button onclick="submitReport()" class="w-full bg-gradient-to-r from-red-600 to-red-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg shadow-red-200 mt-2 active:scale-95 flex justify-center items-center gap-2">
                         ส่งรายงานเข้าระบบส่วนกลาง 🚀
                     </button>
-                </div>
-            </div>
-
-            <!-- แท็บ: กฎระเบียบ (Rules View) -->
-            <div id="rulesView" class="hidden space-y-4 fade-in mt-2">
-                <!-- ตารางเวลาปฏิบัติงาน -->
-                <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
-                    <div class="flex items-center gap-3 mb-4 border-b border-gray-100 pb-3">
-                        <div class="bg-blue-100 p-2 rounded-xl text-blue-600 text-xl shadow-inner">⏱️</div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-lg">ตารางเวลาปฏิบัติงาน รปภ.</h3>
-                            <p class="text-[11px] text-gray-500 font-medium mt-0.5">สถานะไม้กั้น (ใช้เหมือนกันทั้ง 2 กะ)</p>
-                        </div>
-                    </div>
-
-                    <div class="space-y-3">
-                        <!-- 06.00 - 08.00 -->
-                        <div class="flex items-stretch gap-3 border border-red-100 bg-red-50/40 rounded-2xl p-3 relative overflow-hidden shadow-sm">
-                            <div class="w-1.5 bg-red-400 absolute left-0 top-0 bottom-0"></div>
-                            <div class="flex-1 pl-2">
-                                <div class="flex justify-between items-center mb-1.5">
-                                    <span class="font-black text-red-700 text-sm">06.00 - 08.00 น. <span class="text-[10px] font-bold text-red-500">(กะเช้า)</span></span>
-                                    <span class="text-[9px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-md">ช่วงเร่งด่วน</span>
-                                </div>
-                                <div class="text-[11px] text-gray-600 mb-2.5 font-bold">ภารกิจ: ระบายรถออก</div>
-                                <div class="flex gap-2">
-                                    <div class="flex-1 bg-white p-2 rounded-xl border border-red-100 text-center shadow-sm">
-                                        <span class="block text-[9px] text-gray-400 font-bold mb-0.5">สถานะไม้กั้น "ขาออก"</span>
-                                        <span class="text-[13px] font-black text-red-600">**เปิดค้าง**</span>
-                                        <span class="block text-[8px] text-red-400 mt-0.5">(เพื่อระบายรถ)</span>
-                                    </div>
-                                    <div class="flex-1 bg-white p-2 rounded-xl border border-gray-100 text-center shadow-sm">
-                                        <span class="block text-[9px] text-gray-400 font-bold mb-0.5">สถานะไม้กั้น "ขาเข้า"</span>
-                                        <span class="text-[11px] font-bold text-green-600">ระบบปกติ</span>
-                                        <span class="block text-[8px] text-green-500 mt-0.5">(คัดกรองเข้มงวด)</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
 
@@ -550,6 +530,7 @@
         let currentActiveTab = 'home'; 
         let historyLogsData = {}; 
         let gpsWatchId = null;
+        let html5QrcodeScanner = null; // ตัวแปรสำหรับกล้องสำรอง
 
         // ==========================================
         // Modal Alert
@@ -610,7 +591,6 @@
                 await initLiffSafely();
 
                 statusText.innerText = "กำลังดึงข้อมูลโครงการ...";
-                // 🟢 แก้ไข: ใช้ .limit(1) แทน .single() เพื่อป้องกัน Error 406 กรณีที่ตารางยังไม่มีข้อมูล
                 const { data: settingsData, error: dbError } = await sbClient.from('system_settings').select('*').limit(1);
                 
                 if (dbError) {
@@ -864,7 +844,16 @@
             try {
                 const { data } = await sbClient.from('checkpoints').select('*').order('id', { ascending: true });
                 checkpointsData = {}; 
-                data?.forEach(cp => { checkpointsData[cp.id] = { lat: cp.lat, lng: cp.lng, radius: cp.radius_meters || 20, name: cp.name }; });
+                const cpSelect = document.getElementById('checkpointSelect');
+                if (cpSelect) {
+                    cpSelect.innerHTML = '<option value="">-- กรุณาเลือกจุดตรวจ --</option>';
+                    data?.forEach(cp => { 
+                        checkpointsData[cp.id] = { lat: cp.lat, lng: cp.lng, radius: cp.radius_meters || 20, name: cp.name }; 
+                        const opt = document.createElement('option');
+                        opt.value = cp.id; opt.text = `📍 ${cp.name}`;
+                        cpSelect.appendChild(opt);
+                    });
+                }
             } catch(e) {}
         }
 
@@ -875,6 +864,9 @@
             currentActiveTab = activeTab; 
             document.getElementById('previewSection').classList.add('hidden');
             
+            // ปิดกล้องถ้าเปิดทิ้งไว้
+            if(html5QrcodeScanner) window.stopQRScanner();
+
             const globalHeader = document.getElementById('globalHeader');
             if (activeTab === 'home' || activeTab === 'report' || activeTab === 'rules') {
                 globalHeader.classList.add('hidden');
@@ -976,34 +968,105 @@
         }
 
         // ==========================================
-        // การถ่ายรูป & บันทึก
+        // 🌟 ระบบสแกน QR อัจฉริยะ (LIFF + HTML5-QR Fallback)
         // ==========================================
         window.scanCheckpointQR = function() {
-            if (typeof liff === 'undefined' || !liff.isInClient()) return showCustomAlert('แจ้งเตือน', 'รองรับเฉพาะในแอป LINE เท่านั้น', 'warning');
-            if (!liff.scanCodeV2) return showCustomAlert('ข้อผิดพลาด', 'ยังไม่เปิดสิทธิ์ Scan QR บน LINE Developers', 'error');
-
-            liff.scanCodeV2().then(result => {
-                if (result && result.value) {
-                    const scannedValue = result.value.trim(); 
-                    if (checkpointsData[scannedValue]) {
-                        const selectEl = document.getElementById('checkpointSelect');
-                        if (!selectEl) {
-                           const ts = document.createElement('select'); ts.id = 'checkpointSelect'; ts.classList.add('hidden');
-                           const opt = document.createElement('option'); opt.value = scannedValue; opt.text = checkpointsData[scannedValue].name;
-                           ts.appendChild(opt); document.body.appendChild(ts);
-                        } else {
-                           selectEl.innerHTML = `<option value="${scannedValue}">${checkpointsData[scannedValue].name}</option>`;
+            // ลองใช้กล้องของ LINE (LIFF) ก่อนเพราะมีความเสถียรสุด
+            if (typeof liff !== 'undefined' && liff.isInClient() && liff.scanCodeV2) {
+                liff.scanCodeV2().then(result => {
+                    if (result && result.value) {
+                        const scannedValue = result.value.trim(); 
+                        if (checkpointsData[scannedValue]) {
+                            const selectEl = document.getElementById('checkpointSelect');
+                            if (selectEl) selectEl.value = scannedValue;
+                            
+                            if(currentLocation) updateLocationUI({ coords: { latitude: currentLocation.lat, longitude: currentLocation.lng } });
+                            showCustomAlert('สแกนสำเร็จ', `จุดตรวจ: ${checkpointsData[scannedValue].name}\nระบบกำลังตรวจสอบพิกัด...`, 'success');
+                            
+                            setTimeout(() => { closeCustomAlert(); window.checkLocationAndCapture('patrol'); }, 2000);
+                        } else { 
+                            showCustomAlert('ไม่พบข้อมูล', `รหัส QR (${scannedValue}) ไม่มีในระบบจุดตรวจ`, 'error'); 
                         }
+                    }
+                }).catch(err => {
+                    console.warn("LIFF Scan Error (Fallback to HTML5 QR):", err);
+                    // หากผู้ใช้ไม่อนุญาต หรือมีปัญหา ให้สลับไปใช้กล้องบนหน้าเว็บแทน
+                    window.startHTML5QRScanner();
+                });
+            } else {
+                // กรณีไม่ได้เปิดใน LINE หรือ LIFF ไม่รองรับฟังก์ชันสแกน
+                window.startHTML5QRScanner();
+            }
+        }
+
+        window.startHTML5QRScanner = function() {
+            document.getElementById('qrScannerContainer').classList.remove('hidden');
+            document.getElementById('startScanBtn').classList.add('hidden');
+            document.getElementById('patrolScanStatus').classList.add('hidden');
+            document.getElementById('manualDropdownContainer').classList.add('hidden');
+
+            if (!html5QrcodeScanner) {
+                html5QrcodeScanner = new Html5Qrcode("qr-reader");
+            }
+
+            const config = { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 };
+
+            html5QrcodeScanner.start({ facingMode: "environment" }, config, 
+                (decodedText) => {
+                    window.stopQRScanner();
+                    const scannedValue = decodedText.trim();
+
+                    if (checkpointsData && checkpointsData[scannedValue]) {
+                        const selectEl = document.getElementById('checkpointSelect');
+                        if (selectEl) selectEl.value = scannedValue;
                         
                         if(currentLocation) updateLocationUI({ coords: { latitude: currentLocation.lat, longitude: currentLocation.lng } });
                         showCustomAlert('สแกนสำเร็จ', `จุดตรวจ: ${checkpointsData[scannedValue].name}\nระบบกำลังตรวจสอบพิกัด...`, 'success');
                         
                         setTimeout(() => { closeCustomAlert(); window.checkLocationAndCapture('patrol'); }, 2000);
-                    } else { showCustomAlert('ไม่พบข้อมูล', `รหัส (${scannedValue}) ไม่มีในระบบ`, 'error'); }
-                }
-            }).catch(err => console.error(err));
+
+                        if (navigator.vibrate) navigator.vibrate(200);
+                    } else {
+                        showCustomAlert('ไม่พบข้อมูล', `รหัส QR Code (${scannedValue}) ไม่มีในระบบจุดตรวจ`, 'error');
+                        document.getElementById('patrolScanStatus').classList.remove('hidden');
+                        document.getElementById('startScanBtn').classList.remove('hidden');
+                    }
+                }, 
+                (err) => { /* Ignore background scan errors */ }
+            ).catch((err) => {
+                showCustomAlert("เปิดกล้องไม่ได้", "โปรดอนุญาตให้แอปเข้าถึงกล้องถ่ายรูป\n" + err, "error");
+                window.stopQRScanner();
+                window.showManualDropdown(); 
+            });
+        }
+        
+        window.stopQRScanner = function() {
+            if (html5QrcodeScanner) {
+                html5QrcodeScanner.stop().then(() => { html5QrcodeScanner.clear(); html5QrcodeScanner = null; 
+                    document.getElementById('qrScannerContainer').classList.add('hidden');
+                    document.getElementById('startScanBtn').classList.remove('hidden');
+                    document.getElementById('patrolScanStatus').classList.remove('hidden');
+                }).catch(e => html5QrcodeScanner = null);
+            }
         }
 
+        window.showManualDropdown = function() {
+            document.getElementById('manualDropdownContainer').classList.remove('hidden');
+            document.getElementById('patrolScanStatus').classList.add('hidden');
+            document.getElementById('startScanBtn').classList.add('hidden');
+        }
+
+        window.handleManualSelection = function() {
+            const val = document.getElementById('checkpointSelect').value;
+            if(val && checkpointsData[val]) {
+                if(currentLocation) updateLocationUI({ coords: { latitude: currentLocation.lat, longitude: currentLocation.lng } });
+                window.checkLocationAndCapture('patrol');
+            }
+        }
+
+        // ==========================================
+        // การถ่ายรูป & บันทึก
+        // ==========================================
         window.checkLocationAndCapture = function(actionType) {
             if (!currentLocation) return showCustomAlert('รอพิกัด GPS', 'กรุณารอระบบค้นหาพิกัด GPS 🔄 ก่อนครับ', 'warning');
 
@@ -1015,7 +1078,7 @@
                 document.getElementById('cameraInput').click();
             } else if (actionType === 'patrol') {
                 const selectedCpId = document.getElementById('checkpointSelect') ? document.getElementById('checkpointSelect').value : null;
-                if(!selectedCpId) return showCustomAlert('แจ้งเตือน', 'กรุณาสแกน QR Code ก่อน', 'warning');
+                if(!selectedCpId) return showCustomAlert('แจ้งเตือน', 'กรุณาสแกน QR Code หรือเลือกจุดตรวจก่อน', 'warning');
 
                 const cpInfo = checkpointsData[selectedCpId];
                 if (cpInfo && cpInfo.lat !== 0 && cpInfo.lng !== 0) {
@@ -1053,7 +1116,7 @@
                         shiftInfoText = `<p><span class="text-gray-400">รายการ:</span> <span class="text-white font-bold">${isCheckedIn ? "ออกงาน" : "เข้างาน"}</span></p>`;
                         if(!isCheckedIn) currentShiftType = r ? r.value : 'normal';
                     } else {
-                        const cpName = document.getElementById('checkpointSelect') ? document.getElementById('checkpointSelect').options[0].text : 'ไม่ระบุ';
+                        const cpName = document.getElementById('checkpointSelect') ? document.getElementById('checkpointSelect').options[document.getElementById('checkpointSelect').selectedIndex].text : 'ไม่ระบุ';
                         shiftInfoText = `<p><span class="text-gray-400">รายการ:</span> <span class="text-white font-bold">บันทึกจุดตรวจ</span></p><p><span class="text-gray-400">สถานที่:</span> <span class="text-orange-300 font-bold">${cpName}</span></p>`;
                     }
 
@@ -1100,6 +1163,14 @@
                 
                 document.getElementById('savingContainer').classList.add('hidden');
                 document.getElementById('successContainer').classList.remove('hidden');
+                
+                // คืนค่าหน้าสแกนเป็นปกติ
+                if (pendingActionType === 'patrol') {
+                    document.getElementById('startScanBtn').classList.remove('hidden');
+                    document.getElementById('patrolScanStatus').classList.remove('hidden');
+                    document.getElementById('manualDropdownContainer').classList.add('hidden');
+                }
+                
                 pendingActionType = null; pendingBase64Image = null;
             } catch (err) {
                 document.getElementById('savingContainer').classList.add('hidden');
