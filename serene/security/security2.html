@@ -31,6 +31,10 @@
         
         #qr-reader { width: 100%; max-width: 400px; margin: 0 auto; border-radius: 1rem; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
         #qr-reader__scan_region { background: white; }
+
+        /* Custom Scrollbar for horizontal scrolling */
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="bg-slate-50 text-gray-800 font-sans antialiased h-[100dvh] flex flex-col overflow-hidden relative">
@@ -72,7 +76,6 @@
                 </button>
             </div>
 
-            <!-- กล่องแสดงสถานะ -->
             <div id="loginStatusSection" class="hidden mt-6">
                 <div class="loader mb-4"></div>
                 <p id="loginStatusText" class="text-sm font-bold text-gray-600 animate-pulse">กำลังเตรียมระบบ...</p>
@@ -176,9 +179,42 @@
                         </h3>
                         <button onclick="clearHistory()" class="text-[10px] text-red-500 hover:text-red-700 underline px-2 py-1 rounded-md">ล้าง</button>
                     </div>
-                    <div id="historyListContainer" class="space-y-3 max-h-64 overflow-y-auto pr-1">
+                    <div id="historyListContainer" class="space-y-3 max-h-40 overflow-y-auto pr-1">
                         <!-- History items injected here -->
                         <p class="text-center text-xs text-gray-400 py-4">ยังไม่มีประวัติการทำรายการ</p>
+                    </div>
+                    
+                    <!-- ปุ่มสำหรับเข้าดูประวัติทั้งหมดจาก Google Sheets -->
+                    <button onclick="switchTab('history'); loadServerHistory('attendance');" class="w-full mt-4 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 text-indigo-700 py-3 rounded-xl font-bold text-sm transition flex justify-center items-center gap-2 shadow-sm">
+                        <span class="text-lg">☁️</span> ดูประวัติทั้งหมดจากเซิร์ฟเวอร์
+                    </button>
+                </div>
+            </div>
+
+            <!-- แท็บ: ประวัติจากเซิร์ฟเวอร์ (History View) -->
+            <div id="historyView" class="hidden fade-in space-y-4 mt-2">
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 relative">
+                    <button onclick="switchTab('home')" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 bg-gray-100 px-3 py-1 rounded-full text-xs font-bold transition">✖️ กลับ</button>
+                    <h3 class="text-xl font-black text-indigo-800 mb-4 flex items-center gap-2">
+                        <span class="text-2xl">☁️</span> ประวัติบนระบบ
+                    </h3>
+                    <p class="text-xs text-gray-500 mb-4">ดึงข้อมูลล่าสุด (สูงสุด 30 รายการ) จาก Google Sheets ของคุณ</p>
+
+                    <!-- Filters -->
+                    <div class="flex gap-2 mb-4 overflow-x-auto pb-2 hide-scrollbar">
+                        <button onclick="loadServerHistory('attendance')" id="btnHistAttendance" class="shrink-0 px-4 py-2 bg-indigo-500 text-white rounded-xl text-sm font-bold shadow-md transition">ลงเวลา</button>
+                        <button onclick="loadServerHistory('patrol')" id="btnHistPatrol" class="shrink-0 px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-bold transition">เดินตรวจ</button>
+                        <button onclick="loadServerHistory('report')" id="btnHistReport" class="shrink-0 px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-bold transition">แจ้งเหตุ</button>
+                    </div>
+
+                    <div id="serverHistoryLoading" class="hidden text-center py-8">
+                        <div class="loader border-indigo-500 mb-3 mx-auto"></div>
+                        <p class="text-sm font-bold text-indigo-500 animate-pulse">กำลังดึงข้อมูลจากระบบ...</p>
+                    </div>
+
+                    <div id="serverHistoryList" class="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                        <!-- ข้อมูลจะมาแสดงที่นี่ -->
+                        <p class="text-center text-sm text-gray-400 py-4">เลือกประเภทเพื่อดูประวัติ</p>
                     </div>
                 </div>
             </div>
@@ -205,7 +241,6 @@
                         </div>
                     </div>
 
-                    <!-- บังคับใช้กล้องหน้า (เซลฟี่) สำหรับลงเวลา -->
                     <input type="file" id="cameraInput" accept="image/*" capture="user" class="hidden" onchange="handlePhotoCapture(event, 'checkin')">
                     
                     <button id="btnCheckinCapture" onclick="checkLocationAndCapture('checkin')" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white py-6 rounded-2xl font-bold text-lg shadow-lg shadow-emerald-200 flex flex-col justify-center items-center gap-2 transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -248,7 +283,7 @@
 
                     <div id="patrolScanStatus" class="bg-orange-50 border border-orange-100 rounded-xl p-4 text-center mt-4">
                         <p class="text-sm text-orange-700 font-bold mb-1">⚠️ คำแนะนำ</p>
-                        <p class="text-xs text-orange-600 mb-3">กดปุ่มสแกน QR Code ประจำจุด ระบบจะตรวจสอบพิกัด GPS ของคุณอัตโนมัติก่อนอนุญาตให้ถ่ายรูป</p>
+                        <p class="text-xs text-orange-600 mb-3">กดปุ่มสแกน QR Code ประจำจุด ระบบจะตรวจสอบพิกัด GPS อัตโนมัติก่อนอนุญาตให้ถ่ายรูป</p>
                         <button onclick="showManualDropdown()" class="text-xs font-bold text-orange-700 underline px-2 py-1">เลือกจุดตรวจเอง (กรณีกล้องเสีย)</button>
                     </div>
 
@@ -260,7 +295,6 @@
                         <button onclick="document.getElementById('manualDropdownContainer').classList.add('hidden')" class="text-[10px] text-gray-400 underline block text-center w-full">ซ่อน</button>
                     </div>
                     
-                    <!-- บังคับใช้กล้องหลังสำหรับถ่ายรูปจุดตรวจ -->
                     <input type="file" id="patrolCameraInput" accept="image/*" capture="environment" class="hidden" onchange="handlePhotoCapture(event, 'patrol')">
                 </div>
             </div>
@@ -304,12 +338,212 @@
                 </div>
             </div>
 
-            <!-- แท็บ: กฎระเบียบ (Rules View) - ย่อไว้เพื่อให้โค้ดกระชับ โครงสร้างเหมือนเดิม -->
+            <!-- แท็บ: กฎระเบียบ (Rules View - นำข้อมูลทั้งหมดกลับมาจัดเต็ม) -->
             <div id="rulesView" class="hidden space-y-4 fade-in mt-2">
-                <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 text-center text-gray-500">
-                    <p class="mb-2 text-2xl">📋</p>
-                    <h3 class="font-bold text-gray-800 text-lg">กฎระเบียบการทำงาน</h3>
-                    <p class="text-sm mt-2">โปรดปฏิบัติตามกฎระเบียบและตารางเวลาอย่างเคร่งครัด</p>
+                <!-- ตารางเวลาปฏิบัติงาน -->
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
+                    <div class="flex items-center gap-3 mb-4 border-b border-gray-100 pb-3">
+                        <div class="bg-emerald-100 p-2 rounded-xl text-emerald-600 text-xl shadow-inner">⏱️</div>
+                        <div>
+                            <h3 class="font-bold text-gray-800 text-lg">ตารางเวลาปฏิบัติงาน รปภ.</h3>
+                            <p class="text-[11px] text-gray-500 font-medium mt-0.5">สถานะไม้กั้น (ใช้เหมือนกันทั้ง 2 กะ)</p>
+                        </div>
+                    </div>
+
+                    <div class="space-y-3">
+                        <!-- 06.00 - 08.00 -->
+                        <div class="flex items-stretch gap-3 border border-red-100 bg-red-50/40 rounded-2xl p-3 relative overflow-hidden shadow-sm">
+                            <div class="w-1.5 bg-red-400 absolute left-0 top-0 bottom-0"></div>
+                            <div class="flex-1 pl-2">
+                                <div class="flex justify-between items-center mb-1.5">
+                                    <span class="font-black text-red-700 text-sm">06.00 - 08.00 น. <span class="text-[10px] font-bold text-red-500">(กะเช้า)</span></span>
+                                    <span class="text-[9px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-md">ช่วงเร่งด่วน</span>
+                                </div>
+                                <div class="text-[11px] text-gray-600 mb-2.5 font-bold">ภารกิจ: ระบายรถออก</div>
+                                <div class="flex gap-2">
+                                    <div class="flex-1 bg-white p-2 rounded-xl border border-red-100 text-center shadow-sm">
+                                        <span class="block text-[9px] text-gray-400 font-bold mb-0.5">สถานะไม้กั้น "ขาออก"</span>
+                                        <span class="text-[13px] font-black text-red-600">**เปิดค้าง**</span>
+                                        <span class="block text-[8px] text-red-400 mt-0.5">(เพื่อระบายรถ)</span>
+                                    </div>
+                                    <div class="flex-1 bg-white p-2 rounded-xl border border-gray-100 text-center shadow-sm">
+                                        <span class="block text-[9px] text-gray-400 font-bold mb-0.5">สถานะไม้กั้น "ขาเข้า"</span>
+                                        <span class="text-[11px] font-bold text-green-600">ระบบปกติ</span>
+                                        <span class="block text-[8px] text-green-500 mt-0.5">(คัดกรองเข้มงวด)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 08.00 - 18.00 -->
+                        <div class="flex items-stretch gap-3 border border-slate-200 bg-slate-50/80 rounded-2xl p-3 relative overflow-hidden shadow-sm">
+                            <div class="w-1.5 bg-slate-400 absolute left-0 top-0 bottom-0"></div>
+                            <div class="flex-1 pl-2">
+                                <div class="flex justify-between items-center mb-1.5">
+                                    <span class="font-bold text-slate-700 text-sm">08.00 - 18.00 น. <span class="text-[10px] font-bold text-slate-500">(กะเช้า)</span></span>
+                                    <span class="text-[9px] font-bold text-slate-500 bg-slate-200 px-2 py-0.5 rounded-md">ช่วงเวลาปกติ</span>
+                                </div>
+                                <div class="text-[11px] text-gray-600 mb-2.5 font-bold">ภารกิจ: ตรวจสอบ</div>
+                                <div class="flex gap-2">
+                                    <div class="flex-1 bg-white p-2 rounded-xl border border-slate-100 text-center shadow-sm">
+                                        <span class="block text-[9px] text-gray-400 font-bold mb-0.5">สถานะไม้กั้น "ขาออก"</span>
+                                        <span class="text-[11px] font-bold text-slate-600">ระบบปกติ</span>
+                                        <span class="block text-[8px] text-slate-400 mt-0.5">(ปิดไม้กั้น/ตรวจสอบ)</span>
+                                    </div>
+                                    <div class="flex-1 bg-white p-2 rounded-xl border border-gray-100 text-center shadow-sm">
+                                        <span class="block text-[9px] text-gray-400 font-bold mb-0.5">สถานะไม้กั้น "ขาเข้า"</span>
+                                        <span class="text-[11px] font-bold text-green-600">ระบบปกติ</span>
+                                        <span class="block text-[8px] text-green-500 mt-0.5">(คัดกรองเข้มงวด)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 18.00 - 20.00 -->
+                        <div class="flex items-stretch gap-3 border border-red-100 bg-red-50/40 rounded-2xl p-3 relative overflow-hidden shadow-sm">
+                            <div class="w-1.5 bg-red-400 absolute left-0 top-0 bottom-0"></div>
+                            <div class="flex-1 pl-2">
+                                <div class="flex justify-between items-center mb-1.5">
+                                    <span class="font-black text-red-700 text-sm">18.00 - 20.00 น. <span class="text-[10px] font-bold text-red-500">(กะดึก)</span></span>
+                                    <span class="text-[9px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-md">ช่วงเร่งด่วน</span>
+                                </div>
+                                <div class="text-[11px] text-gray-600 mb-2.5 font-bold">ภารกิจ: ระบายรถออก</div>
+                                <div class="flex gap-2">
+                                    <div class="flex-1 bg-white p-2 rounded-xl border border-red-100 text-center shadow-sm">
+                                        <span class="block text-[9px] text-gray-400 font-bold mb-0.5">สถานะไม้กั้น "ขาออก"</span>
+                                        <span class="text-[13px] font-black text-red-600">**เปิดค้าง**</span>
+                                        <span class="block text-[8px] text-red-400 mt-0.5">(เพื่อระบายรถ)</span>
+                                    </div>
+                                    <div class="flex-1 bg-white p-2 rounded-xl border border-gray-100 text-center shadow-sm">
+                                        <span class="block text-[9px] text-gray-400 font-bold mb-0.5">สถานะไม้กั้น "ขาเข้า"</span>
+                                        <span class="text-[11px] font-bold text-green-600">ระบบปกติ</span>
+                                        <span class="block text-[8px] text-green-500 mt-0.5">(คัดกรองเข้มงวด)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 20.00 - 06.00 -->
+                        <div class="flex items-stretch gap-3 border border-indigo-100 bg-indigo-50/30 rounded-2xl p-3 relative overflow-hidden shadow-sm">
+                            <div class="w-1.5 bg-indigo-500 absolute left-0 top-0 bottom-0"></div>
+                            <div class="flex-1 pl-2">
+                                <div class="flex justify-between items-center mb-1.5">
+                                    <span class="font-bold text-indigo-800 text-sm">20.00 - 06.00 น. <span class="text-[10px] font-bold text-indigo-500">(กะดึก)</span></span>
+                                    <span class="text-[9px] font-bold text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-md">ยามวิกาล</span>
+                                </div>
+                                <div class="text-[11px] text-gray-600 mb-2.5 font-bold">ภารกิจ: เข้มงวดสูงสุด</div>
+                                <div class="flex gap-2">
+                                    <div class="flex-1 bg-white p-2 rounded-xl border border-indigo-100 text-center shadow-sm">
+                                        <span class="block text-[9px] text-gray-400 font-bold mb-0.5">สถานะไม้กั้น "ขาออก"</span>
+                                        <span class="text-[11px] font-bold text-slate-600">ระบบปกติ</span>
+                                        <span class="block text-[8px] text-slate-400 mt-0.5">(ปิดไม้กั้น/ตรวจสอบ)</span>
+                                    </div>
+                                    <div class="flex-1 bg-white p-2 rounded-xl border border-gray-100 text-center shadow-sm">
+                                        <span class="block text-[9px] text-gray-400 font-bold mb-0.5">สถานะไม้กั้น "ขาเข้า"</span>
+                                        <span class="text-[11px] font-bold text-green-600">ระบบปกติ</span>
+                                        <span class="block text-[8px] text-green-500 mt-0.5">(คัดกรองเข้มงวด)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- กฎเหล็ก -->
+                    <div class="mt-4 bg-gradient-to-br from-emerald-50 to-green-100 border border-green-200 rounded-2xl p-4 shadow-sm">
+                        <div class="flex items-start gap-2 mb-2 border-b border-green-200/50 pb-2">
+                            <span class="text-xl">⚠️</span>
+                            <div>
+                                <h4 class="font-black text-green-800 text-sm">กฎเหล็กสำหรับช่วงเวลาเร่งด่วน</h4>
+                                <p class="text-[10px] text-green-700 font-bold">(ขณะเปิดไม้กั้นขาออกค้าง)</p>
+                            </div>
+                        </div>
+                        <ul class="space-y-3 text-[11px] text-green-900 leading-relaxed mt-2">
+                            <li class="flex items-start gap-2 bg-white/50 p-2 rounded-lg">
+                                <span class="mt-0.5">❗</span> 
+                                <span><b class="text-green-800">ห้ามละทิ้งหน้าป้อมเด็ดขาด:</b> รปภ. ต้องยืนประจำจุดสังเกตการณ์รถที่ขับออกไปเสมอ</span>
+                            </li>
+                            <li class="flex items-start gap-2 bg-white/50 p-2 rounded-lg">
+                                <span class="mt-0.5">❗</span> 
+                                <span><b class="text-green-800">เฝ้าระวังการย้อนศร:</b> ป้องกันบุคคลภายนอกลักไก่ขับรถสวนเข้าทางช่อง "ขาออก" ที่เปิดค้างไว้</span>
+                            </li>
+                            <li class="flex items-start gap-2 bg-white/50 p-2 rounded-lg">
+                                <span class="mt-0.5">❗</span> 
+                                <span><b class="text-green-800">รถขาเข้ายังต้องตรวจเข้ม:</b> ฝั่งขาเข้าต้องใช้ระบบ LPR/คีย์การ์ด และบุคคลภายนอกต้องแลกบัตร 100%</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- กฎระเบียบพื้นฐาน -->
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
+                    <div class="flex items-center gap-3 mb-4 border-b border-gray-100 pb-3">
+                        <div class="bg-blue-100 p-2 rounded-xl text-blue-600 text-xl shadow-inner">📋</div>
+                        <h3 class="font-bold text-gray-800 text-lg">กฎระเบียบการทำงาน</h3>
+                    </div>
+                    <ul class="space-y-4">
+                        <li class="flex items-start gap-3">
+                            <span class="bg-green-100 text-green-600 p-1.5 rounded-full mt-0.5 text-[10px] shadow-sm">✔️</span>
+                            <span class="text-sm text-gray-600 leading-tight">แต่งกายให้เรียบร้อยตามฟอร์มบริษัท ติดบัตรประจำตัวเสมอ</span>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <span class="bg-green-100 text-green-600 p-1.5 rounded-full mt-0.5 text-[10px] shadow-sm">✔️</span>
+                            <span class="text-sm text-gray-600 leading-tight">ลงเวลาเข้างานด้วยตนเอง ห้ามลงเวลาแทนผู้อื่นเด็ดขาด</span>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <span class="bg-green-100 text-green-600 p-1.5 rounded-full mt-0.5 text-[10px] shadow-sm">✔️</span>
+                            <span class="text-sm text-gray-600 leading-tight">เดินตรวจตราพื้นที่ตามจุด Checkpoint ที่กำหนดให้ครบถ้วน</span>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <span class="bg-red-100 text-red-600 p-1.5 rounded-full mt-0.5 text-[10px] shadow-sm">❌</span>
+                            <span class="text-sm text-gray-600 leading-tight">ห้ามหลับยาม ดื่มสุรา หรือเล่นโทรศัพท์มือถือขณะปฏิบัติหน้าที่</span>
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- ขั้นตอนรับมือเหตุฉุกเฉิน -->
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-red-200">
+                    <div class="flex items-center gap-3 mb-4 border-b border-gray-100 pb-3">
+                        <div class="bg-red-100 p-2 rounded-xl text-red-600 text-xl shadow-inner">🚨</div>
+                        <h3 class="font-bold text-gray-800 text-lg">ขั้นตอนรับมือเหตุฉุกเฉิน</h3>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <div class="bg-gradient-to-br from-orange-50 to-white p-4 rounded-2xl border border-orange-100 shadow-sm">
+                            <h4 class="font-black text-orange-800 text-sm flex items-center gap-2 mb-2">🔥 กรณีเกิดเหตุเพลิงไหม้</h4>
+                            <p class="text-xs text-orange-700 mb-1">1. ประเมินสถานการณ์ หากไฟลุกลามให้รีบกดสัญญาณแจ้งเตือน</p>
+                            <p class="text-xs text-orange-700 mb-1">2. โทรแจ้งดับเพลิง <b>(199)</b> และแจ้งนิติบุคคลทันที</p>
+                            <p class="text-xs text-orange-700">3. ใช้ถังดับเพลิงเบื้องต้นเข้าควบคุมเพลิง (ถ้าปลอดภัย)</p>
+                        </div>
+                        <div class="bg-gradient-to-br from-slate-100 to-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                            <h4 class="font-black text-slate-800 text-sm flex items-center gap-2 mb-2">🥷 กรณีพบผู้บุกรุก/บุคคลต้องสงสัย</h4>
+                            <p class="text-xs text-slate-600 mb-1">1. เฝ้าสังเกตการณ์ในระยะปลอดภัย ห้ามปะทะโดยตรงเด็ดขาด</p>
+                            <p class="text-xs text-slate-600 mb-1">2. วิทยุแจ้งเพื่อน รปภ. และถ่ายรูปบันทึกลักษณะรูปพรรณ</p>
+                            <p class="text-xs text-slate-600">3. โทรแจ้งตำรวจ <b>(191)</b> พร้อมระบุพิกัดที่ชัดเจน</p>
+                        </div>
+                        <div class="bg-gradient-to-br from-blue-50 to-white p-4 rounded-2xl border border-blue-100 shadow-sm">
+                            <h4 class="font-black text-blue-800 text-sm flex items-center gap-2 mb-2">🚑 กรณีเกิดอุบัติเหตุ/เจ็บป่วยฉุกเฉิน</h4>
+                            <p class="text-xs text-blue-700 mb-1">1. เข้าตรวจสอบอาการเบื้องต้น ห้ามเคลื่อนย้ายผู้บาดเจ็บเอง</p>
+                            <p class="text-xs text-blue-700 mb-1">2. โทรแจ้งสายด่วนการแพทย์ฉุกเฉิน <b>(1669)</b></p>
+                            <p class="text-xs text-blue-700">3. อำนวยความสะดวกเปิดทางให้รถพยาบาลเข้าถึงจุดเกิดเหตุ</p>
+                        </div>
+                        <div class="bg-gradient-to-br from-purple-50 to-white p-4 rounded-2xl border border-purple-100 shadow-sm">
+                            <h4 class="font-black text-purple-800 text-sm flex items-center gap-2 mb-3">🚧 กรณีรถชนไม้กั้น/ทรัพย์สินส่วนกลาง</h4>
+                            <div class="space-y-3">
+                                <div>
+                                    <span class="text-[10px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md mb-1 inline-block">1. กักพื้นที่และระงับเหตุ</span>
+                                    <p class="text-[11px] text-purple-700 ml-1 leading-tight">- ให้สัญญาณหยุดรถทันที ห้ามเคลื่อนย้ายรถจนกว่าจะถ่ายภาพเสร็จ<br>- นำกรวยยาง/แผงกั้นมาวางล้อมพื้นที่เกิดเหตุ</p>
+                                </div>
+                                <div>
+                                    <span class="text-[10px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md mb-1 inline-block">2. เก็บรวบรวมหลักฐาน</span>
+                                    <p class="text-[11px] text-purple-700 ml-1 leading-tight">- ถ่ายภาพ/วิดีโอ: ความเสียหาย, ทะเบียนรถ, รอยชนบนรถ, มุมกว้าง<br>- บันทึกเวลาเกิดเหตุ เพื่อใช้ตรวจสอบ CCTV</p>
+                                </div>
+                                <div>
+                                    <span class="text-[10px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md mb-1 inline-block">3. การประสานงาน</span>
+                                    <p class="text-[11px] text-purple-700 ml-1 leading-tight">- โทรแจ้งสายตรวจ/นิติบุคคล ทันทีเพื่อลงมาเจรจา<br>- หากขัดขืน/หลบหนี ห้ามขวางรถ ให้รีบโทร <b>191</b> ทันที</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -333,13 +567,13 @@
 
                 <div id="savingContainer" class="hidden flex-col items-center justify-center py-4">
                     <div class="loader mb-3"></div>
-                    <p class="text-emerald-400 font-bold mt-3 text-center text-sm">กำลังส่งข้อมูลและอัปโหลดรูปภาพ...<br><span class="text-gray-400 text-xs">โปรดรอสักครู่ (ไม่เกิน 15 วิ)</span></p>
+                    <p class="text-emerald-400 font-bold mt-3 text-center text-sm">กำลังส่งข้อมูลและอัปโหลดรูปภาพ...<br><span class="text-gray-400 text-xs">โปรดรอสักครู่ (ไม่เกิน 25 วิ)</span></p>
                 </div>
                 
                 <div id="successContainer" class="hidden text-center py-4">
                     <span class="text-5xl block mb-2">✅</span>
                     <p class="text-emerald-400 font-bold text-lg">บันทึกสำเร็จ!</p>
-                    <p class="text-sm text-gray-400 mt-1">ข้อมูลอัปเดตเรียบร้อยแล้ว</p>
+                    <p class="text-sm text-gray-400 mt-1">ข้อมูลอัปเดตลง Google Sheets เรียบร้อย</p>
                     <button onclick="closePreviewAndRefresh()" class="mt-4 bg-slate-800 hover:bg-slate-700 text-white px-8 py-3 rounded-xl font-bold border border-slate-600 transition active:scale-95">ปิดหน้าต่าง</button>
                 </div>
             </div>
@@ -368,7 +602,6 @@
         const BOT_TOKEN = '7708637309:AAHU2swP8U67XVWITdjsxjQoqiXIL9KbBJs';
         const CHAT_ID = '7585120244';
 
-        // State Variables
         let currentUser = null;
         let currentLocation = null;
         let guardHouseLocation = { lat: 12.981353, lng: 101.143047 }; 
@@ -382,10 +615,10 @@
         let gpsWatchId = null;
 
         // ==========================================
-        // เสถียรภาพ 1: API Fetch พร้อมระบบ Timeout 
+        // 1: API Fetch ที่ได้รับการปรับปรุงการดักจับข้อผิดพลาด
         // ==========================================
         async function fetchWithTimeout(resource, options = {}) {
-            const { timeout = 15000 } = options; // ค่ามาตรฐาน 15 วินาที
+            const { timeout = 25000 } = options;
             const controller = new AbortController();
             const id = setTimeout(() => controller.abort(), timeout);
 
@@ -396,7 +629,7 @@
             } catch (error) {
                 clearTimeout(id);
                 if (error.name === 'AbortError') {
-                    throw new Error('การเชื่อมต่อใช้เวลานานเกินไป (Timeout) โปรดตรวจสอบอินเทอร์เน็ตและลองใหม่');
+                    throw new Error('การเชื่อมต่อใช้เวลานานเกินไป โปรดตรวจสอบอินเทอร์เน็ต');
                 }
                 throw error;
             }
@@ -404,16 +637,24 @@
 
         async function callGasApi(payload) {
             if (!GAS_URL || GAS_URL.includes('ใส่_URL')) {
-                throw new Error("ยังไม่ได้นำลิงก์จาก Google Apps Script มาใส่ในโค้ด HTML");
+                throw new Error("ยังไม่ได้ใส่ลิงก์ Google Apps Script URL ในโค้ด HTML");
             }
-            
-            const response = await fetchWithTimeout(GAS_URL, {
-                method: 'POST',
-                body: JSON.stringify(payload),
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                timeout: 20000 // ให้เวลา GAS ทำงานสูงสุด 20 วิ
-            });
-            return await response.json();
+            try {
+                const response = await fetchWithTimeout(GAS_URL, {
+                    method: 'POST', body: JSON.stringify(payload),
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    redirect: 'follow', timeout: 25000 
+                });
+                const responseText = await response.text();
+                try {
+                    return JSON.parse(responseText); 
+                } catch (e) {
+                    throw new Error("การตั้งค่าสิทธิ์ฝั่ง Google Apps Script ผิดพลาด (กรุณาตั้งสิทธิ์เป็น 'Anyone' / 'ทุกคน')");
+                }
+            } catch (error) {
+                console.error("Fetch API Error:", error);
+                throw error;
+            }
         }
 
         // ==========================================
@@ -461,7 +702,6 @@
                     document.getElementById('loginStatusSection').classList.remove('hidden');
                     document.getElementById('loginStatusText').innerText = "กำลังดึงข้อมูลพิกัดและจุดตรวจ...";
                     
-                    // ดึงตั้งค่าจาก Sheets
                     const configResult = await callGasApi({ action: 'getConfig' });
                     if (configResult.success) {
                         guardHouseLocation = { lat: configResult.settings.lat, lng: configResult.settings.lng };
@@ -482,14 +722,12 @@
                     throw new Error(result.error || "ไม่พบข้อมูล รปภ. รหัสนีในระบบ");
                 }
             } catch (err) {
-                console.error(err);
-                if (err.message.includes("ยังไม่ได้นำลิงก์")) {
-                    // Fallback จำลองถ้าไม่มี GAS URL
+                if (err.message.includes("ใส่ลิงก์")) {
                     currentUser = { emp_code: empCodeInput, full_name: "พนักงานทดสอบ " + empCodeInput };
                     launchApp();
                     showCustomAlert("โหมดทดสอบ", "กำลังใช้งานในโหมดจำลอง", "success");
                 } else {
-                    showCustomAlert('เข้าสู่ระบบล้มเหลว', err.message, 'error');
+                    showCustomAlert('การเข้าสู่ระบบล้มเหลว', err.message, 'error');
                 }
             } finally {
                 document.getElementById('loginSpinner').classList.add('hidden');
@@ -514,7 +752,7 @@
         }
 
         // ==========================================
-        // เสถียรภาพ 2: ระบบ GPS แบบแม่นยำและไม่ค้าง
+        // ระบบ GPS
         // ==========================================
         function startGPS() {
             const gpsBadge = document.getElementById('gpsStatus');
@@ -538,52 +776,55 @@
                     btnRefresh.classList.remove('animate-spin');
                 },
                 (error) => {
-                    console.warn(`GPS Error: ${error.message}`);
                     gpsBadge.innerText = "หาพิกัดไม่พบ (โปรดเปิด GPS)"; 
                     gpsIcon.innerText = "⚠️";
                     btnRefresh.classList.remove('animate-spin');
                 }, 
-                { 
-                    enableHighAccuracy: true, 
-                    maximumAge: 10000, // ใช้ข้อมูลเก่าได้ไม่เกิน 10 วิ
-                    timeout: 10000     // ยอมแพ้ถ้าหาไม่เจอใน 10 วิ
-                }
+                { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
             );
         }
         window.refreshGPS = () => startGPS();
 
         // ==========================================
-        // Navigation
+        // Navigation & Tab Switch
         // ==========================================
         window.switchTab = function(activeTab) {
             document.getElementById('previewSection').classList.add('hidden');
             if(html5QrcodeScanner) window.stopQRScanner();
             
             const globalHeader = document.getElementById('globalHeader');
-            if (activeTab === 'home' || activeTab === 'rules') { globalHeader.classList.add('hidden'); } else { globalHeader.classList.remove('hidden'); }
+            if (activeTab === 'home' || activeTab === 'rules' || activeTab === 'history') { 
+                globalHeader.classList.add('hidden'); 
+            } else { 
+                globalHeader.classList.remove('hidden'); 
+            }
 
-            const tabs = ['home', 'checkin', 'patrol', 'report', 'rules'];
+            // เพิ่ม history เข้าไปใน List สำหรับซ่อน/แสดงหน้าต่าง
+            const tabs = ['home', 'checkin', 'patrol', 'report', 'rules', 'history'];
             tabs.forEach(tab => {
                 const view = document.getElementById(tab + 'View');
                 if(view) view.classList.toggle('hidden', tab !== activeTab);
                 
-                const capitalized = tab.charAt(0).toUpperCase() + tab.slice(1);
-                const btn = document.getElementById('tabBtn' + capitalized);
-                const icon = document.getElementById('icon' + capitalized);
-                
-                if(btn && icon) {
-                    if(tab === activeTab) {
-                        if(tab === 'home') {
-                            document.getElementById('iconHomeBg').className = "bg-gradient-to-br from-emerald-500 to-emerald-700 w-14 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all text-white scale-110 -translate-y-1";
+                // จัดการแถบเมนูด้านล่าง (ยกเว้น history เพราะไม่มีปุ่มตรงๆ)
+                if(tab !== 'history') {
+                    const capitalized = tab.charAt(0).toUpperCase() + tab.slice(1);
+                    const btn = document.getElementById('tabBtn' + capitalized);
+                    const icon = document.getElementById('icon' + capitalized);
+                    
+                    if(btn && icon) {
+                        if(tab === activeTab) {
+                            if(tab === 'home') {
+                                document.getElementById('iconHomeBg').className = "bg-gradient-to-br from-emerald-500 to-emerald-700 w-14 h-11 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-200 text-white scale-110 -translate-y-1";
+                            } else {
+                                if(document.getElementById('iconHomeBg')) document.getElementById('iconHomeBg').className = "bg-slate-100 border border-slate-200 w-12 h-10 rounded-xl flex items-center justify-center transition-all text-emerald-400";
+                                btn.className = `flex-1 py-3 flex flex-col items-center transition text-emerald-600`;
+                                icon.className = `text-2xl mb-1 filter-none opacity-100 scale-110 drop-shadow-sm`;
+                            }
                         } else {
-                            if(document.getElementById('iconHomeBg')) document.getElementById('iconHomeBg').className = "bg-slate-100 border border-slate-200 w-12 h-10 rounded-xl flex items-center justify-center transition-all text-emerald-400";
-                            btn.className = `flex-1 py-3 flex flex-col items-center transition text-emerald-600`;
-                            icon.className = `text-2xl mb-1 filter-none opacity-100 scale-110 drop-shadow-sm`;
-                        }
-                    } else {
-                        if(tab !== 'home') {
-                            btn.className = `flex-1 py-3 flex flex-col items-center transition text-gray-400`;
-                            icon.className = `text-2xl mb-1 filter grayscale opacity-40`;
+                            if(tab !== 'home') {
+                                btn.className = `flex-1 py-3 flex flex-col items-center transition text-gray-400`;
+                                icon.className = `text-2xl mb-1 filter grayscale opacity-40`;
+                            }
                         }
                     }
                 }
@@ -592,6 +833,88 @@
             const hours = new Date().getHours();
             document.getElementById('currentShiftText').innerText = (hours >= 7 && hours < 19) ? "กะเช้า" : "กะดึก";
         }
+
+        // ==========================================
+        // ฟังก์ชันดึงประวัติจากเซิร์ฟเวอร์ (Google Sheets)
+        // ==========================================
+        window.loadServerHistory = async function(type) {
+            // อัปเดตสไตล์ของปุ่ม Filter ด้านบน
+            const types = ['attendance', 'patrol', 'report'];
+            types.forEach(t => {
+                const btn = document.getElementById('btnHist' + t.charAt(0).toUpperCase() + t.slice(1));
+                if (t === type) {
+                    btn.className = "shrink-0 px-4 py-2 bg-indigo-500 text-white rounded-xl text-sm font-bold shadow-md transition";
+                } else {
+                    btn.className = "shrink-0 px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-bold transition";
+                }
+            });
+
+            const listEl = document.getElementById('serverHistoryList');
+            const loadingEl = document.getElementById('serverHistoryLoading');
+
+            listEl.innerHTML = '';
+            loadingEl.classList.remove('hidden');
+
+            try {
+                const result = await callGasApi({
+                    action: 'getHistory',
+                    emp_code: currentUser.emp_code,
+                    type: type,
+                    limit: 30 // ดึงมาสูงสุด 30 รายการล่าสุด
+                });
+
+                loadingEl.classList.add('hidden');
+
+                if (result.success) {
+                    if (result.rows.length === 0) {
+                        listEl.innerHTML = '<p class="text-center text-sm text-gray-400 py-8">ไม่พบข้อมูลประวัติในระบบ</p>';
+                        return;
+                    }
+
+                    listEl.innerHTML = result.rows.map(row => {
+                        let title = "", time = row["วันที่-เวลา"], desc = "";
+                        let icon = "📝";
+                        
+                        // จัดรูปแบบข้อมูลตามประเภท Sheet
+                        if (type === 'attendance') {
+                            title = `${row["ประเภท"]} (${row["กะ"]})`;
+                            icon = row["ประเภท"] === "เข้างาน" ? "✅" : "🚪";
+                            desc = `พิกัด: ${row["พิกัด GPS"] || "-"}`;
+                        } else if (type === 'patrol') {
+                            title = `ตรวจจุด: ${row["ชื่อจุดตรวจ"] || "-"}`;
+                            icon = "🔦";
+                            desc = `พิกัด: ${row["พิกัด GPS"] || "-"}`;
+                        } else if (type === 'report') {
+                            title = `แจ้งเหตุ: ${row["ประเภทเหตุ"] || "-"}`;
+                            icon = "🚨";
+                            desc = `รายละเอียด: ${row["รายละเอียด"] || "-"}`;
+                        }
+
+                        // แสดงปุ่มดูรูปภาพถ้ามีลิงก์
+                        let imgHtml = row["ลิงก์รูป"] ? `<a href="${row["ลิงก์รูป"]}" target="_blank" class="text-indigo-500 hover:text-indigo-700 underline text-xs mt-2 font-bold inline-flex items-center gap-1 bg-indigo-50 px-2 py-1 rounded-md">🖼️ ดูรูปภาพที่บันทึก</a>` : '';
+
+                        return `
+                            <div class="p-3.5 rounded-2xl border border-gray-100 bg-slate-50 flex items-start gap-3 shadow-sm mb-3">
+                                <div class="text-2xl mt-1 bg-white p-2 rounded-full shadow-inner border border-gray-100">${icon}</div>
+                                <div class="flex-1 overflow-hidden">
+                                    <div class="flex justify-between items-start">
+                                        <div class="text-sm font-black text-gray-800 truncate pr-2">${title}</div>
+                                        <div class="text-[10px] font-bold text-gray-500 bg-gray-200 px-2 py-1 rounded-md whitespace-nowrap">${time}</div>
+                                    </div>
+                                    <div class="text-xs text-gray-500 mt-1.5 truncate">${desc}</div>
+                                    ${imgHtml}
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                } else {
+                    throw new Error(result.error);
+                }
+            } catch (err) {
+                loadingEl.classList.add('hidden');
+                listEl.innerHTML = `<div class="bg-red-50 p-4 rounded-xl text-center"><p class="text-sm text-red-600 font-bold mb-1">ดึงข้อมูลล้มเหลว</p><p class="text-xs text-red-500">${err.message}</p></div>`;
+            }
+        };
 
         // ==========================================
         // QR Code Scanner
@@ -681,7 +1004,6 @@
             pendingActionType = actionType;
         }
 
-        // เสถียรภาพ 3: ประมวลผลภาพแบบกินเมมโมรี่น้อยลง
         window.handlePhotoCapture = function(event, inputType) {
             const file = event.target.files[0]; if (!file) return;
             
@@ -697,13 +1019,11 @@
                 const img = new Image();
                 img.onload = () => {
                     const canvas = document.createElement('canvas'); 
-                    // จำกัดขนาดที่ 600px เพื่อลดภาระการส่งข้อมูล
-                    let w = img.width, h = img.height, MAX = 600; 
+                    let w = img.width, h = img.height, MAX = 500; 
                     if (w > h && w > MAX) { h *= MAX / w; w = MAX; } else if (h > MAX) { w *= MAX / h; h = MAX; }
                     canvas.width = w; canvas.height = h; 
                     canvas.getContext('2d').drawImage(img, 0, 0, w, h);
                     
-                    // แปลงด้วยคุณภาพ 0.6 (60%) 
                     pendingBase64Image = canvas.toDataURL('image/jpeg', 0.6); 
                     
                     let actionLabel = "";
@@ -735,18 +1055,23 @@
         // ==========================================
         document.getElementById('confirmSaveBtn').onclick = async () => {
             const btn = document.getElementById('confirmSaveBtn');
-            btn.disabled = true; // ป้องกันกดซ้ำ
+            btn.disabled = true; 
             btn.innerHTML = 'กำลังส่ง... <span class="loader w-4 h-4 border-2 ml-2"></span>';
 
             document.getElementById('imageConfirmContainer').classList.add('hidden');
             document.getElementById('savingContainer').classList.remove('hidden');
 
             const locStr = `${currentLocation.lat},${currentLocation.lng}`;
+            let safeBase64 = "";
+            if(pendingBase64Image && pendingBase64Image.includes(',')){
+                safeBase64 = pendingBase64Image.split(',')[1];
+            }
+
             let payload = {
                 guard_id: currentUser.emp_code,
                 guard_name: currentUser.full_name,
                 lat_lng: locStr,
-                base64_image: pendingBase64Image.split(',')[1] 
+                base64_image: safeBase64 
             };
 
             let titleHistory = "";
@@ -768,7 +1093,6 @@
                 if (result.success) {
                     processSuccess(titleHistory, payload.type);
                     
-                    // แจ้งเตือน Telegram
                     if (pendingActionType === 'checkin' || pendingActionType === 'checkout') {
                         const shiftText = document.querySelector('input[name="shiftType"]:checked').value;
                         const actionText = pendingActionType === 'checkin' ? 'เข้างาน' : 'ออกงาน';
@@ -779,16 +1103,15 @@
                     }
 
                 } else {
-                    throw new Error(result.error || "เกิดข้อผิดพลาดจากเซิร์ฟเวอร์");
+                    throw new Error(result.error || "เกิดข้อผิดพลาดจากเซิร์ฟเวอร์ฐานข้อมูล");
                 }
             } catch (err) {
                 document.getElementById('savingContainer').classList.add('hidden');
                 document.getElementById('imageConfirmContainer').classList.remove('hidden');
-                if(err.message.includes('ยังไม่ได้นำลิงก์')) {
-                    // จำลองว่าสำเร็จ (Mock Mode)
+                if(err.message.includes('ใส่ลิงก์')) {
                     processSuccess(titleHistory, payload.type);
                 } else {
-                    showCustomAlert('บันทึกไม่สำเร็จ', err.message, 'error');
+                    showCustomAlert('การบันทึกไม่สำเร็จ', err.message, 'error');
                 }
             } finally {
                 btn.disabled = false;
@@ -799,7 +1122,7 @@
         function processSuccess(title, type) {
             document.getElementById('savingContainer').classList.add('hidden');
             document.getElementById('successContainer').classList.remove('hidden');
-            saveToHistory(title, type); // บันทึกลงประวัติเครื่อง
+            saveToHistory(title, type); 
         }
 
         window.closePreviewAndRefresh = function() {
@@ -810,7 +1133,7 @@
         }
 
         // ==========================================
-        // เสถียรภาพ 4: ระบบ Local History (ประวัติในเครื่อง)
+        // ระบบ Local History (ประวัติในเครื่อง)
         // ==========================================
         function loadHistory() {
             const history = JSON.parse(localStorage.getItem('guard_history_v2')) || [];
@@ -825,7 +1148,7 @@
             const record = { id: Date.now(), title: title, time: timeStr, date: dateStr, type: type || 'patrol' };
             const history = JSON.parse(localStorage.getItem('guard_history_v2')) || [];
             history.unshift(record);
-            if (history.length > 20) history.pop(); // เก็บแค่ 20 รายการล่าสุด ป้องกันเมมเต็ม
+            if (history.length > 20) history.pop(); 
             
             localStorage.setItem('guard_history_v2', JSON.stringify(history));
             renderHistory(history);
@@ -878,7 +1201,7 @@
                 const img = new Image();
                 img.onload = () => {
                     const canvas = document.createElement('canvas'); 
-                    let w = img.width, h = img.height, MAX = 600; 
+                    let w = img.width, h = img.height, MAX = 500; 
                     if (w > h && w > MAX) { h *= MAX / w; w = MAX; } else if (h > MAX) { w *= MAX / h; h = MAX; }
                     canvas.width = w; canvas.height = h; canvas.getContext('2d').drawImage(img, 0, 0, w, h);
                     currentReportImageBase64 = canvas.toDataURL('image/jpeg', 0.6);
@@ -914,13 +1237,16 @@
             document.getElementById('previewHeader').classList.remove('hidden');
             document.getElementById('loadingIcon').innerText = "🚨"; document.getElementById('loadingText').innerText = "กำลังส่งสัญญาณฉุกเฉิน...";
             
-            let base64Data = currentReportImageBase64 ? currentReportImageBase64.split(',')[1] : null;
+            let safeBase64 = "";
+            if (currentReportImageBase64 && currentReportImageBase64.includes(',')) {
+                safeBase64 = currentReportImageBase64.split(',')[1];
+            }
 
             try {
                 const locStr = currentLocation ? `${currentLocation.lat},${currentLocation.lng}` : "ไม่ทราบ";
                 const result = await callGasApi({
                     action: 'report', guard_id: currentUser.emp_code, guard_name: currentUser.full_name,
-                    incident_type: type, details: details, lat_lng: locStr, base64_image: base64Data
+                    incident_type: type, details: details, lat_lng: locStr, base64_image: safeBase64
                 });
 
                 if (result.success || result.message?.includes('mock')) {
@@ -932,7 +1258,7 @@
                     throw new Error(result.error);
                 }
             } catch (err) {
-                if(err.message.includes('ยังไม่ได้นำลิงก์')) {
+                if(err.message.includes('ใส่ลิงก์')) {
                     setTimeout(() => {
                         document.getElementById('loadingIcon').innerText = "✅"; document.getElementById('loadingText').innerText = "แจ้งเหตุสำเร็จ (โหมดจำลอง)";
                         document.getElementById('reportType').value = ''; document.getElementById('reportDetail').value = ''; window.removeReportPhoto();
