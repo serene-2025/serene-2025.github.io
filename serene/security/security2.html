@@ -697,48 +697,93 @@
             const now = new Date();
             const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
             document.getElementById('currentDateDisplay').innerText = `${now.getDate()} ${thaiMonths[now.getMonth()]} ${now.getFullYear() + 543}`;
-            loadHistory(); // โหลดประวัติในเครื่อง
+
+            // [PERF] โหลดประวัติใน idle time ไม่บล็อก UI
+            if (window.requestIdleCallback) {
+                requestIdleCallback(() => loadHistory());
+            } else {
+                setTimeout(loadHistory, 0);
+            }
+
+            // [PERF] เริ่ม GPS ทันทีตอนโหลดหน้า ไม่รอให้ login เสร็จก่อน
+            // GPS ใช้เวลา 3-8 วินาที — เริ่มเร็วได้เลย ไม่ต้องรอ permission ซ้ำ
+            startGPSBackground();
         });
+
+        // GPS เบื้องหลัง — เริ่มก่อน login เพื่อให้พิกัดพร้อมเมื่อเข้าแอป
+        function startGPSBackground() {
+            if (!navigator.geolocation) return;
+            if (gpsWatchId !== null) return; // ป้องกัน watch ซ้ำ
+            gpsWatchId = navigator.geolocation.watchPosition(
+                (pos) => {
+                    currentLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                    // อัปเดต UI เฉพาะถ้าแอปเปิดแล้ว
+                    const badge = document.getElementById('gpsStatus');
+                    const icon  = document.getElementById('gpsIcon');
+                    const spin  = document.getElementById('refreshGpsIcon');
+                    if (badge) badge.innerText = currentLocation.lat.toFixed(5) + ', ' + currentLocation.lng.toFixed(5);
+                    if (icon)  icon.innerText = '🟢';
+                    if (spin)  spin.classList.remove('animate-spin');
+                },
+                () => {
+                    const spin = document.getElementById('refreshGpsIcon');
+                    if (spin) spin.classList.remove('animate-spin');
+                },
+                { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
+            );
+        }
+
+        // [PERF] ใช้ sessionStorage cache config — reload ภายใน session ไม่ต้องดึงใหม่
+        function applyConfig(configResult) {
+            if (!configResult || !configResult.success) return;
+            guardHouseLocation = { lat: configResult.settings.lat, lng: configResult.settings.lng };
+            ALLOWED_RADIUS = configResult.settings.radius;
+            document.getElementById('homeProjectName').innerText = configResult.settings.name;
+            const cpSelect = document.getElementById('checkpointSelect');
+            cpSelect.innerHTML = '<option value="">-- กรุณาเลือกจุดตรวจ --</option>';
+            configResult.checkpoints.forEach(cp => {
+                checkpointsData[cp.id] = { lat: cp.lat, lng: cp.lng, radius: cp.radius, name: cp.name };
+                const opt = document.createElement('option');
+                opt.value = cp.id; opt.text = '📍 ' + cp.name;
+                cpSelect.appendChild(opt);
+            });
+            try { sessionStorage.setItem('svs_config', JSON.stringify(configResult)); } catch(e) {}
+        }
 
         async function loginWithEmpCode() {
             const empCodeInput = document.getElementById('loginEmpCode').value.trim().toUpperCase();
             if (!empCodeInput) return showCustomAlert('แจ้งเตือน', 'กรุณากรอกรหัสประจำตัวพนักงาน', 'warning');
-            
+
             document.getElementById('loginSpinner').classList.remove('hidden');
             document.getElementById('loginBtn').disabled = true;
 
             try {
-                const result = await callGasApi({ action: 'login', emp_code: empCodeInput });
+                // [PERF] ยิง login + getConfig พร้อมกัน ประหยัดเวลา ~50%
+                // ถ้ามี config cache อยู่แล้วใน session ให้ใช้ทันที ไม่ต้องรอ
+                const cachedConfig = (() => {
+                    try { return JSON.parse(sessionStorage.getItem('svs_config') || 'null'); } catch(e) { return null; }
+                })();
 
-                if (result.success && result.data) {
-                    currentUser = result.data;
-                    document.getElementById('loginStatusSection').classList.remove('hidden');
-                    document.getElementById('loginStatusText').innerText = "กำลังดึงข้อมูลพิกัดและจุดตรวจ...";
-                    
-                    const configResult = await callGasApi({ action: 'getConfig' });
-                    if (configResult.success) {
-                        guardHouseLocation = { lat: configResult.settings.lat, lng: configResult.settings.lng };
-                        ALLOWED_RADIUS = configResult.settings.radius;
-                        document.getElementById('homeProjectName').innerText = configResult.settings.name;
-                        
-                        const cpSelect = document.getElementById('checkpointSelect');
-                        cpSelect.innerHTML = '<option value="">-- กรุณาเลือกจุดตรวจ --</option>';
-                        configResult.checkpoints.forEach(cp => {
-                            checkpointsData[cp.id] = { lat: cp.lat, lng: cp.lng, radius: cp.radius, name: cp.name };
-                            const opt = document.createElement('option');
-                            opt.value = cp.id; opt.text = `📍 ${cp.name}`;
-                            cpSelect.appendChild(opt);
-                        });
-                    }
-                    launchApp();
-                } else {
-                    throw new Error(result.error || "ไม่พบข้อมูล รปภ. รหัสนีในระบบ");
+                const promises = [
+                    callGasApi({ action: 'login', emp_code: empCodeInput }),
+                    cachedConfig ? Promise.resolve(cachedConfig) : callGasApi({ action: 'getConfig' })
+                ];
+
+                const [loginResult, configResult] = await Promise.all(promises);
+
+                if (!loginResult.success || !loginResult.data) {
+                    throw new Error(loginResult.error || 'ไม่พบรหัสพนักงานในระบบ');
                 }
+
+                currentUser = loginResult.data;
+                applyConfig(configResult);
+                launchApp();
+
             } catch (err) {
-                if (err.message.includes("ใส่ลิงก์")) {
-                    currentUser = { emp_code: empCodeInput, full_name: "พนักงานทดสอบ " + empCodeInput, profile_pic: "" };
+                if (err.message.includes('ใส่ลิงก์')) {
+                    currentUser = { emp_code: empCodeInput, full_name: 'พนักงานทดสอบ ' + empCodeInput, profile_pic: '' };
                     launchApp();
-                    showCustomAlert("โหมดทดสอบ", "กำลังใช้งานในโหมดจำลอง", "success");
+                    showCustomAlert('โหมดทดสอบ', 'กำลังใช้งานในโหมดจำลอง', 'success');
                 } else {
                     showCustomAlert('การเข้าสู่ระบบล้มเหลว', err.message, 'error');
                 }
@@ -749,61 +794,57 @@
         }
 
         function launchApp() {
-            document.getElementById('homeGuardName').innerText = `คุณ ${currentUser.full_name}`;
+            document.getElementById('homeGuardName').innerText = 'คุณ ' + currentUser.full_name;
             document.getElementById('currentGuardName').innerText = currentUser.full_name;
             document.getElementById('homeEmpCode').innerText = currentUser.emp_code;
 
-            // การแสดงรูปโปรไฟล์
-            if (currentUser.profile_pic && currentUser.profile_pic !== "") {
-                document.getElementById('globalAvatar').innerHTML = `<img src="${currentUser.profile_pic}" alt="Profile" class="w-full h-full object-cover">`;
-                document.getElementById('homeAvatar').innerHTML = `<img src="${currentUser.profile_pic}" alt="Profile" class="w-full h-full object-cover">`;
+            if (currentUser.profile_pic && currentUser.profile_pic !== '') {
+                const pic = '<img src="' + currentUser.profile_pic + '" alt="Profile" class="w-full h-full object-cover">';
+                document.getElementById('globalAvatar').innerHTML = pic;
+                document.getElementById('homeAvatar').innerHTML = pic;
             } else {
-                document.getElementById('globalAvatar').innerHTML = `👮`;
-                document.getElementById('homeAvatar').innerHTML = `<span class="text-3xl drop-shadow-lg">🛡️</span>`;
+                document.getElementById('globalAvatar').innerHTML = '👮';
+                document.getElementById('homeAvatar').innerHTML = '<span class="text-3xl drop-shadow-lg">🛡️</span>';
             }
 
-            document.getElementById('splashScreen').classList.add('fade-out');
-            setTimeout(() => {
-                document.getElementById('splashScreen').classList.add('hidden');
-                document.getElementById('mainAppContainer').classList.remove('hidden');
-                document.getElementById('mainAppContainer').classList.add('flex');
-                document.getElementById('bottomNav').classList.remove('hidden');
-                switchTab('home');
-                startGPS();
-            }, 300);
+            // [PERF] เปิดแอปทันที ไม่ delay 300ms
+            document.getElementById('splashScreen').classList.add('hidden');
+            document.getElementById('mainAppContainer').classList.remove('hidden');
+            document.getElementById('mainAppContainer').classList.add('flex');
+            document.getElementById('bottomNav').classList.remove('hidden');
+            switchTab('home');
+
+            // [PERF] GPS เริ่มไปแล้วตั้งแต่โหลดหน้า ซิงค์ UI เท่านั้น
+            // ถ้ายังไม่มีพิกัด แสดง "กำลังค้นหา" ถ้ามีแล้วแสดงทันที
+            const gpsBadge = document.getElementById('gpsStatus');
+            const gpsIcon  = document.getElementById('gpsIcon');
+            if (currentLocation) {
+                gpsBadge.innerText = currentLocation.lat.toFixed(5) + ', ' + currentLocation.lng.toFixed(5);
+                gpsIcon.innerText = '🟢';
+            } else {
+                gpsBadge.innerText = 'กำลังค้นหาพิกัด...';
+                gpsIcon.innerText = '📍';
+            }
         }
 
         // ==========================================
-        // ระบบ GPS
+        // ระบบ GPS — startGPS ใช้สำหรับปุ่ม refresh เท่านั้น
         // ==========================================
         function startGPS() {
             const gpsBadge = document.getElementById('gpsStatus');
-            const gpsIcon = document.getElementById('gpsIcon');
-            const btnRefresh = document.getElementById('refreshGpsIcon');
+            const gpsIcon  = document.getElementById('gpsIcon');
+            const spin     = document.getElementById('refreshGpsIcon');
 
             if (!navigator.geolocation) {
-                gpsBadge.innerText = "อุปกรณ์ไม่รองรับ GPS"; gpsIcon.innerText = "❌"; return;
+                gpsBadge.innerText = 'อุปกรณ์ไม่รองรับ GPS'; gpsIcon.innerText = '❌'; return;
             }
 
-            gpsBadge.innerText = "กำลังค้นหาพิกัด...";
-            btnRefresh.classList.add('animate-spin');
+            gpsBadge.innerText = 'กำลังค้นหาพิกัดใหม่...';
+            if (spin) spin.classList.add('animate-spin');
 
-            if (gpsWatchId) navigator.geolocation.clearWatch(gpsWatchId);
-
-            gpsWatchId = navigator.geolocation.watchPosition(
-                (position) => {
-                    currentLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
-                    gpsBadge.innerText = `${currentLocation.lat.toFixed(5)}, ${currentLocation.lng.toFixed(5)}`;
-                    gpsIcon.innerText = "🟢";
-                    btnRefresh.classList.remove('animate-spin');
-                },
-                (error) => {
-                    gpsBadge.innerText = "หาพิกัดไม่พบ (โปรดเปิด GPS)"; 
-                    gpsIcon.innerText = "⚠️";
-                    btnRefresh.classList.remove('animate-spin');
-                }, 
-                { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
-            );
+            // clear watch เก่าแล้วเริ่มใหม่ (ใช้เมื่อกดปุ่ม refresh)
+            if (gpsWatchId !== null) { navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId = null; }
+            startGPSBackground();
         }
         window.refreshGPS = () => startGPS();
 
