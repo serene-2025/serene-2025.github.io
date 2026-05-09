@@ -1268,12 +1268,12 @@
                     processSuccess(titleHistory, payload.type);
                     
                     if (pendingActionType === 'checkin' || pendingActionType === 'checkout') {
-                        const shiftText = document.querySelector('input[name="shiftType"]:checked').value;
-                        const actionText = pendingActionType === 'checkin' ? 'เข้างาน' : 'ออกงาน';
-                        sendTelegramAlert(`${pendingActionType === 'checkin'?'✅':'🔴'} ลงเวลา${actionText} ${shiftText}\nพนักงาน: ${currentUser.full_name}\nเวลา: ${new Date().toLocaleTimeString('th-TH')} น.`, pendingBase64Image);
+                        var shiftText = document.querySelector('input[name="shiftType"]:checked').value;
+                        notifyCheckin(pendingActionType, shiftText, pendingBase64Image);
                     } else if (pendingActionType === 'patrol') {
-                        const cpName = document.getElementById('checkpointSelect').options[document.getElementById('checkpointSelect').selectedIndex].text;
-                        sendTelegramAlert(`🔦 บันทึกจุดตรวจ\nพนักงาน: ${currentUser.full_name}\nจุด: ${cpName}\nเวลา: ${new Date().toLocaleTimeString('th-TH')} น.`, pendingBase64Image);
+                        var cpSel = document.getElementById('checkpointSelect');
+                        var cpName = cpSel.options[cpSel.selectedIndex].text;
+                        notifyPatrol(cpName, pendingBase64Image);
                     }
 
                 } else {
@@ -1447,30 +1447,189 @@
         }
 
         // ==========================================
-        // Telegram Alert — รับได้ทั้ง dataURL (มี prefix) และ raw base64
+        // Telegram — ระบบแจ้งเตือนพร้อม parse_mode HTML + inline button
         // ==========================================
+
+        // escape HTML สำหรับ Telegram HTML mode
+        function tgEsc(str) {
+            return String(str || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
+        // สร้างลิงก์ Google Maps จากพิกัด
+        function mapsLink(loc) {
+            if (!loc) return null;
+            var parts = String(loc).split(',');
+            if (parts.length < 2) return null;
+            var lat = parts[0].trim(), lng = parts[1].trim();
+            return 'https://maps.google.com/?q=' + lat + ',' + lng;
+        }
+
+        // แปลงวัน/เวลาเป็นภาษาไทยเต็มรูปแบบ
+        function thaiDateTime() {
+            var d = new Date();
+            var days   = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
+            var months = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+            var h  = String(d.getHours()).padStart(2,'0');
+            var m  = String(d.getMinutes()).padStart(2,'0');
+            var s  = String(d.getSeconds()).padStart(2,'0');
+            return 'วัน' + days[d.getDay()] + 'ที่ ' + d.getDate() + ' ' + months[d.getMonth()] + ' ' + (d.getFullYear()+543) + '  เวลา ' + h + ':' + m + ':' + s + ' น.';
+        }
+
+        // กะงานจากชั่วโมง
+        function shiftLabel(h) {
+            return (h >= 7 && h < 19) ? '☀️ กะเช้า (07:00–19:00)' : '🌙 กะดึก (19:00–07:00)';
+        }
+
+        // ส่ง text-only (HTML parse_mode)
+        async function tgSendText(htmlText, replyMarkup) {
+            var body = { chat_id: CHAT_ID, text: htmlText, parse_mode: 'HTML' };
+            if (replyMarkup) body.reply_markup = replyMarkup;
+            await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+        }
+
+        // ส่งรูปพร้อม caption (HTML parse_mode)
+        async function tgSendPhoto(imageData, captionHtml, replyMarkup) {
+            var raw   = imageData.includes(',') ? imageData.split(',')[1] : imageData;
+            var bytes = atob(raw);
+            var ab    = new ArrayBuffer(bytes.length);
+            var ia    = new Uint8Array(ab);
+            for (var i = 0; i < bytes.length; i++) ia[i] = bytes.charCodeAt(i);
+            var blob = new Blob([ab], { type: 'image/jpeg' });
+            var fd   = new FormData();
+            fd.append('chat_id', CHAT_ID);
+            fd.append('photo', blob, 'photo.jpg');
+            fd.append('caption', captionHtml);
+            fd.append('parse_mode', 'HTML');
+            if (replyMarkup) fd.append('reply_markup', JSON.stringify(replyMarkup));
+            await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/sendPhoto', { method: 'POST', body: fd });
+        }
+
+        // ============================================================
+        //  sendTelegramAlert — ยังคงใช้ชื่อเดิมเพื่อ backward compat
+        //  แต่ตอนนี้สร้างข้อความโดย buildTelegramMessage แยกตามประเภท
+        // ============================================================
         async function sendTelegramAlert(message, imageData) {
+            // fallback ถ้าเรียกจากโค้ดเดิมที่ยังไม่ migrate
             try {
                 if (imageData) {
-                    const raw = imageData.includes(',') ? imageData.split(',')[1] : imageData;
-                    const bytes = atob(raw);
-                    const ab = new ArrayBuffer(bytes.length);
-                    const ia = new Uint8Array(ab);
-                    for (let i = 0; i < bytes.length; i++) ia[i] = bytes.charCodeAt(i);
-                    const blob = new Blob([ab], { type: 'image/jpeg' });
-                    const fd = new FormData();
-                    fd.append('chat_id', CHAT_ID);
-                    fd.append('caption', message);
-                    fd.append('photo', blob, 'photo.jpg');
-                    await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/sendPhoto', { method: 'POST', body: fd });
+                    await tgSendPhoto(imageData, tgEsc(message), null);
                 } else {
-                    await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ chat_id: CHAT_ID, text: message })
-                    });
+                    await tgSendText(tgEsc(message), null);
                 }
-            } catch (err) { console.error('Telegram failed:', err); }
+            } catch(err) { console.error('Telegram fallback failed:', err); }
+        }
+
+        // ============================================================
+        //  ฟังก์ชันส่งแจ้งเตือนแต่ละประเภท
+        // ============================================================
+
+        async function notifyCheckin(type, shift, imageData) {
+            try {
+                var isIn   = (type === 'checkin');
+                var emoji  = isIn ? '✅' : '🔴';
+                var action = isIn ? 'เข้างาน' : 'ออกงาน';
+                var now    = new Date();
+                var locStr = currentLocation ? currentLocation.lat + ',' + currentLocation.lng : null;
+                var mapUrl = mapsLink(locStr);
+
+                var caption =
+                    emoji + ' <b>ลงเวลา' + tgEsc(action) + '</b>\n' +
+                    '━━━━━━━━━━━━━━━━━━━━\n' +
+                    '👤 <b>พนักงาน:</b> ' + tgEsc(currentUser.full_name) + '\n' +
+                    '🪪 <b>รหัส:</b> ' + tgEsc(currentUser.emp_code) + '\n' +
+                    '🔖 <b>กะ:</b> ' + tgEsc(shift) + '\n' +
+                    '⏰ <b>เวลา:</b> ' + tgEsc(thaiDateTime()) + '\n' +
+                    '📍 <b>พิกัด:</b> ' + (locStr ? tgEsc(locStr) : 'ไม่ทราบ') + '\n' +
+                    '🏢 <b>สถานะ:</b> ' + tgEsc(shiftLabel(now.getHours()));
+
+                var markup = mapUrl ? {
+                    inline_keyboard: [[
+                        { text: '📍 ดูพิกัดบน Maps', url: mapUrl }
+                    ]]
+                } : null;
+
+                if (imageData) {
+                    await tgSendPhoto(imageData, caption, markup);
+                } else {
+                    await tgSendText(caption, markup);
+                }
+            } catch(err) { console.error('notifyCheckin failed:', err); }
+        }
+
+        async function notifyPatrol(cpName, imageData) {
+            try {
+                var now    = new Date();
+                var locStr = currentLocation ? currentLocation.lat + ',' + currentLocation.lng : null;
+                var mapUrl = mapsLink(locStr);
+
+                var caption =
+                    '🔦 <b>บันทึกจุดตรวจ</b>\n' +
+                    '━━━━━━━━━━━━━━━━━━━━\n' +
+                    '👤 <b>พนักงาน:</b> ' + tgEsc(currentUser.full_name) + '\n' +
+                    '🪪 <b>รหัส:</b> ' + tgEsc(currentUser.emp_code) + '\n' +
+                    '📌 <b>จุดตรวจ:</b> ' + tgEsc(cpName) + '\n' +
+                    '⏰ <b>เวลา:</b> ' + tgEsc(thaiDateTime()) + '\n' +
+                    '🏢 <b>กะ:</b> ' + tgEsc(shiftLabel(now.getHours())) + '\n' +
+                    '📍 <b>พิกัด:</b> ' + (locStr ? tgEsc(locStr) : 'ไม่ทราบ');
+
+                var markup = mapUrl ? {
+                    inline_keyboard: [[
+                        { text: '📍 ดูพิกัดบน Maps', url: mapUrl }
+                    ]]
+                } : null;
+
+                if (imageData) {
+                    await tgSendPhoto(imageData, caption, markup);
+                } else {
+                    await tgSendText(caption, markup);
+                }
+            } catch(err) { console.error('notifyPatrol failed:', err); }
+        }
+
+        async function notifyReport(incidentType, details, imageData) {
+            try {
+                var locStr = currentLocation ? currentLocation.lat + ',' + currentLocation.lng : null;
+                var mapUrl = mapsLink(locStr);
+                var now    = new Date();
+
+                var urgencyEmoji = {
+                    'อุบัติเหตุ/รถชน':   '💥',
+                    'ทรัพย์สินเสียหาย':  '🚧',
+                    'บุคคลต้องสงสัย':    '🥷',
+                    'เหตุเพลิงไหม้':      '🔥',
+                    'อื่นๆ':              '📝'
+                }[incidentType] || '🚨';
+
+                var msg =
+                    '🚨🚨 <b>แจ้งเหตุฉุกเฉิน</b> 🚨🚨\n' +
+                    '━━━━━━━━━━━━━━━━━━━━\n' +
+                    urgencyEmoji + ' <b>ประเภทเหตุ:</b> ' + tgEsc(incidentType) + '\n' +
+                    '📋 <b>รายละเอียด:</b>\n' + tgEsc(details) + '\n' +
+                    '━━━━━━━━━━━━━━━━━━━━\n' +
+                    '👤 <b>ผู้แจ้ง:</b> ' + tgEsc(currentUser.full_name) + '\n' +
+                    '🪪 <b>รหัส:</b> ' + tgEsc(currentUser.emp_code) + '\n' +
+                    '⏰ <b>เวลา:</b> ' + tgEsc(thaiDateTime()) + '\n' +
+                    '📍 <b>พิกัด:</b> ' + (locStr ? tgEsc(locStr) : '<i>ไม่ทราบ</i>') + '\n' +
+                    '🏢 <b>กะ:</b> ' + tgEsc(shiftLabel(now.getHours()));
+
+                var buttons = [];
+                if (mapUrl) buttons.push({ text: '📍 ดูพิกัดบน Maps', url: mapUrl });
+
+                var markup = buttons.length ? { inline_keyboard: [buttons] } : null;
+
+                if (imageData) {
+                    await tgSendPhoto(imageData, msg, markup);
+                } else {
+                    await tgSendText(msg, markup);
+                }
+            } catch(err) { console.error('notifyReport failed:', err); }
         }
 
         // ==========================================
