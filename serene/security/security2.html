@@ -1523,73 +1523,73 @@
         // ==========================================
         // การยืนยันบันทึกและระบบ History
         // ==========================================
-        document.getElementById('confirmSaveBtn').onclick = async () => {
-            const btn = document.getElementById('confirmSaveBtn');
-            btn.disabled = true; 
-            btn.innerHTML = 'กำลังส่ง... <span class="loader w-4 h-4 border-2 ml-2"></span>';
+        document.getElementById('confirmSaveBtn').onclick = async function() {
+            var btn = document.getElementById('confirmSaveBtn');
+            btn.disabled = true;
 
-            document.getElementById('imageConfirmContainer').classList.add('hidden');
-            document.getElementById('savingContainer').classList.remove('hidden');
+            // แสดง saving state ใน bottom sheet
+            showSheetState('saving');
 
-            const locStr = `${currentLocation.lat},${currentLocation.lng}`;
-            let safeBase64 = "";
-            if(pendingBase64Image && pendingBase64Image.includes(',')){
-                safeBase64 = pendingBase64Image.split(',')[1];
+            // พิกัด GPS
+            var locStr = currentLocation
+                ? currentLocation.lat + ',' + currentLocation.lng
+                : '0,0';
+
+            // raw base64 (ไม่มี prefix) — pendingBase64Image เก็บ dataURL
+            var rawB64 = '';
+            if (pendingBase64Image) {
+                rawB64 = pendingBase64Image.includes(',')
+                    ? pendingBase64Image.split(',')[1]
+                    : pendingBase64Image;
             }
 
-            let payload = {
-                guard_id: currentUser.emp_code,
-                guard_name: currentUser.full_name,
-                lat_lng: locStr,
-                base64_image: safeBase64 
+            var payload = {
+                guard_id:    currentUser.emp_code,
+                guard_name:  currentUser.full_name,
+                lat_lng:     locStr,
+                base64_image: rawB64
             };
 
-            let titleHistory = "";
+            var titleHistory = '';
+            var extraData    = null;
 
             if (pendingActionType === 'checkin' || pendingActionType === 'checkout') {
                 payload.action = 'attendance';
-                payload.type = pendingActionType;
-                payload.shift = document.querySelector('input[name="shiftType"]:checked').value;
-                titleHistory = pendingActionType === 'checkin' ? "เข้างาน" : "ออกงาน";
+                payload.type   = pendingActionType;
+                payload.shift  = document.querySelector('input[name="shiftType"]:checked').value;
+                titleHistory   = pendingActionType === 'checkin' ? 'เข้างาน' : 'ออกงาน';
             } else if (pendingActionType === 'patrol') {
-                payload.action = 'patrol';
-                payload.checkpoint = document.getElementById('checkpointSelect').value;
-                const cpSelect = document.getElementById('checkpointSelect');
-                titleHistory = "จุดตรวจ: " + cpSelect.options[cpSelect.selectedIndex].text;
+                var cpSel = document.getElementById('checkpointSelect');
+                payload.action     = 'patrol';
+                payload.checkpoint = cpSel.value;
+                titleHistory       = 'จุดตรวจ: ' + cpSel.options[cpSel.selectedIndex].text;
+                extraData = { checkpoint: cpSel.value, cpName: cpSel.options[cpSel.selectedIndex].text };
             }
 
             try {
-                const result = await callGasApi(payload);
+                var result = await callGasApi(payload);
                 if (result.success) {
-                    var extraData = (pendingActionType === 'patrol')
-                        ? { checkpoint: document.getElementById('checkpointSelect').value,
-                            cpName: document.getElementById('checkpointSelect').options[document.getElementById('checkpointSelect').selectedIndex].text }
-                        : null;
-                    processSuccess(titleHistory, payload.type, extraData);
-                    
-                    if (pendingActionType === 'checkin' || pendingActionType === 'checkout') {
-                        var shiftText = document.querySelector('input[name="shiftType"]:checked').value;
-                        notifyCheckin(pendingActionType, shiftText, pendingBase64Image);
-                    } else if (pendingActionType === 'patrol') {
-                        var cpSel = document.getElementById('checkpointSelect');
-                        var cpName = cpSel.options[cpSel.selectedIndex].text;
-                        notifyPatrol(cpName, pendingBase64Image);
-                    }
+                    processSuccess(titleHistory, payload.type || pendingActionType, extraData);
 
+                    // Telegram notify (fire-and-forget)
+                    if (pendingActionType === 'checkin' || pendingActionType === 'checkout') {
+                        notifyCheckin(pendingActionType, payload.shift, rawB64);
+                    } else if (pendingActionType === 'patrol') {
+                        notifyPatrol(extraData.cpName, rawB64);
+                    }
                 } else {
-                    throw new Error(result.error || "เกิดข้อผิดพลาดจากเซิร์ฟเวอร์ฐานข้อมูล");
+                    throw new Error(result.error || 'เกิดข้อผิดพลาดจากเซิร์ฟเวอร์');
                 }
             } catch (err) {
-                document.getElementById('savingContainer').classList.add('hidden');
-                document.getElementById('imageConfirmContainer').classList.remove('hidden');
-                if(err.message.includes('ใส่ลิงก์')) {
-                    processSuccess(titleHistory, payload.type);
+                if (err.message.includes('ใส่ลิงก์')) {
+                    // demo mode — ถือว่าสำเร็จ
+                    processSuccess(titleHistory, pendingActionType, extraData);
                 } else {
+                    showSheetState('confirm');   // กลับให้กดใหม่ได้
                     showCustomAlert('การบันทึกไม่สำเร็จ', err.message, 'error');
                 }
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = 'ยืนยันส่งเข้าระบบ';
             }
         };
 
@@ -1708,8 +1708,6 @@
             const preview = document.getElementById('previewSection');
             preview.classList.remove('hidden'); preview.scrollIntoView({ behavior: 'smooth' });
             
-            document.getElementById('imageConfirmContainer').classList.add('hidden');
-            document.getElementById('successContainer').classList.add('hidden');
             document.getElementById('previewHeader').classList.remove('hidden');
             document.getElementById('loadingIcon').innerText = "🚨"; document.getElementById('loadingText').innerText = "กำลังส่งสัญญาณฉุกเฉิน...";
             
