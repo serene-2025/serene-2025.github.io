@@ -181,6 +181,57 @@
                     </div>
                 </div>
 
+                <!-- ██ Patrol Progress Card ██ -->
+                <div id="patrolProgressCard" class="bg-white rounded-3xl shadow-sm border border-orange-100 overflow-hidden">
+                    <!-- Header -->
+                    <div class="bg-gradient-to-r from-orange-500 to-amber-500 px-5 py-3.5 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xl">🔦</span>
+                            <div>
+                                <p class="text-white font-black text-sm tracking-wide">ความคืบหน้าการเดินตรวจ</p>
+                                <p id="progressRoundLabel" class="text-orange-100 text-[10px] font-medium">รอบ -- กะ --</p>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <p id="progressFraction" class="text-white font-black text-xl leading-none">-/-</p>
+                            <p class="text-orange-100 text-[10px]">จุดตรวจ</p>
+                        </div>
+                    </div>
+
+                    <!-- Progress bar -->
+                    <div class="px-5 pt-4 pb-1">
+                        <div class="w-full bg-gray-100 rounded-full h-3 overflow-hidden shadow-inner">
+                            <div id="progressBar" class="h-3 rounded-full transition-all duration-700 ease-out bg-gradient-to-r from-orange-400 to-amber-400" style="width:0%"></div>
+                        </div>
+                        <div class="flex justify-between mt-1">
+                            <span id="progressPct" class="text-xs font-black text-orange-600">0%</span>
+                            <span id="progressStatusLabel" class="text-xs font-bold text-gray-400">ยังไม่ได้เดินตรวจ</span>
+                        </div>
+                    </div>
+
+                    <!-- Checkpoint dots grid -->
+                    <div id="checkpointDotsGrid" class="px-5 pb-4 pt-2 grid gap-1.5" style="grid-template-columns: repeat(auto-fill, minmax(72px, 1fr))"></div>
+
+                    <!-- Missed list (แสดงเมื่อมีจุดที่ยังไม่ได้ตรวจ) -->
+                    <div id="missedContainer" class="hidden px-5 pb-4">
+                        <div class="bg-red-50 border border-red-100 rounded-2xl p-3">
+                            <p class="text-[10px] font-black text-red-600 uppercase tracking-widest mb-1.5">⚠️ จุดที่ยังไม่ได้ตรวจในรอบนี้</p>
+                            <div id="missedList" class="flex flex-wrap gap-1.5"></div>
+                        </div>
+                    </div>
+
+                    <!-- All done banner -->
+                    <div id="allDoneBanner" class="hidden px-5 pb-4">
+                        <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 flex items-center gap-3">
+                            <span class="text-2xl">🎉</span>
+                            <div>
+                                <p class="text-sm font-black text-emerald-700">เดินตรวจครบทุกจุดแล้ว!</p>
+                                <p class="text-[10px] text-emerald-500">รอบการตรวจถัดไปจะรีเซ็ตเองอัตโนมัติ</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- เมนูด่วน -->
                 <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
                     <h3 class="text-sm font-black text-gray-800 mb-4 flex items-center gap-2 tracking-wide">
@@ -255,7 +306,7 @@
                 <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 mt-2">
                     <div class="text-center mb-6 mt-2">
                         <h3 class="text-xl font-bold text-gray-800">ลงเวลาปฏิบัติงาน</h3>
-                        <p class="text-sm text-gray-500">ข้อมูลและรูปจะถูกบันทึกลง</p>
+                        <p class="text-sm text-gray-500">ข้อมูลและรูปจะถูกบันทึกลง Google Sheets</p>
                     </div>
                     
                     <div class="mb-6">
@@ -704,7 +755,7 @@
                 <div id="successContainer" class="hidden text-center py-4">
                     <span class="text-5xl block mb-2">✅</span>
                     <p class="text-emerald-400 font-bold text-lg">บันทึกสำเร็จ!</p>
-                    <p class="text-sm text-gray-400 mt-1">ข้อมูลอัปเดตลง เรียบร้อย</p>
+                    <p class="text-sm text-gray-400 mt-1">ข้อมูลอัปเดตลง Google Sheets เรียบร้อย</p>
                     <button onclick="closePreviewAndRefresh()" class="mt-4 bg-slate-800 hover:bg-slate-700 text-white px-8 py-3 rounded-xl font-bold border border-slate-600 transition active:scale-95">ปิดหน้าต่าง</button>
                 </div>
             </div>
@@ -1057,6 +1108,13 @@
                 gpsBadge.innerText = 'กำลังค้นหาพิกัด...';
                 gpsIcon.innerText = '📍';
             }
+
+            // โหลด progress หลัง launch
+            if (window.requestIdleCallback) {
+                requestIdleCallback(updatePatrolProgress);
+            } else {
+                setTimeout(updatePatrolProgress, 0);
+            }
         }
 
         // ==========================================
@@ -1397,7 +1455,11 @@
             try {
                 const result = await callGasApi(payload);
                 if (result.success) {
-                    processSuccess(titleHistory, payload.type);
+                    var extraData = (pendingActionType === 'patrol')
+                        ? { checkpoint: document.getElementById('checkpointSelect').value,
+                            cpName: document.getElementById('checkpointSelect').options[document.getElementById('checkpointSelect').selectedIndex].text }
+                        : null;
+                    processSuccess(titleHistory, payload.type, extraData);
                     
                     if (pendingActionType === 'checkin' || pendingActionType === 'checkout') {
                         var shiftText = document.querySelector('input[name="shiftType"]:checked').value;
@@ -1425,10 +1487,10 @@
             }
         };
 
-        function processSuccess(title, type) {
+        function processSuccess(title, type, extraData) {
             document.getElementById('savingContainer').classList.add('hidden');
             document.getElementById('successContainer').classList.remove('hidden');
-            saveToHistory(title, type); 
+            saveToHistory(title, type, extraData);
         }
 
         window.closePreviewAndRefresh = function() {
@@ -1446,18 +1508,21 @@
             renderHistory(history);
         }
 
-        function saveToHistory(title, type) {
+        function saveToHistory(title, type, extraData) {
             const now = new Date();
             const timeStr = now.toLocaleTimeString('th-TH');
             const dateStr = now.toLocaleDateString('th-TH');
 
-            const record = { id: Date.now(), title: title, time: timeStr, date: dateStr, type: type || 'patrol' };
+            const record = { id: Date.now(), title: title, time: timeStr, date: dateStr,
+                             type: type || 'patrol', extra: extraData || null };
             const history = JSON.parse(localStorage.getItem('guard_history_v2')) || [];
             history.unshift(record);
-            if (history.length > 20) history.pop(); 
-            
+            if (history.length > 50) history.pop();
+
             localStorage.setItem('guard_history_v2', JSON.stringify(history));
             renderHistory(history);
+            // อัปเดต progress ทุกครั้งที่บันทึก
+            updatePatrolProgress();
         }
 
         function renderHistory(history) {
@@ -1788,6 +1853,184 @@
         // ==========================================
         // ตารางเวลาออกตรวจ — highlight รอบถัดไป
         // ==========================================
+        // ============================================================
+        //  PATROL PROGRESS SYSTEM
+        //  — คำนวณจุดที่ตรวจแล้วในรอบปัจจุบัน จาก localStorage
+        // ============================================================
+
+        // กำหนดรอบตรวจและจุดที่ต้องตรวจแต่ละรอบ (ตรงกับตารางใน rulesView)
+        const PATROL_ROUNDS = [
+            { h: 22, m: 0, shift: 'กะดึก',  label: '22:00 น.',
+              checkpoints: ['ท้ายซอย 1','ท้ายซอย 5','ท้ายซอย 6','ท้ายซอย 2'] },
+            { h: 0,  m: 0, shift: 'กะดึก',  label: '00:00 น.',
+              checkpoints: ['ท้ายซอย 3','ท้ายซอย 7','ท้ายซอย 8','ท้ายซอย 4'] },
+            { h: 2,  m: 0, shift: 'กะดึก',  label: '02:00 น.',
+              checkpoints: ['ท้ายซอย 9','ท้ายซอย 11','ท้ายซอย 10','ท้ายซอย 12'] },
+            { h: 4,  m: 0, shift: 'กะดึก',  label: '04:00 น.',
+              checkpoints: ['ออฟฟิศ','ตู้ไฟกลางซอย 5-7','ตู้ไฟหน้าซอย 11'] },
+            { h: 10, m: 0, shift: 'กะเช้า', label: '10:00 น.',
+              checkpoints: ['ท้ายซอย 1','ท้ายซอย 5','ท้ายซอย 6','ท้ายซอย 2'] },
+            { h: 12, m: 0, shift: 'กะเช้า', label: '12:00 น.',
+              checkpoints: ['ท้ายซอย 3','ท้ายซอย 7','ท้ายซอย 8','ท้ายซอย 4'] },
+            { h: 14, m: 0, shift: 'กะเช้า', label: '14:00 น.',
+              checkpoints: ['ท้ายซอย 9','ท้ายซอย 11','ท้ายซอย 10','ท้ายซอย 12'] },
+            { h: 16, m: 0, shift: 'กะเช้า', label: '16:00 น.',
+              checkpoints: ['ออฟฟิศ','ตู้ไฟกลางซอย 5-7','ตู้ไฟหน้าซอย 11'] }
+        ];
+
+        // หารอบปัจจุบัน (รอบที่เพิ่งผ่านมา)
+        function getCurrentRound() {
+            var now  = new Date();
+            var nowM = now.getHours() * 60 + now.getMinutes();
+            var best = null, bestStart = -Infinity;
+            PATROL_ROUNDS.forEach(function(r) {
+                var rM = r.h * 60 + r.m;
+                // เวลาที่รอบนี้เริ่ม (อาจข้ามคืน)
+                var diff = nowM - rM;
+                if (diff < 0) diff += 24 * 60;   // รอบนี้เริ่มวานนี้
+                if (-diff > bestStart) { bestStart = -diff; best = r; }
+                // เลือกรอบที่ผ่านมาล่าสุด (diff น้อยที่สุดในทิศบวก)
+            });
+            // เลือกรอบ latest ที่ nowM >= rM (wrap-around ด้วย)
+            var latest = null, latestDiff = Infinity;
+            PATROL_ROUNDS.forEach(function(r) {
+                var rM   = r.h * 60 + r.m;
+                var diff = nowM - rM;
+                if (diff < 0) diff += 24 * 60;
+                if (diff < latestDiff) { latestDiff = diff; latest = r; }
+            });
+            return latest;
+        }
+
+        // หา window เวลาของรอบ: [startMs, endMs)
+        function getRoundWindow(round) {
+            var now   = new Date();
+            var startD = new Date(now);
+            startD.setHours(round.h, round.m, 0, 0);
+            // ถ้า startD อยู่ในอนาคต ให้ถอยกลับ 1 วัน
+            if (startD > now) startD.setDate(startD.getDate() - 1);
+
+            // หารอบถัดไป
+            var nowM = startD.getHours() * 60 + startD.getMinutes();
+            var roundM = round.h * 60 + round.m;
+            var nextRound = null, nextDiff = Infinity;
+            PATROL_ROUNDS.forEach(function(r) {
+                var rM = r.h * 60 + r.m;
+                var diff = rM - roundM;
+                if (diff <= 0) diff += 24 * 60;
+                if (diff < nextDiff) { nextDiff = diff; nextRound = r; }
+            });
+            var endD = new Date(startD);
+            endD.setMinutes(endD.getMinutes() + nextDiff);
+
+            return { start: startD.getTime(), end: endD.getTime() };
+        }
+
+        // ดึง patrol records ที่บันทึกไว้ใน localStorage ในช่วง window
+        function getPatrolledInWindow(startMs, endMs) {
+            var history = [];
+            try { history = JSON.parse(localStorage.getItem('guard_history_v2')) || []; } catch(e) {}
+
+            var done = {};
+            history.forEach(function(rec) {
+                if (rec.type !== 'patrol') return;
+                if (rec.id >= startMs && rec.id < endMs) {
+                    // cpName มาจาก extra.cpName (บันทึกใหม่) หรือ parse จาก title (เก่า)
+                    var cpName = (rec.extra && rec.extra.cpName)
+                        ? rec.extra.cpName.replace(/^📍\s*/, '')
+                        : rec.title.replace(/^จุดตรวจ:\s*📍\s*/, '').replace(/^จุดตรวจ:\s*/, '');
+                    done[cpName] = rec.id;
+                }
+            });
+            return done;
+        }
+
+        function updatePatrolProgress() {
+            var round = getCurrentRound();
+            if (!round) return;
+
+            var win   = getRoundWindow(round);
+            var done  = getPatrolledInWindow(win.start, win.end);
+            var total = round.checkpoints.length;
+            var doneCount = 0;
+            round.checkpoints.forEach(function(cp) {
+                if (done[cp]) doneCount++;
+            });
+
+            var pct = total > 0 ? Math.round(doneCount / total * 100) : 0;
+
+            // — อัปเดต header
+            document.getElementById('progressRoundLabel').innerText = 'รอบ ' + round.label + ' · ' + round.shift;
+            document.getElementById('progressFraction').innerText   = doneCount + '/' + total;
+            document.getElementById('progressPct').innerText        = pct + '%';
+
+            // — progress bar สีตามสถานะ
+            var bar = document.getElementById('progressBar');
+            bar.style.width = pct + '%';
+            if (pct === 100) {
+                bar.className = 'h-3 rounded-full transition-all duration-700 ease-out bg-gradient-to-r from-emerald-400 to-green-400';
+            } else if (pct >= 50) {
+                bar.className = 'h-3 rounded-full transition-all duration-700 ease-out bg-gradient-to-r from-orange-400 to-amber-400';
+            } else {
+                bar.className = 'h-3 rounded-full transition-all duration-700 ease-out bg-gradient-to-r from-red-400 to-orange-400';
+            }
+
+            // — status label
+            var statusEl = document.getElementById('progressStatusLabel');
+            if (pct === 100)      statusEl.innerText = '✅ ครบทุกจุดแล้ว';
+            else if (pct === 0)   statusEl.innerText = '⏳ ยังไม่ได้เดินตรวจ';
+            else                   statusEl.innerText = '🔦 กำลังเดินตรวจ...';
+            statusEl.className = pct === 100
+                ? 'text-xs font-bold text-emerald-600'
+                : pct === 0 ? 'text-xs font-bold text-gray-400'
+                : 'text-xs font-bold text-orange-500';
+
+            // — checkpoint dots
+            var grid = document.getElementById('checkpointDotsGrid');
+            grid.innerHTML = '';
+            round.checkpoints.forEach(function(cp) {
+                var isDone = !!done[cp];
+                var dot = document.createElement('div');
+                dot.className = 'flex flex-col items-center gap-1 p-2 rounded-xl text-center transition '
+                    + (isDone ? 'bg-emerald-50 border border-emerald-200' : 'bg-gray-50 border border-gray-200');
+                var icon = isDone ? '✅' : '⬜';
+                var nameStyle = isDone ? 'color:#059669;font-weight:900' : 'color:#9ca3af;font-weight:600';
+                dot.innerHTML = '<span style="font-size:18px">' + icon + '</span>'
+                    + '<span style="font-size:9px;line-height:1.2;' + nameStyle + '">' + cp + '</span>';
+                if (isDone && done[cp]) {
+                    var t = new Date(done[cp]);
+                    var hh = String(t.getHours()).padStart(2,'0');
+                    var mm = String(t.getMinutes()).padStart(2,'0');
+                    dot.innerHTML += '<span style="font-size:8px;color:#6ee7b7;font-weight:700">' + hh + ':' + mm + '</span>';
+                }
+                grid.appendChild(dot);
+            });
+
+            // — missed list
+            var missed = round.checkpoints.filter(function(cp) { return !done[cp]; });
+            var missedContainer = document.getElementById('missedContainer');
+            var missedList      = document.getElementById('missedList');
+            var allDoneBanner   = document.getElementById('allDoneBanner');
+
+            if (pct === 100) {
+                missedContainer.classList.add('hidden');
+                allDoneBanner.classList.remove('hidden');
+            } else if (missed.length > 0 && doneCount > 0) {
+                allDoneBanner.classList.add('hidden');
+                missedContainer.classList.remove('hidden');
+                missedList.innerHTML = missed.map(function(cp) {
+                    return '<span style="background:#fee2e2;border:1px solid #fca5a5;color:#dc2626;font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px">'
+                        + cp + '</span>';
+                }).join('');
+            } else {
+                missedContainer.classList.add('hidden');
+                allDoneBanner.classList.add('hidden');
+            }
+        }
+
+        // อัปเดตทุก 60 วินาที + hook switchTab home
+        setInterval(updatePatrolProgress, 60000);
+
         const PATROL_TIMES = [
             { h: 22, m: 0 }, { h: 0,  m: 0 }, { h: 2,  m: 0 }, { h: 4,  m: 0 },
             { h: 10, m: 0 }, { h: 12, m: 0 }, { h: 14, m: 0 }, { h: 16, m: 0 }
@@ -1843,6 +2086,7 @@
         window.switchTab = function(tab) {
             _origSwitchTab(tab);
             if (tab === 'rules') updatePatrolScheduleUI();
+            if (tab === 'home')  updatePatrolProgress();
         };
     </script>
 </body>
