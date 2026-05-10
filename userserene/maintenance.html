@@ -74,7 +74,7 @@
                         <div class="grid grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-bold text-gray-700 mb-1.5 ml-1">บ้านเลขที่ <span class="text-red-500">*</span></label>
-                                <input type="text" id="input-house" required placeholder="เช่น 99/1" class="w-full px-4 py-3.5 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm">
+                                <input type="text" id="input-house" required placeholder="เช่น 998/1" class="w-full px-4 py-3.5 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm">
                             </div>
                             <div>
                                 <label class="block text-sm font-bold text-gray-700 mb-1.5 ml-1">เบอร์โทร <span class="text-gray-400 font-normal text-xs">(ไม่บังคับ)</span></label>
@@ -395,6 +395,78 @@
             'Prefer': 'return=representation'
         };
 
+        // --- NOTIFICATION CONFIG ---
+        // Telegram Settings
+        const TELEGRAM_BOT_TOKEN = '7708637309:AAHU2swP8U67XVWITdjsxjQoqiXIL9KbBJs';
+        const TELEGRAM_CHAT_ID = '7585120244';
+        
+        // LINE Messaging API Settings
+        const LINE_ACCESS_TOKEN = 'HvWfDq36/J52sm8eZZ6VwOl/JZcmhpyFryThEGGnHuIXswF40rUchBY9Wsup3PsDKtGCF4lzmTFiwNFSpCh0AnWJzevzcpH/C113RJwPh+kwnUEgogyWV0cZixUxzOzlpX0VPw/5jPL//h/R/S7lVAdB04t89/1O/w1cDnyilFU='; // ใส่ Channel Access Token ของ LINE Messaging API
+        const LINE_GROUP_ID = '2cdHaQZpzCtR69Hzszg12igvrHIj2hJIEBwwIn680Y1';     // ใส่ Group ID ของกลุ่มไลน์ (มักขึ้นต้นด้วยตัว C)
+
+        // ฟังก์ชันส่งแจ้งเตือน Telegram
+        async function sendTelegramNotification(issue, imageUrl) {
+            if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+            
+            let message = `🚨 <b>มีแจ้งซ่อมใหม่เข้าสู่ระบบ!</b>\n\n`;
+            message += `<b>รหัส:</b> ${issue.id}\n`;
+            message += `<b>บ้านเลขที่:</b> ${issue.houseNumber}\n`;
+            message += `<b>เบอร์โทร:</b> ${issue.phoneNumber || '-'}\n`;
+            message += `<b>หมวดหมู่:</b> ${issue.category}\n`;
+            message += `<b>รายละเอียด:</b> ${issue.detail}`;
+            
+            let apiUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+            let payload = { chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'HTML' };
+
+            // หากมีการแนบรูปภาพ ให้ส่งรูปพร้อม Caption
+            if (imageUrl) {
+                apiUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`;
+                payload = { chat_id: TELEGRAM_CHAT_ID, photo: imageUrl, caption: message, parse_mode: 'HTML' };
+            }
+
+            try {
+                await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+            } catch (error) {
+                console.error('Telegram Notify Error:', error);
+            }
+        }
+
+        // ฟังก์ชันส่งแจ้งเตือน LINE Messaging API
+        async function sendLineNotification(issue, imageUrl) {
+            if (!LINE_ACCESS_TOKEN || !LINE_GROUP_ID) return;
+            
+            let message = `🚨 มีแจ้งซ่อมใหม่!\n\nรหัส: ${issue.id}\nบ้านเลขที่: ${issue.houseNumber}\nเบอร์โทร: ${issue.phoneNumber || '-'}\nหมวดหมู่: ${issue.category}\nรายละเอียด: ${issue.detail}`;
+            let messagesPayload = [{ type: 'text', text: message }];
+            
+            if (imageUrl) {
+                messagesPayload.push({
+                    type: 'image',
+                    originalContentUrl: imageUrl,
+                    previewImageUrl: imageUrl
+                });
+            }
+
+            try {
+                await fetch('https://api.line.me/v2/bot/message/push', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${LINE_ACCESS_TOKEN}`
+                    },
+                    body: JSON.stringify({
+                        to: LINE_GROUP_ID,
+                        messages: messagesPayload
+                    })
+                });
+            } catch (error) {
+                console.error('LINE Notify Error:', error);
+            }
+        }
+
         // --- GLOBAL STATE ---
         let currentIssues = [];
         let currentView = 'user_submit';
@@ -526,12 +598,18 @@
         // --- UPLOAD IMAGE DIRECTORY TO SUPABASE ---
         async function uploadImage(fileInput, prefix = 'img') {
             if (!fileInput) return null;
+            // ถ้าเป็น URL อยู่แล้ว (เช่น กรณีแก้ไขแต่ไม่ได้เปลี่ยนรูป) ให้ส่งกลับได้เลย
             if (typeof fileInput === 'string' && fileInput.startsWith('http')) return fileInput;
+            // ถ้าเป็น Base64 อยู่แล้วให้ส่งกลับได้เลย
+            if (typeof fileInput === 'string' && fileInput.startsWith('data:')) return fileInput;
 
             try {
                 let contentType = fileInput.type || 'image/jpeg';
                 let fileExt = fileInput.name ? fileInput.name.split('.').pop() : 'jpg';
                 const fileName = `${prefix}-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+
+                // แปลงไฟล์เป็นข้อมูลไบนารีดิบ (ArrayBuffer) เพื่อให้ส่งผ่าน REST API ได้สมบูรณ์ 100%
+                const arrayBuffer = await fileInput.arrayBuffer();
 
                 const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/maintenance_images/${fileName}`, {
                     method: 'POST',
@@ -541,15 +619,23 @@
                         'Content-Type': contentType,
                         'x-upsert': 'true'
                     },
-                    body: fileInput 
+                    body: arrayBuffer 
                 });
 
-                if (!uploadRes.ok) throw new Error('Upload failed');
+                if (!uploadRes.ok) {
+                    const errData = await uploadRes.json();
+                    console.error("Supabase Storage Error:", errData);
+                    // ยกเลิก Fallback Base64 และบังคับแจ้งเตือน Error ทันทีถ้าอัพโหลดขึ้น Storage ไม่ผ่าน
+                    throw new Error(errData.message || errData.error || 'Upload failed');
+                }
+                
+                // คืนค่าเป็น Direct Link (URL ตรงของรูปภาพ)
                 return `${SUPABASE_URL}/storage/v1/object/public/maintenance_images/${fileName}`;
             } catch (error) {
                 console.error('Upload error:', error);
-                showToast('อัพโหลดรูปภาพไม่สำเร็จ');
-                return null;
+                showToast(`อัพโหลดรูปภาพไม่สำเร็จ กรุณาตรวจสอบสิทธิ์ Supabase Storage`);
+                // โยน Error กลับไปเพื่อให้ฟอร์มหยุดทำงานและไม่บันทึกข้อมูลถ้าอัพรูปไม่ผ่าน
+                throw error; 
             }
         }
 
@@ -603,7 +689,12 @@
                 };
 
                 try {
-                    const imageUrl = await uploadImage(userImageFile, 'user');
+                    // ถ้ามีรูป ระบบจะทำการอัพโหลดก่อน
+                    let imageUrl = null;
+                    if (userImageFile) {
+                        imageUrl = await uploadImage(userImageFile, 'user');
+                    }
+
                     const payload = {
                         id: newIssue.id,
                         house_number: newIssue.houseNumber,
@@ -624,6 +715,10 @@
                         showToast('ส่งข้อมูลแจ้งซ่อมเรียบร้อยแล้ว');
                         userHouseNumberStore = house;
                         
+                        // ส่งแจ้งเตือนผ่าน Telegram และ LINE
+                        sendTelegramNotification(newIssue, imageUrl);
+                        sendLineNotification(newIssue, imageUrl);
+                        
                         // Reset Form
                         this.reset();
                         document.getElementById('btn-remove-image').click();
@@ -632,7 +727,9 @@
                         switchView('user_history');
                     } else { throw new Error('Save failed'); }
                 } catch (error) {
-                    showToast('เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง');
+                    if (!error.message.includes('upload')) {
+                        showToast('เกิดข้อผิดพลาดในการบันทึก กรุณาลองใหม่อีกครั้ง');
+                    }
                 } finally {
                     inputs.forEach(i => i.disabled = false);
                     btn.disabled = false;
@@ -707,7 +804,11 @@
                         existingImageUrl = document.getElementById('ae-image-preview').src;
                     }
 
-                    const adminImageUrl = await uploadImage(adminImageFile || existingImageUrl, 'admin');
+                    // อัพโหลดรูปใหม่ของแอดมิน (ถ้ามี)
+                    let adminImageUrl = null;
+                    if (adminImageFile || existingImageUrl) {
+                        adminImageUrl = await uploadImage(adminImageFile || existingImageUrl, 'admin');
+                    }
 
                     const payload = {
                         status: currentEditStatus,
@@ -727,7 +828,9 @@
                         await fetchIssues();
                     } else { throw new Error('Update failed'); }
                 } catch(e) {
-                    showToast('อัพเดทล้มเหลว กรุณาลองใหม่อีกครั้ง');
+                    if (!e.message.includes('upload')) {
+                        showToast('อัพเดทล้มเหลว กรุณาลองใหม่อีกครั้ง');
+                    }
                 } finally {
                     btn.disabled = false;
                     document.getElementById('ae-save-icon').classList.remove('hidden');
