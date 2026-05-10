@@ -8,6 +8,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- โหลดไลบรารี html5-qrcode สำหรับสแกน QR -->
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <style>
         html { height: -webkit-fill-available; }
@@ -404,7 +406,32 @@
 
             <!-- แท็บ: เดินตรวจ (Patrol) -->
             <div id="patrolView" class="hidden fade-in">
-                <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 mt-2 relative">
+
+                <!-- ██ MINI-MAP CARD ██ -->
+                <div class="bg-white rounded-3xl shadow-sm border border-gray-100 mt-2 overflow-hidden">
+                    <!-- Map -->
+                    <div id="patrolMiniMap" class="w-full" style="height:240px; background:#e2e8f0;"></div>
+
+                    <!-- Legend + ระยะ -->
+                    <div class="px-4 py-3 border-t border-gray-100">
+                        <div class="flex items-center justify-between mb-2">
+                            <p class="text-xs font-black text-gray-700">แผนที่จุดตรวจ</p>
+                            <button onclick="recenterMap()" class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg active:scale-90 transition border border-emerald-100">
+                                🎯 ตำแหน่งฉัน
+                            </button>
+                        </div>
+                        <div class="flex flex-wrap gap-3 text-[10px] font-bold text-gray-500">
+                            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-blue-500 border-2 border-white shadow"></span>ตำแหน่งฉัน</span>
+                            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-emerald-600 border-2 border-white shadow"></span>ป้อม รปภ.</span>
+                            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-slate-700 border-2 border-white shadow"></span>จุดตรวจ</span>
+                            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-orange-400 border-2 border-white shadow"></span>จุดที่เลือก</span>
+                        </div>
+                        <p id="mapDistanceText" class="text-xs text-gray-400 mt-2 font-medium"></p>
+                    </div>
+                </div>
+
+                <!-- QR + Controls -->
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 mt-3 relative">
                     <div class="text-center mb-6 mt-2">
                         <h3 class="text-xl font-bold text-gray-800">ระบบเดินตรวจ</h3>
                         <p class="text-sm text-gray-500">สแกน QR Code ประจำจุดตรวจเพื่อตรวจสอบพิกัด</p>
@@ -1051,6 +1078,8 @@
                     if (badge) badge.innerText = currentLocation.lat.toFixed(5) + ', ' + currentLocation.lng.toFixed(5);
                     if (icon)  icon.innerText = '🟢';
                     if (spin)  spin.classList.remove('animate-spin');
+                    // อัปเดต user marker บน map
+                    refreshMapUserMarker();
                 },
                 () => {
                     const spin = document.getElementById('refreshGpsIcon');
@@ -1075,6 +1104,11 @@
                 cpSelect.appendChild(opt);
             });
             try { sessionStorage.setItem(CONFIG_KEY, JSON.stringify(configResult)); } catch(e) {}
+
+            // ถ้า map เปิดอยู่แล้ว ให้เพิ่ม marker จุดตรวจใหม่
+            if (_mapInitialized && _map) {
+                Object.keys(checkpointsData).forEach(function(cpId) { addCpMarker(cpId, false); });
+            }
         }
 
         async function loginWithEmpCode() {
@@ -1347,7 +1381,9 @@
                 (decodedText) => {
                     window.stopQRScanner();
                     const val = decodedText.trim();
-                    document.getElementById('scannedCheckpointName').innerText = `📍 จุดสแกนรหัส: ${val}`;
+                    document.getElementById('scannedCheckpointName').innerText = '📍 จุดสแกนรหัส: ' + val;
+                    // อัปเดต map
+                    onCheckpointSelected(val);
                     
                     const sel = document.getElementById('checkpointSelect');
                     if(!Array.from(sel.options).some(o => o.value === val)){
@@ -2260,6 +2296,221 @@
             // 'denied' — ไม่ทำอะไร ไม่แสดง banner
         }
 
+        // ============================================================
+        //  MINI-MAP SYSTEM (Leaflet.js)
+        // ============================================================
+        var _map = null;
+        var _userMarker = null;
+        var _userCircle = null;
+        var _guardMarker = null;
+        var _cpMarkers = {};          // { cpId: { marker, circle } }
+        var _selectedCpId = null;
+        var _mapInitialized = false;
+
+        // tile layer ที่ไม่ต้องการ API key
+        var TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+        function initMiniMap() {
+            if (_mapInitialized) return;
+            if (!document.getElementById('patrolMiniMap')) return;
+            if (typeof L === 'undefined') return;
+
+            _mapInitialized = true;
+
+            var center = guardHouseLocation.lat !== 0
+                ? [guardHouseLocation.lat, guardHouseLocation.lng]
+                : currentLocation
+                    ? [currentLocation.lat, currentLocation.lng]
+                    : [13.7563, 100.5018]; // default กทม.
+
+            _map = L.map('patrolMiniMap', {
+                center: center, zoom: 17,
+                zoomControl: true, attributionControl: false
+            });
+
+            L.tileLayer(TILE_URL, { maxZoom: 19 }).addTo(_map);
+
+            // ป้อม รปภ.
+            if (guardHouseLocation.lat !== 0) {
+                _guardMarker = L.circleMarker(
+                    [guardHouseLocation.lat, guardHouseLocation.lng],
+                    { radius: 10, fillColor: '#059669', color: '#fff', weight: 2.5, fillOpacity: 1 }
+                ).addTo(_map);
+
+                var ghLabel = L.divIcon({ className: '', html: '<div class="guardhouse-label">ป้อม รปภ.</div>', iconAnchor: [-14, 6] });
+                L.marker([guardHouseLocation.lat, guardHouseLocation.lng], { icon: ghLabel, interactive: false }).addTo(_map);
+
+                // รัศมีอนุญาตลงเวลา
+                L.circle([guardHouseLocation.lat, guardHouseLocation.lng], {
+                    radius: ALLOWED_RADIUS, color: '#059669', fillColor: '#059669',
+                    fillOpacity: 0.06, weight: 1.5, dashArray: '5,5'
+                }).addTo(_map);
+            }
+
+            // จุดตรวจทั้งหมด
+            Object.keys(checkpointsData).forEach(function(cpId) {
+                addCpMarker(cpId, false);
+            });
+
+            // ตำแหน่งตัวเอง
+            updateUserMarker();
+        }
+
+        function addCpMarker(cpId, isSelected) {
+            if (!_map) return;
+            var cp = checkpointsData[cpId];
+            if (!cp || cp.lat === 0) return;
+
+            // ลบ marker เก่า
+            if (_cpMarkers[cpId]) {
+                _cpMarkers[cpId].marker.remove();
+                _cpMarkers[cpId].circle.remove();
+            }
+
+            var color  = isSelected ? '#f97316' : '#1e293b';
+            var radius = isSelected ? 12 : 9;
+
+            var marker = L.circleMarker([cp.lat, cp.lng], {
+                radius: radius, fillColor: color, color: '#fff', weight: 2, fillOpacity: 1
+            }).addTo(_map);
+
+            // tooltip ชื่อจุดตรวจ
+            var label = L.divIcon({
+                className: '', iconAnchor: [-14, 6],
+                html: '<div class="cp-marker-label" style="background:' + color + '">' + cp.name + '</div>'
+            });
+            var labelM = L.marker([cp.lat, cp.lng], { icon: label, interactive: false }).addTo(_map);
+
+            // รัศมีจุดตรวจ
+            var circle = L.circle([cp.lat, cp.lng], {
+                radius: cp.radius || 30,
+                color: color, fillColor: color,
+                fillOpacity: isSelected ? 0.12 : 0.05,
+                weight: isSelected ? 2 : 1, dashArray: '4,4'
+            }).addTo(_map);
+
+            _cpMarkers[cpId] = { marker, circle, labelM };
+
+            // คลิก marker เพื่อเลือกจุดตรวจ
+            marker.on('click', function() {
+                selectCpOnMap(cpId);
+            });
+        }
+
+        function selectCpOnMap(cpId) {
+            var prevId = _selectedCpId;
+            _selectedCpId = cpId;
+
+            // redraw ทุก marker
+            Object.keys(_cpMarkers).forEach(function(id) {
+                addCpMarker(id, id === cpId);
+            });
+
+            // อัปเดต dropdown
+            var sel = document.getElementById('checkpointSelect');
+            if (sel) {
+                sel.value = cpId;
+                handleManualSelection();
+                if (!document.getElementById('manualDropdownContainer').classList.contains('hidden') === false) {
+                    window.showManualDropdown();
+                }
+            }
+
+            // pan ไปที่จุดตรวจที่เลือก
+            var cp = checkpointsData[cpId];
+            if (cp && cp.lat !== 0 && _map) {
+                _map.panTo([cp.lat, cp.lng], { animate: true, duration: 0.5 });
+            }
+
+            updateMapDistanceText(cpId);
+        }
+
+        function updateUserMarker() {
+            if (!_map || !currentLocation) return;
+            var latlng = [currentLocation.lat, currentLocation.lng];
+
+            if (!_userMarker) {
+                // สร้าง user marker แบบ pulsing
+                var userIcon = L.divIcon({
+                    className: '',
+                    html: '<div style="width:18px;height:18px;border-radius:50%;background:#3b82f6;border:3px solid #fff;box-shadow:0 0 0 4px rgba(59,130,246,0.25);"></div>',
+                    iconSize: [18, 18], iconAnchor: [9, 9]
+                });
+                _userMarker = L.marker(latlng, { icon: userIcon, zIndexOffset: 1000 }).addTo(_map);
+                _userMarker.bindTooltip('ตำแหน่งฉัน', { permanent: false, direction: 'top' });
+
+                // accuracy circle
+                _userCircle = L.circle(latlng, {
+                    radius: 8, color: '#3b82f6', fillColor: '#3b82f6',
+                    fillOpacity: 0.12, weight: 1
+                }).addTo(_map);
+            } else {
+                _userMarker.setLatLng(latlng);
+                _userCircle.setLatLng(latlng);
+            }
+
+            updateMapDistanceText(_selectedCpId);
+        }
+
+        function updateMapDistanceText(cpId) {
+            var el = document.getElementById('mapDistanceText');
+            if (!el) return;
+            if (!currentLocation) { el.innerText = 'กำลังค้นหาพิกัด...'; return; }
+
+            if (cpId && checkpointsData[cpId] && checkpointsData[cpId].lat !== 0) {
+                var cp   = checkpointsData[cpId];
+                var dist = Math.round(calculateDistance(currentLocation.lat, currentLocation.lng, cp.lat, cp.lng));
+                var max  = cp.radius || 30;
+                var ok   = dist <= max;
+                el.innerHTML = '📍 ระยะจาก <b>' + cp.name + '</b>: '
+                    + (ok
+                        ? '<span style="color:#059669;font-weight:700">' + dist + 'ม. ✅ อยู่ในพื้นที่</span>'
+                        : '<span style="color:#dc2626;font-weight:700">' + dist + 'ม. ⚠️ ไกลเกิน (สูงสุด ' + max + 'ม.)</span>');
+            } else {
+                var distGuard = Math.round(calculateDistance(
+                    currentLocation.lat, currentLocation.lng,
+                    guardHouseLocation.lat, guardHouseLocation.lng
+                ));
+                el.innerHTML = '📍 ระยะจากป้อม: <b>' + distGuard + 'ม.</b>';
+            }
+        }
+
+        window.recenterMap = function() {
+            if (!_map) return;
+            if (currentLocation) {
+                _map.flyTo([currentLocation.lat, currentLocation.lng], 17, { animate: true, duration: 0.8 });
+            } else if (guardHouseLocation.lat !== 0) {
+                _map.flyTo([guardHouseLocation.lat, guardHouseLocation.lng], 17);
+            }
+        };
+
+        // เมื่อเปิด patrol tab — init map + invalidate size
+        function onPatrolTabOpen() {
+            if (!_mapInitialized) {
+                initMiniMap();
+            } else if (_map) {
+                setTimeout(function() { _map.invalidateSize(); }, 100);
+            }
+            updateUserMarker();
+        }
+
+        // อัปเดต user marker เมื่อ GPS เปลี่ยน — hook เข้า GPS callback
+        function refreshMapUserMarker() {
+            if (_map && _mapInitialized) updateUserMarker();
+        }
+
+        // อัปเดต map เมื่อเลือกจุดตรวจ
+        function onCheckpointSelected(cpId) {
+            if (!_map || !_mapInitialized) return;
+            _selectedCpId = cpId;
+            Object.keys(_cpMarkers).forEach(function(id) { addCpMarker(id, id === cpId); });
+            var cp = checkpointsData[cpId];
+            if (cp && cp.lat !== 0) {
+                _map.panTo([cp.lat, cp.lng], { animate: true, duration: 0.5 });
+            }
+            updateMapDistanceText(cpId);
+        }
+
         const PATROL_TIMES = [
             { h: 22, m: 0 }, { h: 0,  m: 0 }, { h: 2,  m: 0 }, { h: 4,  m: 0 },
             { h: 10, m: 0 }, { h: 12, m: 0 }, { h: 14, m: 0 }, { h: 16, m: 0 }
@@ -2314,8 +2565,9 @@
         var _origSwitchTab = window.switchTab;
         window.switchTab = function(tab) {
             _origSwitchTab(tab);
-            if (tab === 'rules') updatePatrolScheduleUI();
-            if (tab === 'home')  updatePatrolProgress();
+            if (tab === 'rules')  updatePatrolScheduleUI();
+            if (tab === 'home')   updatePatrolProgress();
+            if (tab === 'patrol') onPatrolTabOpen();
         };
     </script>
 </body>
