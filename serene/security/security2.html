@@ -1430,29 +1430,125 @@
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
         }
 
-        window.checkLocationAndCapture = function(actionType) {
-            if (!currentLocation) return showCustomAlert('รอพิกัด GPS', 'กรุณารอระบบค้นหาพิกัด GPS ให้สำเร็จก่อน', 'warning');
-            
-            if (actionType === 'patrol') {
-                const selectedCpId = document.getElementById('checkpointSelect').value;
-                if(!selectedCpId) return showCustomAlert('แจ้งเตือน', 'กรุณาสแกน QR Code หรือเลือกจุดตรวจก่อน', 'warning');
+        // ============================================================
+        //  Duplicate Check — ตรวจลงเวลาซ้ำ
+        // ============================================================
+        var DUPLICATE_MINUTES = 30; // นาที
 
-                const cpInfo = checkpointsData[selectedCpId];
-                if (cpInfo && cpInfo.lat !== 0 && cpInfo.lng !== 0) {
-                    const distance = calculateDistance(currentLocation.lat, currentLocation.lng, cpInfo.lat, cpInfo.lng);
-                    if (distance > cpInfo.radius) {
-                        return showCustomAlert('อยู่นอกพื้นที่', `คุณอยู่ห่างจุดตรวจเกินไป\nระยะของคุณ: ${Math.round(distance)}ม.\nกำหนดไว้: ไม่เกิน ${cpInfo.radius}ม.`, 'error');
+        function getLastRecord(type, cpId) {
+            // type: 'checkin' | 'checkout' | 'patrol'
+            // คืน record ล่าสุดของ type นั้น (และ cpId สำหรับ patrol)
+            try {
+                var history = JSON.parse(localStorage.getItem('guard_history_v2')) || [];
+                for (var i = 0; i < history.length; i++) {
+                    var rec = history[i];
+                    if (type === 'patrol') {
+                        if (rec.type === 'patrol' && rec.extra && rec.extra.checkpoint === cpId) return rec;
+                    } else {
+                        // checkin/checkout เก็บใน title เช่น "เข้างาน" / "ออกงาน"
+                        var keyword = type === 'checkin' ? 'เข้างาน' : 'ออกงาน';
+                        if (rec.title && rec.title.includes(keyword)) return rec;
                     }
                 }
+            } catch(e) {}
+            return null;
+        }
+
+        function isDuplicate(type, cpId) {
+            var last = getLastRecord(type, cpId);
+            if (!last) return { dup: false };
+            var diffMs  = Date.now() - last.id; // id คือ timestamp
+            var diffMin = Math.round(diffMs / 60000);
+            if (diffMin < DUPLICATE_MINUTES) {
+                return { dup: true, diffMin: diffMin, last: last };
+            }
+            return { dup: false };
+        }
+
+        // แสดง modal ยืนยัน แล้ว callback เมื่อกด "บันทึกต่อ"
+        function showDuplicateWarning(msg, onConfirm) {
+            // override closeCustomAlert ชั่วคราว เพื่อดักปุ่ม OK → ยกเลิก
+            document.getElementById('customAlertTitle').innerText = '⚠️ พบการบันทึกซ้ำ';
+            document.getElementById('customAlertMessage').innerText = msg;
+
+            // เพิ่มปุ่ม "บันทึกต่อ" ชั่วคราว
+            var footer = document.querySelector('#customAlertModal .p-5.bg-gray-50');
+            var origHTML = footer.innerHTML;
+            footer.innerHTML =
+                '<div class="flex gap-2">' +
+                '<button onclick="closeDupModal(false)" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-3.5 rounded-xl transition active:scale-95">ยกเลิก</button>' +
+                '<button onclick="closeDupModal(true)" class="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-3.5 rounded-xl transition active:scale-95 shadow-md">บันทึกต่อ</button>' +
+                '</div>';
+
+            document.getElementById('customAlertModal').classList.remove('hidden');
+
+            window._dupOnConfirm = onConfirm;
+            window._dupFooterOrigHTML = origHTML;
+        }
+
+        window.closeDupModal = function(confirmed) {
+            var footer = document.querySelector('#customAlertModal .p-5.bg-gray-50');
+            if (footer && window._dupFooterOrigHTML) footer.innerHTML = window._dupFooterOrigHTML;
+            document.getElementById('customAlertModal').classList.add('hidden');
+            if (confirmed && typeof window._dupOnConfirm === 'function') window._dupOnConfirm();
+            window._dupOnConfirm = null;
+        };
+
+        // ============================================================
+        window.checkLocationAndCapture = function(actionType) {
+            if (!currentLocation) return showCustomAlert('รอพิกัด GPS', 'กรุณารอระบบค้นหาพิกัด GPS ให้สำเร็จก่อน', 'warning');
+
+            if (actionType === 'patrol') {
+                var selectedCpId = document.getElementById('checkpointSelect').value;
+                if (!selectedCpId) return showCustomAlert('แจ้งเตือน', 'กรุณาสแกน QR Code หรือเลือกจุดตรวจก่อน', 'warning');
+
+                var cpInfo = checkpointsData[selectedCpId];
+                if (cpInfo && cpInfo.lat !== 0 && cpInfo.lng !== 0) {
+                    var dist = calculateDistance(currentLocation.lat, currentLocation.lng, cpInfo.lat, cpInfo.lng);
+                    if (dist > cpInfo.radius) {
+                        return showCustomAlert('อยู่นอกพื้นที่',
+                            'คุณอยู่ห่างจุดตรวจเกินไป\nระยะของคุณ: ' + Math.round(dist) + 'ม.\nกำหนดไว้: ไม่เกิน ' + cpInfo.radius + 'ม.', 'error');
+                    }
+                }
+
+                // Duplicate check สำหรับ patrol (แยกตาม checkpoint)
+                var dupP = isDuplicate('patrol', selectedCpId);
+                if (dupP.dup) {
+                    var cpName = cpInfo ? cpInfo.name : selectedCpId;
+                    return showDuplicateWarning(
+                        'คุณบันทึกจุดตรวจ "' + cpName + '" ไปแล้วเมื่อ ' + dupP.diffMin + ' นาทีที่แล้ว\n\n'
+                        + 'บันทึกเวลา: ' + dupP.last.time + '\n'
+                        + 'ต้องการบันทึกซ้ำหรือไม่?',
+                        function() { doCapture(actionType); }
+                    );
+                }
+
             } else if (actionType === 'checkin' || actionType === 'checkout') {
-                const distance = calculateDistance(currentLocation.lat, currentLocation.lng, guardHouseLocation.lat, guardHouseLocation.lng);
-                if (guardHouseLocation.lat !== 0 && guardHouseLocation.lng !== 0 && distance > ALLOWED_RADIUS) {
-                    return showCustomAlert('อยู่นอกพื้นที่', `คุณอยู่ห่างจากป้อมเกินไป\nระยะของคุณ: ${Math.round(distance)}ม.\nกำหนดไว้: ไม่เกิน ${ALLOWED_RADIUS}ม.`, 'error');
+                var distG = calculateDistance(currentLocation.lat, currentLocation.lng, guardHouseLocation.lat, guardHouseLocation.lng);
+                if (guardHouseLocation.lat !== 0 && guardHouseLocation.lng !== 0 && distG > ALLOWED_RADIUS) {
+                    return showCustomAlert('อยู่นอกพื้นที่',
+                        'คุณอยู่ห่างจากป้อมเกินไป\nระยะของคุณ: ' + Math.round(distG) + 'ม.\nกำหนดไว้: ไม่เกิน ' + ALLOWED_RADIUS + 'ม.', 'error');
+                }
+
+                // Duplicate check สำหรับ checkin/checkout
+                var dupC = isDuplicate(actionType, null);
+                if (dupC.dup) {
+                    var actionLabel = actionType === 'checkin' ? 'เข้างาน' : 'ออกงาน';
+                    return showDuplicateWarning(
+                        'คุณลงเวลา' + actionLabel + 'ไปแล้วเมื่อ ' + dupC.diffMin + ' นาทีที่แล้ว\n\n'
+                        + 'บันทึกเวลา: ' + dupC.last.time + '\n'
+                        + 'ต้องการบันทึกซ้ำหรือไม่?',
+                        function() { doCapture(actionType); }
+                    );
                 }
             }
-            
-            document.getElementById(actionType === 'patrol' ? 'patrolCameraInput' : 'cameraInput').click();
+
+            doCapture(actionType);
+        };
+
+        function doCapture(actionType) {
             pendingActionType = actionType;
+            document.getElementById(actionType === 'patrol' ? 'patrolCameraInput' : 'cameraInput').click();
         }
 
         // ---- Bottom Sheet helpers ----
