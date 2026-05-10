@@ -196,6 +196,17 @@
                     </div>
                 </div>
 
+                <!-- Notification permission banner -->
+                <div id="notifPermBanner" class="hidden bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3 fade-in">
+                    <span class="text-xl shrink-0">🔔</span>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-xs font-black text-amber-800">เปิดรับการแจ้งเตือน</p>
+                        <p class="text-[10px] text-amber-600 leading-snug">แจ้งก่อนถึงเวลาเดินตรวจ 5 นาที แม้ปิดหน้าจออยู่</p>
+                    </div>
+                    <button onclick="requestNotifPermission()" class="shrink-0 bg-amber-500 hover:bg-amber-600 text-white text-xs font-black px-3 py-2 rounded-xl active:scale-90 transition">อนุญาต</button>
+                    <button onclick="this.closest('#notifPermBanner').classList.add('hidden')" class="shrink-0 text-amber-400 text-base leading-none px-1">✕</button>
+                </div>
+
                 <div class="bg-white p-3.5 rounded-3xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-gray-100 flex items-center gap-3">
                     <div class="bg-slate-50 p-2.5 rounded-2xl shadow-inner">
                         <span id="gpsIcon" class="text-lg">📍</span>
@@ -815,8 +826,8 @@
         // ตั้งค่า URL ของ Google Apps Script API และ Telegram
         // ==========================================
         const GAS_URL = "https://script.google.com/macros/s/AKfycbxcv4f8AGhnEZ2Cb8Ba0VOa15NBIBX3dYJ9Dn1jN4fW7nzPxetIDqTOtTsMzyAkEx2c2A/exec"; 
-        const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
-        const CHAT_ID = '-4574041962';
+        const BOT_TOKEN = '7708637309:AAHU2swP8U67XVWITdjsxjQoqiXIL9KbBJs';
+        const CHAT_ID = '7585120244';
 
         let currentUser = null;
         let currentLocation = null;
@@ -1149,6 +1160,9 @@
             } else {
                 setTimeout(updatePatrolProgress, 0);
             }
+
+            // เริ่มระบบ Notification
+            initNotifications();
         }
 
         // ==========================================
@@ -2133,6 +2147,118 @@
 
         // อัปเดตทุก 60 วินาที + hook switchTab home
         setInterval(updatePatrolProgress, 60000);
+
+        // ============================================================
+        //  WEB NOTIFICATION SYSTEM — แจ้งเตือนเมื่อถึงเวลาเดินตรวจ
+        // ============================================================
+
+        var _notifCheckInterval = null;
+        var _lastNotifiedRoundKey = null;   // ป้องกันแจ้งซ้ำในรอบเดิม
+        var _notifLeadMinutes = 5;          // แจ้งก่อนกี่นาที
+
+        // ขอสิทธิ์แจ้งเตือน
+        window.requestNotifPermission = async function() {
+            if (!('Notification' in window)) {
+                showCustomAlert('ไม่รองรับ', 'เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือน', 'warning');
+                return;
+            }
+            var perm = await Notification.requestPermission();
+            if (perm === 'granted') {
+                document.getElementById('notifPermBanner').classList.add('hidden');
+                showCustomAlert('เปิดแจ้งเตือนแล้ว', 'ระบบจะแจ้งเตือนก่อนถึงเวลาเดินตรวจ ' + _notifLeadMinutes + ' นาที 🔔', 'success');
+                startNotifChecker();
+                // ทดสอบส่งแจ้งเตือนทันที
+                setTimeout(function() {
+                    sendPatrolNotif('ทดสอบระบบแจ้งเตือน', 'ระบบพร้อมใช้งาน - จะแจ้งก่อนถึงเวลาเดินตรวจ ' + _notifLeadMinutes + ' นาที', true);
+                }, 500);
+            } else {
+                showCustomAlert('ไม่ได้รับสิทธิ์', 'กรุณาเปิดสิทธิ์การแจ้งเตือนในการตั้งค่าเบราว์เซอร์', 'error');
+            }
+        };
+
+        // ส่ง notification จริง
+        function sendPatrolNotif(title, body, silent) {
+            if (Notification.permission !== 'granted') return;
+            try {
+                var n = new Notification(title, {
+                    body:    body,
+                    icon:    'https://cdn.jsdelivr.net/npm/twemoji@14/assets/72x72/1f6e1.png',
+                    badge:   'https://cdn.jsdelivr.net/npm/twemoji@14/assets/72x72/1f514.png',
+                    tag:     'patrol-reminder',
+                    renotify: !silent,
+                    silent:  !!silent,
+                    vibrate: silent ? [] : [200, 100, 200]
+                });
+                n.onclick = function() {
+                    window.focus();
+                    n.close();
+                    window.switchTab('patrol');
+                };
+            } catch(e) { console.warn('Notification error:', e); }
+        }
+
+        // ตรวจทุก 30 วินาที ว่าใกล้ถึงเวลาเดินตรวจหรือไม่
+        function checkPatrolNotif() {
+            if (Notification.permission !== 'granted') return;
+            var now  = new Date();
+            var nowM = now.getHours() * 60 + now.getMinutes();
+
+            PATROL_ROUNDS.forEach(function(r) {
+                var rM   = r.h * 60 + r.m;
+                var diff = rM - nowM;
+                if (diff < 0) diff += 24 * 60;
+
+                // แจ้งเตือนที่ _notifLeadMinutes นาทีก่อน และ 0 นาที (ถึงเวลา)
+                var roundKey = r.h + ':' + r.m + ':' + now.toDateString();
+
+                if (diff === _notifLeadMinutes) {
+                    var key = 'before:' + roundKey;
+                    if (_lastNotifiedRoundKey !== key) {
+                        _lastNotifiedRoundKey = key;
+                        var guardName = currentUser ? currentUser.full_name : 'รปภ.';
+                        sendPatrolNotif(
+                            '⏰ อีก ' + _notifLeadMinutes + ' นาที ถึงเวลาเดินตรวจ',
+                            'รอบ ' + r.label + ' / ' + r.shift + ' | จุดตรวจ: ' + r.checkpoints.join(', ') + ' | ' + guardName + ' โปรดเตรียมตัว',
+                            false
+                        );
+                    }
+                } else if (diff === 0) {
+                    var key2 = 'now:' + roundKey;
+                    if (_lastNotifiedRoundKey !== key2) {
+                        _lastNotifiedRoundKey = key2;
+                        var guardName2 = currentUser ? currentUser.full_name : 'รปภ.';
+                        sendPatrolNotif(
+                            '🔦 ถึงเวลาเดินตรวจแล้ว!',
+                            'รอบ ' + r.label + ' / ' + r.shift + ' | จุดตรวจ: ' + r.checkpoints.join(', ') + ' | ' + guardName2 + ' กรุณาออกตรวจทันที',
+                            false
+                        );
+                    }
+                }
+            });
+        }
+
+        function startNotifChecker() {
+            if (_notifCheckInterval) clearInterval(_notifCheckInterval);
+            // ตรวจทุก 30 วิ (sync กับนาที จะแม่นขึ้น)
+            _notifCheckInterval = setInterval(function() {
+                if (currentUser) checkPatrolNotif();
+            }, 30000);
+        }
+
+        // แสดง banner และเริ่ม checker หลัง login
+        function initNotifications() {
+            if (!('Notification' in window)) return;
+            if (Notification.permission === 'granted') {
+                // มีสิทธิ์แล้ว เริ่ม checker เลย
+                startNotifChecker();
+            } else if (Notification.permission === 'default') {
+                // ยังไม่เคยขอ — แสดง banner
+                setTimeout(function() {
+                    document.getElementById('notifPermBanner').classList.remove('hidden');
+                }, 2000);   // รอ 2 วิให้ UI โหลดเสร็จก่อน
+            }
+            // 'denied' — ไม่ทำอะไร ไม่แสดง banner
+        }
 
         const PATROL_TIMES = [
             { h: 22, m: 0 }, { h: 0,  m: 0 }, { h: 2,  m: 0 }, { h: 4,  m: 0 },
