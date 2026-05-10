@@ -40,6 +40,20 @@
 
         /* Image Lightbox */
         #imgLightbox { transition: opacity 0.2s; }
+
+        /* ── Offline Queue Badge ── */
+        #offlineBadge {
+            animation: badgePulse 2s ease-in-out infinite;
+        }
+        @keyframes badgePulse {
+            0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0   rgba(251,146,60,0.6); }
+            50%      { transform: scale(1.10); box-shadow: 0 0 0 6px rgba(251,146,60,0);   }
+        }
+        #offlineSyncBar {
+            transition: max-height 0.35s ease, opacity 0.3s ease;
+            max-height: 0; opacity: 0; overflow: hidden;
+        }
+        #offlineSyncBar.show { max-height: 80px; opacity: 1; }
     </style>
 </head>
 <body class="bg-slate-50 text-gray-800 font-sans antialiased h-[100dvh] flex flex-col overflow-hidden relative">
@@ -175,10 +189,32 @@
         <header class="bg-emerald-600 text-white p-4 shadow-md z-50 shrink-0 relative overflow-hidden">
             <div class="absolute inset-0 bg-white opacity-10 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-white via-transparent to-transparent"></div>
             <h1 class="text-xl font-bold text-center relative z-10 tracking-wide">Smart Village Security</h1>
+            <!-- Offline Queue Badge -->
+            <div id="offlineBadge" class="hidden absolute left-4 top-1/2 -translate-y-1/2 z-10
+                bg-orange-400 text-white text-[10px] font-black px-2.5 py-1.5 rounded-xl
+                flex items-center gap-1 border border-orange-300 cursor-pointer"
+                onclick="switchTab('home'); setTimeout(function(){ document.getElementById('offlineSyncBar').scrollIntoView({behavior:'smooth'}); },200)">
+                📦 <span id="offlineBadgeCount">0</span> รอส่ง
+            </div>
             <button onclick="confirmLogout()" class="absolute right-4 top-1/2 -translate-y-1/2 z-10 text-white/70 hover:text-white text-xs font-bold bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-xl transition active:scale-90 border border-white/20" title="ออกจากระบบ">
                 🚪 ออก
             </button>
         </header>
+
+        <!-- Offline Sync Banner (แสดงเมื่อมีคิวรอส่ง + ออนไลน์) -->
+        <div id="offlineSyncBar" class="w-full max-w-md mx-auto px-3 pt-2 z-40">
+            <div class="bg-orange-50 border border-orange-200 rounded-2xl px-4 py-3 flex items-center gap-3 shadow-sm">
+                <span class="text-xl shrink-0" id="offlineSyncIcon">📦</span>
+                <div class="flex-1 min-w-0">
+                    <p class="text-xs font-black text-orange-800" id="offlineSyncTitle">มีข้อมูลรอส่ง</p>
+                    <p class="text-[10px] text-orange-600 leading-snug" id="offlineSyncDesc">กำลังรอการเชื่อมต่อ...</p>
+                </div>
+                <button onclick="manualSync()" id="offlineSyncBtn"
+                    class="shrink-0 bg-orange-500 hover:bg-orange-600 text-white text-xs font-black px-3 py-2 rounded-xl active:scale-90 transition">
+                    ส่งเดี๋ยวนี้
+                </button>
+            </div>
+        </div>
 
         <main class="flex-1 overflow-y-auto w-full max-w-md mx-auto relative px-4 pt-4 pb-32">
             
@@ -853,8 +889,8 @@
         // ตั้งค่า URL ของ Google Apps Script API และ Telegram
         // ==========================================
         const GAS_URL = "https://script.google.com/macros/s/AKfycbxcv4f8AGhnEZ2Cb8Ba0VOa15NBIBX3dYJ9Dn1jN4fW7nzPxetIDqTOtTsMzyAkEx2c2A/exec"; 
-        const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
-        const CHAT_ID = '-4574041962';
+        const BOT_TOKEN = '7708637309:AAHU2swP8U67XVWITdjsxjQoqiXIL9KbBJs';
+        const CHAT_ID = '7585120244';
 
         let currentUser = null;
         let currentLocation = null;
@@ -2790,6 +2826,358 @@
             if (tab === 'home')   updatePatrolProgress();
             if (tab === 'patrol') onPatrolTabOpen();
         };
+    </script>
+
+    <!-- ════════════════════════════════════════════════
+         ระบบ Offline Queue — IndexedDB + Auto-Sync
+         ════════════════════════════════════════════════ -->
+    <script>
+    (function() {
+        'use strict';
+
+        // ── 1. IndexedDB helpers ──────────────────────────────────
+        var DB_NAME    = 'svs_offline_db';
+        var DB_VERSION = 1;
+        var STORE_NAME = 'queue';
+        var _db        = null;
+
+        function openDB() {
+            return new Promise(function(resolve, reject) {
+                if (_db) { resolve(_db); return; }
+                var req = indexedDB.open(DB_NAME, DB_VERSION);
+                req.onupgradeneeded = function(e) {
+                    var db = e.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+                    }
+                };
+                req.onsuccess = function(e) { _db = e.target.result; resolve(_db); };
+                req.onerror   = function(e) { reject(e.target.error); };
+            });
+        }
+
+        function dbAddItem(item) {
+            return openDB().then(function(db) {
+                return new Promise(function(resolve, reject) {
+                    var tx  = db.transaction(STORE_NAME, 'readwrite');
+                    var req = tx.objectStore(STORE_NAME).add(item);
+                    req.onsuccess = function() { resolve(req.result); };
+                    req.onerror   = function() { reject(req.error); };
+                });
+            });
+        }
+
+        function dbGetAll() {
+            return openDB().then(function(db) {
+                return new Promise(function(resolve, reject) {
+                    var tx  = db.transaction(STORE_NAME, 'readonly');
+                    var req = tx.objectStore(STORE_NAME).getAll();
+                    req.onsuccess = function() { resolve(req.result); };
+                    req.onerror   = function() { reject(req.error); };
+                });
+            });
+        }
+
+        function dbDeleteItem(id) {
+            return openDB().then(function(db) {
+                return new Promise(function(resolve, reject) {
+                    var tx  = db.transaction(STORE_NAME, 'readwrite');
+                    var req = tx.objectStore(STORE_NAME).delete(id);
+                    req.onsuccess = function() { resolve(); };
+                    req.onerror   = function() { reject(req.error); };
+                });
+            });
+        }
+
+        // ── 2. Badge / Banner UI ──────────────────────────────────
+        function updateOfflineUI(count) {
+            var badge    = document.getElementById('offlineBadge');
+            var badgeCnt = document.getElementById('offlineBadgeCount');
+            var bar      = document.getElementById('offlineSyncBar');
+            var barTitle = document.getElementById('offlineSyncTitle');
+            var barDesc  = document.getElementById('offlineSyncDesc');
+            var barBtn   = document.getElementById('offlineSyncBtn');
+            var barIcon  = document.getElementById('offlineSyncIcon');
+
+            if (count === 0) {
+                if (badge) badge.classList.add('hidden');
+                if (bar)   bar.classList.remove('show');
+                return;
+            }
+
+            // มีรายการรอส่ง
+            if (badge) {
+                badge.classList.remove('hidden');
+                if (badgeCnt) badgeCnt.innerText = count;
+            }
+            if (bar) {
+                bar.classList.add('show');
+                var online = navigator.onLine;
+                if (barIcon)  barIcon.innerText  = online ? '📡' : '📵';
+                if (barTitle) barTitle.innerText  = count + ' รายการรอส่งเข้า Google Sheets';
+                if (barDesc)  barDesc.innerText   = online ? 'มีอินเทอร์เน็ต — กด "ส่งเดี๋ยวนี้" หรือรอระบบ sync อัตโนมัติ' : 'ไม่มีสัญญาณ — ระบบจะส่งอัตโนมัติเมื่อออนไลน์';
+                if (barBtn)   barBtn.disabled     = !online;
+                if (barBtn)   barBtn.style.opacity = online ? '1' : '0.5';
+            }
+        }
+
+        async function refreshBadge() {
+            try {
+                var items = await dbGetAll();
+                updateOfflineUI(items.length);
+            } catch(e) { /* ignore */ }
+        }
+
+        // ── 3. Enqueue — บันทึก payload ลง IndexedDB ───────────────
+        window.enqueueOffline = async function(payload, titleHistory, actionType, extraData) {
+            var item = {
+                payload:      payload,
+                titleHistory: titleHistory,
+                actionType:   actionType,
+                extraData:    extraData,
+                savedAt:      Date.now(),
+                retries:      0
+            };
+            try {
+                await dbAddItem(item);
+                await refreshBadge();
+                // บันทึก local history ทันที (ใช้ฟังก์ชันเดิม)
+                if (typeof saveToHistory === 'function') {
+                    saveToHistory(titleHistory + ' (รอส่ง)', actionType, extraData);
+                }
+                // แสดงผลสำเร็จ (offline mode)
+                showSheetState('success');
+                var descEl = document.querySelector('#sheetSuccessContent p.text-xs');
+                if (descEl) descEl.innerText = '📦 บันทึกในเครื่องแล้ว จะส่งอัตโนมัติเมื่อมีสัญญาณ';
+            } catch(err) {
+                showCustomAlert('บันทึกล้มเหลว', 'ไม่สามารถบันทึกข้อมูลชั่วคราวได้: ' + err.message, 'error');
+            }
+        };
+
+        // ── 4. Sync — ส่งทุกรายการใน queue ─────────────────────────
+        var _syncing = false;
+
+        window.syncOfflineQueue = async function(silent) {
+            if (_syncing || !navigator.onLine) return;
+            var items = await dbGetAll();
+            if (items.length === 0) return;
+
+            _syncing = true;
+            updateSyncBar('syncing', items.length);
+
+            var sent = 0, failed = 0;
+
+            for (var i = 0; i < items.length; i++) {
+                var item = items[i];
+                try {
+                    var result = await callGasApi(item.payload);
+                    if (result && result.success) {
+                        await dbDeleteItem(item.id);
+                        // อัปเดต local history — ลบ "(รอส่ง)" ออก ถ้ามี
+                        sent++;
+                        // Telegram notify (fire-and-forget เหมือนเดิม)
+                        try {
+                            if (item.actionType === 'checkin' || item.actionType === 'checkout') {
+                                notifyCheckin(item.actionType, item.payload.shift, item.payload.base64_image);
+                            } else if (item.actionType === 'patrol') {
+                                var cpName = item.extraData ? item.extraData.cpName : item.payload.checkpoint;
+                                notifyPatrol(cpName, item.payload.base64_image);
+                            } else if (item.actionType === 'report') {
+                                sendTelegramAlert(
+                                    '🚨 แจ้งเหตุฉุกเฉิน (Offline Sync)\n\nผู้แจ้ง: ' + item.payload.guard_name +
+                                    '\nประเภท: ' + item.payload.incident_type +
+                                    '\nรายละเอียด: ' + item.payload.details,
+                                    null
+                                );
+                            }
+                        } catch(te) { /* Telegram ล้มเหลว ไม่หยุด sync */ }
+                    } else {
+                        failed++;
+                    }
+                } catch(err) {
+                    failed++;
+                    // หากเป็น network error ให้หยุด loop รอรอบถัดไป
+                    if (!navigator.onLine) break;
+                }
+            }
+
+            _syncing = false;
+            invalidateCache('getHistory');
+            await refreshBadge();
+
+            if (!silent) {
+                var remaining = await dbGetAll();
+                if (sent > 0 && remaining.length === 0) {
+                    updateSyncBar('done', 0);
+                    setTimeout(function() { updateOfflineUI(0); }, 3000);
+                    showCustomAlert('ซิงก์สำเร็จ', 'ส่งข้อมูล ' + sent + ' รายการเข้า Google Sheets เรียบร้อย ✅', 'success');
+                } else if (failed > 0) {
+                    updateSyncBar('error', remaining.length);
+                }
+            } else {
+                var rem = await dbGetAll();
+                if (rem.length === 0) {
+                    updateSyncBar('done', 0);
+                    setTimeout(function() { updateOfflineUI(0); }, 3000);
+                }
+            }
+        };
+
+        function updateSyncBar(state, count) {
+            var bar      = document.getElementById('offlineSyncBar');
+            var barIcon  = document.getElementById('offlineSyncIcon');
+            var barTitle = document.getElementById('offlineSyncTitle');
+            var barDesc  = document.getElementById('offlineSyncDesc');
+            var barBtn   = document.getElementById('offlineSyncBtn');
+            if (!bar) return;
+
+            if (state === 'syncing') {
+                bar.classList.add('show');
+                if (barIcon)  barIcon.innerText  = '🔄';
+                if (barTitle) barTitle.innerText  = 'กำลังส่งข้อมูล ' + count + ' รายการ...';
+                if (barDesc)  barDesc.innerText   = 'โปรดรอสักครู่ อย่าปิดหน้าจอ';
+                if (barBtn)   barBtn.disabled     = true;
+            } else if (state === 'done') {
+                if (barIcon)  barIcon.innerText  = '✅';
+                if (barTitle) barTitle.innerText  = 'ส่งข้อมูลครบหมดแล้ว!';
+                if (barDesc)  barDesc.innerText   = 'Google Sheets อัปเดตเรียบร้อย';
+                if (barBtn)   barBtn.disabled     = false;
+            } else if (state === 'error') {
+                if (barIcon)  barIcon.innerText  = '⚠️';
+                if (barTitle) barTitle.innerText  = 'ส่งไม่สำเร็จ ' + count + ' รายการ';
+                if (barDesc)  barDesc.innerText   = 'เชื่อมต่อ GAS ล้มเหลว กดลองใหม่';
+                if (barBtn)   barBtn.disabled     = false;
+            }
+        }
+
+        window.manualSync = function() { window.syncOfflineQueue(false); };
+
+        // ── 5. Network listeners + auto-retry ────────────────────
+        window.addEventListener('online', function() {
+            refreshBadge().then(function() {
+                dbGetAll().then(function(items) {
+                    if (items.length > 0) {
+                        // รอ 2 วิ ให้ connection stable แล้วค่อย sync
+                        setTimeout(function() { window.syncOfflineQueue(true); }, 2000);
+                    }
+                });
+            });
+        });
+
+        window.addEventListener('offline', function() {
+            refreshBadge();
+        });
+
+        // Auto-retry ทุก 90 วิ ถ้ามีคิวค้าง
+        setInterval(function() {
+            if (navigator.onLine) {
+                dbGetAll().then(function(items) {
+                    if (items.length > 0) window.syncOfflineQueue(true);
+                });
+            }
+        }, 90 * 1000);
+
+        // ── 6. Hook เข้า confirmSaveBtn ──────────────────────────
+        //    ทำทีหลัง DOM โหลดเสร็จ เพื่อให้ override onclick เดิมได้
+        document.addEventListener('DOMContentLoaded', function() {
+            // เริ่มต้น badge ทันทีที่โหลดหน้า
+            refreshBadge();
+
+            var origConfirmSave = document.getElementById('confirmSaveBtn').onclick;
+
+            document.getElementById('confirmSaveBtn').onclick = async function() {
+                var btn = document.getElementById('confirmSaveBtn');
+                btn.disabled = true;
+
+                // ถ้าออฟไลน์ → ข้ามไป enqueue โดยตรง
+                if (!navigator.onLine) {
+                    showSheetState('saving');
+
+                    var locStr = currentLocation
+                        ? currentLocation.lat + ',' + currentLocation.lng : '0,0';
+                    var rawB64 = '';
+                    if (pendingBase64Image) {
+                        rawB64 = pendingBase64Image.includes(',')
+                            ? pendingBase64Image.split(',')[1] : pendingBase64Image;
+                    }
+
+                    var payload = {
+                        guard_id:    currentUser.emp_code,
+                        guard_name:  currentUser.full_name,
+                        lat_lng:     locStr,
+                        base64_image: rawB64
+                    };
+                    var titleHistory = '', extraData = null;
+
+                    if (pendingActionType === 'checkin' || pendingActionType === 'checkout') {
+                        payload.action = 'attendance';
+                        payload.type   = pendingActionType;
+                        payload.shift  = document.querySelector('input[name="shiftType"]:checked').value;
+                        titleHistory   = pendingActionType === 'checkin' ? 'เข้างาน' : 'ออกงาน';
+                    } else if (pendingActionType === 'patrol') {
+                        var cpSel = document.getElementById('checkpointSelect');
+                        payload.action     = 'patrol';
+                        payload.checkpoint = cpSel.value;
+                        titleHistory       = 'จุดตรวจ: ' + cpSel.options[cpSel.selectedIndex].text;
+                        extraData = { checkpoint: cpSel.value, cpName: cpSel.options[cpSel.selectedIndex].text };
+                    }
+
+                    await window.enqueueOffline(payload, titleHistory, pendingActionType, extraData);
+                    btn.disabled = false;
+                    return;
+                }
+
+                // ออนไลน์ — ใช้ logic เดิม
+                if (typeof origConfirmSave === 'function') {
+                    btn.disabled = false;   // คืนสิทธิ์ก่อนให้ handler เดิมทำงาน
+                    origConfirmSave.call(this);
+                }
+            };
+
+            // ── Hook submitReportToGAS ──────────────────────────
+            var origSubmitReport = window.submitReportToGAS;
+            window.submitReportToGAS = async function() {
+                if (!navigator.onLine) {
+                    var type    = document.getElementById('reportType').value;
+                    var details = document.getElementById('reportDetail').value;
+                    if (!type || !details.trim()) {
+                        return showCustomAlert('ข้อมูลไม่ครบ', 'กรุณาระบุรายละเอียดให้ครบถ้วน', 'warning');
+                    }
+                    var locStr = currentLocation
+                        ? currentLocation.lat + ',' + currentLocation.lng : 'ไม่ทราบ';
+                    var safeBase64 = '';
+                    if (currentReportImageBase64 && currentReportImageBase64.includes(',')) {
+                        safeBase64 = currentReportImageBase64.split(',')[1];
+                    }
+                    var payload = {
+                        action: 'report', guard_id: currentUser.emp_code, guard_name: currentUser.full_name,
+                        incident_type: type, details: details, lat_lng: locStr, base64_image: safeBase64
+                    };
+
+                    // แสดง feedback inline (เหมือน online path)
+                    switchTab('home');
+                    var preview = document.getElementById('previewSection');
+                    preview.classList.remove('hidden');
+                    preview.scrollIntoView({ behavior: 'smooth' });
+                    document.getElementById('previewHeader').classList.remove('hidden');
+                    document.getElementById('loadingIcon').innerText  = '📦';
+                    document.getElementById('loadingText').innerText  = 'บันทึกในเครื่อง (ออฟไลน์)...';
+
+                    await window.enqueueOffline(payload, 'แจ้งเหตุ: ' + type, 'report', null);
+
+                    document.getElementById('loadingIcon').innerText = '✅';
+                    document.getElementById('loadingText').innerText = 'บันทึกแล้ว! จะส่งเมื่อมีสัญญาณ';
+                    document.getElementById('reportType').value  = '';
+                    document.getElementById('reportDetail').value = '';
+                    window.removeReportPhoto();
+                    return;
+                }
+                // ออนไลน์ — ใช้ logic เดิม
+                return origSubmitReport.apply(this, arguments);
+            };
+        });
+
+    })();
     </script>
 </body>
 </html>
