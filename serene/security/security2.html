@@ -3204,8 +3204,6 @@
                 if (bar)   bar.classList.remove('show');
                 return;
             }
-
-            // มีรายการรอส่ง
             if (badge) {
                 badge.classList.remove('hidden');
                 if (badgeCnt) badgeCnt.innerText = count;
@@ -3225,27 +3223,21 @@
             try {
                 var items = await dbGetAll();
                 updateOfflineUI(items.length);
-            } catch(e) { /* ignore */ }
+            } catch(e) {}
         }
 
-        // ── 3. Enqueue — บันทึก payload ลง IndexedDB ───────────────
+        // ── 3. Enqueue ───────────────────────────────────────────
         window.enqueueOffline = async function(payload, titleHistory, actionType, extraData) {
             var item = {
-                payload:      payload,
-                titleHistory: titleHistory,
-                actionType:   actionType,
-                extraData:    extraData,
-                savedAt:      Date.now(),
-                retries:      0
+                payload: payload, titleHistory: titleHistory, actionType: actionType,
+                extraData: extraData, savedAt: Date.now(), retries: 0
             };
             try {
                 await dbAddItem(item);
                 await refreshBadge();
-                // บันทึก local history ทันที (ใช้ฟังก์ชันเดิม)
                 if (typeof saveToHistory === 'function') {
                     saveToHistory(titleHistory + ' (รอส่ง)', actionType, extraData);
                 }
-                // แสดงผลสำเร็จ (offline mode)
                 showSheetState('success');
                 var descEl = document.querySelector('#sheetSuccessContent p.text-xs');
                 if (descEl) descEl.innerText = '📦 บันทึกในเครื่องแล้ว จะส่งอัตโนมัติเมื่อมีสัญญาณ';
@@ -3254,28 +3246,23 @@
             }
         };
 
-        // ── 4. Sync — ส่งทุกรายการใน queue ─────────────────────────
+        // ── 4. Sync ──────────────────────────────────────────────
         var _syncing = false;
 
         window.syncOfflineQueue = async function(silent) {
             if (_syncing || !navigator.onLine) return;
             var items = await dbGetAll();
             if (items.length === 0) return;
-
             _syncing = true;
             updateSyncBar('syncing', items.length);
-
             var sent = 0, failed = 0;
-
             for (var i = 0; i < items.length; i++) {
                 var item = items[i];
                 try {
                     var result = await callGasApi(item.payload);
                     if (result && result.success) {
                         await dbDeleteItem(item.id);
-                        // อัปเดต local history — ลบ "(รอส่ง)" ออก ถ้ามี
                         sent++;
-                        // Telegram notify (fire-and-forget เหมือนเดิม)
                         try {
                             if (item.actionType === 'checkin' || item.actionType === 'checkout') {
                                 notifyCheckin(item.actionType, item.payload.shift, item.payload.base64_image);
@@ -3283,28 +3270,18 @@
                                 var cpName = item.extraData ? item.extraData.cpName : item.payload.checkpoint;
                                 notifyPatrol(cpName, item.payload.base64_image);
                             } else if (item.actionType === 'report') {
-                                sendTelegramAlert(
-                                    '🚨 แจ้งเหตุฉุกเฉิน (Offline Sync)\n\nผู้แจ้ง: ' + item.payload.guard_name +
-                                    '\nประเภท: ' + item.payload.incident_type +
-                                    '\nรายละเอียด: ' + item.payload.details,
-                                    null
-                                );
+                                sendTelegramAlert('🚨 แจ้งเหตุฉุกเฉิน (Offline Sync)\n\nผู้แจ้ง: ' + item.payload.guard_name + '\nประเภท: ' + item.payload.incident_type + '\nรายละเอียด: ' + item.payload.details, null);
                             }
-                        } catch(te) { /* Telegram ล้มเหลว ไม่หยุด sync */ }
-                    } else {
-                        failed++;
-                    }
+                        } catch(te) {}
+                    } else { failed++; }
                 } catch(err) {
                     failed++;
-                    // หากเป็น network error ให้หยุด loop รอรอบถัดไป
                     if (!navigator.onLine) break;
                 }
             }
-
             _syncing = false;
             invalidateCache('getHistory');
             await refreshBadge();
-
             if (!silent) {
                 var remaining = await dbGetAll();
                 if (sent > 0 && remaining.length === 0) {
@@ -3316,345 +3293,114 @@
                 }
             } else {
                 var rem = await dbGetAll();
-                if (rem.length === 0) {
-                    updateSyncBar('done', 0);
-                    setTimeout(function() { updateOfflineUI(0); }, 3000);
-                }
+                if (rem.length === 0) { updateSyncBar('done', 0); setTimeout(function() { updateOfflineUI(0); }, 3000); }
             }
         };
 
         function updateSyncBar(state, count) {
-            var bar      = document.getElementById('offlineSyncBar');
+            var bar = document.getElementById('offlineSyncBar');
             var barIcon  = document.getElementById('offlineSyncIcon');
             var barTitle = document.getElementById('offlineSyncTitle');
             var barDesc  = document.getElementById('offlineSyncDesc');
             var barBtn   = document.getElementById('offlineSyncBtn');
             if (!bar) return;
-
             if (state === 'syncing') {
                 bar.classList.add('show');
-                if (barIcon)  barIcon.innerText  = '🔄';
-                if (barTitle) barTitle.innerText  = 'กำลังส่งข้อมูล ' + count + ' รายการ...';
-                if (barDesc)  barDesc.innerText   = 'โปรดรอสักครู่ อย่าปิดหน้าจอ';
-                if (barBtn)   barBtn.disabled     = true;
+                if (barIcon)  barIcon.innerText = '🔄';
+                if (barTitle) barTitle.innerText = 'กำลังส่งข้อมูล ' + count + ' รายการ...';
+                if (barDesc)  barDesc.innerText  = 'โปรดรอสักครู่ อย่าปิดหน้าจอ';
+                if (barBtn)   barBtn.disabled    = true;
             } else if (state === 'done') {
-                if (barIcon)  barIcon.innerText  = '✅';
-                if (barTitle) barTitle.innerText  = 'ส่งข้อมูลครบหมดแล้ว!';
-                if (barDesc)  barDesc.innerText   = 'Google Sheets อัปเดตเรียบร้อย';
-                if (barBtn)   barBtn.disabled     = false;
+                if (barIcon)  barIcon.innerText = '✅';
+                if (barTitle) barTitle.innerText = 'ส่งข้อมูลครบหมดแล้ว!';
+                if (barDesc)  barDesc.innerText  = 'Google Sheets อัปเดตเรียบร้อย';
+                if (barBtn)   barBtn.disabled    = false;
             } else if (state === 'error') {
-                if (barIcon)  barIcon.innerText  = '⚠️';
-                if (barTitle) barTitle.innerText  = 'ส่งไม่สำเร็จ ' + count + ' รายการ';
-                if (barDesc)  barDesc.innerText   = 'เชื่อมต่อ GAS ล้มเหลว กดลองใหม่';
-                if (barBtn)   barBtn.disabled     = false;
+                if (barIcon)  barIcon.innerText = '⚠️';
+                if (barTitle) barTitle.innerText = 'ส่งไม่สำเร็จ ' + count + ' รายการ';
+                if (barDesc)  barDesc.innerText  = 'เชื่อมต่อ GAS ล้มเหลว กดลองใหม่';
+                if (barBtn)   barBtn.disabled    = false;
             }
         }
 
         window.manualSync = function() { window.syncOfflineQueue(false); };
 
-        // ── 5. Network listeners + auto-retry ────────────────────
+        // ── 5. Network listeners ─────────────────────────────────
         window.addEventListener('online', function() {
             refreshBadge().then(function() {
                 dbGetAll().then(function(items) {
-                    if (items.length > 0) {
-                        // รอ 2 วิ ให้ connection stable แล้วค่อย sync
-                        setTimeout(function() { window.syncOfflineQueue(true); }, 2000);
-                    }
+                    if (items.length > 0) setTimeout(function() { window.syncOfflineQueue(true); }, 2000);
                 });
             });
         });
-
-        window.addEventListener('offline', function() {
-            refreshBadge();
-        });
-
-        // Auto-retry ทุก 90 วิ ถ้ามีคิวค้าง
+        window.addEventListener('offline', function() { refreshBadge(); });
         setInterval(function() {
             if (navigator.onLine) {
-                dbGetAll().then(function(items) {
-                    if (items.length > 0) window.syncOfflineQueue(true);
-                });
+                dbGetAll().then(function(items) { if (items.length > 0) window.syncOfflineQueue(true); });
             }
         }, 90 * 1000);
 
-        // ── 6. Hook เข้า confirmSaveBtn ──────────────────────────
-        //    ทำทีหลัง DOM โหลดเสร็จ เพื่อให้ override onclick เดิมได้
-        // ══════════════════════════════════════════════════════
-        //  HOME QR MODAL — สแกนจากหน้าแรกโดยไม่สลับแท็บ
-        // ══════════════════════════════════════════════════════
-        var _homeQrScanner  = null;
-        var _homeQrTargetCp = null;  // cpId ที่ user กดมาจาก dot
-
-        window.openHomeQrModal = function(cpId) {
-            _homeQrTargetCp = cpId || null;
-
-            // ป้าย header
-            var label = document.getElementById('homeQrTargetLabel');
-            if (label) label.innerText = cpId ? ('จุดตรวจ: ' + cpId) : 'กรุณาสแกน QR Code';
-
-            // reset UI
-            document.getElementById('homeQrScannerWrap').classList.add('hidden');
-            document.getElementById('homeQrStartBtn').classList.remove('hidden');
-            document.getElementById('homeQrSuccess').classList.add('hidden');
-            document.getElementById('homeQrHint').classList.remove('hidden');
-            document.getElementById('homeQrManualWrap').classList.add('hidden');
-
-            // โหลด options ลง dropdown (เหมือน patrol tab)
-            var sel = document.getElementById('homeQrSelect');
-            sel.innerHTML = '<option value="">-- กรุณาเลือกจุดตรวจ --</option>';
-            Object.keys(window.checkpointsData || {}).forEach(function(k) {
-                var opt = document.createElement('option');
-                opt.value = k;
-                opt.text  = (window.checkpointsData[k] && window.checkpointsData[k].name) ? window.checkpointsData[k].name : k;
-                if (k === cpId) opt.selected = true;
-                sel.appendChild(opt);
-            });
-
-            // เปิด modal
-            document.getElementById('homeQrModal').classList.remove('hidden');
-            document.body.style.overflow = 'hidden';
-        };
-
-        window.closeHomeQrModal = function() {
-            stopHomeQrScanner();
-            document.getElementById('homeQrModal').classList.add('hidden');
-            document.body.style.overflow = '';
-        };
-
-        window.startHomeQrScanner = function() {
-            var wrap = document.getElementById('homeQrScannerWrap');
-            var btn  = document.getElementById('homeQrStartBtn');
-            wrap.classList.remove('hidden');
-            btn.classList.add('hidden');
-            document.getElementById('homeQrSuccess').classList.add('hidden');
-            document.getElementById('homeQrHint').classList.add('hidden');
-
-            if (!_homeQrScanner) _homeQrScanner = new Html5Qrcode('home-qr-reader');
-            _homeQrScanner.start(
-                { facingMode: 'environment' },
-                { fps: 10, qrbox: { width: 240, height: 240 } },
-                function(decodedText) {
-                    stopHomeQrScanner();
-                    var val = decodedText.trim();
-                    _homeQrTargetCp = val;
-
-                    // อัปเดต label
-                    var label = document.getElementById('homeQrTargetLabel');
-                    var cpData = window.checkpointsData && window.checkpointsData[val];
-                    var displayName = (cpData && cpData.name) ? cpData.name : val;
-                    if (label) label.innerText = 'จุดตรวจ: ' + displayName;
-
-                    document.getElementById('homeQrCpName').innerText = '📍 ' + displayName;
-                    document.getElementById('homeQrSuccess').classList.remove('hidden');
-                    document.getElementById('homeQrHint').classList.remove('hidden');
-
-                    // sync กับ checkpointSelect ใน patrol tab ด้วย (ใช้ checkLocationAndCapture ร่วมกัน)
-                    var sel = document.getElementById('checkpointSelect');
-                    if (sel) {
-                        if (!Array.from(sel.options).some(function(o) { return o.value === val; })) {
-                            var opt = document.createElement('option');
-                            opt.value = val; opt.text = displayName; sel.appendChild(opt);
-                        }
-                        sel.value = val;
-                    }
-
-                    if (navigator.vibrate) navigator.vibrate(200);
-                },
-                function() {}
-            ).catch(function() {
-                showCustomAlert('กล้องขัดข้อง', 'โปรดอนุญาตการเข้าถึงกล้องเบราว์เซอร์', 'error');
-                stopHomeQrScanner();
-                showHomeManualDropdown();
-            });
-        };
-
-        window.stopHomeQrScanner = function() {
-            if (_homeQrScanner) {
-                _homeQrScanner.stop().then(function() {
-                    _homeQrScanner.clear();
-                    _homeQrScanner = null;
-                    document.getElementById('homeQrScannerWrap').classList.add('hidden');
-                    document.getElementById('homeQrStartBtn').classList.remove('hidden');
-                }).catch(function() { _homeQrScanner = null; });
-            }
-        };
-
-        window.showHomeManualDropdown = function() {
-            document.getElementById('homeQrManualWrap').classList.remove('hidden');
-            document.getElementById('homeQrHint').classList.add('hidden');
-        };
-
-        window.handleHomeManualSelection = function() {
-            var sel  = document.getElementById('homeQrSelect');
-            var val  = sel.value;
-            if (!val) return;
-            _homeQrTargetCp = val;
-            var cpData      = window.checkpointsData && window.checkpointsData[val];
-            var displayName = (cpData && cpData.name) ? cpData.name : val;
-
-            document.getElementById('homeQrTargetLabel').innerText = 'จุดตรวจ: ' + displayName;
-            document.getElementById('homeQrCpName').innerText = '📍 ' + displayName;
-            document.getElementById('homeQrSuccess').classList.remove('hidden');
-
-            // sync กับ patrol tab
-            var patrolSel = document.getElementById('checkpointSelect');
-            if (patrolSel) {
-                if (!Array.from(patrolSel.options).some(function(o) { return o.value === val; })) {
-                    var opt = document.createElement('option');
-                    opt.value = val; opt.text = displayName; patrolSel.appendChild(opt);
-                }
-                patrolSel.value = val;
-            }
-        };
-
-        // ถ่ายรูปบันทึกจาก home modal
-        window.doHomeCapturePatrol = function() {
-            if (!_homeQrTargetCp) return showCustomAlert('แจ้งเตือน', 'กรุณาสแกน QR หรือเลือกจุดตรวจก่อน', 'warning');
-
-            // sync checkpoint ให้ checkLocationAndCapture ใช้ได้
-            var sel = document.getElementById('checkpointSelect');
-            if (sel) sel.value = _homeQrTargetCp;
-
-            // ตรวจ GPS + radius เหมือนเดิม (ใช้ logic เดิมจาก patrol tab)
-            if (!currentLocation) return showCustomAlert('รอพิกัด GPS', 'กรุณารอระบบค้นหาพิกัด GPS ให้สำเร็จก่อน', 'warning');
-
-            var cpInfo = window.checkpointsData && window.checkpointsData[_homeQrTargetCp];
-            if (cpInfo && cpInfo.lat !== 0 && cpInfo.lng !== 0) {
-                var dist = calculateDistance(currentLocation.lat, currentLocation.lng, cpInfo.lat, cpInfo.lng);
-                if (dist > cpInfo.radius) {
-                    return showCustomAlert('อยู่นอกพื้นที่',
-                        'คุณอยู่ห่างจุดตรวจเกินไป\nระยะของคุณ: ' + Math.round(dist) + 'ม.\nกำหนดไว้: ไม่เกิน ' + cpInfo.radius + 'ม.', 'error');
-                }
-            }
-
-            // Duplicate check
-            var dup = isDuplicate('patrol', _homeQrTargetCp);
-            if (dup.dup) {
-                var cpName = cpInfo ? cpInfo.name : _homeQrTargetCp;
-                return showDuplicateWarning(
-                    'คุณบันทึกจุดตรวจ "' + cpName + '" ไปแล้วเมื่อ ' + dup.diffMin + ' นาทีที่แล้ว\nต้องการบันทึกซ้ำหรือไม่?',
-                    function() {
-                        pendingActionType = 'patrol';
-                        document.getElementById('patrolCameraInputHome').click();
-                    }
-                );
-            }
-
-            pendingActionType = 'patrol';
-            document.getElementById('patrolCameraInputHome').click();
-        };
-
-        // เมื่อถ่ายรูปสำเร็จจาก home modal → ปิด modal + รีเฟรช progress
-        var _origHandlePhotoCapture = window.handlePhotoCapture;
-        if (typeof _origHandlePhotoCapture === 'function') {
-            window.handlePhotoCapture = function(event, actionType) {
-                _origHandlePhotoCapture(event, actionType);
-                if (actionType === 'patrol') {
-                    closeHomeQrModal();
-                    setTimeout(updatePatrolProgress, 500);
-                }
-            };
-        }
-
+        // ── 6. Hook confirmSaveBtn + submitReportToGAS ───────────
         document.addEventListener('DOMContentLoaded', function() {
-            // ปิด modal ถ้ากด ESC
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape') closeHomeQrModal();
-            });
-        });
-
-
+            refreshBadge();
 
             var origConfirmSave = document.getElementById('confirmSaveBtn').onclick;
-
             document.getElementById('confirmSaveBtn').onclick = async function() {
                 var btn = document.getElementById('confirmSaveBtn');
                 btn.disabled = true;
-
-                // ถ้าออฟไลน์ → ข้ามไป enqueue โดยตรง
                 if (!navigator.onLine) {
                     showSheetState('saving');
-
-                    var locStr = currentLocation
-                        ? currentLocation.lat + ',' + currentLocation.lng : '0,0';
+                    var locStr = currentLocation ? currentLocation.lat + ',' + currentLocation.lng : '0,0';
                     var rawB64 = '';
                     if (pendingBase64Image) {
-                        rawB64 = pendingBase64Image.includes(',')
-                            ? pendingBase64Image.split(',')[1] : pendingBase64Image;
+                        rawB64 = pendingBase64Image.includes(',') ? pendingBase64Image.split(',')[1] : pendingBase64Image;
                     }
-
-                    var payload = {
-                        guard_id:    currentUser.emp_code,
-                        guard_name:  currentUser.full_name,
-                        lat_lng:     locStr,
-                        base64_image: rawB64
-                    };
+                    var payload = { guard_id: currentUser.emp_code, guard_name: currentUser.full_name, lat_lng: locStr, base64_image: rawB64 };
                     var titleHistory = '', extraData = null;
-
                     if (pendingActionType === 'checkin' || pendingActionType === 'checkout') {
-                        payload.action = 'attendance';
-                        payload.type   = pendingActionType;
+                        payload.action = 'attendance'; payload.type = pendingActionType;
                         payload.shift  = document.querySelector('input[name="shiftType"]:checked').value;
                         titleHistory   = pendingActionType === 'checkin' ? 'เข้างาน' : 'ออกงาน';
                     } else if (pendingActionType === 'patrol') {
                         var cpSel = document.getElementById('checkpointSelect');
-                        payload.action     = 'patrol';
-                        payload.checkpoint = cpSel.value;
-                        titleHistory       = 'จุดตรวจ: ' + cpSel.options[cpSel.selectedIndex].text;
+                        payload.action = 'patrol'; payload.checkpoint = cpSel.value;
+                        titleHistory   = 'จุดตรวจ: ' + cpSel.options[cpSel.selectedIndex].text;
                         extraData = { checkpoint: cpSel.value, cpName: cpSel.options[cpSel.selectedIndex].text };
                     }
-
                     await window.enqueueOffline(payload, titleHistory, pendingActionType, extraData);
                     btn.disabled = false;
                     return;
                 }
-
-                // ออนไลน์ — ใช้ logic เดิม
                 if (typeof origConfirmSave === 'function') {
-                    btn.disabled = false;   // คืนสิทธิ์ก่อนให้ handler เดิมทำงาน
+                    btn.disabled = false;
                     origConfirmSave.call(this);
                 }
             };
 
-            // ── Hook submitReportToGAS ──────────────────────────
             var origSubmitReport = window.submitReportToGAS;
             window.submitReportToGAS = async function() {
                 if (!navigator.onLine) {
                     var type    = document.getElementById('reportType').value;
                     var details = document.getElementById('reportDetail').value;
-                    if (!type || !details.trim()) {
-                        return showCustomAlert('ข้อมูลไม่ครบ', 'กรุณาระบุรายละเอียดให้ครบถ้วน', 'warning');
-                    }
-                    var locStr = currentLocation
-                        ? currentLocation.lat + ',' + currentLocation.lng : 'ไม่ทราบ';
+                    if (!type || !details.trim()) return showCustomAlert('ข้อมูลไม่ครบ', 'กรุณาระบุรายละเอียดให้ครบถ้วน', 'warning');
+                    var locStr = currentLocation ? currentLocation.lat + ',' + currentLocation.lng : 'ไม่ทราบ';
                     var safeBase64 = '';
-                    if (currentReportImageBase64 && currentReportImageBase64.includes(',')) {
-                        safeBase64 = currentReportImageBase64.split(',')[1];
-                    }
-                    var payload = {
-                        action: 'report', guard_id: currentUser.emp_code, guard_name: currentUser.full_name,
-                        incident_type: type, details: details, lat_lng: locStr, base64_image: safeBase64
-                    };
-
-                    // แสดง feedback inline (เหมือน online path)
+                    if (currentReportImageBase64 && currentReportImageBase64.includes(',')) safeBase64 = currentReportImageBase64.split(',')[1];
+                    var payload = { action: 'report', guard_id: currentUser.emp_code, guard_name: currentUser.full_name, incident_type: type, details: details, lat_lng: locStr, base64_image: safeBase64 };
                     switchTab('home');
                     var preview = document.getElementById('previewSection');
-                    preview.classList.remove('hidden');
-                    preview.scrollIntoView({ behavior: 'smooth' });
+                    preview.classList.remove('hidden'); preview.scrollIntoView({ behavior: 'smooth' });
                     document.getElementById('previewHeader').classList.remove('hidden');
-                    document.getElementById('loadingIcon').innerText  = '📦';
-                    document.getElementById('loadingText').innerText  = 'บันทึกในเครื่อง (ออฟไลน์)...';
-
+                    document.getElementById('loadingIcon').innerText = '📦';
+                    document.getElementById('loadingText').innerText = 'บันทึกในเครื่อง (ออฟไลน์)...';
                     await window.enqueueOffline(payload, 'แจ้งเหตุ: ' + type, 'report', null);
-
                     document.getElementById('loadingIcon').innerText = '✅';
                     document.getElementById('loadingText').innerText = 'บันทึกแล้ว! จะส่งเมื่อมีสัญญาณ';
-                    document.getElementById('reportType').value  = '';
+                    document.getElementById('reportType').value = '';
                     document.getElementById('reportDetail').value = '';
                     window.removeReportPhoto();
                     return;
                 }
-                // ออนไลน์ — ใช้ logic เดิม
                 return origSubmitReport.apply(this, arguments);
             };
         });
@@ -3937,6 +3683,203 @@
             var el = document.getElementById(id);
             if (el) el.style.width = Math.min(100, Math.max(0, pct)) + '%';
         }
+
+    })();
+    </script>
+    <!-- ════════════════════════════════════════════════
+         Home QR Modal — สแกนจุดตรวจจากหน้าแรก
+         ════════════════════════════════════════════════ -->
+    <script>
+    (function() {
+        'use strict';
+
+        var _homeQrScanner  = null;
+        var _homeQrTargetCp = null;
+
+        // เปิด modal (เรียกจาก dot ที่ยังไม่ตรวจ)
+        window.openHomeQrModal = function(cpId) {
+            _homeQrTargetCp = cpId || null;
+
+            // อัปเดต header label
+            var label = document.getElementById('homeQrTargetLabel');
+            if (label) label.innerText = cpId ? ('จุดตรวจ: ' + cpId) : 'กรุณาสแกน QR Code';
+
+            // reset state
+            _setEl('homeQrScannerWrap', true);
+            _setEl('homeQrStartBtn',    false);
+            _setEl('homeQrSuccess',     true);
+            _setEl('homeQrHint',        false);
+            _setEl('homeQrManualWrap',  true);
+
+            // โหลด options dropdown
+            var sel = document.getElementById('homeQrSelect');
+            if (sel) {
+                sel.innerHTML = '<option value="">-- กรุณาเลือกจุดตรวจ --</option>';
+                var cps = window.checkpointsData || {};
+                Object.keys(cps).forEach(function(k) {
+                    var opt = document.createElement('option');
+                    opt.value = k;
+                    opt.text  = (cps[k] && cps[k].name) ? cps[k].name : k;
+                    if (k === cpId) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+            }
+
+            document.getElementById('homeQrModal').classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        };
+
+        window.closeHomeQrModal = function() {
+            _stopHomeQr();
+            document.getElementById('homeQrModal').classList.add('hidden');
+            document.body.style.overflow = '';
+        };
+
+        window.startHomeQrScanner = function() {
+            _setEl('homeQrScannerWrap', false);
+            _setEl('homeQrStartBtn',    true);
+            _setEl('homeQrSuccess',     true);
+            _setEl('homeQrHint',        true);
+
+            if (!_homeQrScanner) _homeQrScanner = new Html5Qrcode('home-qr-reader');
+
+            _homeQrScanner.start(
+                { facingMode: 'environment' },
+                { fps: 10, qrbox: { width: 240, height: 240 } },
+                function(decodedText) {
+                    _stopHomeQr();
+                    var val       = decodedText.trim();
+                    _homeQrTargetCp = val;
+                    var cps       = window.checkpointsData || {};
+                    var cpData    = cps[val];
+                    var name      = (cpData && cpData.name) ? cpData.name : val;
+
+                    var lbl = document.getElementById('homeQrTargetLabel');
+                    if (lbl) lbl.innerText = 'จุดตรวจ: ' + name;
+                    var cpNameEl = document.getElementById('homeQrCpName');
+                    if (cpNameEl) cpNameEl.innerText = '📍 ' + name;
+
+                    _setEl('homeQrSuccess', false);
+                    _setEl('homeQrHint',    false);
+
+                    // sync patrol tab select
+                    _syncPatrolSelect(val, name);
+
+                    if (navigator.vibrate) navigator.vibrate(200);
+                },
+                function() {}
+            ).catch(function() {
+                showCustomAlert('กล้องขัดข้อง', 'โปรดอนุญาตการเข้าถึงกล้องเบราว์เซอร์', 'error');
+                _stopHomeQr();
+                window.showHomeManualDropdown();
+            });
+        };
+
+        window.stopHomeQrScanner = function() { _stopHomeQr(); };
+
+        function _stopHomeQr() {
+            if (_homeQrScanner) {
+                _homeQrScanner.stop().then(function() {
+                    _homeQrScanner.clear(); _homeQrScanner = null;
+                    _setEl('homeQrScannerWrap', true);
+                    _setEl('homeQrStartBtn',    false);
+                }).catch(function() { _homeQrScanner = null; });
+            }
+        }
+
+        window.showHomeManualDropdown = function() {
+            _setEl('homeQrManualWrap', false);
+            _setEl('homeQrHint',       true);
+        };
+
+        window.handleHomeManualSelection = function() {
+            var sel  = document.getElementById('homeQrSelect');
+            var val  = sel ? sel.value : '';
+            if (!val) return;
+            _homeQrTargetCp = val;
+            var cps  = window.checkpointsData || {};
+            var name = (cps[val] && cps[val].name) ? cps[val].name : val;
+
+            var lbl = document.getElementById('homeQrTargetLabel');
+            if (lbl) lbl.innerText = 'จุดตรวจ: ' + name;
+            var cpNameEl = document.getElementById('homeQrCpName');
+            if (cpNameEl) cpNameEl.innerText = '📍 ' + name;
+
+            _setEl('homeQrSuccess', false);
+            _syncPatrolSelect(val, name);
+        };
+
+        window.doHomeCapturePatrol = function() {
+            if (!_homeQrTargetCp) {
+                return showCustomAlert('แจ้งเตือน', 'กรุณาสแกน QR หรือเลือกจุดตรวจก่อน', 'warning');
+            }
+            if (!currentLocation) {
+                return showCustomAlert('รอพิกัด GPS', 'กรุณารอระบบค้นหาพิกัด GPS ให้สำเร็จก่อน', 'warning');
+            }
+
+            // ตรวจ radius
+            var cps    = window.checkpointsData || {};
+            var cpInfo = cps[_homeQrTargetCp];
+            if (cpInfo && cpInfo.lat !== 0 && cpInfo.lng !== 0) {
+                var dist = calculateDistance(currentLocation.lat, currentLocation.lng, cpInfo.lat, cpInfo.lng);
+                if (dist > cpInfo.radius) {
+                    return showCustomAlert('อยู่นอกพื้นที่',
+                        'คุณอยู่ห่างจุดตรวจเกินไป\nระยะของคุณ: ' + Math.round(dist) + 'ม.\nกำหนดไว้: ไม่เกิน ' + cpInfo.radius + 'ม.', 'error');
+                }
+            }
+
+            // Duplicate check
+            var dup = isDuplicate('patrol', _homeQrTargetCp);
+            if (dup.dup) {
+                var cpName = cpInfo ? cpInfo.name : _homeQrTargetCp;
+                return showDuplicateWarning(
+                    'คุณบันทึกจุดตรวจ "' + cpName + '" ไปแล้วเมื่อ ' + dup.diffMin + ' นาทีที่แล้ว\nต้องการบันทึกซ้ำหรือไม่?',
+                    function() { _doHomeShoot(); }
+                );
+            }
+            _doHomeShoot();
+        };
+
+        function _doHomeShoot() {
+            // sync checkpointSelect ให้ handlePhotoCapture อ่านค่าถูก
+            _syncPatrolSelect(_homeQrTargetCp, _homeQrTargetCp);
+            pendingActionType = 'patrol';
+            document.getElementById('patrolCameraInputHome').click();
+        }
+
+        function _syncPatrolSelect(val, name) {
+            var sel = document.getElementById('checkpointSelect');
+            if (!sel) return;
+            if (!Array.from(sel.options).some(function(o) { return o.value === val; })) {
+                var opt = document.createElement('option');
+                opt.value = val; opt.text = name || val; sel.appendChild(opt);
+            }
+            sel.value = val;
+        }
+
+        function _setEl(id, hidden) {
+            var el = document.getElementById(id);
+            if (!el) return;
+            if (hidden) el.classList.add('hidden');
+            else        el.classList.remove('hidden');
+        }
+
+        // หลังถ่ายรูปสำเร็จ → ปิด modal + refresh progress
+        document.addEventListener('DOMContentLoaded', function() {
+            var inp = document.getElementById('patrolCameraInputHome');
+            if (inp) {
+                inp.addEventListener('change', function() {
+                    setTimeout(function() {
+                        window.closeHomeQrModal();
+                        if (typeof updatePatrolProgress === 'function') updatePatrolProgress();
+                    }, 400);
+                });
+            }
+            // ESC ปิด modal
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') window.closeHomeQrModal();
+            });
+        });
 
     })();
     </script>
