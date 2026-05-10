@@ -1,926 +1,972 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Wrench, 
-  ClipboardList, 
-  UserCog, 
-  Camera, 
-  Image as ImageIcon, 
-  CheckCircle, 
-  Clock, 
-  AlertCircle, 
-  LogOut, 
-  X, 
-  Save,
-  Home,
-  FileText,
-  Building2,
-  Info,
-  Phone,
-  Loader2
-} from 'lucide-react';
-
-// --- SUPABASE CONFIG ---
-const SUPABASE_URL = 'https://olwonvxplwlmqquzivjm.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sd29udnhwbHdsbXFxdXppdmptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3OTM3OTYsImV4cCI6MjA5MzM2OTc5Nn0.hRhguKwikODZcpt9b0t43Th0-M8Yvv9fB6UNEOvYq4Y';
-
-const supabaseHeaders = {
-  'apikey': SUPABASE_KEY,
-  'Authorization': `Bearer ${SUPABASE_KEY}`,
-  'Content-Type': 'application/json',
-  'Prefer': 'return=representation'
-};
-
-export default function App() {
-  // --- STATE ---
-  const [issues, setIssues] = useState([]);
-  const [view, setView] = useState('user_submit'); // user_submit, user_history, admin_login, admin_dashboard
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [toastMessage, setToastMessage] = useState('');
-  const [userHouseNumber, setUserHouseNumber] = useState('');
-  const [showWelcomeModal, setShowWelcomeModal] = useState(true);
-  const [isLoadingData, setIsLoadingData] = useState(true);
-
-  // --- FETCH DATA FROM SUPABASE ---
-  const fetchIssues = async () => {
-    try {
-      setIsLoadingData(true);
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/issues?order=created_at.desc`, { headers: supabaseHeaders });
-      if (res.ok) {
-        const data = await res.json();
-        // Map database fields to frontend fields
-        const formattedData = data.map(item => ({
-          id: item.id,
-          houseNumber: item.house_number,
-          phoneNumber: item.phone_number,
-          category: item.category,
-          detail: item.detail,
-          image: item.image_url,
-          status: item.status,
-          date: new Date(item.created_at).toLocaleString('th-TH'),
-          adminRemark: item.admin_remark,
-          adminImage: item.admin_image_url
-        }));
-        setIssues(formattedData);
-      }
-    } catch (error) {
-      console.error('Error fetching data:', error);
-      showToast('เกิดข้อผิดพลาดในการดึงข้อมูล');
-    } finally {
-      setIsLoadingData(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchIssues();
-  }, []);
-
-  // --- TOAST NOTIFICATION ---
-  const showToast = (message) => {
-    setToastMessage(message);
-    setTimeout(() => setToastMessage(''), 3000);
-  };
-
-  // --- UPLOAD DIRECT FILE TO SUPABASE STORAGE ---
-  const uploadImage = async (fileInput, prefix = 'img') => {
-    if (!fileInput) return null;
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ระบบแจ้งซ่อม - โกลเด้นแลนด์ ซีรีน</title>
     
-    // หากเป็น URL (string) อยู่แล้ว (เช่น กรณีไม่ได้แก้ไขรูปภาพใหม่) ให้ส่งกลับไปเลย
-    if (typeof fileInput === 'string' && fileInput.startsWith('http')) return fileInput;
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
 
-    try {
-      let bodyData = fileInput;
-      let contentType = fileInput.type || 'image/jpeg';
-      let fileExt = fileInput.name ? fileInput.name.split('.').pop() : 'jpg';
-
-      // สุ่มชื่อไฟล์ให้ไม่ซ้ำกัน
-      const fileName = `${prefix}-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-
-      const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/maintenance_images/${fileName}`, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': contentType,
-          'x-upsert': 'true' // อนุญาตให้เขียนทับได้หากชื่อซ้ำ
-        },
-        body: bodyData // ส่งเป็น Binary File ก้อนเดียวตรงๆ ขึ้นไป
-      });
-
-      if (!uploadRes.ok) {
-        const err = await uploadRes.json();
-        console.error("Storage Error Detail:", err);
-        throw new Error('Upload failed');
-      }
-      
-      return `${SUPABASE_URL}/storage/v1/object/public/maintenance_images/${fileName}`;
-    } catch (error) {
-      console.error('Image upload error:', error);
-      showToast('อัพโหลดรูปภาพไม่สำเร็จ กรุณาลองใหม่');
-      return null;
-    }
-  };
-
-  // --- ACTIONS ---
-  const handleAddIssue = async (newIssue, rawFileImage) => {
-    try {
-      // 1. Upload File Image Directly (If exists)
-      const imageUrl = await uploadImage(rawFileImage, 'user');
-      
-      // 2. Prepare payload
-      const payload = {
-        id: newIssue.id,
-        house_number: newIssue.houseNumber,
-        phone_number: newIssue.phoneNumber,
-        category: newIssue.category,
-        detail: newIssue.detail,
-        image_url: imageUrl,
-        status: newIssue.status
-      };
-
-      // 3. Save to Supabase
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/issues`, {
-        method: 'POST',
-        headers: supabaseHeaders,
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        showToast('ส่งข้อมูลแจ้งซ่อมเรียบร้อยแล้ว');
-        setUserHouseNumber(newIssue.houseNumber);
-        await fetchIssues(); // Refresh data
-        setView('user_history');
-      } else {
-        throw new Error('Save failed');
-      }
-    } catch (error) {
-      console.error('Submit error:', error);
-      showToast('เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง');
-    }
-  };
-
-  const handleUpdateIssue = async (id, newStatus, newRemark, newAdminFileImage) => {
-    try {
-      // 1. Upload admin file image (If exists and is a new file)
-      const adminImageUrl = await uploadImage(newAdminFileImage, 'admin');
-
-      // 2. Prepare payload
-      const payload = {
-        status: newStatus,
-        admin_remark: newRemark,
-        admin_image_url: adminImageUrl
-      };
-
-      // 3. Update Supabase
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/issues?id=eq.${id}`, {
-        method: 'PATCH',
-        headers: supabaseHeaders,
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        showToast('อัพเดทข้อมูลเรียบร้อยแล้ว');
-        await fetchIssues(); // Refresh data
-      } else {
-        throw new Error('Update failed');
-      }
-    } catch (error) {
-      console.error('Update error:', error);
-      showToast('อัพเดทล้มเหลว กรุณาลองใหม่อีกครั้ง');
-    }
-  };
-
-  const handleAdminLogin = (pin) => {
-    if (pin === '9999') {
-      setIsAdmin(true);
-      setView('admin_dashboard');
-      showToast('เข้าสู่ระบบนิติบุคคลสำเร็จ');
-    } else {
-      showToast('รหัสผ่านไม่ถูกต้อง');
-    }
-  };
-
-  const handleAdminLogout = () => {
-    setIsAdmin(false);
-    setView('user_submit');
-    showToast('ออกจากระบบเรียบร้อย');
-  };
-
-  // --- RENDER ROUTING ---
-  const renderView = () => {
-    if (isLoadingData && view !== 'user_submit' && view !== 'admin_login') {
-      return (
-        <div className="flex flex-col items-center justify-center h-64 mt-10">
-          <Loader2 className="w-10 h-10 text-blue-500 animate-spin mb-4" />
-          <p className="text-gray-500 font-medium text-sm">กำลังโหลดข้อมูล...</p>
-        </div>
-      );
-    }
-
-    switch (view) {
-      case 'user_submit':
-        return <UserSubmitView onSubmit={handleAddIssue} userHouseNumber={userHouseNumber} setUserHouseNumber={setUserHouseNumber} />;
-      case 'user_history':
-        return <UserHistoryView issues={issues} userHouseNumber={userHouseNumber} />;
-      case 'admin_login':
-        return <AdminLoginView onLogin={handleAdminLogin} />;
-      case 'admin_dashboard':
-        return <AdminDashboardView issues={issues} onUpdateIssue={handleUpdateIssue} />;
-      default:
-        return <UserSubmitView />;
-    }
-  };
-
-  return (
-    <div className="bg-gray-100 min-h-screen flex justify-center font-sans text-gray-800">
-      <div className="w-full max-w-md bg-gray-50 h-screen flex flex-col shadow-2xl relative overflow-hidden sm:border-x sm:border-gray-200">
+    <!-- Custom CSS for Animations & Hide/Show -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800&display=swap');
         
-        {/* HEADER */}
-        <header className={`px-5 py-5 shadow-md flex items-center justify-between z-10 transition-all duration-500 rounded-b-2xl mb-1 bg-gradient-to-r ${isAdmin ? 'from-indigo-800 to-purple-700' : 'from-blue-600 to-cyan-500'}`}>
-          <div className="flex items-center text-white">
-            <Building2 className="w-8 h-8 mr-3 drop-shadow-sm" />
-            <div>
-              <h1 className="text-xl font-extrabold tracking-wide drop-shadow-sm">
-                โกลเด้นแลนด์ ซีรีน
-              </h1>
-              <p className="text-xs text-white/90 font-medium mt-0.5">
-                {isAdmin ? 'ระบบจัดการนิติบุคคล' : 'แจ้งซ่อมออนไลน์ 24 ชม.'}
-              </p>
+        body { font-family: 'Sarabun', sans-serif; }
+        
+        .fade-in { animation: fadeIn 0.4s ease-in-out; }
+        .slide-up { animation: slideUp 0.4s ease-out; }
+        .zoom-in { animation: zoomIn 0.3s ease-out; }
+        
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes zoomIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        
+        /* Hide scrollbar for cleaner look */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        .hidden-view { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex justify-center text-gray-800">
+
+    <!-- Mobile Simulator Container -->
+    <div class="w-full max-w-md bg-gray-50 h-[100dvh] flex flex-col shadow-2xl relative overflow-hidden sm:border-x sm:border-gray-200">
+        
+        <!-- HEADER -->
+        <header id="main-header" class="px-5 py-5 shadow-md flex items-center justify-between z-10 transition-all duration-500 rounded-b-2xl mb-1 bg-gradient-to-r from-blue-600 to-cyan-500">
+            <div class="flex items-center text-white">
+                <i data-lucide="building-2" class="w-8 h-8 mr-3 drop-shadow-sm"></i>
+                <div>
+                    <h1 class="text-xl font-extrabold tracking-wide drop-shadow-sm">โกลเด้นแลนด์ ซีรีน</h1>
+                    <p id="header-subtitle" class="text-xs text-white/90 font-medium mt-0.5">แจ้งซ่อมออนไลน์ 24 ชม.</p>
+                </div>
             </div>
-          </div>
-          {isAdmin && (
-            <button onClick={handleAdminLogout} className="text-indigo-100 hover:text-white p-2 bg-white/10 rounded-full backdrop-blur-sm transition-colors">
-              <LogOut className="w-5 h-5" />
+            <button id="btn-logout" class="hidden text-indigo-100 hover:text-white p-2 bg-white/10 rounded-full backdrop-blur-sm transition-colors">
+                <i data-lucide="log-out" class="w-5 h-5"></i>
             </button>
-          )}
         </header>
 
-        {/* MAIN CONTENT AREA */}
-        <main className="flex-1 overflow-y-auto pb-24 relative">
-          {renderView()}
+        <!-- MAIN CONTENT AREA -->
+        <main class="flex-1 overflow-y-auto pb-24 relative no-scrollbar" id="main-content">
+            
+            <!-- Global Loader -->
+            <div id="global-loader" class="flex flex-col items-center justify-center h-64 mt-10 hidden-view">
+                <i data-lucide="loader-2" class="w-10 h-10 text-blue-500 animate-spin mb-4"></i>
+                <p class="text-gray-500 font-medium text-sm">กำลังโหลดข้อมูล...</p>
+            </div>
+
+            <!-- VIEW: USER SUBMIT -->
+            <div id="view-user-submit" class="p-5 slide-up">
+                <div class="bg-white rounded-3xl shadow-lg p-6 border border-gray-100/50">
+                    <h2 class="text-xl font-extrabold text-gray-800 mb-5 flex items-center">
+                        <div class="bg-blue-100 p-2 rounded-xl mr-3">
+                            <i data-lucide="wrench" class="w-5 h-5 text-blue-600"></i>
+                        </div>
+                        กรอกข้อมูลแจ้งซ่อม
+                    </h2>
+                    
+                    <form id="form-submit-issue" class="space-y-5">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700 mb-1.5 ml-1">บ้านเลขที่ <span class="text-red-500">*</span></label>
+                                <input type="text" id="input-house" required placeholder="เช่น 99/1" class="w-full px-4 py-3.5 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700 mb-1.5 ml-1">เบอร์โทร <span class="text-gray-400 font-normal text-xs">(ไม่บังคับ)</span></label>
+                                <input type="tel" id="input-phone" placeholder="08x-xxx-xxxx" class="w-full px-4 py-3.5 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700 mb-1.5 ml-1">หมวดหมู่ปัญหา (พื้นที่ส่วนกลาง)</label>
+                            <div class="relative">
+                                <select id="input-category" class="w-full px-4 py-3.5 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none appearance-none transition-all shadow-sm font-medium text-gray-700">
+                                    <option value="ไฟฟ้า / แสงสว่าง">⚡ ไฟฟ้า / แสงสว่าง (ส่วนกลาง)</option>
+                                    <option value="ประปา / ท่อระบายน้ำ">💧 ประปา / ท่อระบายน้ำ (ส่วนกลาง)</option>
+                                    <option value="ถนน / ทางเท้า">🛣️ ถนน / ทางเท้า</option>
+                                    <option value="สวนสาธารณะ / ต้นไม้">🌳 สวนสาธารณะ / ต้นไม้</option>
+                                    <option value="คลับเฮ้าส์ / สระว่ายน้ำ">🏊 คลับเฮ้าส์ / สระว่ายน้ำ</option>
+                                    <option value="อื่นๆ (ส่วนกลาง)">📌 อื่นๆ (ส่วนกลาง)</option>
+                                </select>
+                                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-400">
+                                    <svg class="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700 mb-1.5 ml-1">รายละเอียด <span class="text-red-500">*</span></label>
+                            <textarea id="input-detail" required rows="3" placeholder="อธิบายลักษณะปัญหาที่พบ..." class="w-full px-4 py-3.5 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all resize-none shadow-sm"></textarea>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700 mb-1.5 ml-1">แนบรูปภาพ (ถ้ามี)</label>
+                            <div class="mt-1 flex justify-center px-6 pt-6 pb-7 border-2 border-gray-200 border-dashed rounded-2xl hover:bg-blue-50/50 hover:border-blue-300 transition-all bg-gray-50/50 group cursor-pointer">
+                                <div class="space-y-2 text-center w-full" id="upload-container">
+                                    <!-- Upload State -->
+                                    <label id="upload-label" class="relative cursor-pointer w-full flex flex-col items-center">
+                                        <div class="bg-white p-3 rounded-full shadow-sm mb-2 group-hover:scale-110 transition-transform">
+                                            <i data-lucide="camera" class="h-8 w-8 text-blue-500"></i>
+                                        </div>
+                                        <div class="flex text-sm text-gray-600 justify-center font-bold">
+                                            <span class="text-blue-600 group-hover:text-blue-700">อัพโหลดรูปภาพจากมือถือ</span>
+                                            <input type="file" id="input-image" class="sr-only" accept="image/*">
+                                        </div>
+                                        <p class="text-xs text-gray-400 mt-1 font-medium">PNG, JPG ไม่เกิน 5MB</p>
+                                    </label>
+                                    <!-- Preview State -->
+                                    <div id="preview-container" class="relative inline-block w-full hidden">
+                                        <img id="image-preview" src="" alt="Preview" class="mx-auto h-40 w-full object-cover rounded-xl shadow-md">
+                                        <button type="button" id="btn-remove-image" class="absolute -top-3 -right-3 bg-red-500 text-white rounded-full p-1.5 shadow-lg hover:bg-red-600 transition-transform hover:scale-110">
+                                            <i data-lucide="x" class="w-4 h-4"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button type="submit" id="btn-submit" class="w-full bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-extrabold py-4 px-4 rounded-2xl hover:shadow-lg focus:ring-4 focus:ring-blue-200 transition-all shadow-md mt-6 active:scale-[0.98] text-lg flex justify-center items-center">
+                            <i data-lucide="save" class="w-5 h-5 mr-2" id="submit-icon"></i>
+                            <i data-lucide="loader-2" class="w-5 h-5 mr-2 animate-spin hidden" id="submit-loader"></i>
+                            <span id="submit-text">ส่งข้อมูลแจ้งซ่อม</span>
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- VIEW: USER HISTORY -->
+            <div id="view-user-history" class="p-5 slide-up hidden-view">
+                <div class="flex justify-between items-end mb-5 ml-1">
+                    <div>
+                        <h2 class="text-xl font-extrabold text-gray-800">ประวัติการแจ้งซ่อม</h2>
+                        <p id="history-subtitle" class="text-sm font-medium text-gray-500 mt-1 hidden">บ้านเลขที่: <span class="text-blue-600 font-bold" id="history-house-number"></span></p>
+                    </div>
+                </div>
+
+                <div id="history-empty" class="bg-white rounded-3xl p-10 text-center border border-gray-100 shadow-sm mt-4 flex flex-col items-center justify-center">
+                    <div class="bg-gray-50 p-4 rounded-full mb-4">
+                        <i data-lucide="file-text" class="w-10 h-10 text-gray-300"></i>
+                    </div>
+                    <p class="text-gray-500 font-bold">ยังไม่มีประวัติการแจ้งซ่อม</p>
+                    <p class="text-sm text-gray-400 mt-1">รายการที่คุณแจ้งจะแสดงที่นี่</p>
+                </div>
+
+                <div id="history-list" class="space-y-4">
+                    <!-- History Items injected via JS -->
+                </div>
+            </div>
+
+            <!-- VIEW: ADMIN LOGIN -->
+            <div id="view-admin-login" class="p-6 h-full flex flex-col justify-center slide-up hidden-view">
+                <div class="bg-white rounded-[2rem] shadow-xl p-8 border border-gray-100/50 text-center relative overflow-hidden">
+                    <div class="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-indigo-50 to-white -z-10"></div>
+                    <div class="w-20 h-20 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner border-4 border-white">
+                        <i data-lucide="user-cog" class="w-10 h-10 text-indigo-600"></i>
+                    </div>
+                    <h2 class="text-2xl font-extrabold text-gray-800 mb-2">เข้าสู่ระบบนิติบุคคล</h2>
+                    <p class="text-sm font-medium text-gray-500 mb-8">กรุณาใส่รหัสผ่าน (PIN) เพื่อเข้าสู่ระบบจัดการ</p>
+                    <form id="form-admin-login">
+                        <input type="password" id="input-pin" pattern="[0-9]*" inputmode="numeric" maxlength="4" placeholder="รหัส 4 หลัก" class="w-full text-center tracking-[1em] text-3xl px-4 py-5 rounded-2xl border-2 border-gray-200 focus:ring-0 focus:border-indigo-500 outline-none transition-all mb-8 bg-gray-50 shadow-inner font-bold text-indigo-900 placeholder:text-xl placeholder:tracking-normal placeholder:font-medium placeholder:text-gray-400">
+                        <button type="submit" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-extrabold py-4 px-4 rounded-2xl hover:shadow-lg shadow-md active:scale-[0.98] transition-all text-lg">
+                            เข้าสู่ระบบ
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- VIEW: ADMIN DASHBOARD -->
+            <div id="view-admin-dashboard" class="p-5 slide-up hidden-view">
+                <div class="grid grid-cols-3 gap-3 mb-6">
+                    <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center">
+                        <div id="stat-pending" class="text-3xl font-extrabold text-amber-500 drop-shadow-sm">0</div>
+                        <div class="text-[11px] text-gray-500 font-bold mt-1">รอดำเนินการ</div>
+                    </div>
+                    <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center">
+                        <div id="stat-progress" class="text-3xl font-extrabold text-blue-500 drop-shadow-sm">0</div>
+                        <div class="text-[11px] text-gray-500 font-bold mt-1">กำลังดำเนินการ</div>
+                    </div>
+                    <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center">
+                        <div id="stat-completed" class="text-3xl font-extrabold text-emerald-500 drop-shadow-sm">0</div>
+                        <div class="text-[11px] text-gray-500 font-bold mt-1">เสร็จเรียบร้อย</div>
+                    </div>
+                </div>
+
+                <h3 class="font-extrabold text-gray-800 mb-4 ml-1 flex items-center text-lg">
+                    <i data-lucide="clipboard-list" class="w-5 h-5 mr-2 text-indigo-600"></i>
+                    รายการแจ้งซ่อมทั้งหมด
+                </h3>
+
+                <div id="admin-list" class="space-y-3.5">
+                    <!-- Admin Items injected via JS -->
+                </div>
+            </div>
+
         </main>
 
-        {/* WELCOME INFO MODAL */}
-        {showWelcomeModal && <WelcomeModal onClose={() => setShowWelcomeModal(false)} />}
+        <!-- TOAST MESSAGE -->
+        <div id="toast-message" class="absolute top-24 left-1/2 transform -translate-x-1/2 bg-gray-800/90 backdrop-blur-sm text-white px-5 py-2.5 rounded-full shadow-lg text-sm z-50 fade-in flex items-center w-max max-w-[90%] hidden-view">
+            <i data-lucide="check-circle" class="w-4 h-4 mr-2 text-emerald-400 shrink-0"></i>
+            <span id="toast-text" class="truncate"></span>
+        </div>
 
-        {/* TOAST MESSAGE */}
-        {toastMessage && (
-          <div className="absolute top-24 left-1/2 transform -translate-x-1/2 bg-gray-800/90 backdrop-blur-sm text-white px-5 py-2.5 rounded-full shadow-lg text-sm z-50 animate-in fade-in slide-in-from-top-5 duration-300 flex items-center w-max max-w-[90%]">
-            <CheckCircle className="w-4 h-4 mr-2 text-emerald-400 shrink-0" />
-            <span className="truncate">{toastMessage}</span>
-          </div>
-        )}
-
-        {/* BOTTOM NAVIGATION */}
-        <nav className="absolute bottom-0 w-full bg-white/90 backdrop-blur-md border-t border-gray-200 flex justify-around pb-safe z-20 shadow-[0_-5px_15px_-5px_rgba(0,0,0,0.05)] rounded-t-2xl">
-          {!isAdmin ? (
-            <>
-              <NavItem icon={<Wrench />} label="แจ้งซ่อม" active={view === 'user_submit'} onClick={() => setView('user_submit')} />
-              <NavItem icon={<ClipboardList />} label="ประวัติ" active={view === 'user_history'} onClick={() => setView('user_history')} />
-              <NavItem icon={<UserCog />} label="นิติบุคคล" active={view === 'admin_login'} onClick={() => setView('admin_login')} />
-            </>
-          ) : (
-            <>
-              <NavItem icon={<ClipboardList />} label="รายการแจ้งซ่อม" active={view === 'admin_dashboard'} onClick={() => setView('admin_dashboard')} isAdmin />
-              <NavItem icon={<LogOut />} label="ออกจากระบบ" active={false} onClick={handleAdminLogout} isAdmin />
-            </>
-          )}
+        <!-- BOTTOM NAVIGATION -->
+        <nav class="absolute bottom-0 w-full bg-white/90 backdrop-blur-md border-t border-gray-200 flex justify-around pb-safe z-20 shadow-[0_-5px_15px_-5px_rgba(0,0,0,0.05)] rounded-t-2xl" id="bottom-nav-user">
+            <button onclick="switchView('user_submit')" id="nav-btn-submit" class="nav-btn flex flex-col items-center justify-center w-full py-3 pt-4 text-blue-600 transition-all duration-300">
+                <div class="icon-wrapper mb-1 transition-all duration-300 scale-125 drop-shadow-md -translate-y-1"><i data-lucide="wrench"></i></div>
+                <span class="text-[10px] font-bold transition-all">แจ้งซ่อม</span>
+            </button>
+            <button onclick="switchView('user_history')" id="nav-btn-history" class="nav-btn flex flex-col items-center justify-center w-full py-3 pt-4 text-gray-400 hover:text-gray-600 transition-all duration-300">
+                <div class="icon-wrapper mb-1 transition-all duration-300"><i data-lucide="clipboard-list"></i></div>
+                <span class="text-[10px] font-medium transition-all">ประวัติ</span>
+            </button>
+            <button onclick="switchView('admin_login')" id="nav-btn-login" class="nav-btn flex flex-col items-center justify-center w-full py-3 pt-4 text-gray-400 hover:text-gray-600 transition-all duration-300">
+                <div class="icon-wrapper mb-1 transition-all duration-300"><i data-lucide="user-cog"></i></div>
+                <span class="text-[10px] font-medium transition-all">นิติบุคคล</span>
+            </button>
         </nav>
-      </div>
+
+        <nav class="absolute bottom-0 w-full bg-white/90 backdrop-blur-md border-t border-gray-200 flex justify-around pb-safe z-20 shadow-[0_-5px_15px_-5px_rgba(0,0,0,0.05)] rounded-t-2xl hidden-view" id="bottom-nav-admin">
+            <button onclick="switchView('admin_dashboard')" id="nav-btn-dashboard" class="nav-btn flex flex-col items-center justify-center w-full py-3 pt-4 text-indigo-600 transition-all duration-300">
+                <div class="icon-wrapper mb-1 transition-all duration-300 scale-125 drop-shadow-md -translate-y-1"><i data-lucide="clipboard-list"></i></div>
+                <span class="text-[10px] font-bold transition-all">รายการแจ้งซ่อม</span>
+            </button>
+            <button onclick="handleLogout()" class="flex flex-col items-center justify-center w-full py-3 pt-4 text-gray-400 hover:text-gray-600 transition-all duration-300">
+                <div class="mb-1"><i data-lucide="log-out"></i></div>
+                <span class="text-[10px] font-medium">ออกจากระบบ</span>
+            </button>
+        </nav>
+
     </div>
-  );
-}
 
-// --- SUB-COMPONENTS ---
+    <!-- ================= MODALS ================= -->
 
-function NavItem({ icon, label, active, onClick, isAdmin }) {
-  const activeColor = isAdmin ? 'text-indigo-600' : 'text-blue-600';
-  return (
-    <button 
-      onClick={onClick}
-      className={`flex flex-col items-center justify-center w-full py-3 pt-4 ${active ? activeColor : 'text-gray-400 hover:text-gray-600'} transition-all duration-300`}
-    >
-      <div className={`mb-1 transition-all duration-300 ${active ? 'scale-125 drop-shadow-md -translate-y-1' : ''}`}>
-        {React.cloneElement(icon, { size: active ? 24 : 22 })}
-      </div>
-      <span className={`text-[10px] transition-all ${active ? 'font-bold' : 'font-medium'}`}>{label}</span>
-    </button>
-  );
-}
+    <!-- WELCOME MODAL -->
+    <div id="modal-welcome" class="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/70 backdrop-blur-sm p-5 fade-in">
+        <div class="bg-white w-full max-w-sm rounded-[2rem] shadow-2xl zoom-in overflow-hidden flex flex-col">
+            <div class="bg-gradient-to-b from-blue-50 to-white p-6 pb-4 flex flex-col items-center justify-center text-center">
+                <div class="bg-white p-3 rounded-full shadow-sm mb-4 border border-blue-100">
+                    <i data-lucide="info" class="w-10 h-10 text-blue-500"></i>
+                </div>
+                <h3 class="font-extrabold text-xl text-blue-900 tracking-tight">เงื่อนไขการแจ้งซ่อม</h3>
+            </div>
+            <div class="px-6 pb-6 space-y-4 bg-white">
+                <p class="text-gray-600 text-[13px] leading-relaxed text-center font-medium">
+                    เพื่อให้การดำเนินงานของนิติบุคคลเป็นไปอย่างรวดเร็วและมีประสิทธิภาพ ขอเรียนให้ลูกบ้านทราบว่า:
+                </p>
+                <div class="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 shadow-sm flex items-start">
+                    <i data-lucide="check-circle" class="w-5 h-5 text-emerald-500 mr-2.5 shrink-0 mt-0.5"></i>
+                    <div>
+                        <p class="text-sm text-emerald-800 font-bold">รับแจ้งเฉพาะพื้นที่ส่วนกลาง</p>
+                        <p class="text-xs text-emerald-600 mt-1 font-medium leading-relaxed">เช่น ไฟถนน, สวนสาธารณะ, คลับเฮ้าส์, ท่อประปาเมนชำรุด</p>
+                    </div>
+                </div>
+                <div class="bg-red-50 border border-red-100 rounded-2xl p-4 shadow-sm flex items-start">
+                    <i data-lucide="x" class="w-5 h-5 text-red-500 mr-2.5 shrink-0 mt-0.5"></i>
+                    <div>
+                        <p class="text-sm text-red-800 font-bold">งดรับแจ้งพื้นที่ส่วนตัวในบ้าน</p>
+                        <p class="text-xs text-red-600 mt-1 font-medium leading-relaxed">เช่น แอร์เสีย, ท่อน้ำในบ้านรั่ว, ไฟในบ้านดับ, เปลี่ยนหลอดไฟในบ้าน</p>
+                    </div>
+                </div>
+            </div>
+            <div class="p-5 border-t border-gray-100 bg-gray-50/80">
+                <button onclick="closeModal('modal-welcome')" class="w-full bg-blue-600 text-white font-extrabold py-3.5 px-4 rounded-2xl hover:bg-blue-700 shadow-md active:scale-[0.98] transition-all text-base">
+                    รับทราบและดำเนินการต่อ
+                </button>
+            </div>
+        </div>
+    </div>
 
-// 1. USER SUBMIT VIEW
-function UserSubmitView({ onSubmit, userHouseNumber, setUserHouseNumber }) {
-  const [houseNumber, setHouseNumber] = useState(userHouseNumber || '');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [category, setCategory] = useState('ไฟฟ้า / แสงสว่าง');
-  const [detail, setDetail] = useState('');
-  
-  // แยก state ของรูปภาพพรีวิวกับรูปภาพไฟล์ต้นฉบับ
-  const [imagePreview, setImagePreview] = useState(null);
-  const [imageFile, setImageFile] = useState(null);
-  
-  const [isSubmitting, setIsSubmitting] = useState(false);
+    <!-- USER HISTORY DETAIL MODAL -->
+    <div id="modal-history-detail" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-gray-900/60 backdrop-blur-sm hidden-view fade-in">
+        <div class="bg-white w-full max-w-md sm:rounded-3xl rounded-t-[2rem] h-[85vh] sm:h-auto sm:max-h-[90vh] flex flex-col shadow-2xl slide-up">
+            <div class="flex justify-between items-center p-6 border-b border-gray-100 bg-gray-50/80 rounded-t-[2rem] sm:rounded-t-3xl">
+                <div>
+                    <h3 class="font-extrabold text-xl text-gray-800 tracking-tight">รายละเอียดแจ้งซ่อม</h3>
+                    <p class="text-sm text-gray-500 mt-1.5 font-medium">รหัสอ้างอิง: <span id="hd-id" class="font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-lg shadow-sm border border-blue-100"></span></p>
+                </div>
+                <button onclick="closeModal('modal-history-detail')" class="p-2.5 bg-white rounded-full hover:bg-gray-100 shadow-sm border border-gray-200 transition-colors hover:scale-105 active:scale-95">
+                    <i data-lucide="x" class="w-5 h-5 text-gray-600"></i>
+                </button>
+            </div>
+            <div id="hd-content" class="flex-1 overflow-y-auto p-6 space-y-7 bg-white no-scrollbar">
+                <!-- Injected dynamically -->
+            </div>
+        </div>
+    </div>
 
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        alert('ขนาดรูปภาพเกิน 5MB');
-        return;
-      }
-      
-      setImageFile(file); // เก็บไฟล์ต้นฉบับไว้สำหรับการส่ง
+    <!-- ADMIN EDIT MODAL -->
+    <div id="modal-admin-edit" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-gray-900/60 backdrop-blur-sm hidden-view fade-in">
+        <div class="bg-white w-full max-w-md sm:rounded-3xl rounded-t-[2rem] h-[90vh] sm:h-auto sm:max-h-[90vh] flex flex-col shadow-2xl slide-up">
+            <div class="flex justify-between items-center p-5 border-b border-gray-100 bg-gray-50/80 rounded-t-[2rem] sm:rounded-t-3xl">
+                <div>
+                    <h3 class="font-extrabold text-lg text-gray-800">จัดการรายการ <span id="ae-id"></span></h3>
+                    <div class="flex items-center gap-2 mt-1">
+                        <p class="text-sm font-medium text-gray-500">บ้าน: <span id="ae-house" class="font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100"></span></p>
+                        <p id="ae-phone-container" class="text-sm font-medium text-gray-500 border-l border-gray-300 pl-2 flex items-center hidden">
+                            <i data-lucide="phone" class="w-3.5 h-3.5 mr-1 text-gray-400"></i>
+                            <span class="font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+                                <a id="ae-phone" href="#"></a>
+                            </span>
+                        </p>
+                    </div>
+                </div>
+                <button id="btn-close-admin-edit" onclick="closeModal('modal-admin-edit')" class="p-2.5 bg-white rounded-full hover:bg-gray-100 shadow-sm border border-gray-200 transition-colors hover:scale-105">
+                    <i data-lucide="x" class="w-5 h-5 text-gray-600"></i>
+                </button>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-6 bg-white no-scrollbar">
+                <div class="mb-5">
+                    <h4 class="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">หมวดหมู่</h4>
+                    <p id="ae-category" class="text-gray-800 font-extrabold text-lg"></p>
+                </div>
+                <div class="mb-6">
+                    <h4 class="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">รายละเอียดปัญหา</h4>
+                    <p id="ae-detail" class="text-gray-800 bg-gray-50 p-4 rounded-2xl border border-gray-100 shadow-inner font-medium text-sm"></p>
+                </div>
 
-      // สร้างพรีวิวบนหน้าจอ
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
+                <div id="ae-image-container" class="mb-6 hidden">
+                    <h4 class="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center"><i data-lucide="image" class="w-4 h-4 mr-1.5"></i> รูปภาพที่ลูกบ้านแนบมา</h4>
+                    <div class="rounded-2xl overflow-hidden shadow-md border border-gray-100"><img id="ae-image" src="" alt="Issue" class="w-full object-cover"></div>
+                </div>
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!houseNumber.trim() || !detail.trim()) return;
+                <hr class="my-8 border-gray-100">
 
-    setIsSubmitting(true);
-    const newIssue = {
-      id: `REQ-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`,
-      houseNumber,
-      phoneNumber,
-      category,
-      detail,
-      status: 'pending',
-    };
-    
-    // ส่งไฟล์ต้นฉบับไปยังฟังก์ชันจัดการ
-    await onSubmit(newIssue, imageFile);
-    
-    setIsSubmitting(false);
-    setCategory('ไฟฟ้า / แสงสว่าง');
-    setPhoneNumber('');
-    setDetail('');
-    setImagePreview(null);
-    setImageFile(null);
-  };
+                <div class="space-y-7">
+                    <div>
+                        <label class="block text-sm font-extrabold text-indigo-900 mb-3">อัพเดทสถานะงาน</label>
+                        <div class="grid grid-cols-3 gap-2.5" id="ae-status-buttons">
+                            <button type="button" onclick="selectAdminStatus('pending')" id="status-pending" class="py-2.5 px-1 text-xs font-bold rounded-xl border-2 transition-all shadow-sm border-gray-100 text-gray-500">รอดำเนินการ</button>
+                            <button type="button" onclick="selectAdminStatus('in_progress')" id="status-in_progress" class="py-2.5 px-1 text-xs font-bold rounded-xl border-2 transition-all shadow-sm border-gray-100 text-gray-500">กำลังดำเนินการ</button>
+                            <button type="button" onclick="selectAdminStatus('completed')" id="status-completed" class="py-2.5 px-1 text-xs font-bold rounded-xl border-2 transition-all shadow-sm border-gray-100 text-gray-500">เสร็จเรียบร้อย</button>
+                        </div>
+                    </div>
 
-  return (
-    <div className="p-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="bg-white rounded-3xl shadow-lg p-6 border border-gray-100/50">
-        <h2 className="text-xl font-extrabold text-gray-800 mb-5 flex items-center">
-          <div className="bg-blue-100 p-2 rounded-xl mr-3">
-            <Wrench className="w-5 h-5 text-blue-600" />
-          </div>
-          กรอกข้อมูลแจ้งซ่อม
-        </h2>
+                    <div>
+                        <label class="block text-sm font-extrabold text-indigo-900 mb-2">อัพโหลดรูปภาพผลงาน (ถ้ามี)</label>
+                        <div class="mt-2 flex justify-center px-6 pt-6 pb-7 border-2 border-indigo-100 border-dashed rounded-2xl hover:bg-indigo-50/50 hover:border-indigo-300 transition-all bg-white group cursor-pointer">
+                            <div class="space-y-2 text-center w-full">
+                                <!-- Upload State -->
+                                <label id="ae-upload-label" class="relative cursor-pointer w-full flex flex-col items-center">
+                                    <div class="bg-indigo-50 p-3 rounded-full shadow-sm mb-2 group-hover:scale-110 transition-transform"><i data-lucide="camera" class="h-8 w-8 text-indigo-400"></i></div>
+                                    <div class="flex text-sm text-gray-600 justify-center font-bold"><span class="text-indigo-600 group-hover:text-indigo-700">แนบภาพงานหลังซ่อมเสร็จ</span><input type="file" id="ae-input-image" class="sr-only" accept="image/*"></div>
+                                </label>
+                                <!-- Preview State -->
+                                <div id="ae-preview-container" class="relative inline-block w-full hidden">
+                                    <img id="ae-image-preview" src="" alt="Admin Update" class="mx-auto h-40 w-full object-cover rounded-xl shadow-md border border-indigo-100">
+                                    <button type="button" id="ae-btn-remove-image" class="absolute -top-3 -right-3 bg-red-500 text-white rounded-full p-1.5 shadow-lg hover:bg-red-600 transition-transform hover:scale-110"><i data-lucide="x" class="w-4 h-4"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-extrabold text-indigo-900 mb-2">หมายเหตุถึงลูกบ้าน</label>
+                        <textarea id="ae-remark" rows="3" placeholder="เช่น แจ้งกำหนดการซ่อม, สาเหตุของปัญหา..." class="w-full px-4 py-3.5 rounded-2xl border border-indigo-100 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all resize-none bg-indigo-50/30 shadow-sm font-medium text-sm"></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-5 border-t border-gray-100 bg-white sm:rounded-b-3xl pb-safe shadow-[0_-10px_20px_-5px_rgba(0,0,0,0.05)]">
+                <button id="btn-save-admin-edit" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-extrabold py-4 px-4 rounded-2xl hover:shadow-lg shadow-md flex items-center justify-center active:scale-[0.98] transition-all text-lg disabled:opacity-70">
+                    <i data-lucide="save" id="ae-save-icon" class="w-5 h-5 mr-2"></i>
+                    <i data-lucide="loader-2" id="ae-save-loader" class="w-5 h-5 mr-2 animate-spin hidden"></i>
+                    <span id="ae-save-text">บันทึกการอัพเดท</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- ================= JAVASCRIPT LOGIC ================= -->
+    <script>
+        // --- SUPABASE CONFIG ---
+        const SUPABASE_URL = 'https://olwonvxplwlmqquzivjm.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sd29udnhwbHdsbXFxdXppdmptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3OTM3OTYsImV4cCI6MjA5MzM2OTc5Nn0.hRhguKwikODZcpt9b0t43Th0-M8Yvv9fB6UNEOvYq4Y';
+        const supabaseHeaders = {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation'
+        };
+
+        // --- GLOBAL STATE ---
+        let currentIssues = [];
+        let currentView = 'user_submit';
+        let isAdmin = false;
+        let userHouseNumberStore = '';
         
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1.5 ml-1">บ้านเลขที่ <span className="text-red-500">*</span></label>
-              <input 
-                type="text" 
-                required
-                value={houseNumber}
-                onChange={(e) => setHouseNumber(e.target.value)}
-                placeholder="เช่น 99/1"
-                className="w-full px-4 py-3.5 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm"
-                disabled={isSubmitting}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1.5 ml-1">เบอร์โทร <span className="text-gray-400 font-normal text-xs">(ไม่บังคับ)</span></label>
-              <input 
-                type="tel"
-                value={phoneNumber}
-                onChange={(e) => setPhoneNumber(e.target.value)}
-                placeholder="08x-xxx-xxxx"
-                className="w-full px-4 py-3.5 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm"
-                disabled={isSubmitting}
-              />
-            </div>
-          </div>
+        let userImageFile = null;
+        let adminImageFile = null;
+        let currentEditIssueId = null;
+        let currentEditStatus = 'pending';
 
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1.5 ml-1">หมวดหมู่ปัญหา (พื้นที่ส่วนกลาง)</label>
-            <div className="relative">
-              <select 
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="w-full px-4 py-3.5 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none appearance-none transition-all shadow-sm font-medium text-gray-700"
-                disabled={isSubmitting}
-              >
-                <option value="ไฟฟ้า / แสงสว่าง">⚡ ไฟฟ้า / แสงสว่าง (ส่วนกลาง)</option>
-                <option value="ประปา / ท่อระบายน้ำ">💧 ประปา / ท่อระบายน้ำ (ส่วนกลาง)</option>
-                <option value="ถนน / ทางเท้า">🛣️ ถนน / ทางเท้า</option>
-                <option value="สวนสาธารณะ / ต้นไม้">🌳 สวนสาธารณะ / ต้นไม้</option>
-                <option value="คลับเฮ้าส์ / สระว่ายน้ำ">🏊 คลับเฮ้าส์ / สระว่ายน้ำ</option>
-                <option value="อื่นๆ (ส่วนกลาง)">📌 อื่นๆ (ส่วนกลาง)</option>
-              </select>
-              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-400">
-                <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
-              </div>
-            </div>
-          </div>
+        // --- INITIALIZATION ---
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons(); // Initialize Icons
+            setupEventListeners();
+            fetchIssues();
+        });
 
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1.5 ml-1">รายละเอียด <span className="text-red-500">*</span></label>
-            <textarea 
-              required
-              rows="3"
-              value={detail}
-              onChange={(e) => setDetail(e.target.value)}
-              placeholder="อธิบายลักษณะปัญหาที่พบ..."
-              className="w-full px-4 py-3.5 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all resize-none shadow-sm"
-              disabled={isSubmitting}
-            ></textarea>
-          </div>
+        // --- HELPER: TOAST ---
+        function showToast(message) {
+            const toast = document.getElementById('toast-message');
+            document.getElementById('toast-text').textContent = message;
+            toast.classList.remove('hidden-view');
+            setTimeout(() => { toast.classList.add('hidden-view'); }, 3000);
+        }
 
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1.5 ml-1">แนบรูปภาพ (ถ้ามี)</label>
-            <div className="mt-1 flex justify-center px-6 pt-6 pb-7 border-2 border-gray-200 border-dashed rounded-2xl hover:bg-blue-50/50 hover:border-blue-300 transition-all bg-gray-50/50 group cursor-pointer">
-              <div className="space-y-2 text-center w-full">
-                {imagePreview ? (
-                  <div className="relative inline-block w-full">
-                    <img src={imagePreview} alt="Preview" className="mx-auto h-40 w-full object-cover rounded-xl shadow-md" />
-                    {!isSubmitting && (
-                      <button 
-                        type="button" 
-                        onClick={(e) => { e.preventDefault(); setImagePreview(null); setImageFile(null); }}
-                        className="absolute -top-3 -right-3 bg-red-500 text-white rounded-full p-1.5 shadow-lg hover:bg-red-600 transition-transform hover:scale-110"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <label className="relative cursor-pointer w-full flex flex-col items-center">
-                    <div className="bg-white p-3 rounded-full shadow-sm mb-2 group-hover:scale-110 transition-transform">
-                      <Camera className="h-8 w-8 text-blue-500" />
-                    </div>
-                    <div className="flex text-sm text-gray-600 justify-center font-bold">
-                      <span className="text-blue-600 group-hover:text-blue-700">อัพโหลดรูปภาพจากมือถือ</span>
-                      <input type="file" className="sr-only" accept="image/*" onChange={handleImageUpload} disabled={isSubmitting} />
-                    </div>
-                    <p className="text-xs text-gray-400 mt-1 font-medium">PNG, JPG ไม่เกิน 5MB</p>
-                  </label>
-                )}
-              </div>
-            </div>
-          </div>
+        // --- HELPER: MODALS ---
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.add('hidden-view');
+        }
 
-          <button 
-            type="submit" 
-            disabled={isSubmitting}
-            className="w-full bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-extrabold py-4 px-4 rounded-2xl hover:shadow-lg focus:ring-4 focus:ring-blue-200 transition-all shadow-md mt-6 active:scale-[0.98] text-lg flex justify-center items-center disabled:opacity-70"
-          >
-            {isSubmitting ? (
-              <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> กำลังส่งข้อมูล...</>
-            ) : (
-              <><Save className="w-5 h-5 mr-2" /> ส่งข้อมูลแจ้งซ่อม</>
-            )}
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
+        function openModal(modalId) {
+            document.getElementById(modalId).classList.remove('hidden-view');
+            lucide.createIcons();
+        }
 
-// 2. USER HISTORY VIEW
-function UserHistoryView({ issues, userHouseNumber }) {
-  const [selectedHistoryIssue, setSelectedHistoryIssue] = useState(null);
+        // --- NAVIGATION ---
+        function switchView(viewName) {
+            currentView = viewName;
+            
+            // Hide all views
+            document.getElementById('view-user-submit').classList.add('hidden-view');
+            document.getElementById('view-user-history').classList.add('hidden-view');
+            document.getElementById('view-admin-login').classList.add('hidden-view');
+            document.getElementById('view-admin-dashboard').classList.add('hidden-view');
+            
+            // Show target view
+            document.getElementById(`view-${viewName.replace('_', '-')}`).classList.remove('hidden-view');
 
-  const displayIssues = userHouseNumber 
-    ? issues.filter(issue => issue.houseNumber === userHouseNumber)
-    : issues;
+            // Reset Tab styling
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                btn.className = btn.className.replace('text-blue-600', 'text-gray-400 hover:text-gray-600').replace('text-indigo-600', 'text-gray-400 hover:text-gray-600');
+                const wrapper = btn.querySelector('.icon-wrapper');
+                const span = btn.querySelector('span');
+                if(wrapper) wrapper.className = 'icon-wrapper mb-1 transition-all duration-300';
+                if(span) span.className = 'text-[10px] font-medium transition-all';
+            });
 
-  const StatusBadge = ({ status }) => {
-    switch (status) {
-      case 'pending':
-        return <span className="px-2.5 py-1 text-[11px] font-bold bg-amber-100 text-amber-700 rounded-full flex items-center shadow-sm"><AlertCircle className="w-3 h-3 mr-1" /> รอดำเนินการ</span>;
-      case 'in_progress':
-        return <span className="px-2.5 py-1 text-[11px] font-bold bg-blue-100 text-blue-700 rounded-full flex items-center shadow-sm"><Clock className="w-3 h-3 mr-1" /> กำลังดำเนินการ</span>;
-      case 'completed':
-        return <span className="px-2.5 py-1 text-[11px] font-bold bg-emerald-100 text-emerald-700 rounded-full flex items-center shadow-sm"><CheckCircle className="w-3 h-3 mr-1" /> เสร็จเรียบร้อย</span>;
-      default:
-        return null;
-    }
-  };
+            // Set Active Tab Styling
+            const activeBtnMap = {
+                'user_submit': 'nav-btn-submit',
+                'user_history': 'nav-btn-history',
+                'admin_login': 'nav-btn-login',
+                'admin_dashboard': 'nav-btn-dashboard'
+            };
+            
+            const activeBtn = document.getElementById(activeBtnMap[viewName]);
+            if(activeBtn) {
+                const colorClass = isAdmin ? 'text-indigo-600' : 'text-blue-600';
+                activeBtn.className = activeBtn.className.replace('text-gray-400 hover:text-gray-600', colorClass);
+                const wrapper = activeBtn.querySelector('.icon-wrapper');
+                const span = activeBtn.querySelector('span');
+                if(wrapper) wrapper.className = 'icon-wrapper mb-1 transition-all duration-300 scale-125 drop-shadow-md -translate-y-1';
+                if(span) span.className = 'text-[10px] font-bold transition-all';
+            }
 
-  return (
-    <div className="p-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex justify-between items-end mb-5 ml-1">
-        <div>
-          <h2 className="text-xl font-extrabold text-gray-800">ประวัติการแจ้งซ่อม</h2>
-          {userHouseNumber && <p className="text-sm font-medium text-gray-500 mt-1">บ้านเลขที่: <span className="text-blue-600 font-bold">{userHouseNumber}</span></p>}
-        </div>
-      </div>
+            // Custom Renders based on View
+            if(viewName === 'user_history') renderUserHistory();
+            if(viewName === 'admin_dashboard') renderAdminDashboard();
+        }
 
-      {displayIssues.length === 0 ? (
-        <div className="bg-white rounded-3xl p-10 text-center border border-gray-100 shadow-sm mt-4 flex flex-col items-center justify-center">
-          <div className="bg-gray-50 p-4 rounded-full mb-4">
-            <FileText className="w-10 h-10 text-gray-300" />
-          </div>
-          <p className="text-gray-500 font-bold">ยังไม่มีประวัติการแจ้งซ่อม</p>
-          <p className="text-sm text-gray-400 mt-1">รายการที่คุณแจ้งจะแสดงที่นี่</p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {displayIssues.map(issue => (
-            <div 
-              key={issue.id} 
-              onClick={() => setSelectedHistoryIssue(issue)}
-              className="bg-white rounded-3xl p-5 shadow-sm hover:shadow-md transform hover:-translate-y-1 transition-all duration-300 border border-gray-100 relative overflow-hidden cursor-pointer group"
-            >
-              <div className={`absolute left-0 top-0 bottom-0 w-2 transition-all duration-300 group-hover:w-3 ${
-                issue.status === 'pending' ? 'bg-amber-400' : 
-                issue.status === 'in_progress' ? 'bg-blue-400' : 'bg-emerald-400'
-              }`}></div>
-              
-              <div className="pl-3">
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2.5 py-1 rounded-lg shadow-inner">{issue.id}</span>
-                    <span className="ml-2 text-sm font-extrabold text-gray-800">{issue.category}</span>
-                  </div>
-                  <StatusBadge status={issue.status} />
-                </div>
+        function handleLogout() {
+            isAdmin = false;
+            
+            // Revert Header
+            const header = document.getElementById('main-header');
+            header.className = `px-5 py-5 shadow-md flex items-center justify-between z-10 transition-all duration-500 rounded-b-2xl mb-1 bg-gradient-to-r from-blue-600 to-cyan-500`;
+            document.getElementById('header-subtitle').textContent = 'แจ้งซ่อมออนไลน์ 24 ชม.';
+            document.getElementById('btn-logout').classList.add('hidden');
+            
+            // Switch Nav
+            document.getElementById('bottom-nav-user').classList.remove('hidden-view');
+            document.getElementById('bottom-nav-admin').classList.add('hidden-view');
+            
+            switchView('user_submit');
+            showToast('ออกจากระบบเรียบร้อย');
+        }
+
+        // --- FETCH DATA ---
+        async function fetchIssues() {
+            document.getElementById('global-loader').classList.remove('hidden-view');
+            try {
+                const res = await fetch(`${SUPABASE_URL}/rest/v1/issues?order=created_at.desc`, { headers: supabaseHeaders });
+                if (res.ok) {
+                    const data = await res.json();
+                    currentIssues = data.map(item => ({
+                        id: item.id,
+                        houseNumber: item.house_number,
+                        phoneNumber: item.phone_number,
+                        category: item.category,
+                        detail: item.detail,
+                        image: item.image_url,
+                        status: item.status,
+                        date: new Date(item.created_at).toLocaleString('th-TH'),
+                        adminRemark: item.admin_remark,
+                        adminImage: item.admin_image_url
+                    }));
+                    if(currentView === 'user_history') renderUserHistory();
+                    if(currentView === 'admin_dashboard') renderAdminDashboard();
+                }
+            } catch (error) {
+                console.error('Fetch error:', error);
+                showToast('เกิดข้อผิดพลาดในการดึงข้อมูล');
+            } finally {
+                document.getElementById('global-loader').classList.add('hidden-view');
+            }
+        }
+
+        // --- UPLOAD IMAGE DIRECTORY TO SUPABASE ---
+        async function uploadImage(fileInput, prefix = 'img') {
+            if (!fileInput) return null;
+            if (typeof fileInput === 'string' && fileInput.startsWith('http')) return fileInput;
+
+            try {
+                let contentType = fileInput.type || 'image/jpeg';
+                let fileExt = fileInput.name ? fileInput.name.split('.').pop() : 'jpg';
+                const fileName = `${prefix}-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+
+                const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/maintenance_images/${fileName}`, {
+                    method: 'POST',
+                    headers: {
+                        'apikey': SUPABASE_KEY,
+                        'Authorization': `Bearer ${SUPABASE_KEY}`,
+                        'Content-Type': contentType,
+                        'x-upsert': 'true'
+                    },
+                    body: fileInput 
+                });
+
+                if (!uploadRes.ok) throw new Error('Upload failed');
+                return `${SUPABASE_URL}/storage/v1/object/public/maintenance_images/${fileName}`;
+            } catch (error) {
+                console.error('Upload error:', error);
+                showToast('อัพโหลดรูปภาพไม่สำเร็จ');
+                return null;
+            }
+        }
+
+        // --- EVENT LISTENERS SETUP ---
+        function setupEventListeners() {
+            // User Image Upload
+            document.getElementById('input-image').addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    if (file.size > 5 * 1024 * 1024) return alert('ขนาดรูปภาพเกิน 5MB');
+                    userImageFile = file;
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        document.getElementById('image-preview').src = reader.result;
+                        document.getElementById('upload-label').classList.add('hidden');
+                        document.getElementById('preview-container').classList.remove('hidden');
+                    };
+                    reader.readAsDataURL(file);
+                }
+            });
+
+            document.getElementById('btn-remove-image').addEventListener('click', function() {
+                userImageFile = null;
+                document.getElementById('input-image').value = '';
+                document.getElementById('upload-label').classList.remove('hidden');
+                document.getElementById('preview-container').classList.add('hidden');
+            });
+
+            // User Submit Form
+            document.getElementById('form-submit-issue').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                const house = document.getElementById('input-house').value.trim();
+                const detail = document.getElementById('input-detail').value.trim();
+                if (!house || !detail) return;
+
+                const btn = document.getElementById('btn-submit');
+                const inputs = this.querySelectorAll('input, select, textarea');
+                inputs.forEach(i => i.disabled = true);
+                btn.disabled = true;
+                document.getElementById('submit-icon').classList.add('hidden');
+                document.getElementById('submit-loader').classList.remove('hidden');
+                document.getElementById('submit-text').textContent = 'กำลังส่งข้อมูล...';
+
+                const newIssue = {
+                    id: `REQ-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`,
+                    houseNumber: house,
+                    phoneNumber: document.getElementById('input-phone').value,
+                    category: document.getElementById('input-category').value,
+                    detail: detail,
+                    status: 'pending'
+                };
+
+                try {
+                    const imageUrl = await uploadImage(userImageFile, 'user');
+                    const payload = {
+                        id: newIssue.id,
+                        house_number: newIssue.houseNumber,
+                        phone_number: newIssue.phoneNumber,
+                        category: newIssue.category,
+                        detail: newIssue.detail,
+                        image_url: imageUrl,
+                        status: newIssue.status
+                    };
+
+                    const res = await fetch(`${SUPABASE_URL}/rest/v1/issues`, {
+                        method: 'POST',
+                        headers: supabaseHeaders,
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (res.ok) {
+                        showToast('ส่งข้อมูลแจ้งซ่อมเรียบร้อยแล้ว');
+                        userHouseNumberStore = house;
+                        
+                        // Reset Form
+                        this.reset();
+                        document.getElementById('btn-remove-image').click();
+                        
+                        await fetchIssues();
+                        switchView('user_history');
+                    } else { throw new Error('Save failed'); }
+                } catch (error) {
+                    showToast('เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง');
+                } finally {
+                    inputs.forEach(i => i.disabled = false);
+                    btn.disabled = false;
+                    document.getElementById('submit-icon').classList.remove('hidden');
+                    document.getElementById('submit-loader').classList.add('hidden');
+                    document.getElementById('submit-text').textContent = 'ส่งข้อมูลแจ้งซ่อม';
+                }
+            });
+
+            // Admin Login
+            document.getElementById('form-admin-login').addEventListener('submit', function(e) {
+                e.preventDefault();
+                const pin = document.getElementById('input-pin').value;
+                if (pin === '9999') {
+                    isAdmin = true;
+                    // Switch Header
+                    const header = document.getElementById('main-header');
+                    header.className = `px-5 py-5 shadow-md flex items-center justify-between z-10 transition-all duration-500 rounded-b-2xl mb-1 bg-gradient-to-r from-indigo-800 to-purple-700`;
+                    document.getElementById('header-subtitle').textContent = 'ระบบจัดการนิติบุคคล';
+                    document.getElementById('btn-logout').classList.remove('hidden');
+                    
+                    // Switch Nav
+                    document.getElementById('bottom-nav-user').classList.add('hidden-view');
+                    document.getElementById('bottom-nav-admin').classList.remove('hidden-view');
+                    
+                    document.getElementById('input-pin').value = '';
+                    switchView('admin_dashboard');
+                    showToast('เข้าสู่ระบบนิติบุคคลสำเร็จ');
+                } else {
+                    showToast('รหัสผ่านไม่ถูกต้อง');
+                }
+            });
+
+            document.getElementById('btn-logout').addEventListener('click', handleLogout);
+
+            // Admin Edit Image Upload
+            document.getElementById('ae-input-image').addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    adminImageFile = file;
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        document.getElementById('ae-image-preview').src = reader.result;
+                        document.getElementById('ae-upload-label').classList.add('hidden');
+                        document.getElementById('ae-preview-container').classList.remove('hidden');
+                    };
+                    reader.readAsDataURL(file);
+                }
+            });
+
+            document.getElementById('ae-btn-remove-image').addEventListener('click', function() {
+                adminImageFile = null;
+                document.getElementById('ae-input-image').value = '';
+                document.getElementById('ae-upload-label').classList.remove('hidden');
+                document.getElementById('ae-preview-container').classList.add('hidden');
+            });
+
+            // Admin Save Edit
+            document.getElementById('btn-save-admin-edit').addEventListener('click', async function() {
+                const remark = document.getElementById('ae-remark').value;
+                const btn = this;
                 
-                <p className="text-gray-600 font-medium mb-2 mt-2 line-clamp-2 leading-snug">{issue.detail}</p>
-                <p className="text-[11px] text-gray-400 mb-4 flex items-center font-medium">
-                  <Clock className="w-3.5 h-3.5 mr-1" /> {issue.date}
-                </p>
-                
-                {(issue.adminRemark || issue.adminImage) && (
-                  <div className="mt-3 bg-gradient-to-r from-blue-50 to-cyan-50/30 rounded-2xl p-3.5 border border-blue-100/50 shadow-inner">
-                    <p className="text-xs font-bold text-blue-800 mb-1.5 flex items-center">
-                      <CheckCircle className="w-3.5 h-3.5 mr-1" /> อัพเดทจากนิติบุคคล
-                    </p>
-                    {issue.adminRemark && <p className="text-sm text-blue-700 line-clamp-1 font-medium">{issue.adminRemark}</p>}
-                    {issue.adminImage && !issue.adminRemark && <p className="text-sm text-blue-700 line-clamp-1 italic font-medium">📷 แนบรูปภาพการแก้ไขแล้ว</p>}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+                btn.disabled = true;
+                document.getElementById('ae-save-icon').classList.add('hidden');
+                document.getElementById('ae-save-loader').classList.remove('hidden');
+                document.getElementById('ae-save-text').textContent = 'กำลังบันทึก...';
 
-      {selectedHistoryIssue && (
-        <UserHistoryDetailModal issue={selectedHistoryIssue} onClose={() => setSelectedHistoryIssue(null)} />
-      )}
-    </div>
-  );
-}
+                try {
+                    // Try to get original image url if no new file is uploaded
+                    let existingImageUrl = null;
+                    if(!adminImageFile && document.getElementById('ae-image-preview').src && !document.getElementById('ae-preview-container').classList.contains('hidden')){
+                        existingImageUrl = document.getElementById('ae-image-preview').src;
+                    }
 
-// 6. USER HISTORY DETAIL MODAL
-function UserHistoryDetailModal({ issue, onClose }) {
-  const StatusBadge = ({ status }) => {
-    switch (status) {
-      case 'pending': return <span className="px-3 py-1.5 text-xs font-bold bg-amber-100 text-amber-700 rounded-full flex items-center shadow-sm"><AlertCircle className="w-4 h-4 mr-1.5" /> รอดำเนินการ</span>;
-      case 'in_progress': return <span className="px-3 py-1.5 text-xs font-bold bg-blue-100 text-blue-700 rounded-full flex items-center shadow-sm"><Clock className="w-4 h-4 mr-1.5" /> กำลังดำเนินการ</span>;
-      case 'completed': return <span className="px-3 py-1.5 text-xs font-bold bg-emerald-100 text-emerald-700 rounded-full flex items-center shadow-sm"><CheckCircle className="w-4 h-4 mr-1.5" /> เสร็จเรียบร้อย</span>;
-      default: return null;
-    }
-  };
+                    const adminImageUrl = await uploadImage(adminImageFile || existingImageUrl, 'admin');
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-300">
-      <div className="bg-white w-full max-w-md sm:rounded-3xl rounded-t-[2rem] h-[85vh] sm:h-auto sm:max-h-[90vh] flex flex-col shadow-2xl animate-in slide-in-from-bottom-full duration-400 ease-out">
-        <div className="flex justify-between items-center p-6 border-b border-gray-100 bg-gray-50/80 rounded-t-[2rem] sm:rounded-t-3xl">
-          <div>
-            <h3 className="font-extrabold text-xl text-gray-800 tracking-tight">รายละเอียดแจ้งซ่อม</h3>
-            <p className="text-sm text-gray-500 mt-1.5 font-medium">รหัสอ้างอิง: <span className="font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-lg shadow-sm border border-blue-100">{issue.id}</span></p>
-          </div>
-          <button onClick={onClose} className="p-2.5 bg-white rounded-full hover:bg-gray-100 shadow-sm border border-gray-200 transition-colors hover:scale-105 active:scale-95">
-            <X className="w-5 h-5 text-gray-600" />
-          </button>
-        </div>
+                    const payload = {
+                        status: currentEditStatus,
+                        admin_remark: remark,
+                        admin_image_url: adminImageUrl
+                    };
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-7 bg-white">
-          <div className="flex justify-between items-center">
-            <div>
-              <h4 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">หมวดหมู่</h4>
-              <p className="text-gray-800 font-extrabold text-xl">{issue.category}</p>
-            </div>
-            <StatusBadge status={issue.status} />
-          </div>
+                    const res = await fetch(`${SUPABASE_URL}/rest/v1/issues?id=eq.${currentEditIssueId}`, {
+                        method: 'PATCH',
+                        headers: supabaseHeaders,
+                        body: JSON.stringify(payload)
+                    });
 
-          <div className="flex gap-3 bg-gray-50 p-4 rounded-2xl border border-gray-100 shadow-inner">
-            <div className="flex-1">
-              <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">บ้านเลขที่</p>
-              <p className="text-sm font-extrabold text-blue-700">{issue.houseNumber}</p>
-            </div>
-            {issue.phoneNumber && (
-              <div className="flex-1 border-l border-gray-200 pl-4">
-                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">เบอร์ติดต่อ</p>
-                <p className="text-sm font-extrabold text-blue-700 flex items-center"><Phone className="w-3.5 h-3.5 mr-1"/> {issue.phoneNumber}</p>
-              </div>
-            )}
-          </div>
-          
-          <div>
-            <h4 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">รายละเอียดปัญหา</h4>
-            <div className="bg-gray-50 p-5 rounded-2xl border border-gray-100 text-gray-700 leading-relaxed shadow-inner font-medium text-sm">
-              {issue.detail}
-            </div>
-          </div>
+                    if (res.ok) {
+                        showToast('อัพเดทข้อมูลเรียบร้อยแล้ว');
+                        closeModal('modal-admin-edit');
+                        await fetchIssues();
+                    } else { throw new Error('Update failed'); }
+                } catch(e) {
+                    showToast('อัพเดทล้มเหลว กรุณาลองใหม่อีกครั้ง');
+                } finally {
+                    btn.disabled = false;
+                    document.getElementById('ae-save-icon').classList.remove('hidden');
+                    document.getElementById('ae-save-loader').classList.add('hidden');
+                    document.getElementById('ae-save-text').textContent = 'บันทึกการอัพเดท';
+                }
+            });
+        }
 
-          {issue.image && (
-            <div>
-              <h4 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center">
-                <ImageIcon className="w-4 h-4 mr-1.5" /> รูปภาพที่แจ้ง
-              </h4>
-              <div className="rounded-2xl overflow-hidden shadow-md border border-gray-100">
-                <img src={issue.image} alt="Issue" className="w-full object-cover" />
-              </div>
-            </div>
-          )}
+        // --- UI RENDER HELPERS ---
+        function getStatusBadge(status) {
+            switch(status) {
+                case 'pending': return `<span class="px-2.5 py-1 text-[11px] font-bold bg-amber-100 text-amber-700 rounded-full flex items-center shadow-sm"><i data-lucide="alert-circle" class="w-3 h-3 mr-1"></i> รอดำเนินการ</span>`;
+                case 'in_progress': return `<span class="px-2.5 py-1 text-[11px] font-bold bg-blue-100 text-blue-700 rounded-full flex items-center shadow-sm"><i data-lucide="clock" class="w-3 h-3 mr-1"></i> กำลังดำเนินการ</span>`;
+                case 'completed': return `<span class="px-2.5 py-1 text-[11px] font-bold bg-emerald-100 text-emerald-700 rounded-full flex items-center shadow-sm"><i data-lucide="check-circle" class="w-3 h-3 mr-1"></i> เสร็จเรียบร้อย</span>`;
+                default: return '';
+            }
+        }
+        function getStatusColorClass(status) {
+            switch(status) {
+                case 'pending': return 'bg-amber-400';
+                case 'in_progress': return 'bg-blue-400';
+                case 'completed': return 'bg-emerald-400';
+                default: return 'bg-gray-400';
+            }
+        }
+        function getAdminStatusBadge(status) {
+            let color = '', label = '', dot = '';
+            if(status === 'pending') { color = 'bg-amber-100 text-amber-800 border-amber-200'; label = 'รอดำเนินการ'; dot = 'bg-amber-500'; }
+            if(status === 'in_progress') { color = 'bg-blue-100 text-blue-800 border-blue-200'; label = 'กำลังดำเนินการ'; dot = 'bg-blue-500'; }
+            if(status === 'completed') { color = 'bg-emerald-100 text-emerald-800 border-emerald-200'; label = 'เสร็จเรียบร้อย'; dot = 'bg-emerald-500'; }
+            
+            return `<span class="px-2.5 py-1 text-[11px] font-bold rounded-lg border flex items-center shadow-sm ${color}">
+                        <span class="w-1.5 h-1.5 rounded-full mr-1.5 ${dot}"></span>${label}
+                    </span>`;
+        }
 
-          {(issue.adminRemark || issue.adminImage) && (
-            <div className="mt-8 pt-7 border-t-2 border-dashed border-gray-200">
-              <h4 className="text-sm font-extrabold text-indigo-700 uppercase tracking-wider mb-5 flex items-center bg-indigo-50 inline-block px-4 py-2 rounded-xl border border-indigo-100 shadow-sm">
-                <Wrench className="w-4 h-4 mr-2" /> การดำเนินการจากนิติบุคคล
-              </h4>
-              <div className="bg-gradient-to-b from-indigo-50/80 to-white rounded-3xl p-5 border border-indigo-100 shadow-sm space-y-5">
-                {issue.adminImage && (
-                  <div>
-                    <p className="text-xs font-bold text-indigo-600 mb-3 flex items-center bg-white inline-block px-3 py-1.5 rounded-lg shadow-sm border border-indigo-50">
-                      <CheckCircle className="w-4 h-4 mr-1.5 text-emerald-500" /> ภาพผลการแก้ไข
-                    </p>
-                    <div className="rounded-2xl overflow-hidden shadow-md border border-indigo-100">
-                      <img src={issue.adminImage} alt="Admin Fix" className="w-full object-cover" />
+        function renderUserHistory() {
+            if(userHouseNumberStore) {
+                document.getElementById('history-house-number').textContent = userHouseNumberStore;
+                document.getElementById('history-subtitle').classList.remove('hidden');
+            }
+
+            const displayIssues = userHouseNumberStore 
+                ? currentIssues.filter(i => i.houseNumber === userHouseNumberStore) 
+                : currentIssues;
+
+            if (displayIssues.length === 0) {
+                document.getElementById('history-empty').classList.remove('hidden');
+                document.getElementById('history-list').innerHTML = '';
+            } else {
+                document.getElementById('history-empty').classList.add('hidden');
+                let html = '';
+                displayIssues.forEach(issue => {
+                    let adminFeedback = '';
+                    if(issue.adminRemark || issue.adminImage) {
+                        adminFeedback = `
+                        <div class="mt-3 bg-gradient-to-r from-blue-50 to-cyan-50/30 rounded-2xl p-3.5 border border-blue-100/50 shadow-inner">
+                            <p class="text-xs font-bold text-blue-800 mb-1.5 flex items-center"><i data-lucide="check-circle" class="w-3.5 h-3.5 mr-1"></i> อัพเดทจากนิติบุคคล</p>
+                            ${issue.adminRemark ? `<p class="text-sm text-blue-700 line-clamp-1 font-medium">${issue.adminRemark}</p>` : ''}
+                            ${issue.adminImage && !issue.adminRemark ? `<p class="text-sm text-blue-700 line-clamp-1 italic font-medium">📷 แนบรูปภาพการแก้ไขแล้ว</p>` : ''}
+                        </div>`;
+                    }
+
+                    html += `
+                    <div onclick="openHistoryDetail('${issue.id}')" class="bg-white rounded-3xl p-5 shadow-sm hover:shadow-md transform hover:-translate-y-1 transition-all duration-300 border border-gray-100 relative overflow-hidden cursor-pointer group">
+                        <div class="absolute left-0 top-0 bottom-0 w-2 transition-all duration-300 group-hover:w-3 ${getStatusColorClass(issue.status)}"></div>
+                        <div class="pl-3">
+                            <div class="flex justify-between items-start mb-3">
+                                <div>
+                                    <span class="text-[10px] font-bold text-gray-500 bg-gray-100 px-2.5 py-1 rounded-lg shadow-inner">${issue.id}</span>
+                                    <span class="ml-2 text-sm font-extrabold text-gray-800">${issue.category}</span>
+                                </div>
+                                ${getStatusBadge(issue.status)}
+                            </div>
+                            <p class="text-gray-600 font-medium mb-2 mt-2 line-clamp-2 leading-snug">${issue.detail}</p>
+                            <p class="text-[11px] text-gray-400 flex items-center font-medium"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1"></i> ${issue.date}</p>
+                            ${adminFeedback}
+                        </div>
+                    </div>`;
+                });
+                document.getElementById('history-list').innerHTML = html;
+                lucide.createIcons();
+            }
+        }
+
+        window.openHistoryDetail = function(id) {
+            const issue = currentIssues.find(i => i.id === id);
+            if(!issue) return;
+
+            document.getElementById('hd-id').textContent = issue.id;
+            
+            let phoneHtml = issue.phoneNumber ? `
+                <div class="flex-1 border-l border-gray-200 pl-4">
+                    <p class="text-[10px] font-bold text-gray-400 uppercase mb-1">เบอร์ติดต่อ</p>
+                    <p class="text-sm font-extrabold text-blue-700 flex items-center"><i data-lucide="phone" class="w-3.5 h-3.5 mr-1"></i> ${issue.phoneNumber}</p>
+                </div>` : '';
+
+            let imageHtml = issue.image ? `
+                <div>
+                    <h4 class="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center"><i data-lucide="image" class="w-4 h-4 mr-1.5"></i> รูปภาพที่แจ้ง</h4>
+                    <div class="rounded-2xl overflow-hidden shadow-md border border-gray-100"><img src="${issue.image}" alt="Issue" class="w-full object-cover"></div>
+                </div>` : '';
+
+            let adminHtml = '';
+            if(issue.adminRemark || issue.adminImage) {
+                let imgPart = issue.adminImage ? `
+                    <div>
+                        <p class="text-xs font-bold text-indigo-600 mb-3 flex items-center bg-white inline-block px-3 py-1.5 rounded-lg shadow-sm border border-indigo-50"><i data-lucide="check-circle" class="w-4 h-4 mr-1.5 text-emerald-500"></i> ภาพผลการแก้ไข</p>
+                        <div class="rounded-2xl overflow-hidden shadow-md border border-indigo-100"><img src="${issue.adminImage}" alt="Admin Fix" class="w-full object-cover"></div>
+                    </div>` : '';
+                let remarkPart = issue.adminRemark ? `
+                    <div>
+                        <p class="text-xs font-bold text-indigo-600 mb-2 flex items-center ml-1"><i data-lucide="file-text" class="w-4 h-4 mr-1.5"></i> หมายเหตุ</p>
+                        <p class="text-indigo-900 font-semibold bg-white p-4 rounded-2xl border border-indigo-50 shadow-sm text-sm leading-relaxed">${issue.adminRemark}</p>
+                    </div>` : '';
+
+                adminHtml = `
+                    <div class="mt-8 pt-7 border-t-2 border-dashed border-gray-200">
+                        <h4 class="text-sm font-extrabold text-indigo-700 uppercase tracking-wider mb-5 flex items-center bg-indigo-50 inline-block px-4 py-2 rounded-xl border border-indigo-100 shadow-sm"><i data-lucide="wrench" class="w-4 h-4 mr-2"></i> การดำเนินการจากนิติบุคคล</h4>
+                        <div class="bg-gradient-to-b from-indigo-50/80 to-white rounded-3xl p-5 border border-indigo-100 shadow-sm space-y-5">
+                            ${imgPart}
+                            ${remarkPart}
+                        </div>
+                    </div>`;
+            }
+
+            const html = `
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h4 class="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">หมวดหมู่</h4>
+                        <p class="text-gray-800 font-extrabold text-xl">${issue.category}</p>
                     </div>
-                  </div>
-                )}
-                {issue.adminRemark && (
-                  <div>
-                    <p className="text-xs font-bold text-indigo-600 mb-2 flex items-center ml-1">
-                      <FileText className="w-4 h-4 mr-1.5" /> หมายเหตุ
-                    </p>
-                    <p className="text-indigo-900 font-semibold bg-white p-4 rounded-2xl border border-indigo-50 shadow-sm text-sm leading-relaxed">{issue.adminRemark}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// 7. WELCOME INFO MODAL
-function WelcomeModal({ onClose }) {
-  return (
-    <div className="absolute inset-0 z-[100] flex items-center justify-center bg-gray-900/70 backdrop-blur-sm animate-in fade-in duration-300 p-5">
-      <div className="bg-white w-full max-w-sm rounded-[2rem] shadow-2xl animate-in zoom-in-95 duration-400 ease-out overflow-hidden flex flex-col">
-        <div className="bg-gradient-to-b from-blue-50 to-white p-6 pb-4 flex flex-col items-center justify-center text-center">
-          <div className="bg-white p-3 rounded-full shadow-sm mb-4 border border-blue-100">
-            <Info className="w-10 h-10 text-blue-500" />
-          </div>
-          <h3 className="font-extrabold text-xl text-blue-900 tracking-tight">เงื่อนไขการแจ้งซ่อม</h3>
-        </div>
-        <div className="px-6 pb-6 space-y-4 bg-white">
-          <p className="text-gray-600 text-[13px] leading-relaxed text-center font-medium">
-            เพื่อให้การดำเนินงานของนิติบุคคลเป็นไปอย่างรวดเร็วและมีประสิทธิภาพ ขอเรียนให้ลูกบ้านทราบว่า:
-          </p>
-          <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 shadow-sm">
-            <div className="flex items-start">
-              <CheckCircle className="w-5 h-5 text-emerald-500 mr-2.5 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm text-emerald-800 font-bold">รับแจ้งเฉพาะพื้นที่ส่วนกลาง</p>
-                <p className="text-xs text-emerald-600 mt-1 font-medium leading-relaxed">เช่น ไฟถนน, สวนสาธารณะ, คลับเฮ้าส์, ท่อประปาเมนชำรุด</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-red-50 border border-red-100 rounded-2xl p-4 shadow-sm">
-            <div className="flex items-start">
-              <X className="w-5 h-5 text-red-500 mr-2.5 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm text-red-800 font-bold">งดรับแจ้งพื้นที่ส่วนตัวในบ้าน</p>
-                <p className="text-xs text-red-600 mt-1 font-medium leading-relaxed">เช่น แอร์เสีย, ท่อน้ำในบ้านรั่ว, ไฟในบ้านดับ, เปลี่ยนหลอดไฟในบ้าน</p>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="p-5 border-t border-gray-100 bg-gray-50/80 pb-safe">
-          <button onClick={onClose} className="w-full bg-blue-600 text-white font-extrabold py-3.5 px-4 rounded-2xl hover:bg-blue-700 shadow-md active:scale-[0.98] transition-all text-base">
-            รับทราบและดำเนินการต่อ
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// 3. ADMIN LOGIN VIEW
-function AdminLoginView({ onLogin }) {
-  const [pin, setPin] = useState('');
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    onLogin(pin);
-  };
-
-  return (
-    <div className="p-6 h-full flex flex-col justify-center animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="bg-white rounded-[2rem] shadow-xl p-8 border border-gray-100/50 text-center relative overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-indigo-50 to-white -z-10"></div>
-        <div className="w-20 h-20 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner border-4 border-white">
-          <UserCog className="w-10 h-10 text-indigo-600" />
-        </div>
-        <h2 className="text-2xl font-extrabold text-gray-800 mb-2">เข้าสู่ระบบนิติบุคคล</h2>
-        <p className="text-sm font-medium text-gray-500 mb-8">กรุณาใส่รหัสผ่าน (PIN) เพื่อเข้าสู่ระบบจัดการ</p>
-        <form onSubmit={handleSubmit}>
-          <input 
-            type="password" pattern="[0-9]*" inputMode="numeric" maxLength="4"
-            value={pin} onChange={(e) => setPin(e.target.value)} placeholder="รหัส 4 หลัก"
-            className="w-full text-center tracking-[1em] text-3xl px-4 py-5 rounded-2xl border-2 border-gray-200 focus:ring-0 focus:border-indigo-500 outline-none transition-all mb-8 bg-gray-50 shadow-inner font-bold text-indigo-900 placeholder:text-xl placeholder:tracking-normal placeholder:font-medium placeholder:text-gray-400"
-          />
-          <button type="submit" className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-extrabold py-4 px-4 rounded-2xl hover:shadow-lg shadow-md active:scale-[0.98] transition-all text-lg">
-            เข้าสู่ระบบ
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-// 4. ADMIN DASHBOARD VIEW
-function AdminDashboardView({ issues, onUpdateIssue }) {
-  const [selectedIssue, setSelectedIssue] = useState(null);
-
-  const AdminStatusBadge = ({ status }) => {
-    const config = {
-      pending: { color: 'bg-amber-100 text-amber-800 border-amber-200', label: 'รอดำเนินการ', dot: 'bg-amber-500' },
-      in_progress: { color: 'bg-blue-100 text-blue-800 border-blue-200', label: 'กำลังดำเนินการ', dot: 'bg-blue-500' },
-      completed: { color: 'bg-emerald-100 text-emerald-800 border-emerald-200', label: 'เสร็จเรียบร้อย', dot: 'bg-emerald-500' }
-    };
-    const c = config[status] || config.pending;
-    return (
-      <span className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border flex items-center shadow-sm ${c.color}`}>
-        <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${c.dot}`}></span>{c.label}
-      </span>
-    );
-  };
-
-  return (
-    <div className="p-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="grid grid-cols-3 gap-3 mb-6">
-        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center transform transition-transform hover:scale-105">
-          <div className="text-3xl font-extrabold text-amber-500 drop-shadow-sm">{issues.filter(i => i.status === 'pending').length}</div>
-          <div className="text-[11px] text-gray-500 font-bold mt-1">รอดำเนินการ</div>
-        </div>
-        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center transform transition-transform hover:scale-105">
-          <div className="text-3xl font-extrabold text-blue-500 drop-shadow-sm">{issues.filter(i => i.status === 'in_progress').length}</div>
-          <div className="text-[11px] text-gray-500 font-bold mt-1">กำลังดำเนินการ</div>
-        </div>
-        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center transform transition-transform hover:scale-105">
-          <div className="text-3xl font-extrabold text-emerald-500 drop-shadow-sm">{issues.filter(i => i.status === 'completed').length}</div>
-          <div className="text-[11px] text-gray-500 font-bold mt-1">เสร็จเรียบร้อย</div>
-        </div>
-      </div>
-
-      <h3 className="font-extrabold text-gray-800 mb-4 ml-1 flex items-center text-lg">
-        <ClipboardList className="w-5 h-5 mr-2 text-indigo-600" />
-        รายการแจ้งซ่อมทั้งหมด
-      </h3>
-
-      <div className="space-y-3.5">
-        {issues.map(issue => (
-          <div key={issue.id} onClick={() => setSelectedIssue(issue)} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 cursor-pointer hover:shadow-md hover:border-indigo-100 transform hover:-translate-y-0.5 transition-all active:scale-[0.98] group">
-            <div className="flex justify-between items-start mb-3">
-              <div className="flex items-center">
-                <div className="bg-indigo-50 px-2.5 py-1 rounded-lg text-xs font-bold text-indigo-700 mr-2.5 border border-indigo-100 shadow-sm">{issue.houseNumber}</div>
-                <span className="text-xs font-extrabold text-gray-700">{issue.category}</span>
-              </div>
-              <AdminStatusBadge status={issue.status} />
-            </div>
-            <p className="text-sm text-gray-800 font-medium line-clamp-1 mb-2 group-hover:text-indigo-900 transition-colors">{issue.detail}</p>
-            <div className="flex justify-between items-center">
-              <p className="text-[11px] text-gray-400 flex items-center font-medium"><Clock className="w-3.5 h-3.5 mr-1" /> {issue.date}</p>
-              {issue.adminImage && <ImageIcon className="w-3.5 h-3.5 text-indigo-400" />}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {selectedIssue && <AdminEditModal issue={selectedIssue} onClose={() => setSelectedIssue(null)} onSave={(id, status, remark, adminImage) => { onUpdateIssue(id, status, remark, adminImage); setSelectedIssue(null); }} />}
-    </div>
-  );
-}
-
-// 5. ADMIN EDIT MODAL
-function AdminEditModal({ issue, onClose, onSave }) {
-  const [status, setStatus] = useState(issue.status);
-  const [remark, setRemark] = useState(issue.adminRemark || '');
-  
-  // แยก state รูปภาพระหว่าง พรีวิว กับ ไฟล์ต้นฉบับ
-  const [adminImagePreview, setAdminImagePreview] = useState(issue.adminImage || null);
-  const [adminImageFile, setAdminImageFile] = useState(null);
-  
-  const [isSaving, setIsSaving] = useState(false);
-
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setAdminImageFile(file); // เก็บไฟล์ต้นฉบับ
-      const reader = new FileReader();
-      reader.onloadend = () => { setAdminImagePreview(reader.result); };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleSaveClick = async () => {
-    setIsSaving(true);
-    // ส่งไฟล์ใหม่ไป (ถ้ามีการอัพโหลดใหม่) หรือถ้าไม่มีก็ส่งพรีวิวเดิมไป (ซึ่งจะเป็น string http url)
-    await onSave(issue.id, status, remark, adminImageFile || adminImagePreview);
-    setIsSaving(false);
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-300">
-      <div className="bg-white w-full max-w-md sm:rounded-3xl rounded-t-[2rem] h-[90vh] sm:h-auto sm:max-h-[90vh] flex flex-col shadow-2xl animate-in slide-in-from-bottom-full duration-400 ease-out">
-        <div className="flex justify-between items-center p-5 border-b border-gray-100 bg-gray-50/80 rounded-t-[2rem] sm:rounded-t-3xl">
-          <div>
-            <h3 className="font-extrabold text-lg text-gray-800">จัดการรายการ {issue.id}</h3>
-            <div className="flex items-center gap-2 mt-1">
-              <p className="text-sm font-medium text-gray-500">บ้าน: <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">{issue.houseNumber}</span></p>
-              {issue.phoneNumber && (
-                <p className="text-sm font-medium text-gray-500 border-l border-gray-300 pl-2 flex items-center">
-                  <Phone className="w-3.5 h-3.5 mr-1 text-gray-400"/>
-                  <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100"><a href={`tel:${issue.phoneNumber}`}>{issue.phoneNumber}</a></span>
-                </p>
-              )}
-            </div>
-          </div>
-          <button onClick={onClose} disabled={isSaving} className="p-2.5 bg-white rounded-full hover:bg-gray-100 shadow-sm border border-gray-200 transition-colors hover:scale-105 disabled:opacity-50">
-            <X className="w-5 h-5 text-gray-600" />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-6 bg-white">
-          <div className="mb-5">
-            <h4 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">หมวดหมู่</h4>
-            <p className="text-gray-800 font-extrabold text-lg">{issue.category}</p>
-          </div>
-          <div className="mb-6">
-            <h4 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">รายละเอียดปัญหา</h4>
-            <p className="text-gray-800 bg-gray-50 p-4 rounded-2xl border border-gray-100 shadow-inner font-medium text-sm">{issue.detail}</p>
-          </div>
-
-          {issue.image && (
-            <div className="mb-6">
-              <h4 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center"><ImageIcon className="w-4 h-4 mr-1.5" /> รูปภาพที่ลูกบ้านแนบมา</h4>
-              <div className="rounded-2xl overflow-hidden shadow-md border border-gray-100"><img src={issue.image} alt="Issue" className="w-full object-cover" /></div>
-            </div>
-          )}
-
-          <hr className="my-8 border-gray-100" />
-
-          <div className="space-y-7">
-            <div>
-              <label className="block text-sm font-extrabold text-indigo-900 mb-3">อัพเดทสถานะงาน</label>
-              <div className="grid grid-cols-3 gap-2.5">
-                {[ { value: 'pending', label: 'รอดำเนินการ', color: 'amber' }, { value: 'in_progress', label: 'กำลังดำเนินการ', color: 'blue' }, { value: 'completed', label: 'เสร็จเรียบร้อย', color: 'emerald' }].map(opt => (
-                  <button key={opt.value} disabled={isSaving} onClick={() => setStatus(opt.value)} className={`py-2.5 px-1 text-xs font-bold rounded-xl border-2 transition-all shadow-sm ${status === opt.value ? `border-${opt.color}-500 bg-${opt.color}-50 text-${opt.color}-700 scale-105` : 'border-gray-100 text-gray-500 hover:bg-gray-50 hover:border-gray-200'}`}>{opt.label}</button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-extrabold text-indigo-900 mb-2">อัพโหลดรูปภาพผลงาน (ถ้ามี)</label>
-              <div className="mt-2 flex justify-center px-6 pt-6 pb-7 border-2 border-indigo-100 border-dashed rounded-2xl hover:bg-indigo-50/50 hover:border-indigo-300 transition-all bg-white group cursor-pointer">
-                <div className="space-y-2 text-center w-full">
-                  {adminImagePreview ? (
-                    <div className="relative inline-block w-full">
-                      <img src={adminImagePreview} alt="Admin Update" className="mx-auto h-40 w-full object-cover rounded-xl shadow-md border border-indigo-100" />
-                      {!isSaving && <button type="button" onClick={(e) => { e.preventDefault(); setAdminImagePreview(null); setAdminImageFile(null); }} className="absolute -top-3 -right-3 bg-red-500 text-white rounded-full p-1.5 shadow-lg hover:bg-red-600 transition-transform hover:scale-110"><X className="w-4 h-4" /></button>}
-                    </div>
-                  ) : (
-                    <label className="relative cursor-pointer w-full flex flex-col items-center">
-                      <div className="bg-indigo-50 p-3 rounded-full shadow-sm mb-2 group-hover:scale-110 transition-transform"><Camera className="h-8 w-8 text-indigo-400" /></div>
-                      <div className="flex text-sm text-gray-600 justify-center font-bold"><span className="text-indigo-600 group-hover:text-indigo-700">แนบภาพงานหลังซ่อมเสร็จ</span><input type="file" className="sr-only" accept="image/*" onChange={handleImageUpload} disabled={isSaving} /></div>
-                    </label>
-                  )}
+                    ${getStatusBadge(issue.status).replace('w-3 h-3', 'w-4 h-4')}
                 </div>
-              </div>
-            </div>
+                <div class="flex gap-3 bg-gray-50 p-4 rounded-2xl border border-gray-100 shadow-inner">
+                    <div class="flex-1">
+                        <p class="text-[10px] font-bold text-gray-400 uppercase mb-1">บ้านเลขที่</p>
+                        <p class="text-sm font-extrabold text-blue-700">${issue.houseNumber}</p>
+                    </div>
+                    ${phoneHtml}
+                </div>
+                <div>
+                    <h4 class="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">รายละเอียดปัญหา</h4>
+                    <div class="bg-gray-50 p-5 rounded-2xl border border-gray-100 text-gray-700 leading-relaxed shadow-inner font-medium text-sm">${issue.detail}</div>
+                </div>
+                ${imageHtml}
+                ${adminHtml}
+            `;
 
-            <div>
-              <label className="block text-sm font-extrabold text-indigo-900 mb-2">หมายเหตุถึงลูกบ้าน</label>
-              <textarea rows="3" disabled={isSaving} value={remark} onChange={(e) => setRemark(e.target.value)} placeholder="เช่น แจ้งกำหนดการซ่อม, สาเหตุของปัญหา..." className="w-full px-4 py-3.5 rounded-2xl border border-indigo-100 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all resize-none bg-indigo-50/30 shadow-sm font-medium text-sm"></textarea>
-            </div>
-          </div>
-        </div>
+            document.getElementById('hd-content').innerHTML = html;
+            openModal('modal-history-detail');
+        }
 
-        <div className="p-5 border-t border-gray-100 bg-white sm:rounded-b-3xl pb-safe shadow-[0_-10px_20px_-5px_rgba(0,0,0,0.05)]">
-          <button onClick={handleSaveClick} disabled={isSaving} className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-extrabold py-4 px-4 rounded-2xl hover:shadow-lg shadow-md flex items-center justify-center active:scale-[0.98] transition-all text-lg disabled:opacity-70">
-            {isSaving ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> กำลังบันทึก...</> : <><Save className="w-5 h-5 mr-2" /> บันทึกการอัพเดท</>}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+        function renderAdminDashboard() {
+            document.getElementById('stat-pending').textContent = currentIssues.filter(i => i.status === 'pending').length;
+            document.getElementById('stat-progress').textContent = currentIssues.filter(i => i.status === 'in_progress').length;
+            document.getElementById('stat-completed').textContent = currentIssues.filter(i => i.status === 'completed').length;
+
+            let html = '';
+            currentIssues.forEach(issue => {
+                html += `
+                <div onclick="openAdminEdit('${issue.id}')" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 cursor-pointer hover:shadow-md hover:border-indigo-100 transform hover:-translate-y-0.5 transition-all active:scale-[0.98] group">
+                    <div class="flex justify-between items-start mb-3">
+                        <div class="flex items-center">
+                            <div class="bg-indigo-50 px-2.5 py-1 rounded-lg text-xs font-bold text-indigo-700 mr-2.5 border border-indigo-100 shadow-sm">${issue.houseNumber}</div>
+                            <span class="text-xs font-extrabold text-gray-700">${issue.category}</span>
+                        </div>
+                        ${getAdminStatusBadge(issue.status)}
+                    </div>
+                    <p class="text-sm text-gray-800 font-medium line-clamp-1 mb-2 group-hover:text-indigo-900 transition-colors">${issue.detail}</p>
+                    <div class="flex justify-between items-center">
+                        <p class="text-[11px] text-gray-400 flex items-center font-medium"><i data-lucide="clock" class="w-3.5 h-3.5 mr-1"></i> ${issue.date}</p>
+                        ${issue.adminImage ? '<i data-lucide="image" class="w-3.5 h-3.5 text-indigo-400"></i>' : ''}
+                    </div>
+                </div>`;
+            });
+            document.getElementById('admin-list').innerHTML = html;
+            lucide.createIcons();
+        }
+
+        window.openAdminEdit = function(id) {
+            const issue = currentIssues.find(i => i.id === id);
+            if(!issue) return;
+
+            currentEditIssueId = id;
+            currentEditStatus = issue.status;
+            adminImageFile = null;
+
+            document.getElementById('ae-id').textContent = id;
+            document.getElementById('ae-house').textContent = issue.houseNumber;
+            if(issue.phoneNumber) {
+                document.getElementById('ae-phone-container').classList.remove('hidden');
+                document.getElementById('ae-phone').textContent = issue.phoneNumber;
+                document.getElementById('ae-phone').href = `tel:${issue.phoneNumber}`;
+            } else {
+                document.getElementById('ae-phone-container').classList.add('hidden');
+            }
+
+            document.getElementById('ae-category').textContent = issue.category;
+            document.getElementById('ae-detail').textContent = issue.detail;
+
+            if(issue.image) {
+                document.getElementById('ae-image-container').classList.remove('hidden');
+                document.getElementById('ae-image').src = issue.image;
+            } else {
+                document.getElementById('ae-image-container').classList.add('hidden');
+            }
+
+            document.getElementById('ae-remark').value = issue.adminRemark || '';
+
+            if(issue.adminImage) {
+                document.getElementById('ae-image-preview').src = issue.adminImage;
+                document.getElementById('ae-upload-label').classList.add('hidden');
+                document.getElementById('ae-preview-container').classList.remove('hidden');
+            } else {
+                document.getElementById('ae-image-preview').src = '';
+                document.getElementById('ae-upload-label').classList.remove('hidden');
+                document.getElementById('ae-preview-container').classList.add('hidden');
+            }
+
+            selectAdminStatus(issue.status);
+            openModal('modal-admin-edit');
+        }
+
+        window.selectAdminStatus = function(status) {
+            currentEditStatus = status;
+            ['pending', 'in_progress', 'completed'].forEach(s => {
+                const btn = document.getElementById(`status-${s}`);
+                // Reset
+                btn.className = "py-2.5 px-1 text-xs font-bold rounded-xl border-2 transition-all shadow-sm border-gray-100 text-gray-500 hover:bg-gray-50 hover:border-gray-200";
+                
+                if(s === status) {
+                    if(s==='pending') btn.className = "py-2.5 px-1 text-xs font-bold rounded-xl border-2 transition-all shadow-sm border-amber-500 bg-amber-50 text-amber-700 scale-105";
+                    if(s==='in_progress') btn.className = "py-2.5 px-1 text-xs font-bold rounded-xl border-2 transition-all shadow-sm border-blue-500 bg-blue-50 text-blue-700 scale-105";
+                    if(s==='completed') btn.className = "py-2.5 px-1 text-xs font-bold rounded-xl border-2 transition-all shadow-sm border-emerald-500 bg-emerald-50 text-emerald-700 scale-105";
+                }
+            });
+        }
+    </script>
+</body>
+</html>
