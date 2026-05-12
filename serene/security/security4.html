@@ -57,6 +57,10 @@
             0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0   rgba(251,146,60,0.6); }
             50%      { transform: scale(1.10); box-shadow: 0 0 0 6px rgba(251,146,60,0);   }
         }
+        @keyframes dmsSlideIn {
+            from { opacity:0; transform: translateY(-12px); }
+            to   { opacity:1; transform: translateY(0); }
+        }
         #offlineSyncBar {
             transition: max-height 0.35s ease, opacity 0.3s ease;
             max-height: 0; opacity: 0; overflow: hidden;
@@ -209,7 +213,7 @@
             </button>
         </header>
 
-        <!-- Offline Sync Banner (แสดงเมื่อมีคิวรอส่ง + ออนไลน์) -->
+        <!-- Offline Sync Banner -->
         <div id="offlineSyncBar" class="w-full max-w-md mx-auto px-3 pt-2 z-40">
             <div class="bg-orange-50 border border-orange-200 rounded-2xl px-4 py-3 flex items-center gap-3 shadow-sm">
                 <span class="text-xl shrink-0" id="offlineSyncIcon">📦</span>
@@ -222,6 +226,13 @@
                     ส่งเดี๋ยวนี้
                 </button>
             </div>
+        </div>
+
+        <!-- DMS Toast Container — แสดงการ์ดเตือนบนสุด -->
+        <div id="dmsToastContainer"
+            class="fixed top-20 left-1/2 -translate-x-1/2 w-full max-w-sm px-3 z-[700] pointer-events-none"
+            style="pointer-events:none;">
+            <div style="pointer-events:auto;"></div>
         </div>
 
         <main class="flex-1 overflow-y-auto w-full max-w-md mx-auto relative px-4 pt-4 pb-32">
@@ -291,6 +302,27 @@
                             <span class="text-sm font-bold tracking-wide drop-shadow-sm" id="homeProjectName">ระบบรักษาความปลอดภัย</span>
                         </div>
                         <span class="text-[10px] bg-black/25 backdrop-blur-sm font-medium px-3 py-1.5 rounded-xl border border-white/10" id="currentDateDisplay">-</span>
+                    </div>
+                    <!-- Stats Pills Row -->
+                    <div class="relative z-10 mt-3 flex gap-2 flex-wrap">
+                        <div class="flex items-center gap-1.5 bg-white/15 border border-white/20 rounded-xl px-2.5 py-1.5 backdrop-blur-sm">
+                            <span class="text-sm">🔦</span>
+                            <div>
+                                <p class="text-[8px] text-emerald-100 font-bold leading-none">ตรวจวันนี้</p>
+                                <p class="text-[11px] text-white font-black" id="pillPatrolCount">0 จุด</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-1.5 bg-white/15 border border-white/20 rounded-xl px-2.5 py-1.5 backdrop-blur-sm">
+                            <span class="text-sm">✅</span>
+                            <div>
+                                <p class="text-[8px] text-emerald-100 font-bold leading-none">ลงเวลา</p>
+                                <p class="text-[11px] text-white font-black" id="pillCheckinCount">0 ครั้ง</p>
+                            </div>
+                        </div>
+                        <div class="ml-auto flex items-center gap-1 bg-black/20 border border-white/10 rounded-xl px-2.5 py-1.5 cursor-pointer active:scale-95 transition" onclick="refreshHomeSummary()">
+                            <span class="text-[10px]">🔄</span>
+                            <p class="text-[8px] text-emerald-100 font-bold" id="lastSyncLabel">กดเพื่ออัปเดต</p>
+                        </div>
                     </div>
                 </div>
 
@@ -368,6 +400,23 @@
                             <span class="text-xs font-bold text-indigo-600">สถิติ</span>
                         </button>
                     </div>
+                </div>
+
+                <!-- Dead Man Switch Status Card -->
+                <div class="bg-white rounded-3xl shadow-sm border border-gray-100 px-5 py-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-sm font-black text-gray-800 flex items-center gap-2">
+                            <span class="bg-red-100 text-red-600 p-1.5 rounded-lg text-xs">🛡</span> ระบบตรวจสอบอัตโนมัติ
+                        </h3>
+                        <button onclick="runDmsNow && runDmsNow()"
+                            class="text-[10px] font-bold text-gray-400 hover:text-gray-600 bg-gray-50 px-2.5 py-1.5 rounded-xl active:scale-90 transition border border-gray-100">
+                            ตรวจเดี๋ยวนี้
+                        </button>
+                    </div>
+                    <div id="dmsStatusCard" class="text-xs text-gray-500">
+                        <span class="text-gray-300">กำลังตรวจสอบ...</span>
+                    </div>
+                    <p class="text-[9px] text-gray-300 mt-2">ตรวจสอบทุก 2 นาที · แจ้ง Telegram อัตโนมัติเมื่อผิดปกติ</p>
                 </div>
 
                 <!-- ประวัติในเครื่อง (Local History) -->
@@ -2617,6 +2666,9 @@
             saveToHistory(title, type, extraData);
             // ล้าง cache history เพื่อให้ครั้งถัดไปดึงข้อมูลใหม่
             invalidateCache('getHistory');
+            // ── Auto-refresh หลังบันทึกสำเร็จ ──
+            updatePatrolProgress();
+            if (typeof _autoRefreshOnAction === 'function') _autoRefreshOnAction(type);
         }
 
         window.closePreviewAndRefresh = function() {
@@ -4575,6 +4627,641 @@
                 origST(tab);
                 if (tab === 'checkin') window.updateCheckinUI();
             };
+        });
+
+    })();
+    </script>
+    <!-- ════════════════════════════════════════════════
+         Auto-Refresh Engine + New Features
+         ════════════════════════════════════════════════ -->
+    <script>
+    (function() {
+        'use strict';
+
+        // ══════════════════════════════════════════════════════
+        //  1. AUTO-REFRESH ENGINE
+        // ══════════════════════════════════════════════════════
+
+        var _refreshTimer   = null;
+        var _lastActionTime = 0;
+        var REFRESH_IDLE_MS = 2 * 60 * 1000;   // 2 นาที เมื่อไม่มีกิจกรรม
+        var REFRESH_FAST_MS = 20 * 1000;        // 20 วิ หลังจากบันทึกข้อมูล
+
+        // เรียกจาก processSuccess ทุกครั้งที่บันทึกสำเร็จ
+        window._autoRefreshOnAction = function(type) {
+            _lastActionTime = Date.now();
+            // 1. อัปเดต patrol progress ทันที (local)
+            if (typeof updatePatrolProgress === 'function') updatePatrolProgress();
+            // 2. ถ้าหน้า history เปิดอยู่ → reload จาก Supabase
+            var histView = document.getElementById('historyView');
+            if (histView && !histView.classList.contains('hidden')) {
+                setTimeout(function() { if (typeof loadAllHistory === 'function') loadAllHistory(true); }, 800);
+            }
+            // 3. อัปเดต dashboard ถ้าเปิดอยู่
+            var dashView = document.getElementById('dashboardView');
+            if (dashView && !dashView.classList.contains('hidden')) {
+                setTimeout(function() { if (typeof buildDashboard === 'function') buildDashboard(); }, 800);
+            }
+            // 4. ตั้ง fast-refresh timer
+            _scheduleRefresh(REFRESH_FAST_MS);
+        };
+
+        function _scheduleRefresh(ms) {
+            if (_refreshTimer) clearTimeout(_refreshTimer);
+            _refreshTimer = setTimeout(_doRefresh, ms);
+        }
+
+        function _doRefresh() {
+            // อัปเดต patrol progress ทุกครั้ง
+            if (typeof updatePatrolProgress === 'function') updatePatrolProgress();
+            // อัปเดต home stats pills
+            _refreshHomePills();
+            // ถ้าหน้า history เปิดอยู่ → silent reload
+            var histView = document.getElementById('historyView');
+            if (histView && !histView.classList.contains('hidden')) {
+                if (typeof loadAllHistory === 'function') loadAllHistory(true);
+            }
+            // ตั้ง idle timer ต่อ
+            _scheduleRefresh(REFRESH_IDLE_MS);
+        }
+
+        // Home quick-stats pills (เข้างานล่าสุด, เดินตรวจวันนี้)
+        function _refreshHomePills() {
+            try {
+                var hist = JSON.parse(localStorage.getItem('guard_history_v2')) || [];
+                var today = new Date().toLocaleDateString('th-TH');
+                var patrolToday = hist.filter(function(r) {
+                    return r.type === 'patrol' && r.date === today;
+                }).length;
+                var lastCheckin = hist.find(function(r) { return r.type === 'checkin'; });
+
+                var pillPatrol = document.getElementById('pillPatrolCount');
+                var pillCheckin = document.getElementById('pillLastCheckin');
+                if (pillPatrol)  pillPatrol.innerText = patrolToday + ' รอบ';
+                if (pillCheckin && lastCheckin) pillCheckin.innerText = lastCheckin.time;
+            } catch(e) {}
+        }
+
+        // ── Page Visibility API — หยุด refresh เมื่อ tab ซ่อน ──
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                if (_refreshTimer) clearTimeout(_refreshTimer);
+            } else {
+                // กลับมา → refresh ทันที แล้วตั้ง idle timer
+                setTimeout(_doRefresh, 1000);
+            }
+        });
+
+        // ── เริ่ม idle refresh เมื่อ login สำเร็จ ──
+        document.addEventListener('DOMContentLoaded', function() {
+            // รอ launchApp() เสร็จก่อน
+            var _origLaunch = window.launchApp;
+            if (typeof _origLaunch === 'function') {
+                window.launchApp = function() {
+                    _origLaunch.apply(this, arguments);
+                    _scheduleRefresh(REFRESH_IDLE_MS);
+                    _refreshHomePills();
+                };
+            }
+        });
+
+        // ══════════════════════════════════════════════════════
+        //  2. HISTORY: loadAllHistory SILENT RELOAD SUPPORT
+        //     เพิ่ม param `silent` เพื่อไม่แสดง skeleton ซ้ำ
+        // ══════════════════════════════════════════════════════
+        var _origLoadAll = window.loadAllHistory;
+        window.loadAllHistory = function(silent) {
+            if (silent && typeof _origLoadAll === 'function') {
+                // reset cache แล้วเรียกใหม่
+                if (typeof invalidateCache === 'function') invalidateCache('getHistory');
+                _histAllRows = [];
+            }
+            if (typeof _origLoadAll === 'function') _origLoadAll();
+        };
+
+        // ══════════════════════════════════════════════════════
+        //  3. PATROL PROGRESS — ดึงจาก Supabase โดยตรง
+        //     (ใช้แทน localStorage เมื่อออนไลน์)
+        // ══════════════════════════════════════════════════════
+        var _sbPatrolCache = null;    // { date: 'YYYY-MM-DD', done: {cpId: timestamp} }
+
+        async function fetchTodayPatrolFromSupabase() {
+            if (!currentUser || !window.SUPABASE_URL || SUPABASE_URL.includes('YOUR_PROJECT')) return null;
+            try {
+                var code    = String(currentUser.emp_code).replace(/^0+/, '');
+                var todayStart = new Date(); todayStart.setHours(0,0,0,0);
+                var filter  = 'emp_code=eq.' + encodeURIComponent(code)
+                            + '&recorded_at=gte.' + todayStart.toISOString()
+                            + '&select=checkpoint,recorded_at&order=recorded_at.asc';
+                var rows = await sbSelect('patrol_logs?' + filter, {});
+                var done = {};
+                (rows || []).forEach(function(r) {
+                    done[r.checkpoint] = new Date(r.recorded_at).getTime();
+                });
+                _sbPatrolCache = { date: todayStart.toDateString(), done: done };
+                return done;
+            } catch(e) { return null; }
+        }
+
+        // Override getPatrolledInWindow ให้ใช้ Supabase cache ถ้ามี
+        var _origGetPatrolled = window.getPatrolledInWindow;
+        window.getPatrolledInWindow = function(startMs, endMs) {
+            // ถ้ามี Supabase cache ของวันนี้ ให้ใช้ก่อน
+            if (_sbPatrolCache) {
+                var todayStr = new Date().setHours(0,0,0,0);
+                if (_sbPatrolCache.date === new Date(todayStr).toDateString()) {
+                    // กรองตาม window
+                    var filtered = {};
+                    Object.keys(_sbPatrolCache.done).forEach(function(k) {
+                        var t = _sbPatrolCache.done[k];
+                        if (t >= startMs && t < endMs) filtered[k] = t;
+                    });
+                    return filtered;
+                }
+            }
+            // fallback localStorage
+            if (typeof _origGetPatrolled === 'function') return _origGetPatrolled(startMs, endMs);
+            return {};
+        };
+
+        // ดึง Supabase แล้ว refresh progress
+        window.refreshPatrolProgressFromDB = async function() {
+            var done = await fetchTodayPatrolFromSupabase();
+            if (done !== null && typeof updatePatrolProgress === 'function') {
+                updatePatrolProgress();
+            }
+        };
+
+        // ══════════════════════════════════════════════════════
+        //  4. REALTIME — Supabase Realtime (Broadcast) 
+        //     อัปเดต progress เมื่อพนักงานคนอื่นเช็คจุดด้วย
+        // ══════════════════════════════════════════════════════
+        function initSupabaseRealtime() {
+            if (!window.SUPABASE_URL || SUPABASE_URL.includes('YOUR_PROJECT')) return;
+            // ใช้ SSE (pg_changes) ผ่าน REST endpoint ง่ายๆ
+            var url = SUPABASE_URL + '/rest/v1/patrol_logs?select=checkpoint,recorded_at'
+                    + '&order=recorded_at.desc&limit=1';
+            var lastId = null;
+            setInterval(async function() {
+                try {
+                    var rows = await sbSelect('patrol_logs', {
+                        select: 'id,checkpoint,recorded_at',
+                        order: 'recorded_at.desc', limit: 1
+                    });
+                    if (rows && rows.length > 0 && rows[0].id !== lastId) {
+                        lastId = rows[0].id;
+                        // มีข้อมูลใหม่ → refresh
+                        _sbPatrolCache = null;   // bust cache
+                        await window.refreshPatrolProgressFromDB();
+                    }
+                } catch(e) {}
+            }, 30 * 1000);  // poll ทุก 30 วิ
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  5. NEW FEATURES
+        // ══════════════════════════════════════════════════════
+
+        // ── 5a. Last Sync Indicator บน header ─────────────────
+        function updateLastSyncLabel() {
+            var el = document.getElementById('lastSyncLabel');
+            if (!el) return;
+            var now = new Date();
+            el.innerText = 'ซิงก์ล่าสุด ' + now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        // ── 5b. แสดงยอดรวมวันนี้บนหน้าแรก ──────────────────────
+        window.refreshHomeSummary = function() {
+            _refreshHomePills();
+            if (typeof refreshPatrolProgressFromDB === 'function') {
+                window.refreshPatrolProgressFromDB().then(updateLastSyncLabel);
+            }
+        };
+
+        // ── 5c. Pull-to-Refresh บน homeView ───────────────────
+        (function() {
+            var startY = 0, pulling = false;
+            var el = document.getElementById('mainScrollArea');
+            if (!el) return;
+            el.addEventListener('touchstart', function(e) {
+                if (el.scrollTop === 0) { startY = e.touches[0].clientY; pulling = true; }
+            }, { passive: true });
+            el.addEventListener('touchend', function(e) {
+                if (pulling && e.changedTouches[0].clientY - startY > 60) {
+                    window.refreshHomeSummary();
+                    var homeView = document.getElementById('homeView');
+                    if (homeView && !homeView.classList.contains('hidden')) {
+                        // แสดง toast
+                        showPullToast();
+                    }
+                }
+                pulling = false;
+            }, { passive: true });
+        })();
+
+        function showPullToast() {
+            var t = document.getElementById('pullToast');
+            if (!t) {
+                t = document.createElement('div');
+                t.id = 'pullToast';
+                t.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);'
+                    + 'background:#1e293b;color:#fff;font-size:11px;font-weight:700;'
+                    + 'padding:8px 18px;border-radius:99px;z-index:9999;'
+                    + 'transition:opacity 0.3s;pointer-events:none;';
+                document.body.appendChild(t);
+            }
+            t.innerText = '🔄 กำลังอัปเดต...';
+            t.style.opacity = '1';
+            setTimeout(function() {
+                t.innerText = '✅ อัปเดตแล้ว';
+                setTimeout(function() { t.style.opacity = '0'; }, 1200);
+            }, 1000);
+        }
+
+        // ── 5d. Badge จำนวน patrol วันนี้บนปุ่มเดินตรวจ nav ──
+        function updatePatrolNavBadge(count) {
+            var btn = document.getElementById('tabBtnPatrol');
+            if (!btn) return;
+            var badge = btn.querySelector('.patrol-badge');
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.className = 'patrol-badge absolute -top-0.5 -right-0.5 min-w-[16px] h-4 '
+                    + 'bg-orange-400 text-white text-[8px] font-black rounded-full '
+                    + 'flex items-center justify-center px-1 leading-none';
+                btn.style.position = 'relative';
+                btn.appendChild(badge);
+            }
+            badge.innerText = count > 0 ? count : '';
+            badge.style.display = count > 0 ? 'flex' : 'none';
+        }
+
+        // ── 5e. สรุปจำนวนการตรวจวันนี้ใน home header ──────────
+        function updateHomeStats() {
+            try {
+                var hist = JSON.parse(localStorage.getItem('guard_history_v2')) || [];
+                var today = new Date().toLocaleDateString('th-TH');
+                var patrolToday = hist.filter(function(r) { return r.type === 'patrol' && r.date === today; }).length;
+                var checkinToday = hist.filter(function(r) { return r.type === 'checkin' && r.date === today; }).length;
+
+                updatePatrolNavBadge(patrolToday);
+
+                // pills ใน homeView
+                var p = document.getElementById('pillPatrolCount');
+                var c = document.getElementById('pillCheckinCount');
+                if (p) p.innerText = patrolToday + ' จุด';
+                if (c) c.innerText = checkinToday + ' ครั้ง';
+            } catch(e) {}
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  INIT
+        // ══════════════════════════════════════════════════════
+        document.addEventListener('DOMContentLoaded', function() {
+            // เริ่ม Realtime polling
+            setTimeout(initSupabaseRealtime, 5000);
+
+            // อัปเดต stats เมื่อเปิดแต่ละแท็บ
+            var _origST = window.switchTab;
+            window.switchTab = function(tab) {
+                _origST(tab);
+                updateHomeStats();
+                if (tab === 'home') {
+                    window.refreshHomeSummary();
+                }
+                if (tab === 'history') {
+                    // ดึงข้อมูลใหม่จาก Supabase เสมอเมื่อเปิดหน้าประวัติ
+                    if (typeof invalidateCache === 'function') invalidateCache('getHistory');
+                    _histAllRows = [];
+                    if (typeof _origLoadAll === 'function') _origLoadAll();
+                }
+            };
+
+            // initial stats
+            updateHomeStats();
+        });
+
+    })();
+    </script>
+    <!-- ════════════════════════════════════════════════
+         Dead Man Switch — แจ้งเตือน admin อัตโนมัติ
+         ════════════════════════════════════════════════ -->
+    <script>
+    (function() {
+        'use strict';
+
+        // ──────────────────────────────────────────────────────
+        //  CONFIG
+        // ──────────────────────────────────────────────────────
+        var DMS_CONFIG = {
+            // tolerance หลังจากเวลากะผ่านไปแล้ว (นาที) ก่อนแจ้งเตือน
+            checkinGrace:  30,   // ลงเวลาเข้างานช้าเกิน 30 นาที
+            patrolGrace:   45,   // ไม่เดินตรวจเกิน 45 นาทีหลังถึงรอบ
+            // ส่งซ้ำทุก X นาที ถ้ายังไม่แก้ไข
+            reNotifyMin:   20,
+            // ตรวจสอบทุก X นาที
+            checkInterval: 2
+        };
+
+        var DMS_KEY = 'dms_state_v1';   // localStorage key
+
+        // ──────────────────────────────────────────────────────
+        //  STATE helpers
+        // ──────────────────────────────────────────────────────
+        function loadState() {
+            try { return JSON.parse(localStorage.getItem(DMS_KEY)) || {}; } catch(e) { return {}; }
+        }
+        function saveState(s) {
+            try { localStorage.setItem(DMS_KEY, JSON.stringify(s)); } catch(e) {}
+        }
+        // key เฉพาะวัน + ประเภทเหตุการณ์
+        function stateKey(type, id) {
+            var d = new Date(); 
+            return type + '_' + id + '_' + d.getFullYear() + '' + (d.getMonth()+1) + '' + d.getDate();
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  CHECK 1 — ลงเวลาเข้างาน
+        // ──────────────────────────────────────────────────────
+        function checkCheckin() {
+            if (!currentUser) return;
+            var SHIFTS_DEF = window._DMS_SHIFTS || {
+                morning: { label: 'กะเช้า', checkinDeadline: 8 * 60 },   // ต้องเข้าก่อน 08:00
+                night:   { label: 'กะดึก',  checkinDeadline: 20 * 60 }   // ต้องเข้าก่อน 20:00
+            };
+            var now      = new Date();
+            var nowMin   = now.getHours() * 60 + now.getMinutes();
+
+            Object.keys(SHIFTS_DEF).forEach(function(shiftId) {
+                var sh   = SHIFTS_DEF[shiftId];
+                var dead = sh.checkinDeadline;
+                // อยู่หลัง deadline + grace แล้วหรือยัง?
+                var graceMin = dead + DMS_CONFIG.checkinGrace;
+                if (nowMin < graceMin) return;           // ยังไม่ถึงเวลา
+                if (nowMin > graceMin + 90) return;      // เลยไปนานแล้ว หยุดเตือน
+
+                // ตรวจว่า checkin วันนี้แล้วหรือยัง
+                var hist = JSON.parse(localStorage.getItem('guard_history_v2') || '[]');
+                var today = now.toLocaleDateString('th-TH');
+                var hasCheckin = hist.some(function(r) {
+                    return (r.type === 'checkin') && r.date === today;
+                });
+                if (hasCheckin) return;
+
+                // ยังไม่ checkin — ตรวจ state ว่าแจ้งไปแล้วหรือยัง
+                var key      = stateKey('checkin', shiftId);
+                var state    = loadState();
+                var lastSent = state[key] || 0;
+                var diffMin  = (Date.now() - lastSent) / 60000;
+                if (lastSent && diffMin < DMS_CONFIG.reNotifyMin) return;
+
+                // ส่งแจ้งเตือน
+                var msg = '⚠️ <b>Dead Man Switch</b>\n\n'
+                    + '🔴 พนักงานยังไม่ลงเวลาเข้างาน\n\n'
+                    + '👤 ' + currentUser.full_name + ' (' + currentUser.emp_code + ')\n'
+                    + '🕐 กะ: ' + sh.label + '\n'
+                    + '⏰ เวลาปัจจุบัน: ' + _hhmm(now) + ' น.\n'
+                    + '📌 ควรเข้างานก่อน ' + _hhmm2(dead) + ' น.\n\n'
+                    + '#DeadManSwitch #ไม่ลงเวลา';
+
+                _sendAlert(msg, key, state);
+            });
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  CHECK 2 — เดินตรวจตามรอบ
+        // ──────────────────────────────────────────────────────
+        function checkPatrolRound() {
+            if (!currentUser) return;
+            var rounds = window.PATROL_ROUNDS;
+            if (!rounds || rounds.length === 0) return;
+
+            var now    = new Date();
+            var nowMin = now.getHours() * 60 + now.getMinutes();
+
+            rounds.forEach(function(round) {
+                var rMin     = round.h * 60 + round.m;
+                var diffMin  = nowMin - rMin;
+                if (diffMin < 0) diffMin += 24 * 60;
+
+                // อยู่ในช่วง grace → deadline
+                if (diffMin < DMS_CONFIG.patrolGrace) return;       // ยังไม่ถึง grace
+                if (diffMin > DMS_CONFIG.patrolGrace + 60) return;  // เลยไปนานแล้ว
+
+                // ตรวจ patrol ในรอบนี้
+                if (typeof getRoundWindow === 'function') {
+                    var win  = getRoundWindow(round);
+                    var done = typeof getPatrolledInWindow === 'function'
+                        ? getPatrolledInWindow(win.start, win.end)
+                        : {};
+                    var total = round.checkpoints.length;
+                    var doneN = Object.keys(done).length;
+                    if (doneN >= total) return;   // ตรวจครบแล้ว
+
+                    var key   = stateKey('patrol', round.h + '_' + round.m);
+                    var state = loadState();
+                    var lastSent = state[key] || 0;
+                    var sinceMin = (Date.now() - lastSent) / 60000;
+                    if (lastSent && sinceMin < DMS_CONFIG.reNotifyMin) return;
+
+                    var missing = round.checkpoints.filter(function(cp) { return !done[cp]; });
+                    var msg = '⚠️ <b>Dead Man Switch</b>\n\n'
+                        + '🔴 ยังไม่ได้เดินตรวจรอบ ' + round.label + '\n\n'
+                        + '👤 ' + currentUser.full_name + ' (' + currentUser.emp_code + ')\n'
+                        + '🕐 รอบเวลา: ' + round.label + ' (' + round.shift + ')\n'
+                        + '✅ ตรวจแล้ว: ' + doneN + '/' + total + ' จุด\n'
+                        + '❌ ยังขาด: ' + missing.join(', ') + '\n'
+                        + '⏰ เวลาปัจจุบัน: ' + _hhmm(now) + ' น.\n\n'
+                        + '#DeadManSwitch #ไม่เดินตรวจ';
+
+                    _sendAlert(msg, key, state);
+                }
+            });
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  CHECK 3 — ไม่ออกงาน (checkout) หลังครบกะ
+        // ──────────────────────────────────────────────────────
+        function checkCheckout() {
+            if (!currentUser) return;
+            var CHECKOUT_CHECK = [
+                { afterMin: 19 * 60 + 30, shift: 'กะเช้า', label: 'หลัง 19:30' },
+                { afterMin: 7  * 60 + 30, shift: 'กะดึก',  label: 'หลัง 07:30' }
+            ];
+            var now    = new Date();
+            var nowMin = now.getHours() * 60 + now.getMinutes();
+
+            CHECKOUT_CHECK.forEach(function(cfg) {
+                var diffMin = nowMin - cfg.afterMin;
+                if (diffMin < 0) diffMin += 24 * 60;
+                if (diffMin < 0 || diffMin > 60) return;  // เฉพาะช่วง 1 ชั่วโมงหลัง
+
+                var hist    = JSON.parse(localStorage.getItem('guard_history_v2') || '[]');
+                var today   = now.toLocaleDateString('th-TH');
+                var hasCheckout = hist.some(function(r) {
+                    return r.type === 'checkout' && r.date === today;
+                });
+                if (hasCheckout) return;
+
+                var key   = stateKey('checkout', cfg.shift);
+                var state = loadState();
+                var last  = state[key] || 0;
+                if (last && (Date.now() - last) / 60000 < DMS_CONFIG.reNotifyMin) return;
+
+                var msg = '⚠️ <b>Dead Man Switch</b>\n\n'
+                    + '🟡 พนักงานยังไม่ลงเวลาออกงาน\n\n'
+                    + '👤 ' + currentUser.full_name + ' (' + currentUser.emp_code + ')\n'
+                    + '🕐 กะ: ' + cfg.shift + '\n'
+                    + '⏰ เวลาปัจจุบัน: ' + _hhmm(now) + ' น. (' + cfg.label + ')\n\n'
+                    + '#DeadManSwitch #ไม่ลงเวลาออก';
+
+                _sendAlert(msg, key, state);
+            });
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  SEND + STATE
+        // ──────────────────────────────────────────────────────
+        function _sendAlert(msg, key, state) {
+            // Telegram (fire-and-forget)
+            var token = window.BOT_TOKEN || '';
+            var chatId = window.CHAT_ID || '';
+            if (token && chatId && !token.includes('YOUR')) {
+                fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: chatId, text: msg, parse_mode: 'HTML' })
+                }).catch(function() {});
+            }
+
+            // บันทึก state
+            state[key] = Date.now();
+            saveState(state);
+
+            // แสดง toast ในแอป
+            _showDmsToast(msg);
+
+            console.warn('[DMS] Alert sent:', msg.split('\n')[2] || msg);
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  IN-APP TOAST (แสดงการ์ดเตือนในแอป)
+        // ──────────────────────────────────────────────────────
+        function _showDmsToast(msg) {
+            var container = document.getElementById('dmsToastContainer');
+            if (!container) return;
+
+            var lines  = msg.split('\n').filter(Boolean);
+            var title  = lines[2] || 'Dead Man Switch';
+            var detail = lines.slice(3, 6).join(' | ');
+
+            var card = document.createElement('div');
+            card.style.cssText = 'animation: dmsSlideIn .3s ease';
+            card.className = 'bg-red-600 text-white rounded-2xl px-4 py-3 shadow-xl flex items-start gap-3 mb-2 relative';
+            card.innerHTML =
+                '<span class="text-2xl shrink-0 mt-0.5">⚠️</span>' +
+                '<div class="flex-1 min-w-0">' +
+                    '<p class="font-black text-sm">Dead Man Switch</p>' +
+                    '<p class="text-[11px] text-red-100 mt-0.5 leading-snug">' + title + '</p>' +
+                    '<p class="text-[10px] text-red-200 mt-1 leading-snug truncate">' + detail + '</p>' +
+                '</div>' +
+                '<button onclick="this.parentElement.remove()" class="shrink-0 text-red-200 hover:text-white text-lg leading-none active:scale-90 transition">✕</button>';
+
+            container.appendChild(card);
+
+            // auto-remove หลัง 15 วิ
+            setTimeout(function() { if (card.parentElement) card.remove(); }, 15000);
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  STATUS WIDGET บนหน้าแรก
+        // ──────────────────────────────────────────────────────
+        window.getDmsStatus = function() {
+            var state  = loadState();
+            var now    = Date.now();
+            var today  = new Date().toLocaleDateString('th-TH');
+
+            // checkin วันนี้?
+            var hist = JSON.parse(localStorage.getItem('guard_history_v2') || '[]');
+            var hasCheckin  = hist.some(function(r) { return r.type === 'checkin'  && r.date === today; });
+            var hasCheckout = hist.some(function(r) { return r.type === 'checkout' && r.date === today; });
+
+            // นับ alerts ที่ส่งวันนี้
+            var d = new Date();
+            var suffix = '' + d.getFullYear() + (d.getMonth()+1) + d.getDate();
+            var alertsToday = Object.keys(state).filter(function(k) { return k.endsWith(suffix) && state[k] > 0; }).length;
+
+            return { hasCheckin: hasCheckin, hasCheckout: hasCheckout, alertsToday: alertsToday };
+        };
+
+        // อัปเดต DMS status card บนหน้าแรก
+        function updateDmsCard() {
+            var card = document.getElementById('dmsStatusCard');
+            if (!card) return;
+            var s = window.getDmsStatus();
+            var html = '<div class="flex items-center justify-between mb-1">'
+                + '<p class="text-xs font-black text-gray-700 flex items-center gap-1.5"><span>🛡</span> Dead Man Switch</p>'
+                + (s.alertsToday > 0
+                    ? '<span class="text-[10px] font-black bg-red-100 text-red-700 px-2 py-0.5 rounded-lg">⚠️ ' + s.alertsToday + ' alerts</span>'
+                    : '<span class="text-[10px] font-black bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-lg">✅ ปกติ</span>')
+                + '</div>'
+                + '<div class="flex gap-2 text-[10px] font-bold">'
+                + '<span class="' + (s.hasCheckin  ? 'text-emerald-600' : 'text-red-500') + '">'  + (s.hasCheckin  ? '✅' : '⏳') + ' เข้างาน</span>'
+                + '<span class="' + (s.hasCheckout ? 'text-emerald-600' : 'text-gray-400') + '">' + (s.hasCheckout ? '✅' : '⬜') + ' ออกงาน</span>'
+                + '</div>';
+            card.innerHTML = html;
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  UTILS
+        // ──────────────────────────────────────────────────────
+        function _hhmm(date) {
+            return String(date.getHours()).padStart(2,'0') + ':' + String(date.getMinutes()).padStart(2,'0');
+        }
+        function _hhmm2(totalMin) {
+            return String(Math.floor(totalMin/60)).padStart(2,'0') + ':' + String(totalMin%60).padStart(2,'0');
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  MAIN LOOP
+        // ──────────────────────────────────────────────────────
+        var _dmsTimer = null;
+
+        function runDmsChecks() {
+            if (!currentUser) return;
+            checkCheckin();
+            checkPatrolRound();
+            checkCheckout();
+            updateDmsCard();
+        }
+
+        function startDms() {
+            if (_dmsTimer) return;
+            runDmsChecks();   // run ทันที
+            _dmsTimer = setInterval(runDmsChecks, DMS_CONFIG.checkInterval * 60 * 1000);
+        }
+
+        function stopDms() {
+            if (_dmsTimer) { clearInterval(_dmsTimer); _dmsTimer = null; }
+        }
+
+        // ── expose ─────────────────────────────────────────────
+        window.startDeadManSwitch  = startDms;
+        window.stopDeadManSwitch   = stopDms;
+        window.runDmsNow           = runDmsChecks;
+
+        // ── Hook launchApp ─────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', function() {
+            var _origLaunch = window.launchApp;
+            if (typeof _origLaunch === 'function') {
+                window.launchApp = function() {
+                    _origLaunch.apply(this, arguments);
+                    setTimeout(startDms, 3000);   // รอ 3 วิ ให้ config โหลดเสร็จก่อน
+                };
+            }
+            // หยุดเมื่อ tab ซ่อน ประหยัดพลังงาน
+            document.addEventListener('visibilitychange', function() {
+                if (document.hidden) stopDms(); else { startDms(); }
+            });
         });
 
     })();
