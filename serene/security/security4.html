@@ -1495,10 +1495,10 @@
             return { success: false, error: 'unknown action: ' + p.action };
         }
 
-        // ── warmUp ทดสอบ connection (แทน GAS warm-up) ───────────
+        // ── warmUp — ping config table (ไม่ใช่ root endpoint) ──────
         function warmUpGAS() {
             if (!SUPABASE_URL || SUPABASE_URL.includes('YOUR_PROJECT')) return;
-            fetch(SUPABASE_URL + '/rest/v1/', { headers: sbHeaders() }).catch(function() {});
+            fetch(SUPABASE_URL + '/rest/v1/config?limit=1', { headers: sbHeaders() }).catch(function() {});
         }
 
         let currentUser = null;
@@ -1765,17 +1765,31 @@
         // [PERF] ใช้ sessionStorage cache config — reload ภายใน session ไม่ต้องดึงใหม่
         function applyConfig(configResult) {
             if (!configResult || !configResult.success) return;
-            guardHouseLocation = { lat: configResult.settings.lat, lng: configResult.settings.lng };
-            ALLOWED_RADIUS = configResult.settings.radius;
-            document.getElementById('homeProjectName').innerText = configResult.settings.name;
+            var s = configResult.settings || {};
+
+            // guard_location มาจาก _dispatchSupabase เป็น { lat, lng } object
+            var gloc = s.guard_location;
+            if (gloc && gloc.lat && gloc.lng) {
+                guardHouseLocation = { lat: parseFloat(gloc.lat), lng: parseFloat(gloc.lng) };
+            }
+            // allowed_radius
+            if (s.allowed_radius) ALLOWED_RADIUS = parseInt(s.allowed_radius) || 50;
+            // project name
+            if (s.name) {
+                var el = document.getElementById('homeProjectName');
+                if (el) el.innerText = s.name;
+            }
+
             const cpSelect = document.getElementById('checkpointSelect');
-            cpSelect.innerHTML = '<option value="">-- กรุณาเลือกจุดตรวจ --</option>';
-            configResult.checkpoints.forEach(cp => {
-                checkpointsData[cp.id] = { lat: cp.lat, lng: cp.lng, radius: cp.radius, name: cp.name };
-                const opt = document.createElement('option');
-                opt.value = cp.id; opt.text = cp.name;
-                cpSelect.appendChild(opt);
-            });
+            if (cpSelect) {
+                cpSelect.innerHTML = '<option value="">-- กรุณาเลือกจุดตรวจ --</option>';
+                (configResult.checkpoints || []).forEach(cp => {
+                    checkpointsData[cp.id] = { lat: cp.lat, lng: cp.lng, radius: cp.radius, name: cp.name };
+                    const opt = document.createElement('option');
+                    opt.value = cp.id; opt.text = cp.name;
+                    cpSelect.appendChild(opt);
+                });
+            }
             try { sessionStorage.setItem(CONFIG_KEY, JSON.stringify(configResult)); } catch(e) {}
 
             // ถ้า map เปิดอยู่แล้ว ให้เพิ่ม marker จุดตรวจใหม่
@@ -3360,7 +3374,17 @@
             var color  = isSelected ? '#f97316' : '#1e293b';
             var radius = isSelected ? 12 : 9;
 
-            var marker = L.circleMarker([cp.lat, cp.lng], {
+            // ข้ามถ้าจุดตรวจยังไม่ได้ตั้งพิกัด (lat/lng = 0 หรือ null)
+            if (!cp.lat || !cp.lng || (cp.lat === 0 && cp.lng === 0)) {
+                _cpMarkers[cpId] = null;
+                return;
+            }
+
+            var safelat = parseFloat(cp.lat);
+            var safelng = parseFloat(cp.lng);
+            if (isNaN(safelat) || isNaN(safelng)) return;
+
+            var marker = L.circleMarker([safelat, safelng], {
                 radius: radius, fillColor: color, color: '#fff', weight: 2, fillOpacity: 1
             }).addTo(_map);
 
@@ -3369,10 +3393,10 @@
                 className: '', iconAnchor: [-14, 6],
                 html: '<div class="cp-marker-label" style="background:' + color + '">' + cp.name + '</div>'
             });
-            var labelM = L.marker([cp.lat, cp.lng], { icon: label, interactive: false }).addTo(_map);
+            var labelM = L.marker([safelat, safelng], { icon: label, interactive: false }).addTo(_map);
 
             // รัศมีจุดตรวจ
-            var circle = L.circle([cp.lat, cp.lng], {
+            var circle = L.circle([safelat, safelng], {
                 radius: cp.radius || 30,
                 color: color, fillColor: color,
                 fillOpacity: isSelected ? 0.12 : 0.05,
