@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Smart Village Security (Google Sheets)</title>
+    <title>Serene Smart Security V.2</title>
     <!-- โหลด Tailwind -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- โหลดไลบรารี html5-qrcode สำหรับสแกน QR -->
@@ -41,6 +41,36 @@
         /* Image Lightbox */
         #imgLightbox { transition: opacity 0.2s; }
 
+        /* Keep Leaflet maps inside their cards and below fixed app controls. */
+        #patrolMiniMap,
+        #adminLiveMap {
+            position: relative !important;
+            z-index: 0 !important;
+            isolation: isolate;
+            overflow: hidden !important;
+            border-radius: inherit;
+        }
+        #patrolMiniMap .leaflet-pane,
+        #patrolMiniMap .leaflet-top,
+        #patrolMiniMap .leaflet-bottom,
+        #patrolMiniMap .leaflet-control,
+        #adminLiveMap .leaflet-pane,
+        #adminLiveMap .leaflet-top,
+        #adminLiveMap .leaflet-bottom,
+        #adminLiveMap .leaflet-control {
+            z-index: 2 !important;
+        }
+        #patrolMiniMap .leaflet-popup-pane,
+        #adminLiveMap .leaflet-popup-pane {
+            z-index: 8 !important;
+        }
+        #bottomNav {
+            z-index: 120 !important;
+        }
+        #adminView {
+            padding-bottom: 7rem;
+        }
+
         /* กดทับ Leaflet ทุก layer เมื่อ confirmSheet/backdrop เปิดอยู่ */
         body.sheet-active .leaflet-pane,
         body.sheet-active .leaflet-top,
@@ -56,6 +86,10 @@
         @keyframes badgePulse {
             0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0   rgba(251,146,60,0.6); }
             50%      { transform: scale(1.10); box-shadow: 0 0 0 6px rgba(251,146,60,0);   }
+        }
+        @keyframes dmsSlideIn {
+            from { opacity:0; transform: translateY(-12px); }
+            to   { opacity:1; transform: translateY(0); }
         }
         #offlineSyncBar {
             transition: max-height 0.35s ease, opacity 0.3s ease;
@@ -130,7 +164,7 @@
         <div id="sheetSuccessContent" class="hidden px-5 py-8 text-center">
             <div class="text-5xl mb-3">✅</div>
             <p class="font-black text-emerald-600 text-lg mb-1">บันทึกสำเร็จ!</p>
-            <p class="text-xs text-gray-400 mb-5">ข้อมูลอัปเดตลง Google Sheets เรียบร้อย</p>
+            <p class="text-xs text-gray-400 mb-5">ข้อมูลอัปเดต เรียบร้อย</p>
             <button onclick="closeConfirmSheet()" class="w-full bg-emerald-500 text-white py-4 rounded-2xl font-black text-base active:scale-95 transition">
                 ปิด
             </button>
@@ -196,7 +230,7 @@
         <!-- Header -->
         <header class="bg-emerald-600 text-white p-4 shadow-md z-50 shrink-0 relative overflow-hidden">
             <div class="absolute inset-0 bg-white opacity-10 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-white via-transparent to-transparent"></div>
-            <h1 class="text-xl font-bold text-center relative z-10 tracking-wide">Smart Village Security</h1>
+            <h1 class="text-xl font-bold text-center relative z-10 tracking-wide">Serene Smart Security</h1>
             <!-- Offline Queue Badge -->
             <div id="offlineBadge" class="hidden absolute left-4 top-1/2 -translate-y-1/2 z-10
                 bg-orange-400 text-white text-[10px] font-black px-2.5 py-1.5 rounded-xl
@@ -207,9 +241,12 @@
             <button onclick="confirmLogout()" class="absolute right-4 top-1/2 -translate-y-1/2 z-10 text-white/70 hover:text-white text-xs font-bold bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-xl transition active:scale-90 border border-white/20" title="ออกจากระบบ">
                 🚪 ออก
             </button>
+            <button id="adminNavBtn" onclick="switchTab('admin'); adminRefreshAll();" class="hidden absolute left-4 top-1/2 -translate-y-1/2 z-10 text-white/70 hover:text-white text-xs font-bold bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-xl transition active:scale-90 border border-white/20">
+                👨‍💼 Admin
+            </button>
         </header>
 
-        <!-- Offline Sync Banner (แสดงเมื่อมีคิวรอส่ง + ออนไลน์) -->
+        <!-- Offline Sync Banner -->
         <div id="offlineSyncBar" class="w-full max-w-md mx-auto px-3 pt-2 z-40">
             <div class="bg-orange-50 border border-orange-200 rounded-2xl px-4 py-3 flex items-center gap-3 shadow-sm">
                 <span class="text-xl shrink-0" id="offlineSyncIcon">📦</span>
@@ -222,6 +259,13 @@
                     ส่งเดี๋ยวนี้
                 </button>
             </div>
+        </div>
+
+        <!-- DMS Toast Container — แสดงการ์ดเตือนบนสุด -->
+        <div id="dmsToastContainer"
+            class="fixed top-20 left-1/2 -translate-x-1/2 w-full max-w-sm px-3 z-[700]"
+            style="pointer-events:none;">
+            <!-- cards injected here with pointer-events:auto -->
         </div>
 
         <main class="flex-1 overflow-y-auto w-full max-w-md mx-auto relative px-4 pt-4 pb-32">
@@ -292,6 +336,27 @@
                         </div>
                         <span class="text-[10px] bg-black/25 backdrop-blur-sm font-medium px-3 py-1.5 rounded-xl border border-white/10" id="currentDateDisplay">-</span>
                     </div>
+                    <!-- Stats Pills Row -->
+                    <div class="relative z-10 mt-3 flex gap-2 flex-wrap">
+                        <div class="flex items-center gap-1.5 bg-white/15 border border-white/20 rounded-xl px-2.5 py-1.5 backdrop-blur-sm">
+                            <span class="text-sm">🔦</span>
+                            <div>
+                                <p class="text-[8px] text-emerald-100 font-bold leading-none">ตรวจวันนี้</p>
+                                <p class="text-[11px] text-white font-black" id="pillPatrolCount">0 จุด</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-1.5 bg-white/15 border border-white/20 rounded-xl px-2.5 py-1.5 backdrop-blur-sm">
+                            <span class="text-sm">✅</span>
+                            <div>
+                                <p class="text-[8px] text-emerald-100 font-bold leading-none">ลงเวลา</p>
+                                <p class="text-[11px] text-white font-black" id="pillCheckinCount">0 ครั้ง</p>
+                            </div>
+                        </div>
+                        <div class="ml-auto flex items-center gap-1 bg-black/20 border border-white/10 rounded-xl px-2.5 py-1.5 cursor-pointer active:scale-95 transition" onclick="refreshHomeSummary()">
+                            <span class="text-[10px]">🔄</span>
+                            <p class="text-[8px] text-emerald-100 font-bold" id="lastSyncLabel">กดเพื่ออัปเดต</p>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- ██ Patrol Progress Card ██ -->
@@ -348,7 +413,7 @@
                 <!-- เมนูด่วน -->
                 <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
                     <h3 class="text-sm font-black text-gray-800 mb-4 flex items-center gap-2 tracking-wide">
-                        <span class="bg-emerald-100 text-emerald-600 p-1.5 rounded-lg text-xs">⚡</span> เมนูด่วน (ทำงานผ่าน Google Sheets)
+                        <span class="bg-emerald-100 text-emerald-600 p-1.5 rounded-lg text-xs">⚡</span> เมนูด่วน
                     </h3>
                     <div class="grid grid-cols-2 gap-3 text-center">
                         <button onclick="switchTab('checkin')" class="flex flex-col items-center group bg-slate-50 p-4 rounded-2xl border border-slate-100 active:scale-95 transition">
@@ -370,6 +435,23 @@
                     </div>
                 </div>
 
+                <!-- Dead Man Switch Status Card -->
+                <div class="bg-white rounded-3xl shadow-sm border border-gray-100 px-5 py-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-sm font-black text-gray-800 flex items-center gap-2">
+                            <span class="bg-red-100 text-red-600 p-1.5 rounded-lg text-xs">🛡</span> ระบบตรวจสอบอัตโนมัติ
+                        </h3>
+                        <button onclick="window.runDmsNow && window.runDmsNow()"
+                            class="text-[10px] font-bold text-gray-400 hover:text-gray-600 bg-gray-50 px-2.5 py-1.5 rounded-xl active:scale-90 transition border border-gray-100">
+                            ตรวจเดี๋ยวนี้
+                        </button>
+                    </div>
+                    <div id="dmsStatusCard" class="text-xs text-gray-500">
+                        <span class="text-gray-300">กำลังตรวจสอบ...</span>
+                    </div>
+                    <p class="text-[9px] text-gray-300 mt-2">ตรวจสอบทุก 2 นาที · แจ้ง Telegram อัตโนมัติเมื่อผิดปกติ</p>
+                </div>
+
                 <!-- ประวัติในเครื่อง (Local History) -->
                 <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 mb-2">
                     <div class="flex items-center justify-between mb-4">
@@ -383,7 +465,7 @@
                         <p class="text-center text-xs text-gray-400 py-4">ยังไม่มีประวัติการทำรายการ</p>
                     </div>
                     
-                    <!-- ปุ่มสำหรับเข้าดูประวัติทั้งหมดจาก Google Sheets -->
+                    <!-- ปุ่มสำหรับเข้าดูประวัติทั้งหมดจาก  -->
                     <button onclick="switchTab('history'); loadServerHistory('attendance');" class="w-full mt-4 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 text-indigo-700 py-3 rounded-xl font-bold text-sm transition flex justify-center items-center gap-2 shadow-sm">
                         <span class="text-lg">☁️</span> ดูประวัติทั้งหมดจากเซิร์ฟเวอร์
                     </button>
@@ -458,6 +540,117 @@
             <input type="file" id="patrolCameraInputHome" accept="image/*" capture="environment"
                 class="hidden" onchange="handlePhotoCapture(event, 'patrol')">
         </div>
+
+            <!-- ██████████ แท็บ: Admin Dashboard ██████████ -->
+            <div id="adminView" class="hidden fade-in space-y-3 mt-2">
+
+                <!-- Header -->
+                <div class="bg-gradient-to-br from-slate-800 via-slate-700 to-slate-900 rounded-3xl p-5 text-white shadow-lg relative overflow-hidden">
+                    <div class="absolute -top-8 -right-8 w-36 h-36 bg-white/5 rounded-full blur-2xl"></div>
+                    <div class="absolute -bottom-6 -left-6 w-24 h-24 bg-white/5 rounded-full blur-xl"></div>
+                    <div class="relative z-10 flex items-start justify-between">
+                        <div>
+                            <p class="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">Admin Dashboard</p>
+                            <h2 class="text-xl font-black text-white">ภาพรวมระบบ</h2>
+                            <p class="text-slate-300 text-xs mt-0.5" id="adminLastUpdate">อัปเดตล่าสุด: -</p>
+                        </div>
+                        <div class="flex flex-col gap-2 items-end">
+                            <button onclick="adminRefreshAll()"
+                                class="bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-black px-3 py-2 rounded-xl active:scale-90 transition flex items-center gap-1.5">
+                                <span id="adminRefreshIcon">🔄</span> รีเฟรช
+                            </button>
+                            <div id="adminRealtimePill"
+                                class="text-[10px] font-black px-2.5 py-1 rounded-full bg-emerald-500/30 text-emerald-300 border border-emerald-500/30">
+                                ● Realtime
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Summary KPIs -->
+                    <div class="relative z-10 grid grid-cols-4 gap-2 mt-4">
+                        <div class="bg-white/10 border border-white/10 rounded-2xl p-3 text-center">
+                            <p class="text-xl font-black text-white" id="adminKpiTotal">-</p>
+                            <p class="text-[9px] text-slate-300 font-bold mt-0.5">พนักงาน</p>
+                        </div>
+                        <div class="bg-white/10 border border-white/10 rounded-2xl p-3 text-center">
+                            <p class="text-xl font-black text-emerald-300" id="adminKpiOnDuty">-</p>
+                            <p class="text-[9px] text-slate-300 font-bold mt-0.5">เข้างาน</p>
+                        </div>
+                        <div class="bg-white/10 border border-white/10 rounded-2xl p-3 text-center">
+                            <p class="text-xl font-black text-orange-300" id="adminKpiPatrol">-</p>
+                            <p class="text-[9px] text-slate-300 font-bold mt-0.5">ตรวจวันนี้</p>
+                        </div>
+                        <div class="bg-white/10 border border-white/10 rounded-2xl p-3 text-center">
+                            <p class="text-xl font-black text-red-300" id="adminKpiAlert">-</p>
+                            <p class="text-[9px] text-slate-300 font-bold mt-0.5">แจ้งเหตุ</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- พนักงานออนดิวตี้วันนี้ -->
+                <div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
+                        <h3 class="text-sm font-black text-gray-800 flex items-center gap-2">
+                            <span class="bg-emerald-100 text-emerald-600 p-1.5 rounded-lg text-xs">👮</span>
+                            สถานะพนักงานวันนี้
+                        </h3>
+                        <span id="adminStaffDate" class="text-[10px] text-gray-400 font-bold"></span>
+                    </div>
+                    <div id="adminStaffList" class="divide-y divide-gray-50">
+                        <div class="px-5 py-8 text-center">
+                            <div class="loader border-slate-400 mx-auto mb-2"></div>
+                            <p class="text-xs text-gray-400">กำลังโหลด...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- เหตุการณ์ล่าสุด Timeline -->
+                <div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
+                        <h3 class="text-sm font-black text-gray-800 flex items-center gap-2">
+                            <span class="bg-indigo-100 text-indigo-600 p-1.5 rounded-lg text-xs">📋</span>
+                            เหตุการณ์ล่าสุด
+                        </h3>
+                        <div class="flex gap-2">
+                            <button onclick="adminSetFeed('all')" id="adminFeedAll"
+                                class="text-[10px] font-black px-2.5 py-1 rounded-lg bg-slate-700 text-white">ทั้งหมด</button>
+                            <button onclick="adminSetFeed('report')" id="adminFeedReport"
+                                class="text-[10px] font-black px-2.5 py-1 rounded-lg bg-gray-100 text-gray-500">🚨 เหตุ</button>
+                        </div>
+                    </div>
+                    <div id="adminFeedList" class="divide-y divide-gray-50 max-h-72 overflow-y-auto">
+                        <div class="px-5 py-6 text-center text-xs text-gray-400">กำลังโหลด...</div>
+                    </div>
+                </div>
+
+                <!-- จุดตรวจ Coverage วันนี้ -->
+                <div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-50">
+                        <h3 class="text-sm font-black text-gray-800 flex items-center gap-2">
+                            <span class="bg-orange-100 text-orange-600 p-1.5 rounded-lg text-xs">🗺</span>
+                            Coverage จุดตรวจวันนี้
+                        </h3>
+                    </div>
+                    <div id="adminCoverageGrid" class="p-4 grid grid-cols-3 gap-2">
+                        <div class="col-span-3 text-center text-xs text-gray-400 py-4">กำลังโหลด...</div>
+                    </div>
+                </div>
+
+                <!-- แจ้งเหตุที่รอดำเนินการ -->
+                <div class="bg-white rounded-3xl shadow-sm border border-red-100 overflow-hidden mb-2">
+                    <div class="px-5 py-4 border-b border-red-50 flex items-center justify-between">
+                        <h3 class="text-sm font-black text-gray-800 flex items-center gap-2">
+                            <span class="bg-red-100 text-red-600 p-1.5 rounded-lg text-xs">🚨</span>
+                            เหตุที่รอดำเนินการ
+                        </h3>
+                        <span id="adminOpenCount" class="text-[10px] font-black bg-red-500 text-white px-2 py-0.5 rounded-lg hidden">0</span>
+                    </div>
+                    <div id="adminOpenReports" class="divide-y divide-red-50">
+                        <div class="px-5 py-6 text-center text-xs text-gray-400">ไม่มีเหตุค้างดำเนินการ ✅</div>
+                    </div>
+                </div>
+
+            </div>
+            <!-- ██████████ /Admin Dashboard ██████████ -->
 
             <!-- แท็บ: ประวัติการทำงาน (History View) -->
             <div id="historyView" class="hidden fade-in space-y-3 mt-2">
@@ -944,7 +1137,7 @@
                             <span class="text-xl">📸</span> ถ่ายภาพสถานที่เกิดเหตุ
                         </button>
                     </div>
-                    <button id="btnSubmitReport" onclick="submitReportToGAS()" class="w-full bg-gradient-to-r from-red-600 to-red-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg shadow-red-200 mt-2 active:scale-95 flex justify-center items-center gap-2 disabled:opacity-50">
+                    <button id="btnSubmitReport" onclick="submitReport()" class="w-full bg-gradient-to-r from-red-600 to-red-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg shadow-red-200 mt-2 active:scale-95 flex justify-center items-center gap-2 disabled:opacity-50">
                         ส่งรายงานเข้าระบบ 🚀
                     </button>
                 </div>
@@ -1287,11 +1480,237 @@
     <!-- Script ควบคุมระบบ -->
     <script>
         // ==========================================
-        // ตั้งค่า URL ของ Google Apps Script API และ Telegram
+        // ⚙️ CONFIG — เปลี่ยนค่าตรงนี้เท่านั้น
         // ==========================================
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbxcv4f8AGhnEZ2Cb8Ba0VOa15NBIBX3dYJ9Dn1jN4fW7nzPxetIDqTOtTsMzyAkEx2c2A/exec"; 
-const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
+        const SUPABASE_URL  = "https://olwonvxplwlmqquzivjm.supabase.co";
+        const SUPABASE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sd29udnhwbHdsbXFxdXppdmptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3OTM3OTYsImV4cCI6MjA5MzM2OTc5Nn0.hRhguKwikODZcpt9b0t43Th0-M8Yvv9fB6UNEOvYq4Y";
+        const STORAGE_BUCKET = "patrol-photos";                      // ชื่อ bucket ใน Storage
+        window.SUPABASE_URL = SUPABASE_URL;
+        window.SUPABASE_KEY = SUPABASE_KEY;
+        window.STORAGE_BUCKET = STORAGE_BUCKET;
+        const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
         const CHAT_ID = '-4574041962';
+
+        // ── Supabase REST helpers ────────────────────────────────
+        function sbHeaders(extra) {
+            return Object.assign({
+                'apikey':        SUPABASE_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_KEY,
+                'Content-Type':  'application/json',
+                'Prefer':        'return=representation'
+            }, extra || {});
+        }
+
+        async function sbSelect(table, params) {
+            // รองรับ table ที่มี query string ฝังมาแล้ว เช่น 'patrol_logs?emp_code=eq.1001&...'
+            var hasInline = table.includes('?');
+            var base = SUPABASE_URL + '/rest/v1/' + (hasInline ? table : table);
+            var extra = '';
+            if (!hasInline && params && Object.keys(params).length > 0) {
+                extra = '?' + Object.entries(params).map(function(kv) {
+                    // ค่าที่มี . เช่น "eq.1001" ไม่ encode ทั้งหมด แค่ key
+                    return encodeURIComponent(kv[0]) + '=' + kv[1];
+                }).join('&');
+            }
+            var url = base + extra;
+            var r = await fetchWithTimeout(url, { headers: sbHeaders() });
+            if (!r.ok) throw new Error('Supabase select error ' + r.status + ' ' + url);
+            return r.json();
+        }
+
+        async function sbInsert(table, row) {
+            var r = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/' + table, {
+                method: 'POST',
+                headers: sbHeaders(),
+                body: JSON.stringify(row)
+            });
+            if (!r.ok) { var e = await r.text(); throw new Error('Supabase insert error: ' + e); }
+            return r.json();
+        }
+
+        // อัปโหลด base64 → Supabase Storage → คืน public URL
+        async function sbUploadPhoto(base64jpeg, folder) {
+            if (!base64jpeg) return '';
+            // แปลง base64 → Blob
+            var byteStr = atob(base64jpeg);
+            var ab = new ArrayBuffer(byteStr.length);
+            var ia = new Uint8Array(ab);
+            for (var i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
+            var blob = new Blob([ab], { type: 'image/jpeg' });
+
+            var filename = (folder || 'misc') + '/' + Date.now() + '.jpg';
+            var uploadUrl = SUPABASE_URL + '/storage/v1/object/' + STORAGE_BUCKET + '/' + filename;
+
+            var r = await fetchWithTimeout(uploadUrl, {
+                method: 'POST',
+                headers: {
+                    'apikey':        SUPABASE_KEY,
+                    'Authorization': 'Bearer ' + SUPABASE_KEY,
+                    'Content-Type':  'image/jpeg',
+                    'x-upsert':      'true'
+                },
+                body: blob
+            });
+            if (!r.ok) { console.warn('Photo upload failed', r.status); return ''; }
+            // Public URL
+            return SUPABASE_URL + '/storage/v1/object/public/' + STORAGE_BUCKET + '/' + filename;
+        }
+
+        // ── callGasApi → Supabase bridge ────────────────────────
+        // เลียนแบบ interface เดิม { action, ...params } → { success, data/error }
+        async function callGasApi(payload) {
+            var notConfigured = !SUPABASE_URL || SUPABASE_URL.includes('YOUR_PROJECT');
+            if (notConfigured) throw new Error("ยังไม่ได้ใส่ลิงก์ Supabase URL ในโค้ด HTML");
+
+            var cached = getCached(payload);
+            if (cached) return cached;
+
+            try {
+                var result = await _dispatchSupabase(payload);
+                if (result && result.success) setCache(payload, result);
+                return result;
+            } catch(err) {
+                console.error('Supabase API error:', err);
+                throw err;
+            }
+        }
+
+        async function _dispatchSupabase(p) {
+            // ── login ──────────────────────────────────────────
+            if (p.action === 'login') {
+                var code = String(p.emp_code || '').trim().toUpperCase();
+                var rows = await sbSelect('employees', { emp_code: 'eq.' + code, select: 'emp_code,full_name,profile_pic,role,is_active', limit: 1 });
+                if ((!rows || rows.length === 0) && /^0+\d+$/.test(code)) {
+                    var strippedCode = code.replace(/^0+/, '') || code;
+                    rows = await sbSelect('employees', { emp_code: 'eq.' + strippedCode, select: 'emp_code,full_name,profile_pic,role,is_active', limit: 1 });
+                }
+                if (!rows || rows.length === 0) return { success: false, error: 'ไม่พบรหัสพนักงาน ' + p.emp_code + ' ในระบบ' };
+                var userRow = rows[0];
+                if (userRow.is_active === false || String(userRow.is_active).toLowerCase() === 'false') {
+                    return { success: false, error: 'บัญชีพนักงาน ' + p.emp_code + ' ถูกปิดใช้งาน' };
+                }
+                return { success: true, data: userRow };
+            }
+
+            // ── getConfig ──────────────────────────────────────
+            if (p.action === 'getConfig') {
+                var [settings, checkpoints] = await Promise.all([
+                    sbSelect('config', { select: 'key,value' }),
+                    sbSelect('checkpoints', { select: 'id,name,lat,lng,radius', order: 'sort_order.asc' })
+                ]);
+                var cfg = {};
+                (settings || []).forEach(function(r) { cfg[r.key] = r.value; });
+                return {
+                    success: true,
+                    settings: {
+                        name:           cfg.project_name  || 'Serene Smart Security',
+                        guard_location: cfg.guard_lat && cfg.guard_lng
+                            ? { lat: parseFloat(cfg.guard_lat), lng: parseFloat(cfg.guard_lng) }
+                            : null,
+                        allowed_radius: cfg.allowed_radius ? parseInt(cfg.allowed_radius) : 50
+                    },
+                    checkpoints: (checkpoints || []).map(function(cp) {
+                        return { id: cp.id, name: cp.name, lat: parseFloat(cp.lat) || 0, lng: parseFloat(cp.lng) || 0, radius: parseInt(cp.radius) || 50 };
+                    })
+                };
+            }
+
+            // ── attendance (checkin/checkout) ──────────────────
+            if (p.action === 'attendance') {
+                var photoUrl = await sbUploadPhoto(p.base64_image, 'attendance');
+                var [lat, lng] = String(p.lat_lng || '0,0').split(',').map(parseFloat);
+                var row = {
+                    emp_code:   String(p.guard_id || '').trim().toUpperCase(),
+                    guard_name: p.guard_name,
+                    type:       p.type,   // checkin | checkout
+                    shift:      p.shift   || '',
+                    lat:        lat       || null,
+                    lng:        lng       || null,
+                    photo_url:  photoUrl,
+                    recorded_at: new Date().toISOString()
+                };
+                await sbInsert('attendance', row);
+                return { success: true };
+            }
+
+            // ── patrol ─────────────────────────────────────────
+            if (p.action === 'patrol') {
+                var photoUrl = await sbUploadPhoto(p.base64_image, 'patrol');
+                var [lat, lng] = String(p.lat_lng || '0,0').split(',').map(parseFloat);
+                var row = {
+                    emp_code:    String(p.guard_id || '').trim().toUpperCase(),
+                    guard_name:  p.guard_name,
+                    checkpoint:  p.checkpoint,
+                    lat:         lat  || null,
+                    lng:         lng  || null,
+                    photo_url:   photoUrl,
+                    recorded_at: new Date().toISOString()
+                };
+                await sbInsert('patrol_logs', row);
+                return { success: true };
+            }
+
+            // ── report ─────────────────────────────────────────
+            if (p.action === 'report') {
+                var photoUrl = await sbUploadPhoto(p.base64_image, 'reports');
+                var [lat, lng] = String(p.lat_lng || '0,0').split(',').map(parseFloat);
+                var row = {
+                    emp_code:      String(p.guard_id || '').trim().toUpperCase(),
+                    guard_name:    p.guard_name,
+                    incident_type: p.incident_type,
+                    details:       p.details,
+                    lat:           lat || null,
+                    lng:           lng || null,
+                    photo_url:     photoUrl,
+                    recorded_at:   new Date().toISOString()
+                };
+                await sbInsert('incident_reports', row);
+                return { success: true };
+            }
+
+            // ── getHistory ─────────────────────────────────────
+            if (p.action === 'getHistory') {
+                var code  = String(p.emp_code || '').trim().toUpperCase();
+                var limit = p.limit || 50;
+                var type  = p.type;
+
+                var rows = [];
+                if (type === 'attendance') {
+                    rows = await sbSelect('attendance', {
+                        emp_code: 'eq.' + code, order: 'recorded_at.desc', limit: limit,
+                        select: 'id,type,shift,lat,lng,photo_url,recorded_at'
+                    });
+                    rows = (rows || []).map(function(r) {
+                        return { id: r.id, action: r.type, shift: r.shift, photo_url: r.photo_url, recorded_at: r.recorded_at, lat: r.lat, lng: r.lng };
+                    });
+                } else if (type === 'patrol') {
+                    rows = await sbSelect('patrol_logs', {
+                        emp_code: 'eq.' + code, order: 'recorded_at.desc', limit: limit,
+                        select: 'id,checkpoint,lat,lng,photo_url,recorded_at'
+                    });
+                    rows = (rows || []).map(function(r) {
+                        return { id: r.id, action: 'patrol', checkpoint: r.checkpoint, photo_url: r.photo_url, recorded_at: r.recorded_at, lat: r.lat, lng: r.lng };
+                    });
+                } else if (type === 'report') {
+                    rows = await sbSelect('incident_reports', {
+                        emp_code: 'eq.' + code, order: 'recorded_at.desc', limit: limit,
+                        select: 'id,incident_type,details,lat,lng,photo_url,recorded_at'
+                    });
+                    rows = (rows || []).map(function(r) {
+                        return { id: r.id, action: 'report', incident_type: r.incident_type, details: r.details, photo_url: r.photo_url, recorded_at: r.recorded_at };
+                    });
+                }
+                return { success: true, data: rows };
+            }
+
+            return { success: false, error: 'unknown action: ' + p.action };
+        }
+
+        // ── warmUp — ping config table (ไม่ใช่ root endpoint) ──────
+        function warmUpGAS() {
+            if (!SUPABASE_URL || SUPABASE_URL.includes('YOUR_PROJECT')) return;
+            fetch(SUPABASE_URL + '/rest/v1/config?limit=1', { headers: sbHeaders() }).catch(function() {});
+        }
 
         let currentUser = null;
         let currentLocation = null;
@@ -1360,42 +1779,6 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
             Object.keys(_apiCache).forEach(function(k) {
                 if (k.startsWith(action + ':')) delete _apiCache[k];
             });
-        }
-
-        // Warm-up: ยิง GET ไปปลุก GAS ก่อน user กด login (fire-and-forget)
-        function warmUpGAS() {
-            if (!GAS_URL || GAS_URL.includes('ใส่_URL')) return;
-            fetch(GAS_URL, { method: 'GET', mode: 'no-cors' }).catch(function() {});
-        }
-
-        async function callGasApi(payload) {
-            if (!GAS_URL || GAS_URL.includes('ใส่_URL')) {
-                throw new Error("ยังไม่ได้ใส่ลิงก์ Google Apps Script URL ในโค้ด HTML");
-            }
-
-            // คืน cache ทันทีถ้ายังสดอยู่
-            var cached = getCached(payload);
-            if (cached) return cached;
-
-            try {
-                const response = await fetchWithTimeout(GAS_URL, {
-                    method: 'POST', body: JSON.stringify(payload),
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    redirect: 'follow', timeout: 25000
-                });
-                const responseText = await response.text();
-                let result;
-                try {
-                    result = JSON.parse(responseText);
-                } catch (e) {
-                    throw new Error("การตั้งค่าสิทธิ์ฝั่ง Google Apps Script ผิดพลาด (กรุณาตั้งสิทธิ์เป็น 'Anyone' / 'ทุกคน')");
-                }
-                if (result.success) setCache(payload, result);
-                return result;
-            } catch (error) {
-                console.error("Fetch API Error:", error);
-                throw error;
-            }
         }
 
         // ==========================================
@@ -1514,7 +1897,7 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
 
             } catch(err) {
                 // session อาจหมดอายุ หรือ network ล้มเหลว
-                if (err.message.includes('ใส่ลิงก์')) {
+                if (err.message.includes('ใส่ลิงก์') || err.message.includes('YOUR_PROJECT')) {
                     // demo mode — ใช้ข้อมูล saved
                     currentUser = user;
                     launchApp();
@@ -1593,17 +1976,31 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
         // [PERF] ใช้ sessionStorage cache config — reload ภายใน session ไม่ต้องดึงใหม่
         function applyConfig(configResult) {
             if (!configResult || !configResult.success) return;
-            guardHouseLocation = { lat: configResult.settings.lat, lng: configResult.settings.lng };
-            ALLOWED_RADIUS = configResult.settings.radius;
-            document.getElementById('homeProjectName').innerText = configResult.settings.name;
+            var s = configResult.settings || {};
+
+            // guard_location มาจาก _dispatchSupabase เป็น { lat, lng } object
+            var gloc = s.guard_location;
+            if (gloc && gloc.lat && gloc.lng) {
+                guardHouseLocation = { lat: parseFloat(gloc.lat), lng: parseFloat(gloc.lng) };
+            }
+            // allowed_radius
+            if (s.allowed_radius) ALLOWED_RADIUS = parseInt(s.allowed_radius) || 50;
+            // project name
+            if (s.name) {
+                var el = document.getElementById('homeProjectName');
+                if (el) el.innerText = s.name;
+            }
+
             const cpSelect = document.getElementById('checkpointSelect');
-            cpSelect.innerHTML = '<option value="">-- กรุณาเลือกจุดตรวจ --</option>';
-            configResult.checkpoints.forEach(cp => {
-                checkpointsData[cp.id] = { lat: cp.lat, lng: cp.lng, radius: cp.radius, name: cp.name };
-                const opt = document.createElement('option');
-                opt.value = cp.id; opt.text = cp.name;
-                cpSelect.appendChild(opt);
-            });
+            if (cpSelect) {
+                cpSelect.innerHTML = '<option value="">-- กรุณาเลือกจุดตรวจ --</option>';
+                (configResult.checkpoints || []).forEach(cp => {
+                    checkpointsData[cp.id] = { lat: cp.lat, lng: cp.lng, radius: cp.radius, name: cp.name };
+                    const opt = document.createElement('option');
+                    opt.value = cp.id; opt.text = cp.name;
+                    cpSelect.appendChild(opt);
+                });
+            }
             try { sessionStorage.setItem(CONFIG_KEY, JSON.stringify(configResult)); } catch(e) {}
 
             // ถ้า map เปิดอยู่แล้ว ให้เพิ่ม marker จุดตรวจใหม่
@@ -1643,7 +2040,7 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                 launchApp();
 
             } catch (err) {
-                if (err.message.includes('ใส่ลิงก์')) {
+                if (err.message.includes('ใส่ลิงก์') || err.message.includes('YOUR_PROJECT')) {
                     currentUser = { emp_code: empCodeInput, full_name: 'พนักงานทดสอบ ' + empCodeInput, profile_pic: '' };
                     launchApp();
                     showCustomAlert('โหมดทดสอบ', 'กำลังใช้งานในโหมดจำลอง', 'success');
@@ -1655,6 +2052,12 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                 document.getElementById('loginBtn').disabled = false;
             }
         }
+
+        function isAdminUser(user) {
+            var role = String((user && (user.role || user.user_role || user.position)) || '').trim().toLowerCase();
+            return role === 'admin' || role === 'administrator' || role === 'ผู้ดูแล' || role === 'หัวหน้า';
+        }
+        window.isAdminUser = isAdminUser;
 
         function launchApp() {
             document.getElementById('homeGuardName').innerText = 'คุณ ' + currentUser.full_name;
@@ -1675,7 +2078,16 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
             document.getElementById('mainAppContainer').classList.remove('hidden');
             document.getElementById('mainAppContainer').classList.add('flex');
             document.getElementById('bottomNav').classList.remove('hidden');
-            switchTab('home');
+
+            // route ตาม role
+            if (isAdminUser(currentUser)) {
+                // แสดงปุ่ม Admin ใน header
+                var adminBtn = document.getElementById('adminNavBtn');
+                if (adminBtn) adminBtn.classList.remove('hidden');
+                switchTab('admin');
+            } else {
+                switchTab('home');
+            }
 
             // [PERF] GPS เริ่มไปแล้วตั้งแต่โหลดหน้า ซิงค์ UI เท่านั้น
             // ถ้ายังไม่มีพิกัด แสดง "กำลังค้นหา" ถ้ามีแล้วแสดงทันที
@@ -1695,6 +2107,21 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
             } else {
                 setTimeout(updatePatrolProgress, 0);
             }
+
+            // เริ่ม Dead Man Switch (รอ 3 วิ ให้ config โหลดเสร็จก่อน)
+            setTimeout(function() {
+                if (typeof window.startDeadManSwitch === 'function') window.startDeadManSwitch();
+            }, 3000);
+
+            // ดึง patrol วันนี้จาก Supabase
+            setTimeout(function() {
+                if (typeof window.refreshPatrolProgressFromDB === 'function') window.refreshPatrolProgressFromDB();
+            }, 1500);
+
+            // อัปเดต shift UI
+            setTimeout(function() {
+                if (typeof window.updateCheckinUI === 'function') window.updateCheckinUI();
+            }, 500);
 
             // เริ่มระบบ Notification
             initNotifications();
@@ -1732,14 +2159,14 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
             if(html5QrcodeScanner) window.stopQRScanner();
             
             const globalHeader = document.getElementById('globalHeader');
-            if (activeTab === 'home' || activeTab === 'rules' || activeTab === 'history' || activeTab === 'dashboard') { 
+            if (activeTab === 'home' || activeTab === 'rules' || activeTab === 'history' || activeTab === 'dashboard' || activeTab === 'admin') { 
                 globalHeader.classList.add('hidden'); 
             } else { 
                 globalHeader.classList.remove('hidden'); 
             }
 
             // เพิ่ม history เข้าไปใน List สำหรับซ่อน/แสดงหน้าต่าง
-            const tabs = ['home', 'checkin', 'patrol', 'report', 'rules', 'history', 'dashboard'];
+            const tabs = ['home', 'checkin', 'patrol', 'report', 'rules', 'history', 'dashboard', 'admin'];
             tabs.forEach(tab => {
                 const view = document.getElementById(tab + 'View');
                 if(view) view.classList.toggle('hidden', tab !== activeTab);
@@ -1774,7 +2201,7 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
         }
 
         // ==========================================
-        // ฟังก์ชันดึงประวัติจากเซิร์ฟเวอร์ (Google Sheets)
+        // ฟังก์ชันดึงประวัติจากเซิร์ฟเวอร์ 
         // ==========================================
         // ==========================================
         // ประวัติการทำงาน — History Engine
@@ -1790,10 +2217,13 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
             return String(code).replace(/^0+/, '') || '0';
         }
 
-        // parse วันที่จาก "DD/MM/YYYY HH:MM:SS" หรือ "DD/MM/YYYY"
+        // parse วันที่จาก ISO timestamp (Supabase) หรือ "DD/MM/YYYY HH:MM:SS"
         function parseRowDate(row) {
-            var s = row['วันที่-เวลา'] || row['วันที่'] || '';
+            var s = row.recorded_at || row['วันที่-เวลา'] || row['วันที่'] || '';
             if (!s) return null;
+            // ISO 8601 — Supabase
+            if (/^\d{4}-\d{2}-\d{2}/.test(s)) return new Date(s);
+            // Thai dd/mm/yyyy
             var parts = s.split(' ')[0].split('/');
             if (parts.length < 3) return null;
             var d = parseInt(parts[0]), m = parseInt(parts[1]) - 1, y = parseInt(parts[2]);
@@ -1856,23 +2286,30 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
             rows.forEach(function(row) {
                 var type = row._type || 'attendance';
                 var cfg  = TYPE_CFG[type] || TYPE_CFG.attendance;
-                var time = row['วันที่-เวลา'] || '-';
+                // แสดงวัน-เวลา: รองรับ ISO (Supabase) และ string เดิม
+                var _rDate = row.recorded_at ? new Date(row.recorded_at) : null;
+                var time = _rDate
+                    ? _rDate.toLocaleDateString('th-TH',{day:'2-digit',month:'2-digit',year:'numeric'}) + ' ' + _rDate.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})
+                    : (row['วันที่-เวลา'] || '-');
                 var title = '', desc = '', icon = cfg.icon;
 
                 if (type === 'attendance') {
-                    var t = row['ประเภท'] || '';
+                    var t = row.action === 'checkin' ? 'เข้างาน' : (row.action === 'checkout' ? 'ออกงาน' : (row['ประเภท'] || row.action || ''));
                     icon  = t === 'เข้างาน' ? '✅' : '🚪';
-                    title = t + (row['กะ'] ? ' — ' + row['กะ'] : '');
-                    desc  = row['พิกัด GPS'] ? '📍 ' + row['พิกัด GPS'] : '';
+                    title = t + (row.shift || row['กะ'] ? ' — ' + (row.shift || row['กะ']) : '');
+                    var gps = (row.lat && row.lng) ? row.lat.toFixed(5) + ', ' + row.lng.toFixed(5) : (row['พิกัด GPS'] || '');
+                    desc  = gps ? '📍 ' + gps : '';
                 } else if (type === 'patrol') {
-                    title = '🗺 จุดตรวจ: ' + (row['ชื่อจุดตรวจ'] || '-');
-                    desc  = row['พิกัด GPS'] ? '📍 ' + row['พิกัด GPS'] : '';
+                    title = '🗺 จุดตรวจ: ' + (row.checkpoint || row['ชื่อจุดตรวจ'] || '-');
+                    var gps = (row.lat && row.lng) ? row.lat.toFixed(5) + ', ' + row.lng.toFixed(5) : (row['พิกัด GPS'] || '');
+                    desc  = gps ? '📍 ' + gps : '';
                 } else {
-                    title = '⚠️ ' + (row['ประเภทเหตุ'] || '-');
-                    desc  = row['รายละเอียด'] ? '📝 ' + row['รายละเอียด'].substring(0, 60) : '';
+                    title = '⚠️ ' + (row.incident_type || row['ประเภทเหตุ'] || '-');
+                    var detail = row.details || row['รายละเอียด'] || '';
+                    desc  = detail ? '📝 ' + detail.substring(0, 60) : '';
                 }
 
-                var imgUrl = row['ลิงก์รูป'] || '';
+                var imgUrl = row.photo_url || row['ลิงก์รูป'] || '';
                 var imgHtml = '';
                 if (imgUrl) {
                     imgHtml = '<div class="mt-2 flex items-center gap-2">'
@@ -1984,13 +2421,20 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
             var refreshBtn = document.getElementById('histRefreshBtn');
             if (refreshBtn) refreshBtn.innerText = '⏳ กำลังดึง...';
 
+            // อัปเดต header ชื่อ-รหัสพนักงาน
+            if (currentUser) {
+                var nameEl = document.getElementById('histEmpName');
+                var codeEl = document.getElementById('histEmpCode');
+                if (nameEl) nameEl.innerText = currentUser.full_name || '-';
+                if (codeEl) codeEl.innerText = 'รหัส: ' + (currentUser.emp_code || '-');
+            }
+
             showHistSkeleton();
 
             var empCode = normalizeEmpCode(currentUser && currentUser.emp_code);
             var limit   = 100;
 
             try {
-                // ดึงพร้อมกัน 3 ประเภท
                 var [resA, resP, resR] = await Promise.all([
                     callGasApi({ action: 'getHistory', emp_code: empCode, type: 'attendance', limit }),
                     callGasApi({ action: 'getHistory', emp_code: empCode, type: 'patrol',     limit }),
@@ -1998,19 +2442,19 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                 ]);
 
                 var combined = [];
-                if (resA && resA.success && resA.rows) {
-                    resA.rows.forEach(function(r){ r._type = 'attendance'; combined.push(r); });
+                if (resA && resA.success && resA.data) {
+                    resA.data.forEach(function(r){ r._type = 'attendance'; combined.push(r); });
                 }
-                if (resP && resP.success && resP.rows) {
-                    resP.rows.forEach(function(r){ r._type = 'patrol';     combined.push(r); });
+                if (resP && resP.success && resP.data) {
+                    resP.data.forEach(function(r){ r._type = 'patrol';     combined.push(r); });
                 }
-                if (resR && resR.success && resR.rows) {
-                    resR.rows.forEach(function(r){ r._type = 'report';     combined.push(r); });
+                if (resR && resR.success && resR.data) {
+                    resR.data.forEach(function(r){ r._type = 'report';     combined.push(r); });
                 }
 
-                // เรียงจากใหม่→เก่า
                 combined.sort(function(a, b) {
-                    var da = parseRowDate(a), db = parseRowDate(b);
+                    var da = a.recorded_at ? new Date(a.recorded_at) : parseRowDate(a);
+                    var db = b.recorded_at ? new Date(b.recorded_at) : parseRowDate(b);
                     if (!da || !db) return 0;
                     return db - da;
                 });
@@ -2380,6 +2824,7 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                 payload.type   = pendingActionType;
                 payload.shift  = document.getElementById('shiftTypeHidden').value;
                 titleHistory   = pendingActionType === 'checkin' ? 'เข้างาน' : 'ออกงาน';
+                extraData = { shift: payload.shift };
             } else if (pendingActionType === 'patrol') {
                 var cpSel = document.getElementById('checkpointSelect');
                 payload.action     = 'patrol';
@@ -2403,7 +2848,7 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                     throw new Error(result.error || 'เกิดข้อผิดพลาดจากเซิร์ฟเวอร์');
                 }
             } catch (err) {
-                if (err.message.includes('ใส่ลิงก์')) {
+                if (err.message.includes('ใส่ลิงก์') || err.message.includes('YOUR_PROJECT')) {
                     // demo mode — ถือว่าสำเร็จ
                     processSuccess(titleHistory, pendingActionType, extraData);
                 } else {
@@ -2420,6 +2865,9 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
             saveToHistory(title, type, extraData);
             // ล้าง cache history เพื่อให้ครั้งถัดไปดึงข้อมูลใหม่
             invalidateCache('getHistory');
+            // ── Auto-refresh หลังบันทึกสำเร็จ ──
+            updatePatrolProgress();
+            if (typeof _autoRefreshOnAction === 'function') _autoRefreshOnAction(type);
         }
 
         window.closePreviewAndRefresh = function() {
@@ -2520,7 +2968,7 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
             document.getElementById('reportPhotoBtn').classList.remove('hidden');
         }
 
-        window.submitReportToGAS = async function() {
+        window.submitReport = async function() {
             const type = document.getElementById('reportType').value;
             const details = document.getElementById('reportDetail').value;
             if (!type || !details.trim()) return showCustomAlert('ข้อมูลไม่ครบ', 'กรุณาระบุรายละเอียดให้ครบถ้วน', 'warning');
@@ -2548,15 +2996,16 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                 });
 
                 if (result.success || result.message?.includes('mock')) {
+                    var reportImageForTelegram = currentReportImageBase64;
                     document.getElementById('loadingIcon').innerText = "✅"; document.getElementById('loadingText').innerText = "แจ้งเหตุสำเร็จ!";
                     document.getElementById('reportType').value = ''; document.getElementById('reportDetail').value = ''; window.removeReportPhoto();
                     saveToHistory(`แจ้งเหตุ: ${type}`, 'report');
-                    sendTelegramAlert(`🚨 แจ้งเหตุฉุกเฉิน 🚨\n\nผู้แจ้ง: ${currentUser.full_name}\nประเภท: ${type}\nรายละเอียด: ${details}\nเวลา: ${new Date().toLocaleString('th-TH')}`, currentReportImageBase64);
+                    sendTelegramAlert(`🚨 แจ้งเหตุฉุกเฉิน 🚨\n\nผู้แจ้ง: ${currentUser.full_name}\nประเภท: ${type}\nรายละเอียด: ${details}\nเวลา: ${new Date().toLocaleString('th-TH')}`, reportImageForTelegram);
                 } else {
                     throw new Error(result.error);
                 }
             } catch (err) {
-                if(err.message.includes('ใส่ลิงก์')) {
+                if(err.message.includes('ใส่ลิงก์') || err.message.includes('YOUR_PROJECT')) {
                     setTimeout(() => {
                         document.getElementById('loadingIcon').innerText = "✅"; document.getElementById('loadingText').innerText = "แจ้งเหตุสำเร็จ (โหมดจำลอง)";
                         document.getElementById('reportType').value = ''; document.getElementById('reportDetail').value = ''; window.removeReportPhoto();
@@ -2605,6 +3054,26 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
         // กะงานจากชั่วโมง
         function shiftLabel(h) {
             return (h >= 7 && h < 19) ? '☀️ กะเช้า (07:00–19:00)' : '🌙 กะดึก (19:00–07:00)';
+        }
+
+        function normalizeShiftLabel(input) {
+            var s = String(input || '').toLowerCase();
+            if (s.includes('เช้า') || s.includes('morning')) return '☀️ กะเช้า (07:00–19:00)';
+            if (s.includes('ดึก') || s.includes('night')) return '🌙 กะดึก (19:00–07:00)';
+            return '';
+        }
+
+        function currentSelectedShiftLabel(fallbackDate) {
+            var d = fallbackDate || new Date();
+            var h = d.getHours();
+            var hidden = document.getElementById('shiftTypeHidden');
+            var fromHidden = hidden ? normalizeShiftLabel(hidden.value) : '';
+            if (fromHidden && h >= 17 && h < 20) return fromHidden;
+            return shiftLabel(h);
+        }
+
+        function notifyShiftLabel(explicitShift, fallbackDate) {
+            return normalizeShiftLabel(explicitShift) || currentSelectedShiftLabel(fallbackDate);
         }
 
         // ส่ง text-only (HTML parse_mode)
@@ -2671,7 +3140,7 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                     '🔖 <b>กะ:</b> ' + tgEsc(shift) + '\n' +
                     '⏰ <b>เวลา:</b> ' + tgEsc(thaiDateTime()) + '\n' +
                     '📍 <b>พิกัด:</b> ' + (locStr ? tgEsc(locStr) : 'ไม่ทราบ') + '\n' +
-                    '🏢 <b>สถานะ:</b> ' + tgEsc(shiftLabel(now.getHours()));
+                    '🏢 <b>กะที่บันทึก:</b> ' + tgEsc(notifyShiftLabel(shift, now));
 
                 var markup = mapUrl ? {
                     inline_keyboard: [[
@@ -2700,7 +3169,7 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                     '🪪 <b>รหัส:</b> ' + tgEsc(currentUser.emp_code) + '\n' +
                     '📌 <b>จุดตรวจ:</b> ' + tgEsc(cpName) + '\n' +
                     '⏰ <b>เวลา:</b> ' + tgEsc(thaiDateTime()) + '\n' +
-                    '🏢 <b>กะ:</b> ' + tgEsc(shiftLabel(now.getHours())) + '\n' +
+                    '🏢 <b>กะ:</b> ' + tgEsc(notifyShiftLabel(null, now)) + '\n' +
                     '📍 <b>พิกัด:</b> ' + (locStr ? tgEsc(locStr) : 'ไม่ทราบ');
 
                 var markup = mapUrl ? {
@@ -2741,7 +3210,7 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                     '🪪 <b>รหัส:</b> ' + tgEsc(currentUser.emp_code) + '\n' +
                     '⏰ <b>เวลา:</b> ' + tgEsc(thaiDateTime()) + '\n' +
                     '📍 <b>พิกัด:</b> ' + (locStr ? tgEsc(locStr) : '<i>ไม่ทราบ</i>') + '\n' +
-                    '🏢 <b>กะ:</b> ' + tgEsc(shiftLabel(now.getHours()));
+                    '🏢 <b>กะ:</b> ' + tgEsc(notifyShiftLabel(null, now));
 
                 var buttons = [];
                 if (mapUrl) buttons.push({ text: '📍 ดูพิกัดบน Maps', url: mapUrl });
@@ -3177,7 +3646,17 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
             var color  = isSelected ? '#f97316' : '#1e293b';
             var radius = isSelected ? 12 : 9;
 
-            var marker = L.circleMarker([cp.lat, cp.lng], {
+            // ข้ามถ้าจุดตรวจยังไม่ได้ตั้งพิกัด (lat/lng = 0 หรือ null)
+            if (!cp.lat || !cp.lng || (cp.lat === 0 && cp.lng === 0)) {
+                _cpMarkers[cpId] = null;
+                return;
+            }
+
+            var safelat = parseFloat(cp.lat);
+            var safelng = parseFloat(cp.lng);
+            if (isNaN(safelat) || isNaN(safelng)) return;
+
+            var marker = L.circleMarker([safelat, safelng], {
                 radius: radius, fillColor: color, color: '#fff', weight: 2, fillOpacity: 1
             }).addTo(_map);
 
@@ -3186,10 +3665,10 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                 className: '', iconAnchor: [-14, 6],
                 html: '<div class="cp-marker-label" style="background:' + color + '">' + cp.name + '</div>'
             });
-            var labelM = L.marker([cp.lat, cp.lng], { icon: label, interactive: false }).addTo(_map);
+            var labelM = L.marker([safelat, safelng], { icon: label, interactive: false }).addTo(_map);
 
             // รัศมีจุดตรวจ
-            var circle = L.circle([cp.lat, cp.lng], {
+            var circle = L.circle([safelat, safelng], {
                 radius: cp.radius || 30,
                 color: color, fillColor: color,
                 fillOpacity: isSelected ? 0.12 : 0.05,
@@ -3464,7 +3943,7 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                 bar.classList.add('show');
                 var online = navigator.onLine;
                 if (barIcon)  barIcon.innerText  = online ? '📡' : '📵';
-                if (barTitle) barTitle.innerText  = count + ' รายการรอส่งเข้า Google Sheets';
+                if (barTitle) barTitle.innerText  = count + ' รายการรอส่งเข้า เซิร์ฟเวอร์';
                 if (barDesc)  barDesc.innerText   = online ? 'มีอินเทอร์เน็ต — กด "ส่งเดี๋ยวนี้" หรือรอระบบ sync อัตโนมัติ' : 'ไม่มีสัญญาณ — ระบบจะส่งอัตโนมัติเมื่อออนไลน์';
                 if (barBtn)   barBtn.disabled     = !online;
                 if (barBtn)   barBtn.style.opacity = online ? '1' : '0.5';
@@ -3522,7 +4001,7 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                                 var cpName = item.extraData ? item.extraData.cpName : item.payload.checkpoint;
                                 notifyPatrol(cpName, item.payload.base64_image);
                             } else if (item.actionType === 'report') {
-                                sendTelegramAlert('🚨 แจ้งเหตุฉุกเฉิน (Offline Sync)\n\nผู้แจ้ง: ' + item.payload.guard_name + '\nประเภท: ' + item.payload.incident_type + '\nรายละเอียด: ' + item.payload.details, null);
+                                sendTelegramAlert('🚨 แจ้งเหตุฉุกเฉิน (Offline Sync)\n\nผู้แจ้ง: ' + item.payload.guard_name + '\nประเภท: ' + item.payload.incident_type + '\nรายละเอียด: ' + item.payload.details, item.payload.base64_image);
                             }
                         } catch(te) {}
                     } else { failed++; }
@@ -3539,7 +4018,7 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                 if (sent > 0 && remaining.length === 0) {
                     updateSyncBar('done', 0);
                     setTimeout(function() { updateOfflineUI(0); }, 3000);
-                    showCustomAlert('ซิงก์สำเร็จ', 'ส่งข้อมูล ' + sent + ' รายการเข้า Google Sheets เรียบร้อย ✅', 'success');
+                    showCustomAlert('ซิงก์สำเร็จ', 'ส่งข้อมูล ' + sent + ' รายการเข้า เซิร์ฟเวอร์ เรียบร้อย ✅', 'success');
                 } else if (failed > 0) {
                     updateSyncBar('error', remaining.length);
                 }
@@ -3565,12 +4044,12 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
             } else if (state === 'done') {
                 if (barIcon)  barIcon.innerText = '✅';
                 if (barTitle) barTitle.innerText = 'ส่งข้อมูลครบหมดแล้ว!';
-                if (barDesc)  barDesc.innerText  = 'Google Sheets อัปเดตเรียบร้อย';
+                if (barDesc)  barDesc.innerText  = 'เซิร์ฟเวอร์ อัปเดตเรียบร้อย';
                 if (barBtn)   barBtn.disabled    = false;
             } else if (state === 'error') {
                 if (barIcon)  barIcon.innerText = '⚠️';
                 if (barTitle) barTitle.innerText = 'ส่งไม่สำเร็จ ' + count + ' รายการ';
-                if (barDesc)  barDesc.innerText  = 'เชื่อมต่อ GAS ล้มเหลว กดลองใหม่';
+                if (barDesc)  barDesc.innerText  = 'เชื่อมต่อ Supabase ล้มเหลว กดลองใหม่';
                 if (barBtn)   barBtn.disabled    = false;
             }
         }
@@ -3592,7 +4071,7 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
             }
         }, 90 * 1000);
 
-        // ── 6. Hook confirmSaveBtn + submitReportToGAS ───────────
+        // ── 6. Hook confirmSaveBtn + submitReport ───────────
         document.addEventListener('DOMContentLoaded', function() {
             refreshBadge();
 
@@ -3625,12 +4104,12 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
                 }
                 if (typeof origConfirmSave === 'function') {
                     btn.disabled = false;
-                    origConfirmSave.call(this);
+                    return await origConfirmSave.call(this);
                 }
             };
 
-            var origSubmitReport = window.submitReportToGAS;
-            window.submitReportToGAS = async function() {
+            var origSubmitReport = window.submitReport;
+            window.submitReport = async function() {
                 if (!navigator.onLine) {
                     var type    = document.getElementById('reportType').value;
                     var details = document.getElementById('reportDetail').value;
@@ -4195,12 +4674,31 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
             // ถ้าทับกัน (17:00–20:00 = checkout เช้า + checkin ดึก)
             // ให้ priority: เช็คเอาท์ก่อน เช็คอินทีหลัง
             return {
-                shift:         inMorningCheckin ? 'morning' : (inNightCheckin ? 'night' : (inMorningCheckout ? 'morning' : (inNightCheckout ? 'night' : null))),
+                shift:         inMorningCheckin ? 'morning' : (inMorningCheckout ? 'morning' : (inNightCheckin ? 'night' : (inNightCheckout ? 'night' : null))),
                 canCheckin:    inMorningCheckin || inNightCheckin,
                 canCheckout:   inMorningCheckout || inNightCheckout,
                 inMorningCheckin, inMorningCheckout, inNightCheckin, inNightCheckout
             };
         }
+
+        function resolveShiftForAction(actionType) {
+            var det = detectShift();
+            if (_manualShift) return SHIFTS[_manualShift];
+            if (actionType === 'checkout') {
+                if (det.inMorningCheckout) return SHIFTS.morning;
+                if (det.inNightCheckout) return SHIFTS.night;
+            }
+            if (actionType === 'checkin') {
+                if (det.inMorningCheckin) return SHIFTS.morning;
+                if (det.inNightCheckin) return SHIFTS.night;
+            }
+            return det.shift ? SHIFTS[det.shift] : null;
+        }
+
+        window.resolveShiftForAction = function(actionType) {
+            var sh = resolveShiftForAction(actionType);
+            return sh ? { id: sh.id, label: sh.label, value: sh.value, workTime: sh.workTime } : null;
+        };
 
         // ─── อัปเดต UI ──────────────────────────────────────────
         window.updateCheckinUI = function() {
@@ -4331,8 +4829,11 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
         window.checkLocationAndCapture = function(actionType) {
             if (actionType === 'checkin' || actionType === 'checkout') {
                 var det   = detectShift();
-                var sh    = _manualShift ? SHIFTS[_manualShift] : (det.shift ? SHIFTS[det.shift] : null);
+                var sh    = resolveShiftForAction(actionType);
                 var m     = nowMin();
+                var hidden = document.getElementById('shiftTypeHidden');
+                var isOT = document.getElementById('otToggle') && document.getElementById('otToggle').checked;
+                if (hidden && sh) hidden.value = sh.value + (isOT ? ' + OT' : '');
 
                 if (sh) {
                     var win    = actionType === 'checkin' ? sh.checkinWin : sh.checkoutWin;
@@ -4372,5 +4873,1434 @@ const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
 
     })();
     </script>
+    <!-- ════════════════════════════════════════════════
+         Auto-Refresh Engine + New Features
+         ════════════════════════════════════════════════ -->
+    <script>
+    (function() {
+        'use strict';
+
+        // ══════════════════════════════════════════════════════
+        //  1. AUTO-REFRESH ENGINE
+        // ══════════════════════════════════════════════════════
+
+        var _refreshTimer   = null;
+        var _lastActionTime = 0;
+        var REFRESH_IDLE_MS = 2 * 60 * 1000;   // 2 นาที เมื่อไม่มีกิจกรรม
+        var REFRESH_FAST_MS = 20 * 1000;        // 20 วิ หลังจากบันทึกข้อมูล
+
+        // เรียกจาก processSuccess ทุกครั้งที่บันทึกสำเร็จ
+        window._autoRefreshOnAction = function(type) {
+            _lastActionTime = Date.now();
+            // 1. อัปเดต patrol progress ทันที (local)
+            if (typeof updatePatrolProgress === 'function') updatePatrolProgress();
+            // 2. ถ้าหน้า history เปิดอยู่ → reload จาก Supabase
+            var histView = document.getElementById('historyView');
+            if (histView && !histView.classList.contains('hidden')) {
+                setTimeout(function() { if (typeof loadAllHistory === 'function') loadAllHistory(true); }, 800);
+            }
+            // 3. อัปเดต dashboard ถ้าเปิดอยู่
+            var dashView = document.getElementById('dashboardView');
+            if (dashView && !dashView.classList.contains('hidden')) {
+                setTimeout(function() { if (typeof buildDashboard === 'function') buildDashboard(); }, 800);
+            }
+            // 4. ตั้ง fast-refresh timer
+            _scheduleRefresh(REFRESH_FAST_MS);
+        };
+
+        function _scheduleRefresh(ms) {
+            if (_refreshTimer) clearTimeout(_refreshTimer);
+            _refreshTimer = setTimeout(_doRefresh, ms);
+        }
+
+        function _doRefresh() {
+            // อัปเดต patrol progress ทุกครั้ง
+            if (typeof updatePatrolProgress === 'function') updatePatrolProgress();
+            // อัปเดต home stats pills
+            _refreshHomePills();
+            // ถ้าหน้า history เปิดอยู่ → silent reload
+            var histView = document.getElementById('historyView');
+            if (histView && !histView.classList.contains('hidden')) {
+                if (typeof loadAllHistory === 'function') loadAllHistory(true);
+            }
+            // ตั้ง idle timer ต่อ
+            _scheduleRefresh(REFRESH_IDLE_MS);
+        }
+
+        // Home quick-stats pills (เข้างานล่าสุด, เดินตรวจวันนี้)
+        function _refreshHomePills() {
+            try {
+                var hist = JSON.parse(localStorage.getItem('guard_history_v2')) || [];
+                var today = new Date().toLocaleDateString('th-TH');
+                var patrolToday = hist.filter(function(r) {
+                    return r.type === 'patrol' && r.date === today;
+                }).length;
+                var lastCheckin = hist.find(function(r) { return r.type === 'checkin'; });
+
+                var pillPatrol = document.getElementById('pillPatrolCount');
+                var pillCheckin = document.getElementById('pillLastCheckin');
+                if (pillPatrol)  pillPatrol.innerText = patrolToday + ' รอบ';
+                if (pillCheckin && lastCheckin) pillCheckin.innerText = lastCheckin.time;
+            } catch(e) {}
+        }
+
+        // ── Page Visibility API — หยุด refresh เมื่อ tab ซ่อน ──
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                if (_refreshTimer) clearTimeout(_refreshTimer);
+            } else {
+                // กลับมา → refresh ทันที แล้วตั้ง idle timer
+                setTimeout(_doRefresh, 1000);
+            }
+        });
+
+        // ── เริ่ม idle refresh เมื่อ login สำเร็จ ──
+        document.addEventListener('DOMContentLoaded', function() {
+            var _origLaunch = window.launchApp;
+            if (typeof _origLaunch === 'function') {
+                window.launchApp = function() {
+                    _origLaunch.apply(this, arguments);
+                    _scheduleRefresh(REFRESH_IDLE_MS);
+                    _refreshHomePills();
+                };
+            }
+        });
+
+        // ══════════════════════════════════════════════════════
+        //  2. HISTORY: loadAllHistory SILENT RELOAD SUPPORT
+        //     เพิ่ม param `silent` เพื่อไม่แสดง skeleton ซ้ำ
+        // ══════════════════════════════════════════════════════
+        var _origLoadAll = window.loadAllHistory;
+        window.loadAllHistory = function(silent) {
+            if (silent && typeof _origLoadAll === 'function') {
+                // reset cache แล้วเรียกใหม่
+                if (typeof invalidateCache === 'function') invalidateCache('getHistory');
+                _histAllRows = [];
+            }
+            if (typeof _origLoadAll === 'function') _origLoadAll();
+        };
+
+        // ══════════════════════════════════════════════════════
+        //  3. PATROL PROGRESS — ดึงจาก Supabase โดยตรง
+        //     (ใช้แทน localStorage เมื่อออนไลน์)
+        // ══════════════════════════════════════════════════════
+        var _sbPatrolCache = null;    // { date: 'YYYY-MM-DD', done: {cpId: timestamp} }
+
+        async function fetchTodayPatrolFromSupabase() {
+            if (!currentUser || !window.SUPABASE_URL || SUPABASE_URL.includes('YOUR_PROJECT')) return null;
+            try {
+                var code    = String(currentUser.emp_code || '').trim().toUpperCase();
+                var todayStart = new Date(); todayStart.setHours(0,0,0,0);
+                var filter  = 'emp_code=eq.' + encodeURIComponent(code)
+                            + '&recorded_at=gte.' + todayStart.toISOString()
+                            + '&select=checkpoint,recorded_at&order=recorded_at.asc';
+                var rows = await sbSelect('patrol_logs?' + filter, {});
+                var done = {};
+                (rows || []).forEach(function(r) {
+                    done[r.checkpoint] = new Date(r.recorded_at).getTime();
+                });
+                _sbPatrolCache = { date: todayStart.toDateString(), done: done };
+                return done;
+            } catch(e) { return null; }
+        }
+
+        // Override getPatrolledInWindow ให้ใช้ Supabase cache ถ้ามี
+        var _origGetPatrolled = window.getPatrolledInWindow;
+        window.getPatrolledInWindow = function(startMs, endMs) {
+            // ถ้ามี Supabase cache ของวันนี้ ให้ใช้ก่อน
+            if (_sbPatrolCache) {
+                var todayStr = new Date().setHours(0,0,0,0);
+                if (_sbPatrolCache.date === new Date(todayStr).toDateString()) {
+                    // กรองตาม window
+                    var filtered = {};
+                    Object.keys(_sbPatrolCache.done).forEach(function(k) {
+                        var t = _sbPatrolCache.done[k];
+                        if (t >= startMs && t < endMs) filtered[k] = t;
+                    });
+                    return filtered;
+                }
+            }
+            // fallback localStorage
+            if (typeof _origGetPatrolled === 'function') return _origGetPatrolled(startMs, endMs);
+            return {};
+        };
+
+        // ดึง Supabase แล้ว refresh progress
+        window.refreshPatrolProgressFromDB = async function() {
+            var done = await fetchTodayPatrolFromSupabase();
+            if (done !== null && typeof updatePatrolProgress === 'function') {
+                updatePatrolProgress();
+            }
+        };
+
+        // ══════════════════════════════════════════════════════
+        //  4. REALTIME — Supabase Realtime (Broadcast) 
+        //     อัปเดต progress เมื่อพนักงานคนอื่นเช็คจุดด้วย
+        // ══════════════════════════════════════════════════════
+        function initSupabaseRealtime() {
+            if (!window.SUPABASE_URL || SUPABASE_URL.includes('YOUR_PROJECT')) return;
+            // ใช้ SSE (pg_changes) ผ่าน REST endpoint ง่ายๆ
+            var url = SUPABASE_URL + '/rest/v1/patrol_logs?select=checkpoint,recorded_at'
+                    + '&order=recorded_at.desc&limit=1';
+            var lastId = null;
+            setInterval(async function() {
+                try {
+                    var rows = await sbSelect('patrol_logs', {
+                        select: 'id,checkpoint,recorded_at',
+                        order: 'recorded_at.desc', limit: 1
+                    });
+                    if (rows && rows.length > 0 && rows[0].id !== lastId) {
+                        lastId = rows[0].id;
+                        // มีข้อมูลใหม่ → refresh
+                        _sbPatrolCache = null;   // bust cache
+                        await window.refreshPatrolProgressFromDB();
+                    }
+                } catch(e) {}
+            }, 30 * 1000);  // poll ทุก 30 วิ
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  5. NEW FEATURES
+        // ══════════════════════════════════════════════════════
+
+        // ── 5a. Last Sync Indicator บน header ─────────────────
+        function updateLastSyncLabel() {
+            var el = document.getElementById('lastSyncLabel');
+            if (!el) return;
+            var now = new Date();
+            el.innerText = 'ซิงก์ล่าสุด ' + now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        // ── 5b. แสดงยอดรวมวันนี้บนหน้าแรก ──────────────────────
+        window.refreshHomeSummary = function() {
+            _refreshHomePills();
+            if (typeof refreshPatrolProgressFromDB === 'function') {
+                window.refreshPatrolProgressFromDB().then(updateLastSyncLabel);
+            }
+        };
+
+        // ── 5c. Pull-to-Refresh บน homeView ───────────────────
+        (function() {
+            var startY = 0, pulling = false;
+            var el = document.getElementById('mainScrollArea');
+            if (!el) return;
+            el.addEventListener('touchstart', function(e) {
+                if (el.scrollTop === 0) { startY = e.touches[0].clientY; pulling = true; }
+            }, { passive: true });
+            el.addEventListener('touchend', function(e) {
+                if (pulling && e.changedTouches[0].clientY - startY > 60) {
+                    window.refreshHomeSummary();
+                    var homeView = document.getElementById('homeView');
+                    if (homeView && !homeView.classList.contains('hidden')) {
+                        // แสดง toast
+                        showPullToast();
+                    }
+                }
+                pulling = false;
+            }, { passive: true });
+        })();
+
+        function showPullToast() {
+            var t = document.getElementById('pullToast');
+            if (!t) {
+                t = document.createElement('div');
+                t.id = 'pullToast';
+                t.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);'
+                    + 'background:#1e293b;color:#fff;font-size:11px;font-weight:700;'
+                    + 'padding:8px 18px;border-radius:99px;z-index:9999;'
+                    + 'transition:opacity 0.3s;pointer-events:none;';
+                document.body.appendChild(t);
+            }
+            t.innerText = '🔄 กำลังอัปเดต...';
+            t.style.opacity = '1';
+            setTimeout(function() {
+                t.innerText = '✅ อัปเดตแล้ว';
+                setTimeout(function() { t.style.opacity = '0'; }, 1200);
+            }, 1000);
+        }
+
+        // ── 5d. Badge จำนวน patrol วันนี้บนปุ่มเดินตรวจ nav ──
+        function updatePatrolNavBadge(count) {
+            var btn = document.getElementById('tabBtnPatrol');
+            if (!btn) return;
+            var badge = btn.querySelector('.patrol-badge');
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.className = 'patrol-badge absolute -top-0.5 -right-0.5 min-w-[16px] h-4 '
+                    + 'bg-orange-400 text-white text-[8px] font-black rounded-full '
+                    + 'flex items-center justify-center px-1 leading-none';
+                btn.style.position = 'relative';
+                btn.appendChild(badge);
+            }
+            badge.innerText = count > 0 ? count : '';
+            badge.style.display = count > 0 ? 'flex' : 'none';
+        }
+
+        // ── 5e. สรุปจำนวนการตรวจวันนี้ใน home header ──────────
+        function updateHomeStats() {
+            try {
+                var hist = JSON.parse(localStorage.getItem('guard_history_v2')) || [];
+                var today = new Date().toLocaleDateString('th-TH');
+                var patrolToday = hist.filter(function(r) { return r.type === 'patrol' && r.date === today; }).length;
+                var checkinToday = hist.filter(function(r) { return r.type === 'checkin' && r.date === today; }).length;
+
+                updatePatrolNavBadge(patrolToday);
+
+                // pills ใน homeView
+                var p = document.getElementById('pillPatrolCount');
+                var c = document.getElementById('pillCheckinCount');
+                if (p) p.innerText = patrolToday + ' จุด';
+                if (c) c.innerText = checkinToday + ' ครั้ง';
+            } catch(e) {}
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  INIT
+        // ══════════════════════════════════════════════════════
+        document.addEventListener('DOMContentLoaded', function() {
+            // เริ่ม Realtime polling
+            setTimeout(initSupabaseRealtime, 5000);
+
+            // อัปเดต stats เมื่อเปิดแต่ละแท็บ
+            var _origST = window.switchTab;
+            window.switchTab = function(tab) {
+                _origST(tab);
+                updateHomeStats();
+                if (tab === 'home') {
+                    window.refreshHomeSummary();
+                }
+                if (tab === 'history') {
+                    // ดึงข้อมูลใหม่จาก Supabase เสมอเมื่อเปิดหน้าประวัติ
+                    if (typeof invalidateCache === 'function') invalidateCache('getHistory');
+                    _histAllRows = [];
+                    if (typeof _origLoadAll === 'function') _origLoadAll();
+                }
+            };
+
+            // initial stats
+            updateHomeStats();
+        });
+
+    })();
+    </script>
+    <!-- ════════════════════════════════════════════════
+         Dead Man Switch — แจ้งเตือน admin อัตโนมัติ
+         ════════════════════════════════════════════════ -->
+    <script>
+    (function() {
+        'use strict';
+
+        // ──────────────────────────────────────────────────────
+        //  CONFIG
+        // ──────────────────────────────────────────────────────
+        var DMS_CONFIG = {
+            // tolerance หลังจากเวลากะผ่านไปแล้ว (นาที) ก่อนแจ้งเตือน
+            checkinGrace:  30,   // ลงเวลาเข้างานช้าเกิน 30 นาที
+            patrolGrace:   45,   // ไม่เดินตรวจเกิน 45 นาทีหลังถึงรอบ
+            // ส่งซ้ำทุก X นาที ถ้ายังไม่แก้ไข
+            reNotifyMin:   20,
+            // ตรวจสอบทุก X นาที
+            checkInterval: 2
+        };
+
+        var DMS_KEY = 'dms_state_v1';   // localStorage key
+
+        // ──────────────────────────────────────────────────────
+        //  STATE helpers
+        // ──────────────────────────────────────────────────────
+        function loadState() {
+            try { return JSON.parse(localStorage.getItem(DMS_KEY)) || {}; } catch(e) { return {}; }
+        }
+        function saveState(s) {
+            try { localStorage.setItem(DMS_KEY, JSON.stringify(s)); } catch(e) {}
+        }
+        // key เฉพาะวัน + ประเภทเหตุการณ์
+        function stateKey(type, id) {
+            var d = new Date(); 
+            return type + '_' + id + '_' + d.getFullYear() + '' + (d.getMonth()+1) + '' + d.getDate();
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  CHECK 1 — ลงเวลาเข้างาน
+        // ──────────────────────────────────────────────────────
+        function checkCheckin() {
+            if (!currentUser) return;
+            var SHIFTS_DEF = window._DMS_SHIFTS || {
+                morning: { label: 'กะเช้า', checkinDeadline: 8 * 60 },   // ต้องเข้าก่อน 08:00
+                night:   { label: 'กะดึก',  checkinDeadline: 20 * 60 }   // ต้องเข้าก่อน 20:00
+            };
+            var now      = new Date();
+            var nowMin   = now.getHours() * 60 + now.getMinutes();
+
+            Object.keys(SHIFTS_DEF).forEach(function(shiftId) {
+                var sh   = SHIFTS_DEF[shiftId];
+                var dead = sh.checkinDeadline;
+                // อยู่หลัง deadline + grace แล้วหรือยัง?
+                var graceMin = dead + DMS_CONFIG.checkinGrace;
+                if (nowMin < graceMin) return;           // ยังไม่ถึงเวลา
+                if (nowMin > graceMin + 90) return;      // เลยไปนานแล้ว หยุดเตือน
+
+                // ตรวจว่า checkin วันนี้แล้วหรือยัง
+                var hist = JSON.parse(localStorage.getItem('guard_history_v2') || '[]');
+                var today = now.toLocaleDateString('th-TH');
+                var hasCheckin = hist.some(function(r) {
+                    return (r.type === 'checkin') && r.date === today;
+                });
+                if (hasCheckin) return;
+
+                // ยังไม่ checkin — ตรวจ state ว่าแจ้งไปแล้วหรือยัง
+                var key      = stateKey('checkin', shiftId);
+                var state    = loadState();
+                var lastSent = state[key] || 0;
+                var diffMin  = (Date.now() - lastSent) / 60000;
+                if (lastSent && diffMin < DMS_CONFIG.reNotifyMin) return;
+
+                // ส่งแจ้งเตือน
+                var msg = '⚠️ <b>Dead Man Switch</b>\n\n'
+                    + '🔴 พนักงานยังไม่ลงเวลาเข้างาน\n\n'
+                    + '👤 ' + currentUser.full_name + ' (' + currentUser.emp_code + ')\n'
+                    + '🕐 กะ: ' + sh.label + '\n'
+                    + '⏰ เวลาปัจจุบัน: ' + _hhmm(now) + ' น.\n'
+                    + '📌 ควรเข้างานก่อน ' + _hhmm2(dead) + ' น.\n\n'
+                    + '#DeadManSwitch #ไม่ลงเวลา';
+
+                _sendAlert(msg, key, state);
+            });
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  CHECK 2 — เดินตรวจตามรอบ
+        // ──────────────────────────────────────────────────────
+        function checkPatrolRound() {
+            if (!currentUser) return;
+            var rounds = window.PATROL_ROUNDS;
+            if (!rounds || rounds.length === 0) return;
+
+            var now    = new Date();
+            var nowMin = now.getHours() * 60 + now.getMinutes();
+
+            rounds.forEach(function(round) {
+                var rMin     = round.h * 60 + round.m;
+                var diffMin  = nowMin - rMin;
+                if (diffMin < 0) diffMin += 24 * 60;
+
+                // อยู่ในช่วง grace → deadline
+                if (diffMin < DMS_CONFIG.patrolGrace) return;       // ยังไม่ถึง grace
+                if (diffMin > DMS_CONFIG.patrolGrace + 60) return;  // เลยไปนานแล้ว
+
+                // ตรวจ patrol ในรอบนี้
+                if (typeof getRoundWindow === 'function') {
+                    var win  = getRoundWindow(round);
+                    var done = typeof getPatrolledInWindow === 'function'
+                        ? getPatrolledInWindow(win.start, win.end)
+                        : {};
+                    var total = round.checkpoints.length;
+                    var doneN = Object.keys(done).length;
+                    if (doneN >= total) return;   // ตรวจครบแล้ว
+
+                    var key   = stateKey('patrol', round.h + '_' + round.m);
+                    var state = loadState();
+                    var lastSent = state[key] || 0;
+                    var sinceMin = (Date.now() - lastSent) / 60000;
+                    if (lastSent && sinceMin < DMS_CONFIG.reNotifyMin) return;
+
+                    var missing = round.checkpoints.filter(function(cp) { return !done[cp]; });
+                    var msg = '⚠️ <b>Dead Man Switch</b>\n\n'
+                        + '🔴 ยังไม่ได้เดินตรวจรอบ ' + round.label + '\n\n'
+                        + '👤 ' + currentUser.full_name + ' (' + currentUser.emp_code + ')\n'
+                        + '🕐 รอบเวลา: ' + round.label + ' (' + round.shift + ')\n'
+                        + '✅ ตรวจแล้ว: ' + doneN + '/' + total + ' จุด\n'
+                        + '❌ ยังขาด: ' + missing.join(', ') + '\n'
+                        + '⏰ เวลาปัจจุบัน: ' + _hhmm(now) + ' น.\n\n'
+                        + '#DeadManSwitch #ไม่เดินตรวจ';
+
+                    _sendAlert(msg, key, state);
+                }
+            });
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  CHECK 3 — ไม่ออกงาน (checkout) หลังครบกะ
+        // ──────────────────────────────────────────────────────
+        function checkCheckout() {
+            if (!currentUser) return;
+            var CHECKOUT_CHECK = [
+                { afterMin: 19 * 60 + 30, shift: 'กะเช้า', label: 'หลัง 19:30' },
+                { afterMin: 7  * 60 + 30, shift: 'กะดึก',  label: 'หลัง 07:30' }
+            ];
+            var now    = new Date();
+            var nowMin = now.getHours() * 60 + now.getMinutes();
+
+            CHECKOUT_CHECK.forEach(function(cfg) {
+                var diffMin = nowMin - cfg.afterMin;
+                if (diffMin < 0) diffMin += 24 * 60;
+                if (diffMin < 0 || diffMin > 60) return;  // เฉพาะช่วง 1 ชั่วโมงหลัง
+
+                var hist    = JSON.parse(localStorage.getItem('guard_history_v2') || '[]');
+                var today   = now.toLocaleDateString('th-TH');
+                var hasCheckinForShift = hist.some(function(r) {
+                    var shiftText = String((r.extra && r.extra.shift) || r.title || '');
+                    return r.type === 'checkin' && r.date === today && shiftText.indexOf(cfg.shift) !== -1;
+                });
+                if (!hasCheckinForShift) return;
+
+                var hasCheckout = hist.some(function(r) {
+                    var shiftText = String((r.extra && r.extra.shift) || r.title || '');
+                    return r.type === 'checkout' && r.date === today && shiftText.indexOf(cfg.shift) !== -1;
+                });
+                if (hasCheckout) return;
+
+                var key   = stateKey('checkout', cfg.shift);
+                var state = loadState();
+                var last  = state[key] || 0;
+                if (last && (Date.now() - last) / 60000 < DMS_CONFIG.reNotifyMin) return;
+
+                var msg = '⚠️ <b>Dead Man Switch</b>\n\n'
+                    + '🟡 พนักงานยังไม่ลงเวลาออกงาน\n\n'
+                    + '👤 ' + currentUser.full_name + ' (' + currentUser.emp_code + ')\n'
+                    + '🕐 กะ: ' + cfg.shift + '\n'
+                    + '⏰ เวลาปัจจุบัน: ' + _hhmm(now) + ' น. (' + cfg.label + ')\n\n'
+                    + '#DeadManSwitch #ไม่ลงเวลาออก';
+
+                _sendAlert(msg, key, state);
+            });
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  SEND + STATE
+        // ──────────────────────────────────────────────────────
+        function _sendAlert(msg, key, state) {
+            // Telegram (fire-and-forget)
+            var token = window.BOT_TOKEN || '';
+            var chatId = window.CHAT_ID || '';
+            if (token && chatId && !token.includes('YOUR')) {
+                fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: chatId, text: msg, parse_mode: 'HTML' })
+                }).catch(function() {});
+            }
+
+            // บันทึก state
+            state[key] = Date.now();
+            saveState(state);
+
+            // แสดง toast ในแอป
+            _showDmsToast(msg);
+
+            console.warn('[DMS] Alert sent:', msg.split('\n')[2] || msg);
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  IN-APP TOAST (แสดงการ์ดเตือนในแอป)
+        // ──────────────────────────────────────────────────────
+        function _showDmsToast(msg) {
+            var container = document.getElementById('dmsToastContainer');
+            if (!container) return;
+
+            var lines  = msg.split('\n').filter(Boolean);
+            var title  = lines[2] || 'Dead Man Switch';
+            var detail = lines.slice(3, 6).join(' | ');
+
+            var card = document.createElement('div');
+            card.style.cssText = 'animation:dmsSlideIn .3s ease; pointer-events:auto; margin-bottom:8px;';
+            card.className = 'bg-red-600 text-white rounded-2xl px-4 py-3 shadow-xl flex items-start gap-3 relative';
+            card.innerHTML =
+                '<span class="text-2xl shrink-0 mt-0.5">⚠️</span>' +
+                '<div class="flex-1 min-w-0">' +
+                    '<p class="font-black text-sm">Dead Man Switch</p>' +
+                    '<p class="text-[11px] text-red-100 mt-0.5 leading-snug">' + title + '</p>' +
+                    '<p class="text-[10px] text-red-200 mt-1 leading-snug truncate">' + detail + '</p>' +
+                '</div>' +
+                '<button onclick="this.parentElement.remove()" ' +
+                    'class="shrink-0 text-red-200 hover:text-white text-xl leading-none active:scale-90 transition ml-1">✕</button>';
+
+            container.appendChild(card);
+            setTimeout(function() { if (card.parentElement) card.remove(); }, 15000);
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  STATUS WIDGET บนหน้าแรก
+        // ──────────────────────────────────────────────────────
+        window.getDmsStatus = function() {
+            var state  = loadState();
+            var now    = Date.now();
+            var today  = new Date().toLocaleDateString('th-TH');
+
+            // checkin วันนี้?
+            var hist = JSON.parse(localStorage.getItem('guard_history_v2') || '[]');
+            var hasCheckin  = hist.some(function(r) { return r.type === 'checkin'  && r.date === today; });
+            var hasCheckout = hist.some(function(r) { return r.type === 'checkout' && r.date === today; });
+
+            // นับ alerts ที่ส่งวันนี้
+            var d = new Date();
+            var suffix = '' + d.getFullYear() + (d.getMonth()+1) + d.getDate();
+            var alertsToday = Object.keys(state).filter(function(k) { return k.endsWith(suffix) && state[k] > 0; }).length;
+
+            return { hasCheckin: hasCheckin, hasCheckout: hasCheckout, alertsToday: alertsToday };
+        };
+
+        // อัปเดต DMS status card บนหน้าแรก
+        function updateDmsCard() {
+            var card = document.getElementById('dmsStatusCard');
+            if (!card) return;
+            var s = window.getDmsStatus();
+            var html = '<div class="flex items-center justify-between mb-1">'
+                + '<p class="text-xs font-black text-gray-700 flex items-center gap-1.5"><span>🛡</span> Dead Man Switch</p>'
+                + (s.alertsToday > 0
+                    ? '<span class="text-[10px] font-black bg-red-100 text-red-700 px-2 py-0.5 rounded-lg">⚠️ ' + s.alertsToday + ' alerts</span>'
+                    : '<span class="text-[10px] font-black bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-lg">✅ ปกติ</span>')
+                + '</div>'
+                + '<div class="flex gap-2 text-[10px] font-bold">'
+                + '<span class="' + (s.hasCheckin  ? 'text-emerald-600' : 'text-red-500') + '">'  + (s.hasCheckin  ? '✅' : '⏳') + ' เข้างาน</span>'
+                + '<span class="' + (s.hasCheckout ? 'text-emerald-600' : 'text-gray-400') + '">' + (s.hasCheckout ? '✅' : '⬜') + ' ออกงาน</span>'
+                + '</div>';
+            card.innerHTML = html;
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  UTILS
+        // ──────────────────────────────────────────────────────
+        function _hhmm(date) {
+            return String(date.getHours()).padStart(2,'0') + ':' + String(date.getMinutes()).padStart(2,'0');
+        }
+        function _hhmm2(totalMin) {
+            return String(Math.floor(totalMin/60)).padStart(2,'0') + ':' + String(totalMin%60).padStart(2,'0');
+        }
+
+        // ──────────────────────────────────────────────────────
+        //  MAIN LOOP
+        // ──────────────────────────────────────────────────────
+        var _dmsTimer = null;
+
+        function runDmsChecks() {
+            if (!currentUser) return;
+            checkCheckin();
+            checkPatrolRound();
+            checkCheckout();
+            updateDmsCard();
+        }
+
+        function startDms() {
+            if (_dmsTimer) return;
+            runDmsChecks();   // run ทันที
+            _dmsTimer = setInterval(runDmsChecks, DMS_CONFIG.checkInterval * 60 * 1000);
+        }
+
+        function stopDms() {
+            if (_dmsTimer) { clearInterval(_dmsTimer); _dmsTimer = null; }
+        }
+
+        // ── expose ─────────────────────────────────────────────
+        window.startDeadManSwitch  = startDms;
+        window.stopDeadManSwitch   = stopDms;
+        window.runDmsNow           = runDmsChecks;
+
+        // ── Hook launchApp ─────────────────────────────────────
+        // launchApp เรียก startDeadManSwitch โดยตรงอยู่แล้ว
+        // เพียงแค่ฟัง visibilitychange หยุด/เริ่ม DMS
+        document.addEventListener('DOMContentLoaded', function() {
+            document.addEventListener('visibilitychange', function() {
+                if (document.hidden) stopDms(); else startDms();
+            });
+        });
+
+    })();
+    </script>
+    <!-- ════════════════════════════════════════════════
+         Admin Dashboard Engine
+         ════════════════════════════════════════════════ -->
+    <script>
+    (function() {
+        'use strict';
+
+        var _adminTimer  = null;
+        var _adminFeed   = 'all';
+        var ADMIN_POLL   = 30 * 1000;   // poll ทุก 30 วิ
+
+        // ── Supabase queries ──────────────────────────────────
+
+        async function fetchAllEmployees() {
+            return sbSelect('employees', { select: 'emp_code,full_name,role,is_active', is_active: 'eq.true' });
+        }
+
+        async function fetchTodayAttendance() {
+            var start = new Date(); start.setHours(0,0,0,0);
+            return sbSelect('attendance?recorded_at=gte.' + start.toISOString()
+                + '&select=emp_code,guard_name,type,shift,recorded_at&order=recorded_at.desc&limit=200', {});
+        }
+
+        async function fetchTodayPatrol() {
+            var start = new Date(); start.setHours(0,0,0,0);
+            return sbSelect('patrol_logs?recorded_at=gte.' + start.toISOString()
+                + '&select=emp_code,guard_name,checkpoint,recorded_at&order=recorded_at.desc&limit=500', {});
+        }
+
+        async function fetchTodayReports() {
+            var start = new Date(); start.setHours(0,0,0,0);
+            return sbSelect('incident_reports?recorded_at=gte.' + start.toISOString()
+                + '&select=id,emp_code,guard_name,incident_type,details,status,recorded_at&order=recorded_at.desc&limit=100', {});
+        }
+
+        async function fetchOpenReports() {
+            return sbSelect('incident_reports?status=eq.open&select=id,emp_code,guard_name,incident_type,details,status,recorded_at&order=recorded_at.desc&limit=50', {});
+        }
+
+        async function updateReportStatus(id, status) {
+            var r = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/incident_reports?id=eq.' + id, {
+                method: 'PATCH',
+                headers: Object.assign(sbHeaders(), { 'Prefer': 'return=minimal' }),
+                body: JSON.stringify({ status: status })
+            });
+            if (!r.ok) throw new Error('Update status failed');
+            adminRefreshAll();
+        }
+        window.adminUpdateStatus = updateReportStatus;
+
+        // ── Main Refresh ──────────────────────────────────────
+
+        window.adminRefreshAll = async function() {
+            var icon = document.getElementById('adminRefreshIcon');
+            if (icon) icon.innerText = '⏳';
+
+            try {
+                var [emps, attend, patrols, reports, openRep] = await Promise.all([
+                    fetchAllEmployees(),
+                    fetchTodayAttendance(),
+                    fetchTodayPatrol(),
+                    fetchTodayReports(),
+                    fetchOpenReports()
+                ]);
+
+                _renderKPIs(emps, attend, patrols, reports);
+                _renderStaffList(emps, attend, patrols);
+                _renderFeed(attend, patrols, reports);
+                _renderCoverage(patrols);
+                _renderOpenReports(openRep);
+
+                var el = document.getElementById('adminLastUpdate');
+                if (el) el.innerText = 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+
+            } catch(err) {
+                console.error('Admin refresh failed:', err);
+                var pill = document.getElementById('adminRealtimePill');
+                if (pill) { pill.innerText = '⚠ ออฟไลน์'; pill.className = 'text-[10px] font-black px-2.5 py-1 rounded-full bg-red-500/30 text-red-300 border border-red-500/30'; }
+            } finally {
+                if (icon) icon.innerText = '🔄';
+            }
+        };
+
+        // ── KPIs ──────────────────────────────────────────────
+
+        function _renderKPIs(emps, attend, patrols, reports) {
+            var total   = (emps   || []).length;
+            var latestByEmp = {};
+            (attend || []).forEach(function(r) {
+                var key = r.emp_code;
+                if (!key) return;
+                if (!latestByEmp[key] || new Date(r.recorded_at) > new Date(latestByEmp[key].recorded_at)) latestByEmp[key] = r;
+            });
+            var onDuty  = Object.keys(latestByEmp).filter(function(k){ return latestByEmp[k].type === 'checkin'; }).length;
+            var patCnt  = new Set((patrols || []).map(function(r){ return r.emp_code; })).size;
+            var repCnt  = (reports || []).length;
+            _setText('adminKpiTotal',   total);
+            _setText('adminKpiOnDuty',  onDuty);
+            _setText('adminKpiPatrol',  patCnt);
+            _setText('adminKpiAlert',   repCnt);
+        }
+
+        // ── Staff List ────────────────────────────────────────
+
+        function _renderStaffList(emps, attend, patrols) {
+            var el = document.getElementById('adminStaffList');
+            if (!el) return;
+
+            var dateEl = document.getElementById('adminStaffDate');
+            if (dateEl) dateEl.innerText = new Date().toLocaleDateString('th-TH', { weekday:'long', day:'numeric', month:'long' });
+
+            // index attendance by emp_code
+            var checkinMap = {}, checkoutMap = {};
+            (attend || []).forEach(function(r) {
+                if (r.type === 'checkin'  && !checkinMap[r.emp_code])  checkinMap[r.emp_code]  = r;
+                if (r.type === 'checkout' && !checkoutMap[r.emp_code]) checkoutMap[r.emp_code] = r;
+            });
+
+            // patrol count per emp
+            var patCount = {};
+            (patrols || []).forEach(function(r) { patCount[r.emp_code] = (patCount[r.emp_code] || 0) + 1; });
+
+            if (!emps || emps.length === 0) {
+                el.innerHTML = '<div class="px-5 py-8 text-center text-sm text-gray-400">ไม่พบข้อมูลพนักงาน</div>';
+                return;
+            }
+
+            el.innerHTML = (emps || []).filter(function(e){ return e.role !== 'admin'; }).map(function(emp) {
+                var ci    = checkinMap[emp.emp_code];
+                var co    = checkoutMap[emp.emp_code];
+                var pats  = patCount[emp.emp_code] || 0;
+                var ciTime = ci  ? new Date(ci.recorded_at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})  : null;
+                var coTime = co  ? new Date(co.recorded_at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})  : null;
+
+                var statusColor, statusLabel, statusDot;
+                if (ci && co)      { statusColor = 'bg-gray-100';    statusLabel = 'ออกงานแล้ว';  statusDot = 'bg-gray-400'; }
+                else if (ci)       { statusColor = 'bg-emerald-50';  statusLabel = 'กำลังทำงาน'; statusDot = 'bg-emerald-400'; }
+                else               { statusColor = 'bg-red-50';      statusLabel = 'ยังไม่มา';    statusDot = 'bg-red-400'; }
+
+                return '<div class="px-5 py-3.5 flex items-center gap-3 ' + statusColor + '">'
+                    + '<div class="relative shrink-0">'
+                    +   '<div class="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-lg font-black text-slate-600">'
+                    +     emp.full_name.charAt(0)
+                    +   '</div>'
+                    +   '<span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ' + statusDot + '"></span>'
+                    + '</div>'
+                    + '<div class="flex-1 min-w-0">'
+                    +   '<p class="text-sm font-black text-gray-800 truncate">' + emp.full_name + '</p>'
+                    +   '<p class="text-[10px] text-gray-400 font-bold">' + emp.emp_code
+                    +   (ci ? ' · เข้า ' + ciTime : '')
+                    +   (co ? ' · ออก ' + coTime  : '')
+                    +   '</p>'
+                    + '</div>'
+                    + '<div class="flex flex-col items-end gap-1 shrink-0">'
+                    +   '<span class="text-[10px] font-black px-2 py-0.5 rounded-lg '
+                    +     (ci && !co ? 'bg-emerald-100 text-emerald-700' : ci && co ? 'bg-gray-200 text-gray-500' : 'bg-red-100 text-red-600')
+                    +   '">' + statusLabel + '</span>'
+                    +   (pats > 0 ? '<span class="text-[9px] text-orange-600 font-bold">🔦 ' + pats + ' จุด</span>' : '')
+                    + '</div>'
+                    + '</div>';
+            }).join('');
+        }
+
+        // ── Activity Feed ─────────────────────────────────────
+
+        window.adminSetFeed = function(type) {
+            _adminFeed = type;
+            ['all','report'].forEach(function(t) {
+                var b = document.getElementById('adminFeed' + t.charAt(0).toUpperCase() + t.slice(1));
+                if (b) b.className = 'text-[10px] font-black px-2.5 py-1 rounded-lg ' + (t === type ? 'bg-slate-700 text-white' : 'bg-gray-100 text-gray-500');
+            });
+            _rebuildFeed();
+        };
+
+        var _lastFeedData = { attend: [], patrols: [], reports: [] };
+
+        function _renderFeed(attend, patrols, reports) {
+            _lastFeedData = { attend: attend || [], patrols: patrols || [], reports: reports || [] };
+            _rebuildFeed();
+        }
+
+        function _rebuildFeed() {
+            var el = document.getElementById('adminFeedList');
+            if (!el) return;
+
+            var items = [];
+
+            // attendance
+            if (_adminFeed === 'all') {
+                (_lastFeedData.attend || []).slice(0, 30).forEach(function(r) {
+                    items.push({ t: new Date(r.recorded_at), icon: r.type === 'checkin' ? '✅' : '🚪', name: r.guard_name, detail: (r.type === 'checkin' ? 'เข้างาน' : 'ออกงาน') + (r.shift ? ' — ' + r.shift : ''), color: 'text-emerald-600' });
+                });
+                (_lastFeedData.patrols || []).slice(0, 50).forEach(function(r) {
+                    items.push({ t: new Date(r.recorded_at), icon: '🔦', name: r.guard_name, detail: 'ตรวจจุด: ' + r.checkpoint, color: 'text-orange-600' });
+                });
+            }
+            (_lastFeedData.reports || []).forEach(function(r) {
+                items.push({ t: new Date(r.recorded_at), icon: '🚨', name: r.guard_name, detail: r.incident_type + (r.details ? ': ' + r.details.substring(0,40) : ''), color: 'text-red-600' });
+            });
+
+            items.sort(function(a,b){ return b.t - a.t; });
+            items = items.slice(0, 40);
+
+            if (items.length === 0) {
+                el.innerHTML = '<div class="px-5 py-6 text-center text-xs text-gray-400">ไม่มีเหตุการณ์</div>';
+                return;
+            }
+
+            el.innerHTML = items.map(function(item) {
+                var hhmm = item.t.toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit' });
+                return '<div class="px-5 py-3 flex items-start gap-3">'
+                    + '<div class="shrink-0 w-8 text-center text-base mt-0.5">' + item.icon + '</div>'
+                    + '<div class="flex-1 min-w-0">'
+                    +   '<p class="text-xs font-black text-gray-800 truncate">' + item.name + '</p>'
+                    +   '<p class="text-[10px] ' + item.color + ' font-bold truncate">' + item.detail + '</p>'
+                    + '</div>'
+                    + '<span class="text-[10px] text-gray-400 font-bold shrink-0">' + hhmm + '</span>'
+                    + '</div>';
+            }).join('');
+        }
+
+        // ── Coverage Grid ─────────────────────────────────────
+
+        function _renderCoverage(patrols) {
+            var el = document.getElementById('adminCoverageGrid');
+            if (!el) return;
+            var cps = window.checkpointsData || {};
+            var cpKeys = Object.keys(cps);
+            if (cpKeys.length === 0) {
+                el.innerHTML = '<div class="col-span-3 text-center text-xs text-gray-400 py-4">ยังไม่มีข้อมูลจุดตรวจ</div>';
+                return;
+            }
+
+            // นับ patrol ต่อ checkpoint วันนี้
+            var count = {};
+            (patrols || []).forEach(function(r) { count[r.checkpoint] = (count[r.checkpoint] || 0) + 1; });
+
+            el.innerHTML = cpKeys.map(function(k) {
+                var cp  = cps[k];
+                var cnt = count[k] || 0;
+                var done = cnt > 0;
+                return '<div class="flex flex-col items-center gap-1 p-2.5 rounded-2xl border text-center '
+                    + (done ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200') + '">'
+                    + '<span class="text-xl">' + (done ? '✅' : '⬜') + '</span>'
+                    + '<p class="text-[9px] font-black ' + (done ? 'text-emerald-700' : 'text-gray-400') + ' leading-tight">' + (cp.name || k) + '</p>'
+                    + (done ? '<span class="text-[8px] text-emerald-500 font-bold">' + cnt + ' ครั้ง</span>' : '')
+                    + '</div>';
+            }).join('');
+        }
+
+        // ── Open Reports ──────────────────────────────────────
+
+        function _renderOpenReports(reports) {
+            var el    = document.getElementById('adminOpenReports');
+            var badge = document.getElementById('adminOpenCount');
+            if (!el) return;
+
+            var open = (reports || []).filter(function(r) { return r.status === 'open'; });
+            if (badge) {
+                badge.innerText = open.length;
+                badge.classList.toggle('hidden', open.length === 0);
+            }
+
+            if (open.length === 0) {
+                el.innerHTML = '<div class="px-5 py-6 text-center text-xs text-gray-400">ไม่มีเหตุค้างดำเนินการ ✅</div>';
+                return;
+            }
+
+            el.innerHTML = open.map(function(r) {
+                var dt = new Date(r.recorded_at);
+                var dtStr = dt.toLocaleDateString('th-TH',{day:'2-digit',month:'short'}) + ' ' + dt.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
+                return '<div class="px-5 py-4 flex items-start gap-3">'
+                    + '<span class="text-xl shrink-0 mt-0.5">🚨</span>'
+                    + '<div class="flex-1 min-w-0">'
+                    +   '<p class="text-xs font-black text-gray-800">' + (r.incident_type || '-') + '</p>'
+                    +   '<p class="text-[10px] text-gray-500 mt-0.5 truncate">' + r.guard_name + ' · ' + dtStr + '</p>'
+                    +   (r.details ? '<p class="text-[10px] text-gray-400 mt-0.5 line-clamp-2">' + r.details + '</p>' : '')
+                    + '</div>'
+                    + '<div class="flex flex-col gap-1 shrink-0">'
+                    +   '<button onclick="adminUpdateStatus(' + r.id + ',\'in_progress\')" '
+                    +     'class="text-[9px] font-black px-2 py-1 rounded-lg bg-amber-100 text-amber-700 active:scale-90 transition">รับเรื่อง</button>'
+                    +   '<button onclick="adminUpdateStatus(' + r.id + ',\'resolved\')" '
+                    +     'class="text-[9px] font-black px-2 py-1 rounded-lg bg-emerald-100 text-emerald-700 active:scale-90 transition">แก้ไขแล้ว</button>'
+                    + '</div>'
+                    + '</div>';
+            }).join('');
+        }
+
+        // ── Util ──────────────────────────────────────────────
+
+        function _setText(id, val) {
+            var el = document.getElementById(id); if (el) el.innerText = String(val);
+        }
+
+        // ── Polling & Init ────────────────────────────────────
+
+        function startAdminPolling() {
+            if (_adminTimer) return;
+            window.adminRefreshAll();
+            _adminTimer = setInterval(window.adminRefreshAll, ADMIN_POLL);
+        }
+
+        function stopAdminPolling() {
+            if (_adminTimer) { clearInterval(_adminTimer); _adminTimer = null; }
+        }
+
+        // hook switchTab — เริ่ม/หยุด polling ตามแท็บที่เปิด
+        document.addEventListener('DOMContentLoaded', function() {
+            var _origST = window.switchTab;
+            window.switchTab = function(tab) {
+                _origST(tab);
+                if (tab === 'admin') startAdminPolling();
+                else stopAdminPolling();
+            };
+
+            // Page visibility
+            document.addEventListener('visibilitychange', function() {
+                var adminOpen = document.getElementById('adminView') && !document.getElementById('adminView').classList.contains('hidden');
+                if (document.hidden) stopAdminPolling();
+                else if (adminOpen) startAdminPolling();
+            });
+        });
+
+    })();
+    </script>
+<!-- ADMIN_PRO_EXT_START -->
+<script>
+(function() {
+  'use strict';
+
+  var AP = {
+    ready: false,
+    data: { emps: [], attend: [], patrols: [], reports: [] },
+    q: '',
+    status: 'all',
+    map: null,
+    layers: [],
+    assignKey: 'svs_admin_assignments_v1',
+    noteKey: 'svs_admin_report_notes_v1'
+  };
+
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function(c) {
+      return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c];
+    });
+  }
+
+  function roleAdmin(emp) {
+    var role = String(emp && emp.role || '').toLowerCase();
+    return role === 'admin' || role === 'administrator' || role === 'ผู้ดูแล' || role === 'หัวหน้า';
+  }
+
+  function statusLabel(s) {
+    return ({ open:'เปิดใหม่', in_progress:'รับเรื่องแล้ว', resolved:'ปิดเหตุแล้ว' })[s || 'open'] || s || '-';
+  }
+
+  function sameDay(a, b) {
+    var d = new Date(a);
+    return d.getFullYear() === b.getFullYear() && d.getMonth() === b.getMonth() && d.getDate() === b.getDate();
+  }
+
+  function setText(id, val) {
+    var el = document.getElementById(id);
+    if (el) el.innerText = String(val);
+  }
+
+  function injectUI() {
+    if (AP.ready) return;
+    var view = document.getElementById('adminView');
+    if (!view) return;
+    AP.ready = true;
+
+    view.insertAdjacentHTML('beforeend', ''
+      + '<div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">'
+      +   '<div class="px-5 py-4 border-b border-gray-50 flex items-center justify-between gap-3">'
+      +     '<h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-sky-100 text-sky-600 p-1.5 rounded-lg text-xs">⚙️</span>Admin Pro</h3>'
+      +     '<button onclick="adminRefreshAll()" class="bg-slate-800 text-white text-[10px] font-black px-3 py-2 rounded-xl active:scale-95">รีเฟรช</button>'
+      +   '</div>'
+      +   '<div class="p-4 space-y-3">'
+      +     '<input id="adminProSearch" oninput="adminProFilter()" placeholder="ค้นหา ชื่อ รหัส จุดตรวจ หรือเหตุการณ์" class="w-full border border-gray-200 bg-slate-50 rounded-2xl px-4 py-3 text-xs font-bold outline-none">'
+      +     '<div class="grid grid-cols-2 gap-2">'
+      +       '<select id="adminProStatus" onchange="adminProFilter()" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold"><option value="all">เหตุทุกสถานะ</option><option value="open">เปิดใหม่</option><option value="in_progress">รับเรื่องแล้ว</option><option value="resolved">ปิดเหตุแล้ว</option></select>'
+      +       '<button onclick="adminExportCsv(\'all\')" class="bg-emerald-600 text-white rounded-2xl px-3 py-3 text-xs font-black">Export ทั้งหมด</button>'
+      +       '<button onclick="adminExportCsv(\'attendance\')" class="bg-emerald-50 text-emerald-700 rounded-2xl px-3 py-3 text-xs font-black">ลงเวลา CSV</button>'
+      +       '<button onclick="adminExportCsv(\'patrol\')" class="bg-orange-50 text-orange-700 rounded-2xl px-3 py-3 text-xs font-black">ตรวจจุด CSV</button>'
+      +       '<button onclick="adminExportCsv(\'report\')" class="bg-red-50 text-red-700 rounded-2xl px-3 py-3 text-xs font-black">แจ้งเหตุ CSV</button>'
+      +       '<button onclick="manualSync && manualSync()" class="bg-amber-50 text-amber-700 rounded-2xl px-3 py-3 text-xs font-black">ซิงก์ออฟไลน์</button>'
+      +     '</div>'
+      +     '<div id="adminSmartAlerts" class="grid grid-cols-1 gap-2"></div>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">'
+      +   '<div class="px-5 py-4 border-b border-gray-50 flex items-center justify-between"><h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-emerald-100 text-emerald-600 p-1.5 rounded-lg text-xs">🛰️</span>แผนที่รวม</h3><button onclick="adminFitMap()" class="bg-gray-100 text-gray-600 text-[10px] font-black px-3 py-1.5 rounded-xl">จัดกลาง</button></div>'
+      +   '<div id="adminLiveMap" class="h-72 bg-slate-100"></div>'
+      + '</div>'
+      + '<div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">'
+      +   '<div class="px-5 py-4 border-b border-gray-50"><h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-violet-100 text-violet-600 p-1.5 rounded-lg text-xs">👥</span>จัดการพนักงาน</h3></div>'
+      +   '<div class="p-4 space-y-3">'
+      +     '<div class="grid grid-cols-2 gap-2">'
+      +       '<input id="adminEmpCode" placeholder="รหัส" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold uppercase">'
+      +       '<input id="adminEmpName" placeholder="ชื่อ-นามสกุล" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold">'
+      +       '<select id="adminEmpRole" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold"><option value="guard">guard</option><option value="admin">admin</option></select>'
+      +       '<label class="flex items-center gap-2 border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold"><input id="adminEmpActive" type="checkbox" checked> ใช้งาน</label>'
+      +       '<input id="adminEmpPic" placeholder="ลิงก์รูปโปรไฟล์" class="col-span-2 border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold">'
+      +       '<button onclick="adminClearEmployeeForm()" class="bg-gray-100 text-gray-600 rounded-2xl px-3 py-3 text-xs font-black">ล้าง</button>'
+      +       '<button onclick="adminSaveEmployee()" class="bg-violet-600 text-white rounded-2xl px-3 py-3 text-xs font-black">บันทึก</button>'
+      +     '</div>'
+      +     '<div id="adminEmployeeList" class="divide-y divide-gray-50 border border-gray-100 rounded-2xl overflow-hidden"></div>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">'
+      +   '<div class="px-5 py-4 border-b border-gray-50"><h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-orange-100 text-orange-600 p-1.5 rounded-lg text-xs">🧭</span>มอบหมายรอบตรวจ</h3></div>'
+      +   '<div class="p-4 space-y-3">'
+      +     '<div class="grid grid-cols-2 gap-2">'
+      +       '<select id="adminAssignEmp" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold"></select>'
+      +       '<select id="adminAssignShift" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold"><option value="morning">กะเช้า</option><option value="night">กะดึก</option></select>'
+      +       '<input id="adminAssignTime" type="time" value="08:00" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold">'
+      +       '<input id="adminAssignCp" placeholder="จุดตรวจ เช่น A,B,C" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold">'
+      +       '<button onclick="adminSaveAssignment()" class="col-span-2 bg-orange-600 text-white rounded-2xl px-3 py-3 text-xs font-black">บันทึกรอบตรวจ</button>'
+      +     '</div>'
+      +     '<div id="adminAssignmentList" class="divide-y divide-orange-50 border border-orange-100 rounded-2xl overflow-hidden"></div>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="bg-white rounded-3xl shadow-sm border border-red-100 overflow-hidden">'
+      +   '<div class="px-5 py-4 border-b border-red-50"><h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-red-100 text-red-600 p-1.5 rounded-lg text-xs">🛠️</span>ติดตามสถานะแจ้งเหตุ</h3></div>'
+      +   '<div id="adminReportDetailList" class="divide-y divide-red-50"></div>'
+      + '</div>'
+      + '<div class="bg-white rounded-3xl shadow-sm border border-amber-100 overflow-hidden">'
+      +   '<div class="px-5 py-4 border-b border-amber-50"><h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-amber-100 text-amber-600 p-1.5 rounded-lg text-xs">📦</span>สถานะ Offline Queue</h3></div>'
+      +   '<div id="adminOfflineStatus" class="p-4 text-xs text-gray-500">กำลังตรวจสอบ...</div>'
+      + '</div>');
+  }
+
+  async function sbPatch(table, query, row) {
+    var r = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/' + table + '?' + query, {
+      method: 'PATCH',
+      headers: Object.assign(sbHeaders(), { Prefer: 'return=minimal' }),
+      body: JSON.stringify(row)
+    });
+    if (!r.ok) throw new Error(await r.text());
+  }
+
+  async function sbPost(table, row) {
+    var r = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/' + table, {
+      method: 'POST',
+      headers: Object.assign(sbHeaders(), { Prefer: 'return=minimal' }),
+      body: JSON.stringify(row)
+    });
+    if (!r.ok) throw new Error(await r.text());
+  }
+
+  async function fetchRows() {
+    var start = new Date(); start.setHours(0,0,0,0);
+    return Promise.all([
+      sbSelect('employees', { select:'emp_code,full_name,profile_pic,role,is_active', order:'emp_code.asc' }),
+      sbSelect('attendance?recorded_at=gte.' + start.toISOString() + '&select=emp_code,guard_name,type,shift,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=500', {}),
+      sbSelect('patrol_logs?recorded_at=gte.' + start.toISOString() + '&select=emp_code,guard_name,checkpoint,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=800', {}),
+      sbSelect('incident_reports?select=id,emp_code,guard_name,incident_type,details,status,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=300', {})
+    ]);
+  }
+
+  window.adminRefreshAll = async function() {
+    injectUI();
+    var icon = document.getElementById('adminRefreshIcon');
+    if (icon) icon.innerText = '⏳';
+    try {
+      var rows = await fetchRows();
+      AP.data.emps = rows[0] || [];
+      AP.data.attend = rows[1] || [];
+      AP.data.patrols = rows[2] || [];
+      AP.data.reports = rows[3] || [];
+      renderAll();
+      setText('adminLastUpdate', 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit', second:'2-digit' }));
+      var pill = document.getElementById('adminRealtimePill');
+      if (pill) { pill.innerText = '● Online'; pill.className = 'text-[10px] font-black px-2.5 py-1 rounded-full bg-emerald-500/30 text-emerald-300 border border-emerald-500/30'; }
+    } catch(err) {
+      console.error('Admin Pro failed:', err);
+      var p = document.getElementById('adminRealtimePill');
+      if (p) { p.innerText = '⚠ ออฟไลน์'; p.className = 'text-[10px] font-black px-2.5 py-1 rounded-full bg-red-500/30 text-red-300 border border-red-500/30'; }
+      if (typeof showCustomAlert === 'function') showCustomAlert('Admin โหลดไม่สำเร็จ', err.message || String(err), 'error');
+    } finally {
+      if (icon) icon.innerText = '🔄';
+    }
+  };
+
+  function renderAll() {
+    renderKpi();
+    renderStaff();
+    renderFeed();
+    renderCoverage();
+    renderReports();
+    renderEmployees();
+    renderAssignments();
+    renderAlerts();
+    renderMap();
+    renderOffline();
+  }
+
+  window.adminProFilter = function() {
+    var q = document.getElementById('adminProSearch');
+    var st = document.getElementById('adminProStatus');
+    AP.q = (q && q.value || '').trim().toLowerCase();
+    AP.status = st && st.value || 'all';
+    renderStaff(); renderFeed(); renderReports(); renderEmployees();
+  };
+
+  window.adminSetFeed = function(type) {
+    window._adminFeed = type || 'all';
+    ['all','report'].forEach(function(t) {
+      var b = document.getElementById('adminFeed' + t.charAt(0).toUpperCase() + t.slice(1));
+      if (b) b.className = 'text-[10px] font-black px-2.5 py-1 rounded-lg ' + (t === window._adminFeed ? 'bg-slate-700 text-white' : 'bg-gray-100 text-gray-500');
+    });
+    renderFeed();
+  };
+
+  function filteredReports() {
+    return (AP.data.reports || []).filter(function(r) {
+      if (AP.status !== 'all' && (r.status || 'open') !== AP.status) return false;
+      if (!AP.q) return true;
+      return [r.emp_code, r.guard_name, r.incident_type, r.details, r.status].join(' ').toLowerCase().indexOf(AP.q) >= 0;
+    });
+  }
+
+  function renderKpi() {
+    var guards = (AP.data.emps || []).filter(function(e){ return !roleAdmin(e) && e.is_active !== false; });
+    var latest = {};
+    (AP.data.attend || []).forEach(function(r) {
+      if (!r.emp_code) return;
+      if (!latest[r.emp_code] || new Date(r.recorded_at) > new Date(latest[r.emp_code].recorded_at)) latest[r.emp_code] = r;
+    });
+    setText('adminKpiTotal', guards.length);
+    setText('adminKpiOnDuty', Object.keys(latest).filter(function(k){ return latest[k].type === 'checkin'; }).length);
+    setText('adminKpiPatrol', new Set((AP.data.patrols || []).map(function(r){ return r.emp_code; })).size);
+    setText('adminKpiAlert', (AP.data.reports || []).filter(function(r){ return sameDay(r.recorded_at, new Date()); }).length);
+  }
+
+  function renderStaff() {
+    var el = document.getElementById('adminStaffList'); if (!el) return;
+    var ci = {}, co = {}, pc = {};
+    (AP.data.attend || []).forEach(function(r){ if (r.type === 'checkin' && !ci[r.emp_code]) ci[r.emp_code] = r; if (r.type === 'checkout' && !co[r.emp_code]) co[r.emp_code] = r; });
+    (AP.data.patrols || []).forEach(function(r){ pc[r.emp_code] = (pc[r.emp_code] || 0) + 1; });
+    var rows = (AP.data.emps || []).filter(function(e){ return !roleAdmin(e) && e.is_active !== false; }).filter(matchEmp);
+    if (!rows.length) { el.innerHTML = '<div class="px-5 py-8 text-center text-sm text-gray-400">ไม่พบพนักงาน</div>'; return; }
+    el.innerHTML = rows.map(function(e) {
+      var active = ci[e.emp_code] && !co[e.emp_code];
+      var done = ci[e.emp_code] && co[e.emp_code];
+      var bg = done ? 'bg-gray-100' : active ? 'bg-emerald-50' : 'bg-red-50';
+      var status = done ? 'ออกงานแล้ว' : active ? 'กำลังทำงาน' : 'ยังไม่มา';
+      var inTime = ci[e.emp_code] ? new Date(ci[e.emp_code].recorded_at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}) : '-';
+      var outTime = co[e.emp_code] ? new Date(co[e.emp_code].recorded_at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}) : '-';
+      return '<div class="px-5 py-3.5 flex items-center gap-3 '+bg+'"><div class="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-lg font-black text-slate-600">'+esc((e.full_name||'?').charAt(0))+'</div><div class="flex-1 min-w-0"><p class="text-sm font-black text-gray-800 truncate">'+esc(e.full_name)+'</p><p class="text-[10px] text-gray-400 font-bold">'+esc(e.emp_code)+' · เข้า '+inTime+' · ออก '+outTime+'</p></div><div class="text-right shrink-0"><span class="text-[10px] font-black px-2 py-0.5 rounded-lg '+(active?'bg-emerald-100 text-emerald-700':'bg-gray-200 text-gray-600')+'">'+status+'</span><p class="text-[9px] text-orange-600 font-bold mt-1">🔦 '+(pc[e.emp_code]||0)+' จุด</p></div></div>';
+    }).join('');
+  }
+
+  function matchEmp(e) {
+    return !AP.q || [e.emp_code, e.full_name, e.role].join(' ').toLowerCase().indexOf(AP.q) >= 0;
+  }
+
+  function renderFeed() {
+    var el = document.getElementById('adminFeedList'); if (!el) return;
+    var items = [];
+    (AP.data.attend || []).forEach(function(r){ items.push({ t:new Date(r.recorded_at), kind:'attendance', icon:r.type === 'checkin' ? '✅' : '🚪', name:r.guard_name, detail:(r.type === 'checkin' ? 'เข้างาน' : 'ออกงาน') + (r.shift ? ' · ' + r.shift : ''), color:'text-emerald-600' }); });
+    (AP.data.patrols || []).forEach(function(r){ items.push({ t:new Date(r.recorded_at), kind:'patrol', icon:'🔦', name:r.guard_name, detail:'ตรวจจุด: ' + r.checkpoint, color:'text-orange-600' }); });
+    filteredReports().forEach(function(r){ items.push({ t:new Date(r.recorded_at), kind:'report', icon:'🚨', name:r.guard_name, detail:(r.incident_type || '-') + ' · ' + statusLabel(r.status), color:'text-red-600' }); });
+    if (window._adminFeed === 'report') items = items.filter(function(i){ return i.kind === 'report'; });
+    if (AP.q) items = items.filter(function(i){ return [i.name, i.detail, i.kind].join(' ').toLowerCase().indexOf(AP.q) >= 0; });
+    items.sort(function(a,b){ return b.t - a.t; });
+    if (!items.length) { el.innerHTML = '<div class="px-5 py-6 text-center text-xs text-gray-400">ไม่พบเหตุการณ์</div>'; return; }
+    el.innerHTML = items.slice(0, 80).map(function(i){ return '<div class="px-5 py-3 flex items-start gap-3"><div class="shrink-0 w-8 text-center text-base mt-0.5">'+i.icon+'</div><div class="flex-1 min-w-0"><p class="text-xs font-black text-gray-800 truncate">'+esc(i.name)+'</p><p class="text-[10px] '+i.color+' font-bold truncate">'+esc(i.detail)+'</p></div><span class="text-[10px] text-gray-400 font-bold shrink-0">'+i.t.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+'</span></div>'; }).join('');
+  }
+
+  function renderCoverage() {
+    var el = document.getElementById('adminCoverageGrid'); if (!el) return;
+    var cps = window.checkpointsData || {}, keys = Object.keys(cps), count = {};
+    (AP.data.patrols || []).forEach(function(r){ count[r.checkpoint] = (count[r.checkpoint] || 0) + 1; });
+    if (!keys.length) { el.innerHTML = '<div class="col-span-3 text-center text-xs text-gray-400 py-4">ยังไม่มีข้อมูลจุดตรวจ</div>'; return; }
+    el.innerHTML = keys.map(function(k){ var n = count[k] || 0, cp = cps[k]; return '<div class="flex flex-col items-center gap-1 p-2.5 rounded-2xl border text-center '+(n?'bg-emerald-50 border-emerald-200':'bg-gray-50 border-gray-200')+'"><span class="text-xl">'+(n?'✅':'⬜')+'</span><p class="text-[9px] font-black '+(n?'text-emerald-700':'text-gray-400')+' leading-tight">'+esc(cp.name || k)+'</p>'+(n?'<span class="text-[8px] text-emerald-500 font-bold">'+n+' ครั้ง</span>':'')+'</div>'; }).join('');
+  }
+
+  function notes() { try { return JSON.parse(localStorage.getItem(AP.noteKey) || '{}'); } catch(e) { return {}; } }
+  function saveNotes(v) { localStorage.setItem(AP.noteKey, JSON.stringify(v)); }
+
+  function renderReports() {
+    var openEl = document.getElementById('adminOpenReports');
+    var detailEl = document.getElementById('adminReportDetailList');
+    var reports = filteredReports();
+    var open = reports.filter(function(r){ return (r.status || 'open') !== 'resolved'; });
+    var badge = document.getElementById('adminOpenCount');
+    if (badge) { badge.innerText = open.length; badge.classList.toggle('hidden', !open.length); }
+    if (openEl) openEl.innerHTML = open.length ? open.slice(0,20).map(reportCard).join('') : '<div class="px-5 py-6 text-center text-xs text-gray-400">ไม่มีเหตุค้างดำเนินการ ✅</div>';
+    if (!detailEl) return;
+    var ns = notes();
+    detailEl.innerHTML = reports.length ? reports.slice(0,80).map(function(r) {
+      var dt = new Date(r.recorded_at).toLocaleString('th-TH');
+      var note = ns[r.id] || '';
+      return '<div class="px-5 py-4 space-y-2"><div class="flex items-start gap-3"><span class="text-xl">🚨</span><div class="flex-1 min-w-0"><p class="text-xs font-black text-gray-800">'+esc(r.incident_type || '-')+'</p><p class="text-[10px] text-gray-500">'+esc(r.guard_name)+' · '+dt+'</p><p class="text-[10px] text-gray-400 line-clamp-2">'+esc(r.details || '')+'</p>'+(note?'<p class="text-[10px] text-indigo-600 font-bold mt-1">หมายเหตุ: '+esc(note)+'</p>':'')+'</div><span class="text-[9px] font-black px-2 py-1 rounded-lg bg-slate-100 text-slate-600">'+statusLabel(r.status)+'</span></div><div class="grid grid-cols-3 gap-1"><button onclick="adminUpdateReportStatus('+r.id+',\'open\')" class="bg-red-50 text-red-700 rounded-xl py-2 text-[9px] font-black">เปิด</button><button onclick="adminUpdateReportStatus('+r.id+',\'in_progress\')" class="bg-amber-50 text-amber-700 rounded-xl py-2 text-[9px] font-black">รับเรื่อง</button><button onclick="adminUpdateReportStatus('+r.id+',\'resolved\')" class="bg-emerald-50 text-emerald-700 rounded-xl py-2 text-[9px] font-black">ปิดเหตุ</button></div><button onclick="adminAddReportNote('+r.id+')" class="w-full bg-gray-100 text-gray-600 rounded-xl py-2 text-[9px] font-black">เพิ่ม/แก้หมายเหตุ</button></div>';
+    }).join('') : '<div class="px-5 py-6 text-center text-xs text-gray-400">ไม่พบรายงาน</div>';
+  }
+
+  function reportCard(r) {
+    var dt = new Date(r.recorded_at).toLocaleString('th-TH');
+    return '<div class="px-5 py-4 flex items-start gap-3"><span class="text-xl shrink-0 mt-0.5">🚨</span><div class="flex-1 min-w-0"><p class="text-xs font-black text-gray-800">'+esc(r.incident_type || '-')+'</p><p class="text-[10px] text-gray-500 mt-0.5 truncate">'+esc(r.guard_name)+' · '+dt+'</p><p class="text-[10px] text-gray-400 mt-0.5 line-clamp-2">'+esc(r.details || '')+'</p></div><div class="flex flex-col gap-1 shrink-0"><button onclick="adminUpdateReportStatus('+r.id+',\'in_progress\')" class="text-[9px] font-black px-2 py-1 rounded-lg bg-amber-100 text-amber-700 active:scale-90 transition">รับเรื่อง</button><button onclick="adminUpdateReportStatus('+r.id+',\'resolved\')" class="text-[9px] font-black px-2 py-1 rounded-lg bg-emerald-100 text-emerald-700 active:scale-90 transition">แก้ไขแล้ว</button></div></div>';
+  }
+
+  window.adminUpdateReportStatus = window.adminUpdateStatus = async function(id, status) {
+    try { await sbPatch('incident_reports', 'id=eq.' + encodeURIComponent(id), { status: status }); await window.adminRefreshAll(); }
+    catch(err) { showCustomAlert('อัปเดตสถานะไม่ได้', err.message || String(err), 'error'); }
+  };
+
+  window.adminAddReportNote = function(id) {
+    var ns = notes();
+    var text = prompt('หมายเหตุสำหรับเหตุ #' + id, ns[id] || '');
+    if (text === null) return;
+    ns[id] = text.trim();
+    saveNotes(ns);
+    renderReports();
+  };
+
+  function renderEmployees() {
+    var el = document.getElementById('adminEmployeeList'); if (!el) return;
+    var rows = (AP.data.emps || []).filter(matchEmp);
+    var sel = document.getElementById('adminAssignEmp');
+    if (sel) sel.innerHTML = (AP.data.emps || []).filter(function(e){ return !roleAdmin(e) && e.is_active !== false; }).map(function(e){ return '<option value="'+esc(e.emp_code)+'">'+esc(e.emp_code + ' · ' + e.full_name)+'</option>'; }).join('');
+    el.innerHTML = rows.length ? rows.map(function(e){ return '<div class="px-4 py-3 flex items-center gap-3"><div class="flex-1 min-w-0"><p class="text-xs font-black text-gray-800 truncate">'+esc(e.full_name)+'</p><p class="text-[10px] text-gray-400 font-bold">'+esc(e.emp_code)+' · '+esc(e.role || 'guard')+'</p></div><span class="text-[9px] font-black px-2 py-1 rounded-lg '+(e.is_active === false?'bg-red-100 text-red-600':'bg-emerald-100 text-emerald-700')+'">'+(e.is_active === false?'ปิด':'ใช้งาน')+'</span><button onclick="adminEditEmployee(\''+esc(e.emp_code)+'\')" class="text-[9px] bg-gray-100 text-gray-600 px-2 py-1 rounded-lg font-black">แก้</button><button onclick="adminToggleEmployee(\''+esc(e.emp_code)+'\','+(e.is_active === false?'true':'false')+')" class="text-[9px] bg-slate-800 text-white px-2 py-1 rounded-lg font-black">'+(e.is_active === false?'เปิด':'ปิด')+'</button></div>'; }).join('') : '<div class="px-4 py-5 text-center text-xs text-gray-400">ไม่พบพนักงาน</div>';
+  }
+
+  window.adminClearEmployeeForm = function() {
+    ['adminEmpCode','adminEmpName','adminEmpPic'].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+    var role = document.getElementById('adminEmpRole'); if (role) role.value = 'guard';
+    var active = document.getElementById('adminEmpActive'); if (active) active.checked = true;
+  };
+
+  window.adminEditEmployee = function(code) {
+    var e = (AP.data.emps || []).find(function(x){ return String(x.emp_code) === String(code); });
+    if (!e) return;
+    document.getElementById('adminEmpCode').value = e.emp_code || '';
+    document.getElementById('adminEmpName').value = e.full_name || '';
+    document.getElementById('adminEmpRole').value = e.role || 'guard';
+    document.getElementById('adminEmpActive').checked = e.is_active !== false;
+    document.getElementById('adminEmpPic').value = e.profile_pic || '';
+  };
+
+  window.adminSaveEmployee = async function() {
+    var code = (document.getElementById('adminEmpCode').value || '').trim();
+    var name = (document.getElementById('adminEmpName').value || '').trim();
+    if (!code || !name) return showCustomAlert('ข้อมูลไม่ครบ', 'กรุณากรอกรหัสและชื่อพนักงาน', 'warning');
+    var row = {
+      emp_code: code,
+      full_name: name,
+      role: document.getElementById('adminEmpRole').value || 'guard',
+      is_active: document.getElementById('adminEmpActive').checked,
+      profile_pic: document.getElementById('adminEmpPic').value.trim() || null
+    };
+    try {
+      var exists = (AP.data.emps || []).some(function(e){ return String(e.emp_code) === String(code); });
+      if (exists) await sbPatch('employees', 'emp_code=eq.' + encodeURIComponent(code), row);
+      else await sbPost('employees', row);
+      adminClearEmployeeForm();
+      await window.adminRefreshAll();
+      showCustomAlert('สำเร็จ', 'บันทึกพนักงานแล้ว', 'success');
+    } catch(err) {
+      showCustomAlert('บันทึกพนักงานไม่ได้', err.message || String(err), 'error');
+    }
+  };
+
+  window.adminToggleEmployee = async function(code, active) {
+    try { await sbPatch('employees', 'emp_code=eq.' + encodeURIComponent(code), { is_active: !!active }); await window.adminRefreshAll(); }
+    catch(err) { showCustomAlert('เปลี่ยนสถานะไม่ได้', err.message || String(err), 'error'); }
+  };
+
+  function assignments() { try { return JSON.parse(localStorage.getItem(AP.assignKey) || '[]'); } catch(e) { return []; } }
+  function saveAssignments(a) { localStorage.setItem(AP.assignKey, JSON.stringify(a)); }
+
+  window.adminSaveAssignment = function() {
+    var emp = document.getElementById('adminAssignEmp').value;
+    var shift = document.getElementById('adminAssignShift').value;
+    var time = document.getElementById('adminAssignTime').value;
+    var cp = document.getElementById('adminAssignCp').value.trim();
+    if (!emp || !cp) return showCustomAlert('ข้อมูลไม่ครบ', 'เลือกพนักงานและระบุจุดตรวจ', 'warning');
+    var a = assignments();
+    a.push({ id: Date.now(), emp_code: emp, shift: shift, time: time, checkpoints: cp, createdAt: new Date().toISOString() });
+    saveAssignments(a);
+    document.getElementById('adminAssignCp').value = '';
+    renderAssignments();
+  };
+
+  window.adminDeleteAssignment = function(id) {
+    saveAssignments(assignments().filter(function(a){ return a.id !== id; }));
+    renderAssignments();
+  };
+
+  function renderAssignments() {
+    var el = document.getElementById('adminAssignmentList'); if (!el) return;
+    var a = assignments();
+    el.innerHTML = a.length ? a.map(function(x) {
+      var emp = (AP.data.emps || []).find(function(e){ return e.emp_code === x.emp_code; });
+      return '<div class="px-4 py-3 flex items-center gap-3"><div class="flex-1 min-w-0"><p class="text-xs font-black text-gray-800 truncate">'+esc(emp ? emp.full_name : x.emp_code)+'</p><p class="text-[10px] text-orange-600 font-bold">'+esc(x.shift)+' · '+esc(x.time)+' · '+esc(x.checkpoints)+'</p></div><button onclick="adminDeleteAssignment('+x.id+')" class="text-[9px] bg-red-50 text-red-600 px-2 py-1 rounded-lg font-black">ลบ</button></div>';
+    }).join('') : '<div class="px-4 py-5 text-center text-xs text-gray-400">ยังไม่มีการมอบหมายรอบตรวจ</div>';
+  }
+
+  function renderAlerts() {
+    var el = document.getElementById('adminSmartAlerts'); if (!el) return;
+    var alerts = [];
+    var guards = (AP.data.emps || []).filter(function(e){ return !roleAdmin(e) && e.is_active !== false; });
+    var checked = new Set((AP.data.attend || []).filter(function(r){ return r.type === 'checkin'; }).map(function(r){ return r.emp_code; }));
+    if (new Date().getHours() >= 9) {
+      var miss = guards.filter(function(g){ return !checked.has(g.emp_code); });
+      if (miss.length) alerts.push(['red', 'ยังไม่ลงเวลา', miss.length + ' คนยังไม่มี check-in วันนี้']);
+    }
+    var cpKeys = Object.keys(window.checkpointsData || {});
+    var done = new Set((AP.data.patrols || []).map(function(r){ return r.checkpoint; }));
+    var missingCp = cpKeys.filter(function(k){ return !done.has(k); });
+    if (missingCp.length) alerts.push(['amber', 'จุดตรวจยังไม่ครบ', missingCp.length + ' จุดยังไม่ถูกตรวจวันนี้']);
+    var open = (AP.data.reports || []).filter(function(r){ return (r.status || 'open') !== 'resolved'; });
+    if (open.length) alerts.push(['red', 'เหตุค้างดำเนินการ', open.length + ' รายการยังไม่ปิดเหตุ']);
+    if (!navigator.onLine) alerts.push(['amber', 'ออฟไลน์', 'เครื่องนี้กำลังใช้งานแบบออฟไลน์']);
+    if (!alerts.length) alerts.push(['green', 'ระบบปกติ', 'ยังไม่พบความผิดปกติสำคัญในวันนี้']);
+    el.innerHTML = alerts.map(function(a) {
+      var cls = a[0] === 'green' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : a[0] === 'amber' ? 'bg-amber-50 border-amber-100 text-amber-700' : 'bg-red-50 border-red-100 text-red-700';
+      return '<div class="border '+cls+' rounded-2xl px-4 py-3"><p class="text-xs font-black">'+esc(a[1])+'</p><p class="text-[10px] font-bold opacity-80 mt-0.5">'+esc(a[2])+'</p></div>';
+    }).join('');
+  }
+
+  function renderMap() {
+    var div = document.getElementById('adminLiveMap');
+    if (!div || !window.L) return;
+    if (!AP.map) {
+      AP.map = L.map('adminLiveMap').setView([guardHouseLocation.lat || 12.981353, guardHouseLocation.lng || 101.143047], 16);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(AP.map);
+    }
+    AP.layers.forEach(function(m){ try { AP.map.removeLayer(m); } catch(e) {} });
+    AP.layers = [];
+    function add(lat, lng, label, icon) {
+      if (!lat || !lng) return;
+      var marker = L.marker([lat, lng]).addTo(AP.map).bindPopup(icon + ' ' + label);
+      AP.layers.push(marker);
+    }
+    Object.keys(window.checkpointsData || {}).forEach(function(k){ var cp = window.checkpointsData[k]; add(cp.lat, cp.lng, cp.name || k, '📍'); });
+    (AP.data.attend || []).slice(0,20).forEach(function(r){ add(r.lat, r.lng, (r.guard_name || r.emp_code) + ' ' + r.type, r.type === 'checkin' ? '✅' : '🚪'); });
+    (AP.data.patrols || []).slice(0,50).forEach(function(r){ add(r.lat, r.lng, (r.guard_name || '') + ' ตรวจ ' + r.checkpoint, '🔦'); });
+    (AP.data.reports || []).slice(0,30).forEach(function(r){ add(r.lat, r.lng, (r.incident_type || 'แจ้งเหตุ') + ' ' + statusLabel(r.status), '🚨'); });
+    setTimeout(function(){ try { AP.map.invalidateSize(); } catch(e) {} }, 100);
+  }
+
+  window.adminFitMap = function() {
+    if (!AP.map || !AP.layers.length) return;
+    AP.map.fitBounds(L.featureGroup(AP.layers).getBounds().pad(0.2));
+  };
+
+  function renderOffline() {
+    var el = document.getElementById('adminOfflineStatus');
+    if (!el || !window.indexedDB) return;
+    var req = indexedDB.open('svs_offline_db', 1);
+    req.onsuccess = function(e) {
+      var db = e.target.result;
+      if (!db.objectStoreNames.contains('queue')) { el.innerHTML = 'ไม่มีรายการค้างส่ง'; return; }
+      var tx = db.transaction('queue', 'readonly');
+      var all = tx.objectStore('queue').getAll();
+      all.onsuccess = function() {
+        var items = all.result || [];
+        el.innerHTML = '<div class="flex items-center justify-between"><span class="font-black text-gray-700">รายการค้างส่ง</span><span class="font-black '+(items.length ? 'text-orange-600' : 'text-emerald-600')+'">'+items.length+'</span></div>' + (items.length ? '<button onclick="manualSync()" class="mt-3 w-full bg-orange-500 text-white rounded-2xl py-3 text-xs font-black">ซิงก์เดี๋ยวนี้</button>' : '<p class="mt-1 text-[10px] text-emerald-600 font-bold">ข้อมูลส่งครบแล้ว</p>');
+      };
+    };
+    req.onerror = function(){ el.innerHTML = 'ตรวจสอบ Offline Queue ไม่สำเร็จ'; };
+  }
+
+  function toCsv(rows) {
+    if (!rows.length) return '';
+    var keys = Object.keys(rows[0]);
+    return keys.join(',') + '\n' + rows.map(function(r) {
+      return keys.map(function(k) { return '"' + String(r[k] == null ? '' : r[k]).replace(/"/g, '""') + '"'; }).join(',');
+    }).join('\n');
+  }
+
+  function downloadCsv(name, rows) {
+    var blob = new Blob(['\ufeff' + toCsv(rows)], { type:'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  }
+
+  window.adminExportCsv = function(type) {
+    var rows = [];
+    if (type === 'attendance' || type === 'all') rows = rows.concat((AP.data.attend || []).map(function(r){ return Object.assign({ data_type:'attendance' }, r); }));
+    if (type === 'patrol' || type === 'all') rows = rows.concat((AP.data.patrols || []).map(function(r){ return Object.assign({ data_type:'patrol' }, r); }));
+    if (type === 'report' || type === 'all') rows = rows.concat(filteredReports().map(function(r){ return Object.assign({ data_type:'report' }, r); }));
+    if (!rows.length) return showCustomAlert('ไม่มีข้อมูล', 'ไม่พบข้อมูลสำหรับ export', 'warning');
+    downloadCsv('svs_' + type + '_' + new Date().toISOString().slice(0,10) + '.csv', rows);
+  };
+
+  document.addEventListener('DOMContentLoaded', injectUI);
+})();
+</script>
+<!-- ADMIN_PRO_EXT_END -->
 </body>
 </html>
