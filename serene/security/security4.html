@@ -1548,10 +1548,18 @@
         async function _dispatchSupabase(p) {
             // ── login ──────────────────────────────────────────
             if (p.action === 'login') {
-                var code = String(p.emp_code || '').replace(/^0+/, '') || p.emp_code;
-                var rows = await sbSelect('employees', { emp_code: 'eq.' + code, select: 'emp_code,full_name,profile_pic,role,is_active', is_active: 'eq.true', limit: 1 });
+                var code = String(p.emp_code || '').trim().toUpperCase();
+                var rows = await sbSelect('employees', { emp_code: 'eq.' + code, select: 'emp_code,full_name,profile_pic,role,is_active', limit: 1 });
+                if ((!rows || rows.length === 0) && /^0+\d+$/.test(code)) {
+                    var strippedCode = code.replace(/^0+/, '') || code;
+                    rows = await sbSelect('employees', { emp_code: 'eq.' + strippedCode, select: 'emp_code,full_name,profile_pic,role,is_active', limit: 1 });
+                }
                 if (!rows || rows.length === 0) return { success: false, error: 'ไม่พบรหัสพนักงาน ' + p.emp_code + ' ในระบบ' };
-                return { success: true, data: rows[0] };
+                var userRow = rows[0];
+                if (userRow.is_active === false || String(userRow.is_active).toLowerCase() === 'false') {
+                    return { success: false, error: 'บัญชีพนักงาน ' + p.emp_code + ' ถูกปิดใช้งาน' };
+                }
+                return { success: true, data: userRow };
             }
 
             // ── getConfig ──────────────────────────────────────
@@ -1582,7 +1590,7 @@
                 var photoUrl = await sbUploadPhoto(p.base64_image, 'attendance');
                 var [lat, lng] = String(p.lat_lng || '0,0').split(',').map(parseFloat);
                 var row = {
-                    emp_code:   String(p.guard_id || '').replace(/^0+/, '') || p.guard_id,
+                    emp_code:   String(p.guard_id || '').trim().toUpperCase(),
                     guard_name: p.guard_name,
                     type:       p.type,   // checkin | checkout
                     shift:      p.shift   || '',
@@ -1600,7 +1608,7 @@
                 var photoUrl = await sbUploadPhoto(p.base64_image, 'patrol');
                 var [lat, lng] = String(p.lat_lng || '0,0').split(',').map(parseFloat);
                 var row = {
-                    emp_code:    String(p.guard_id || '').replace(/^0+/, '') || p.guard_id,
+                    emp_code:    String(p.guard_id || '').trim().toUpperCase(),
                     guard_name:  p.guard_name,
                     checkpoint:  p.checkpoint,
                     lat:         lat  || null,
@@ -1617,7 +1625,7 @@
                 var photoUrl = await sbUploadPhoto(p.base64_image, 'reports');
                 var [lat, lng] = String(p.lat_lng || '0,0').split(',').map(parseFloat);
                 var row = {
-                    emp_code:      String(p.guard_id || '').replace(/^0+/, '') || p.guard_id,
+                    emp_code:      String(p.guard_id || '').trim().toUpperCase(),
                     guard_name:    p.guard_name,
                     incident_type: p.incident_type,
                     details:       p.details,
@@ -1632,7 +1640,7 @@
 
             // ── getHistory ─────────────────────────────────────
             if (p.action === 'getHistory') {
-                var code  = String(p.emp_code || '').replace(/^0+/, '') || p.emp_code;
+                var code  = String(p.emp_code || '').trim().toUpperCase();
                 var limit = p.limit || 50;
                 var type  = p.type;
 
@@ -4951,7 +4959,7 @@
         async function fetchTodayPatrolFromSupabase() {
             if (!currentUser || !window.SUPABASE_URL || SUPABASE_URL.includes('YOUR_PROJECT')) return null;
             try {
-                var code    = String(currentUser.emp_code).replace(/^0+/, '');
+                var code    = String(currentUser.emp_code || '').trim().toUpperCase();
                 var todayStart = new Date(); todayStart.setHours(0,0,0,0);
                 var filter  = 'emp_code=eq.' + encodeURIComponent(code)
                             + '&recorded_at=gte.' + todayStart.toISOString()
