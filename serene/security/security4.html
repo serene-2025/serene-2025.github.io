@@ -2786,6 +2786,7 @@
                 payload.type   = pendingActionType;
                 payload.shift  = document.getElementById('shiftTypeHidden').value;
                 titleHistory   = pendingActionType === 'checkin' ? 'เข้างาน' : 'ออกงาน';
+                extraData = { shift: payload.shift };
             } else if (pendingActionType === 'patrol') {
                 var cpSel = document.getElementById('checkpointSelect');
                 payload.action     = 'patrol';
@@ -3017,6 +3018,26 @@
             return (h >= 7 && h < 19) ? '☀️ กะเช้า (07:00–19:00)' : '🌙 กะดึก (19:00–07:00)';
         }
 
+        function normalizeShiftLabel(input) {
+            var s = String(input || '').toLowerCase();
+            if (s.includes('เช้า') || s.includes('morning')) return '☀️ กะเช้า (07:00–19:00)';
+            if (s.includes('ดึก') || s.includes('night')) return '🌙 กะดึก (19:00–07:00)';
+            return '';
+        }
+
+        function currentSelectedShiftLabel(fallbackDate) {
+            var d = fallbackDate || new Date();
+            var h = d.getHours();
+            var hidden = document.getElementById('shiftTypeHidden');
+            var fromHidden = hidden ? normalizeShiftLabel(hidden.value) : '';
+            if (fromHidden && h >= 17 && h < 20) return fromHidden;
+            return shiftLabel(h);
+        }
+
+        function notifyShiftLabel(explicitShift, fallbackDate) {
+            return normalizeShiftLabel(explicitShift) || currentSelectedShiftLabel(fallbackDate);
+        }
+
         // ส่ง text-only (HTML parse_mode)
         async function tgSendText(htmlText, replyMarkup) {
             var body = { chat_id: CHAT_ID, text: htmlText, parse_mode: 'HTML' };
@@ -3081,7 +3102,7 @@
                     '🔖 <b>กะ:</b> ' + tgEsc(shift) + '\n' +
                     '⏰ <b>เวลา:</b> ' + tgEsc(thaiDateTime()) + '\n' +
                     '📍 <b>พิกัด:</b> ' + (locStr ? tgEsc(locStr) : 'ไม่ทราบ') + '\n' +
-                    '🏢 <b>สถานะ:</b> ' + tgEsc(shiftLabel(now.getHours()));
+                    '🏢 <b>กะที่บันทึก:</b> ' + tgEsc(notifyShiftLabel(shift, now));
 
                 var markup = mapUrl ? {
                     inline_keyboard: [[
@@ -3110,7 +3131,7 @@
                     '🪪 <b>รหัส:</b> ' + tgEsc(currentUser.emp_code) + '\n' +
                     '📌 <b>จุดตรวจ:</b> ' + tgEsc(cpName) + '\n' +
                     '⏰ <b>เวลา:</b> ' + tgEsc(thaiDateTime()) + '\n' +
-                    '🏢 <b>กะ:</b> ' + tgEsc(shiftLabel(now.getHours())) + '\n' +
+                    '🏢 <b>กะ:</b> ' + tgEsc(notifyShiftLabel(null, now)) + '\n' +
                     '📍 <b>พิกัด:</b> ' + (locStr ? tgEsc(locStr) : 'ไม่ทราบ');
 
                 var markup = mapUrl ? {
@@ -3151,7 +3172,7 @@
                     '🪪 <b>รหัส:</b> ' + tgEsc(currentUser.emp_code) + '\n' +
                     '⏰ <b>เวลา:</b> ' + tgEsc(thaiDateTime()) + '\n' +
                     '📍 <b>พิกัด:</b> ' + (locStr ? tgEsc(locStr) : '<i>ไม่ทราบ</i>') + '\n' +
-                    '🏢 <b>กะ:</b> ' + tgEsc(shiftLabel(now.getHours()));
+                    '🏢 <b>กะ:</b> ' + tgEsc(notifyShiftLabel(null, now));
 
                 var buttons = [];
                 if (mapUrl) buttons.push({ text: '📍 ดูพิกัดบน Maps', url: mapUrl });
@@ -4615,12 +4636,31 @@
             // ถ้าทับกัน (17:00–20:00 = checkout เช้า + checkin ดึก)
             // ให้ priority: เช็คเอาท์ก่อน เช็คอินทีหลัง
             return {
-                shift:         inMorningCheckin ? 'morning' : (inNightCheckin ? 'night' : (inMorningCheckout ? 'morning' : (inNightCheckout ? 'night' : null))),
+                shift:         inMorningCheckin ? 'morning' : (inMorningCheckout ? 'morning' : (inNightCheckin ? 'night' : (inNightCheckout ? 'night' : null))),
                 canCheckin:    inMorningCheckin || inNightCheckin,
                 canCheckout:   inMorningCheckout || inNightCheckout,
                 inMorningCheckin, inMorningCheckout, inNightCheckin, inNightCheckout
             };
         }
+
+        function resolveShiftForAction(actionType) {
+            var det = detectShift();
+            if (_manualShift) return SHIFTS[_manualShift];
+            if (actionType === 'checkout') {
+                if (det.inMorningCheckout) return SHIFTS.morning;
+                if (det.inNightCheckout) return SHIFTS.night;
+            }
+            if (actionType === 'checkin') {
+                if (det.inMorningCheckin) return SHIFTS.morning;
+                if (det.inNightCheckin) return SHIFTS.night;
+            }
+            return det.shift ? SHIFTS[det.shift] : null;
+        }
+
+        window.resolveShiftForAction = function(actionType) {
+            var sh = resolveShiftForAction(actionType);
+            return sh ? { id: sh.id, label: sh.label, value: sh.value, workTime: sh.workTime } : null;
+        };
 
         // ─── อัปเดต UI ──────────────────────────────────────────
         window.updateCheckinUI = function() {
@@ -4751,8 +4791,11 @@
         window.checkLocationAndCapture = function(actionType) {
             if (actionType === 'checkin' || actionType === 'checkout') {
                 var det   = detectShift();
-                var sh    = _manualShift ? SHIFTS[_manualShift] : (det.shift ? SHIFTS[det.shift] : null);
+                var sh    = resolveShiftForAction(actionType);
                 var m     = nowMin();
+                var hidden = document.getElementById('shiftTypeHidden');
+                var isOT = document.getElementById('otToggle') && document.getElementById('otToggle').checked;
+                if (hidden && sh) hidden.value = sh.value + (isOT ? ' + OT' : '');
 
                 if (sh) {
                     var win    = actionType === 'checkin' ? sh.checkinWin : sh.checkoutWin;
@@ -5257,8 +5300,15 @@
 
                 var hist    = JSON.parse(localStorage.getItem('guard_history_v2') || '[]');
                 var today   = now.toLocaleDateString('th-TH');
+                var hasCheckinForShift = hist.some(function(r) {
+                    var shiftText = String((r.extra && r.extra.shift) || r.title || '');
+                    return r.type === 'checkin' && r.date === today && shiftText.indexOf(cfg.shift) !== -1;
+                });
+                if (!hasCheckinForShift) return;
+
                 var hasCheckout = hist.some(function(r) {
-                    return r.type === 'checkout' && r.date === today;
+                    var shiftText = String((r.extra && r.extra.shift) || r.title || '');
+                    return r.type === 'checkout' && r.date === today && shiftText.indexOf(cfg.shift) !== -1;
                 });
                 if (hasCheckout) return;
 
@@ -5744,5 +5794,475 @@
 
     })();
     </script>
+<!-- ADMIN_PRO_EXT_START -->
+<script>
+(function() {
+  'use strict';
+
+  var AP = {
+    ready: false,
+    data: { emps: [], attend: [], patrols: [], reports: [] },
+    q: '',
+    status: 'all',
+    map: null,
+    layers: [],
+    assignKey: 'svs_admin_assignments_v1',
+    noteKey: 'svs_admin_report_notes_v1'
+  };
+
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function(c) {
+      return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c];
+    });
+  }
+
+  function roleAdmin(emp) {
+    var role = String(emp && emp.role || '').toLowerCase();
+    return role === 'admin' || role === 'administrator' || role === 'ผู้ดูแล' || role === 'หัวหน้า';
+  }
+
+  function statusLabel(s) {
+    return ({ open:'เปิดใหม่', in_progress:'รับเรื่องแล้ว', resolved:'ปิดเหตุแล้ว' })[s || 'open'] || s || '-';
+  }
+
+  function sameDay(a, b) {
+    var d = new Date(a);
+    return d.getFullYear() === b.getFullYear() && d.getMonth() === b.getMonth() && d.getDate() === b.getDate();
+  }
+
+  function setText(id, val) {
+    var el = document.getElementById(id);
+    if (el) el.innerText = String(val);
+  }
+
+  function injectUI() {
+    if (AP.ready) return;
+    var view = document.getElementById('adminView');
+    if (!view) return;
+    AP.ready = true;
+
+    view.insertAdjacentHTML('beforeend', ''
+      + '<div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">'
+      +   '<div class="px-5 py-4 border-b border-gray-50 flex items-center justify-between gap-3">'
+      +     '<h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-sky-100 text-sky-600 p-1.5 rounded-lg text-xs">⚙️</span>Admin Pro</h3>'
+      +     '<button onclick="adminRefreshAll()" class="bg-slate-800 text-white text-[10px] font-black px-3 py-2 rounded-xl active:scale-95">รีเฟรช</button>'
+      +   '</div>'
+      +   '<div class="p-4 space-y-3">'
+      +     '<input id="adminProSearch" oninput="adminProFilter()" placeholder="ค้นหา ชื่อ รหัส จุดตรวจ หรือเหตุการณ์" class="w-full border border-gray-200 bg-slate-50 rounded-2xl px-4 py-3 text-xs font-bold outline-none">'
+      +     '<div class="grid grid-cols-2 gap-2">'
+      +       '<select id="adminProStatus" onchange="adminProFilter()" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold"><option value="all">เหตุทุกสถานะ</option><option value="open">เปิดใหม่</option><option value="in_progress">รับเรื่องแล้ว</option><option value="resolved">ปิดเหตุแล้ว</option></select>'
+      +       '<button onclick="adminExportCsv(\'all\')" class="bg-emerald-600 text-white rounded-2xl px-3 py-3 text-xs font-black">Export ทั้งหมด</button>'
+      +       '<button onclick="adminExportCsv(\'attendance\')" class="bg-emerald-50 text-emerald-700 rounded-2xl px-3 py-3 text-xs font-black">ลงเวลา CSV</button>'
+      +       '<button onclick="adminExportCsv(\'patrol\')" class="bg-orange-50 text-orange-700 rounded-2xl px-3 py-3 text-xs font-black">ตรวจจุด CSV</button>'
+      +       '<button onclick="adminExportCsv(\'report\')" class="bg-red-50 text-red-700 rounded-2xl px-3 py-3 text-xs font-black">แจ้งเหตุ CSV</button>'
+      +       '<button onclick="manualSync && manualSync()" class="bg-amber-50 text-amber-700 rounded-2xl px-3 py-3 text-xs font-black">ซิงก์ออฟไลน์</button>'
+      +     '</div>'
+      +     '<div id="adminSmartAlerts" class="grid grid-cols-1 gap-2"></div>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">'
+      +   '<div class="px-5 py-4 border-b border-gray-50 flex items-center justify-between"><h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-emerald-100 text-emerald-600 p-1.5 rounded-lg text-xs">🛰️</span>แผนที่รวม</h3><button onclick="adminFitMap()" class="bg-gray-100 text-gray-600 text-[10px] font-black px-3 py-1.5 rounded-xl">จัดกลาง</button></div>'
+      +   '<div id="adminLiveMap" class="h-72 bg-slate-100"></div>'
+      + '</div>'
+      + '<div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">'
+      +   '<div class="px-5 py-4 border-b border-gray-50"><h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-violet-100 text-violet-600 p-1.5 rounded-lg text-xs">👥</span>จัดการพนักงาน</h3></div>'
+      +   '<div class="p-4 space-y-3">'
+      +     '<div class="grid grid-cols-2 gap-2">'
+      +       '<input id="adminEmpCode" placeholder="รหัส" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold uppercase">'
+      +       '<input id="adminEmpName" placeholder="ชื่อ-นามสกุล" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold">'
+      +       '<select id="adminEmpRole" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold"><option value="guard">guard</option><option value="admin">admin</option></select>'
+      +       '<label class="flex items-center gap-2 border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold"><input id="adminEmpActive" type="checkbox" checked> ใช้งาน</label>'
+      +       '<input id="adminEmpPic" placeholder="ลิงก์รูปโปรไฟล์" class="col-span-2 border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold">'
+      +       '<button onclick="adminClearEmployeeForm()" class="bg-gray-100 text-gray-600 rounded-2xl px-3 py-3 text-xs font-black">ล้าง</button>'
+      +       '<button onclick="adminSaveEmployee()" class="bg-violet-600 text-white rounded-2xl px-3 py-3 text-xs font-black">บันทึก</button>'
+      +     '</div>'
+      +     '<div id="adminEmployeeList" class="divide-y divide-gray-50 border border-gray-100 rounded-2xl overflow-hidden"></div>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">'
+      +   '<div class="px-5 py-4 border-b border-gray-50"><h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-orange-100 text-orange-600 p-1.5 rounded-lg text-xs">🧭</span>มอบหมายรอบตรวจ</h3></div>'
+      +   '<div class="p-4 space-y-3">'
+      +     '<div class="grid grid-cols-2 gap-2">'
+      +       '<select id="adminAssignEmp" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold"></select>'
+      +       '<select id="adminAssignShift" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold"><option value="morning">กะเช้า</option><option value="night">กะดึก</option></select>'
+      +       '<input id="adminAssignTime" type="time" value="08:00" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold">'
+      +       '<input id="adminAssignCp" placeholder="จุดตรวจ เช่น A,B,C" class="border border-gray-200 bg-slate-50 rounded-2xl px-3 py-3 text-xs font-bold">'
+      +       '<button onclick="adminSaveAssignment()" class="col-span-2 bg-orange-600 text-white rounded-2xl px-3 py-3 text-xs font-black">บันทึกรอบตรวจ</button>'
+      +     '</div>'
+      +     '<div id="adminAssignmentList" class="divide-y divide-orange-50 border border-orange-100 rounded-2xl overflow-hidden"></div>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="bg-white rounded-3xl shadow-sm border border-red-100 overflow-hidden">'
+      +   '<div class="px-5 py-4 border-b border-red-50"><h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-red-100 text-red-600 p-1.5 rounded-lg text-xs">🛠️</span>ติดตามสถานะแจ้งเหตุ</h3></div>'
+      +   '<div id="adminReportDetailList" class="divide-y divide-red-50"></div>'
+      + '</div>'
+      + '<div class="bg-white rounded-3xl shadow-sm border border-amber-100 overflow-hidden">'
+      +   '<div class="px-5 py-4 border-b border-amber-50"><h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-amber-100 text-amber-600 p-1.5 rounded-lg text-xs">📦</span>สถานะ Offline Queue</h3></div>'
+      +   '<div id="adminOfflineStatus" class="p-4 text-xs text-gray-500">กำลังตรวจสอบ...</div>'
+      + '</div>');
+  }
+
+  async function sbPatch(table, query, row) {
+    var r = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/' + table + '?' + query, {
+      method: 'PATCH',
+      headers: Object.assign(sbHeaders(), { Prefer: 'return=minimal' }),
+      body: JSON.stringify(row)
+    });
+    if (!r.ok) throw new Error(await r.text());
+  }
+
+  async function sbPost(table, row) {
+    var r = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/' + table, {
+      method: 'POST',
+      headers: Object.assign(sbHeaders(), { Prefer: 'return=minimal' }),
+      body: JSON.stringify(row)
+    });
+    if (!r.ok) throw new Error(await r.text());
+  }
+
+  async function fetchRows() {
+    var start = new Date(); start.setHours(0,0,0,0);
+    return Promise.all([
+      sbSelect('employees', { select:'emp_code,full_name,profile_pic,role,is_active', order:'emp_code.asc' }),
+      sbSelect('attendance?recorded_at=gte.' + start.toISOString() + '&select=emp_code,guard_name,type,shift,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=500', {}),
+      sbSelect('patrol_logs?recorded_at=gte.' + start.toISOString() + '&select=emp_code,guard_name,checkpoint,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=800', {}),
+      sbSelect('incident_reports?select=id,emp_code,guard_name,incident_type,details,status,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=300', {})
+    ]);
+  }
+
+  window.adminRefreshAll = async function() {
+    injectUI();
+    var icon = document.getElementById('adminRefreshIcon');
+    if (icon) icon.innerText = '⏳';
+    try {
+      var rows = await fetchRows();
+      AP.data.emps = rows[0] || [];
+      AP.data.attend = rows[1] || [];
+      AP.data.patrols = rows[2] || [];
+      AP.data.reports = rows[3] || [];
+      renderAll();
+      setText('adminLastUpdate', 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit', second:'2-digit' }));
+      var pill = document.getElementById('adminRealtimePill');
+      if (pill) { pill.innerText = '● Online'; pill.className = 'text-[10px] font-black px-2.5 py-1 rounded-full bg-emerald-500/30 text-emerald-300 border border-emerald-500/30'; }
+    } catch(err) {
+      console.error('Admin Pro failed:', err);
+      var p = document.getElementById('adminRealtimePill');
+      if (p) { p.innerText = '⚠ ออฟไลน์'; p.className = 'text-[10px] font-black px-2.5 py-1 rounded-full bg-red-500/30 text-red-300 border border-red-500/30'; }
+      if (typeof showCustomAlert === 'function') showCustomAlert('Admin โหลดไม่สำเร็จ', err.message || String(err), 'error');
+    } finally {
+      if (icon) icon.innerText = '🔄';
+    }
+  };
+
+  function renderAll() {
+    renderKpi();
+    renderStaff();
+    renderFeed();
+    renderCoverage();
+    renderReports();
+    renderEmployees();
+    renderAssignments();
+    renderAlerts();
+    renderMap();
+    renderOffline();
+  }
+
+  window.adminProFilter = function() {
+    var q = document.getElementById('adminProSearch');
+    var st = document.getElementById('adminProStatus');
+    AP.q = (q && q.value || '').trim().toLowerCase();
+    AP.status = st && st.value || 'all';
+    renderStaff(); renderFeed(); renderReports(); renderEmployees();
+  };
+
+  window.adminSetFeed = function(type) {
+    window._adminFeed = type || 'all';
+    ['all','report'].forEach(function(t) {
+      var b = document.getElementById('adminFeed' + t.charAt(0).toUpperCase() + t.slice(1));
+      if (b) b.className = 'text-[10px] font-black px-2.5 py-1 rounded-lg ' + (t === window._adminFeed ? 'bg-slate-700 text-white' : 'bg-gray-100 text-gray-500');
+    });
+    renderFeed();
+  };
+
+  function filteredReports() {
+    return (AP.data.reports || []).filter(function(r) {
+      if (AP.status !== 'all' && (r.status || 'open') !== AP.status) return false;
+      if (!AP.q) return true;
+      return [r.emp_code, r.guard_name, r.incident_type, r.details, r.status].join(' ').toLowerCase().indexOf(AP.q) >= 0;
+    });
+  }
+
+  function renderKpi() {
+    var guards = (AP.data.emps || []).filter(function(e){ return !roleAdmin(e) && e.is_active !== false; });
+    var latest = {};
+    (AP.data.attend || []).forEach(function(r) {
+      if (!r.emp_code) return;
+      if (!latest[r.emp_code] || new Date(r.recorded_at) > new Date(latest[r.emp_code].recorded_at)) latest[r.emp_code] = r;
+    });
+    setText('adminKpiTotal', guards.length);
+    setText('adminKpiOnDuty', Object.keys(latest).filter(function(k){ return latest[k].type === 'checkin'; }).length);
+    setText('adminKpiPatrol', new Set((AP.data.patrols || []).map(function(r){ return r.emp_code; })).size);
+    setText('adminKpiAlert', (AP.data.reports || []).filter(function(r){ return sameDay(r.recorded_at, new Date()); }).length);
+  }
+
+  function renderStaff() {
+    var el = document.getElementById('adminStaffList'); if (!el) return;
+    var ci = {}, co = {}, pc = {};
+    (AP.data.attend || []).forEach(function(r){ if (r.type === 'checkin' && !ci[r.emp_code]) ci[r.emp_code] = r; if (r.type === 'checkout' && !co[r.emp_code]) co[r.emp_code] = r; });
+    (AP.data.patrols || []).forEach(function(r){ pc[r.emp_code] = (pc[r.emp_code] || 0) + 1; });
+    var rows = (AP.data.emps || []).filter(function(e){ return !roleAdmin(e) && e.is_active !== false; }).filter(matchEmp);
+    if (!rows.length) { el.innerHTML = '<div class="px-5 py-8 text-center text-sm text-gray-400">ไม่พบพนักงาน</div>'; return; }
+    el.innerHTML = rows.map(function(e) {
+      var active = ci[e.emp_code] && !co[e.emp_code];
+      var done = ci[e.emp_code] && co[e.emp_code];
+      var bg = done ? 'bg-gray-100' : active ? 'bg-emerald-50' : 'bg-red-50';
+      var status = done ? 'ออกงานแล้ว' : active ? 'กำลังทำงาน' : 'ยังไม่มา';
+      var inTime = ci[e.emp_code] ? new Date(ci[e.emp_code].recorded_at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}) : '-';
+      var outTime = co[e.emp_code] ? new Date(co[e.emp_code].recorded_at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}) : '-';
+      return '<div class="px-5 py-3.5 flex items-center gap-3 '+bg+'"><div class="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-lg font-black text-slate-600">'+esc((e.full_name||'?').charAt(0))+'</div><div class="flex-1 min-w-0"><p class="text-sm font-black text-gray-800 truncate">'+esc(e.full_name)+'</p><p class="text-[10px] text-gray-400 font-bold">'+esc(e.emp_code)+' · เข้า '+inTime+' · ออก '+outTime+'</p></div><div class="text-right shrink-0"><span class="text-[10px] font-black px-2 py-0.5 rounded-lg '+(active?'bg-emerald-100 text-emerald-700':'bg-gray-200 text-gray-600')+'">'+status+'</span><p class="text-[9px] text-orange-600 font-bold mt-1">🔦 '+(pc[e.emp_code]||0)+' จุด</p></div></div>';
+    }).join('');
+  }
+
+  function matchEmp(e) {
+    return !AP.q || [e.emp_code, e.full_name, e.role].join(' ').toLowerCase().indexOf(AP.q) >= 0;
+  }
+
+  function renderFeed() {
+    var el = document.getElementById('adminFeedList'); if (!el) return;
+    var items = [];
+    (AP.data.attend || []).forEach(function(r){ items.push({ t:new Date(r.recorded_at), kind:'attendance', icon:r.type === 'checkin' ? '✅' : '🚪', name:r.guard_name, detail:(r.type === 'checkin' ? 'เข้างาน' : 'ออกงาน') + (r.shift ? ' · ' + r.shift : ''), color:'text-emerald-600' }); });
+    (AP.data.patrols || []).forEach(function(r){ items.push({ t:new Date(r.recorded_at), kind:'patrol', icon:'🔦', name:r.guard_name, detail:'ตรวจจุด: ' + r.checkpoint, color:'text-orange-600' }); });
+    filteredReports().forEach(function(r){ items.push({ t:new Date(r.recorded_at), kind:'report', icon:'🚨', name:r.guard_name, detail:(r.incident_type || '-') + ' · ' + statusLabel(r.status), color:'text-red-600' }); });
+    if (window._adminFeed === 'report') items = items.filter(function(i){ return i.kind === 'report'; });
+    if (AP.q) items = items.filter(function(i){ return [i.name, i.detail, i.kind].join(' ').toLowerCase().indexOf(AP.q) >= 0; });
+    items.sort(function(a,b){ return b.t - a.t; });
+    if (!items.length) { el.innerHTML = '<div class="px-5 py-6 text-center text-xs text-gray-400">ไม่พบเหตุการณ์</div>'; return; }
+    el.innerHTML = items.slice(0, 80).map(function(i){ return '<div class="px-5 py-3 flex items-start gap-3"><div class="shrink-0 w-8 text-center text-base mt-0.5">'+i.icon+'</div><div class="flex-1 min-w-0"><p class="text-xs font-black text-gray-800 truncate">'+esc(i.name)+'</p><p class="text-[10px] '+i.color+' font-bold truncate">'+esc(i.detail)+'</p></div><span class="text-[10px] text-gray-400 font-bold shrink-0">'+i.t.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+'</span></div>'; }).join('');
+  }
+
+  function renderCoverage() {
+    var el = document.getElementById('adminCoverageGrid'); if (!el) return;
+    var cps = window.checkpointsData || {}, keys = Object.keys(cps), count = {};
+    (AP.data.patrols || []).forEach(function(r){ count[r.checkpoint] = (count[r.checkpoint] || 0) + 1; });
+    if (!keys.length) { el.innerHTML = '<div class="col-span-3 text-center text-xs text-gray-400 py-4">ยังไม่มีข้อมูลจุดตรวจ</div>'; return; }
+    el.innerHTML = keys.map(function(k){ var n = count[k] || 0, cp = cps[k]; return '<div class="flex flex-col items-center gap-1 p-2.5 rounded-2xl border text-center '+(n?'bg-emerald-50 border-emerald-200':'bg-gray-50 border-gray-200')+'"><span class="text-xl">'+(n?'✅':'⬜')+'</span><p class="text-[9px] font-black '+(n?'text-emerald-700':'text-gray-400')+' leading-tight">'+esc(cp.name || k)+'</p>'+(n?'<span class="text-[8px] text-emerald-500 font-bold">'+n+' ครั้ง</span>':'')+'</div>'; }).join('');
+  }
+
+  function notes() { try { return JSON.parse(localStorage.getItem(AP.noteKey) || '{}'); } catch(e) { return {}; } }
+  function saveNotes(v) { localStorage.setItem(AP.noteKey, JSON.stringify(v)); }
+
+  function renderReports() {
+    var openEl = document.getElementById('adminOpenReports');
+    var detailEl = document.getElementById('adminReportDetailList');
+    var reports = filteredReports();
+    var open = reports.filter(function(r){ return (r.status || 'open') !== 'resolved'; });
+    var badge = document.getElementById('adminOpenCount');
+    if (badge) { badge.innerText = open.length; badge.classList.toggle('hidden', !open.length); }
+    if (openEl) openEl.innerHTML = open.length ? open.slice(0,20).map(reportCard).join('') : '<div class="px-5 py-6 text-center text-xs text-gray-400">ไม่มีเหตุค้างดำเนินการ ✅</div>';
+    if (!detailEl) return;
+    var ns = notes();
+    detailEl.innerHTML = reports.length ? reports.slice(0,80).map(function(r) {
+      var dt = new Date(r.recorded_at).toLocaleString('th-TH');
+      var note = ns[r.id] || '';
+      return '<div class="px-5 py-4 space-y-2"><div class="flex items-start gap-3"><span class="text-xl">🚨</span><div class="flex-1 min-w-0"><p class="text-xs font-black text-gray-800">'+esc(r.incident_type || '-')+'</p><p class="text-[10px] text-gray-500">'+esc(r.guard_name)+' · '+dt+'</p><p class="text-[10px] text-gray-400 line-clamp-2">'+esc(r.details || '')+'</p>'+(note?'<p class="text-[10px] text-indigo-600 font-bold mt-1">หมายเหตุ: '+esc(note)+'</p>':'')+'</div><span class="text-[9px] font-black px-2 py-1 rounded-lg bg-slate-100 text-slate-600">'+statusLabel(r.status)+'</span></div><div class="grid grid-cols-3 gap-1"><button onclick="adminUpdateReportStatus('+r.id+',\'open\')" class="bg-red-50 text-red-700 rounded-xl py-2 text-[9px] font-black">เปิด</button><button onclick="adminUpdateReportStatus('+r.id+',\'in_progress\')" class="bg-amber-50 text-amber-700 rounded-xl py-2 text-[9px] font-black">รับเรื่อง</button><button onclick="adminUpdateReportStatus('+r.id+',\'resolved\')" class="bg-emerald-50 text-emerald-700 rounded-xl py-2 text-[9px] font-black">ปิดเหตุ</button></div><button onclick="adminAddReportNote('+r.id+')" class="w-full bg-gray-100 text-gray-600 rounded-xl py-2 text-[9px] font-black">เพิ่ม/แก้หมายเหตุ</button></div>';
+    }).join('') : '<div class="px-5 py-6 text-center text-xs text-gray-400">ไม่พบรายงาน</div>';
+  }
+
+  function reportCard(r) {
+    var dt = new Date(r.recorded_at).toLocaleString('th-TH');
+    return '<div class="px-5 py-4 flex items-start gap-3"><span class="text-xl shrink-0 mt-0.5">🚨</span><div class="flex-1 min-w-0"><p class="text-xs font-black text-gray-800">'+esc(r.incident_type || '-')+'</p><p class="text-[10px] text-gray-500 mt-0.5 truncate">'+esc(r.guard_name)+' · '+dt+'</p><p class="text-[10px] text-gray-400 mt-0.5 line-clamp-2">'+esc(r.details || '')+'</p></div><div class="flex flex-col gap-1 shrink-0"><button onclick="adminUpdateReportStatus('+r.id+',\'in_progress\')" class="text-[9px] font-black px-2 py-1 rounded-lg bg-amber-100 text-amber-700 active:scale-90 transition">รับเรื่อง</button><button onclick="adminUpdateReportStatus('+r.id+',\'resolved\')" class="text-[9px] font-black px-2 py-1 rounded-lg bg-emerald-100 text-emerald-700 active:scale-90 transition">แก้ไขแล้ว</button></div></div>';
+  }
+
+  window.adminUpdateReportStatus = window.adminUpdateStatus = async function(id, status) {
+    try { await sbPatch('incident_reports', 'id=eq.' + encodeURIComponent(id), { status: status }); await window.adminRefreshAll(); }
+    catch(err) { showCustomAlert('อัปเดตสถานะไม่ได้', err.message || String(err), 'error'); }
+  };
+
+  window.adminAddReportNote = function(id) {
+    var ns = notes();
+    var text = prompt('หมายเหตุสำหรับเหตุ #' + id, ns[id] || '');
+    if (text === null) return;
+    ns[id] = text.trim();
+    saveNotes(ns);
+    renderReports();
+  };
+
+  function renderEmployees() {
+    var el = document.getElementById('adminEmployeeList'); if (!el) return;
+    var rows = (AP.data.emps || []).filter(matchEmp);
+    var sel = document.getElementById('adminAssignEmp');
+    if (sel) sel.innerHTML = (AP.data.emps || []).filter(function(e){ return !roleAdmin(e) && e.is_active !== false; }).map(function(e){ return '<option value="'+esc(e.emp_code)+'">'+esc(e.emp_code + ' · ' + e.full_name)+'</option>'; }).join('');
+    el.innerHTML = rows.length ? rows.map(function(e){ return '<div class="px-4 py-3 flex items-center gap-3"><div class="flex-1 min-w-0"><p class="text-xs font-black text-gray-800 truncate">'+esc(e.full_name)+'</p><p class="text-[10px] text-gray-400 font-bold">'+esc(e.emp_code)+' · '+esc(e.role || 'guard')+'</p></div><span class="text-[9px] font-black px-2 py-1 rounded-lg '+(e.is_active === false?'bg-red-100 text-red-600':'bg-emerald-100 text-emerald-700')+'">'+(e.is_active === false?'ปิด':'ใช้งาน')+'</span><button onclick="adminEditEmployee(\''+esc(e.emp_code)+'\')" class="text-[9px] bg-gray-100 text-gray-600 px-2 py-1 rounded-lg font-black">แก้</button><button onclick="adminToggleEmployee(\''+esc(e.emp_code)+'\','+(e.is_active === false?'true':'false')+')" class="text-[9px] bg-slate-800 text-white px-2 py-1 rounded-lg font-black">'+(e.is_active === false?'เปิด':'ปิด')+'</button></div>'; }).join('') : '<div class="px-4 py-5 text-center text-xs text-gray-400">ไม่พบพนักงาน</div>';
+  }
+
+  window.adminClearEmployeeForm = function() {
+    ['adminEmpCode','adminEmpName','adminEmpPic'].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+    var role = document.getElementById('adminEmpRole'); if (role) role.value = 'guard';
+    var active = document.getElementById('adminEmpActive'); if (active) active.checked = true;
+  };
+
+  window.adminEditEmployee = function(code) {
+    var e = (AP.data.emps || []).find(function(x){ return String(x.emp_code) === String(code); });
+    if (!e) return;
+    document.getElementById('adminEmpCode').value = e.emp_code || '';
+    document.getElementById('adminEmpName').value = e.full_name || '';
+    document.getElementById('adminEmpRole').value = e.role || 'guard';
+    document.getElementById('adminEmpActive').checked = e.is_active !== false;
+    document.getElementById('adminEmpPic').value = e.profile_pic || '';
+  };
+
+  window.adminSaveEmployee = async function() {
+    var code = (document.getElementById('adminEmpCode').value || '').trim();
+    var name = (document.getElementById('adminEmpName').value || '').trim();
+    if (!code || !name) return showCustomAlert('ข้อมูลไม่ครบ', 'กรุณากรอกรหัสและชื่อพนักงาน', 'warning');
+    var row = {
+      emp_code: code,
+      full_name: name,
+      role: document.getElementById('adminEmpRole').value || 'guard',
+      is_active: document.getElementById('adminEmpActive').checked,
+      profile_pic: document.getElementById('adminEmpPic').value.trim() || null
+    };
+    try {
+      var exists = (AP.data.emps || []).some(function(e){ return String(e.emp_code) === String(code); });
+      if (exists) await sbPatch('employees', 'emp_code=eq.' + encodeURIComponent(code), row);
+      else await sbPost('employees', row);
+      adminClearEmployeeForm();
+      await window.adminRefreshAll();
+      showCustomAlert('สำเร็จ', 'บันทึกพนักงานแล้ว', 'success');
+    } catch(err) {
+      showCustomAlert('บันทึกพนักงานไม่ได้', err.message || String(err), 'error');
+    }
+  };
+
+  window.adminToggleEmployee = async function(code, active) {
+    try { await sbPatch('employees', 'emp_code=eq.' + encodeURIComponent(code), { is_active: !!active }); await window.adminRefreshAll(); }
+    catch(err) { showCustomAlert('เปลี่ยนสถานะไม่ได้', err.message || String(err), 'error'); }
+  };
+
+  function assignments() { try { return JSON.parse(localStorage.getItem(AP.assignKey) || '[]'); } catch(e) { return []; } }
+  function saveAssignments(a) { localStorage.setItem(AP.assignKey, JSON.stringify(a)); }
+
+  window.adminSaveAssignment = function() {
+    var emp = document.getElementById('adminAssignEmp').value;
+    var shift = document.getElementById('adminAssignShift').value;
+    var time = document.getElementById('adminAssignTime').value;
+    var cp = document.getElementById('adminAssignCp').value.trim();
+    if (!emp || !cp) return showCustomAlert('ข้อมูลไม่ครบ', 'เลือกพนักงานและระบุจุดตรวจ', 'warning');
+    var a = assignments();
+    a.push({ id: Date.now(), emp_code: emp, shift: shift, time: time, checkpoints: cp, createdAt: new Date().toISOString() });
+    saveAssignments(a);
+    document.getElementById('adminAssignCp').value = '';
+    renderAssignments();
+  };
+
+  window.adminDeleteAssignment = function(id) {
+    saveAssignments(assignments().filter(function(a){ return a.id !== id; }));
+    renderAssignments();
+  };
+
+  function renderAssignments() {
+    var el = document.getElementById('adminAssignmentList'); if (!el) return;
+    var a = assignments();
+    el.innerHTML = a.length ? a.map(function(x) {
+      var emp = (AP.data.emps || []).find(function(e){ return e.emp_code === x.emp_code; });
+      return '<div class="px-4 py-3 flex items-center gap-3"><div class="flex-1 min-w-0"><p class="text-xs font-black text-gray-800 truncate">'+esc(emp ? emp.full_name : x.emp_code)+'</p><p class="text-[10px] text-orange-600 font-bold">'+esc(x.shift)+' · '+esc(x.time)+' · '+esc(x.checkpoints)+'</p></div><button onclick="adminDeleteAssignment('+x.id+')" class="text-[9px] bg-red-50 text-red-600 px-2 py-1 rounded-lg font-black">ลบ</button></div>';
+    }).join('') : '<div class="px-4 py-5 text-center text-xs text-gray-400">ยังไม่มีการมอบหมายรอบตรวจ</div>';
+  }
+
+  function renderAlerts() {
+    var el = document.getElementById('adminSmartAlerts'); if (!el) return;
+    var alerts = [];
+    var guards = (AP.data.emps || []).filter(function(e){ return !roleAdmin(e) && e.is_active !== false; });
+    var checked = new Set((AP.data.attend || []).filter(function(r){ return r.type === 'checkin'; }).map(function(r){ return r.emp_code; }));
+    if (new Date().getHours() >= 9) {
+      var miss = guards.filter(function(g){ return !checked.has(g.emp_code); });
+      if (miss.length) alerts.push(['red', 'ยังไม่ลงเวลา', miss.length + ' คนยังไม่มี check-in วันนี้']);
+    }
+    var cpKeys = Object.keys(window.checkpointsData || {});
+    var done = new Set((AP.data.patrols || []).map(function(r){ return r.checkpoint; }));
+    var missingCp = cpKeys.filter(function(k){ return !done.has(k); });
+    if (missingCp.length) alerts.push(['amber', 'จุดตรวจยังไม่ครบ', missingCp.length + ' จุดยังไม่ถูกตรวจวันนี้']);
+    var open = (AP.data.reports || []).filter(function(r){ return (r.status || 'open') !== 'resolved'; });
+    if (open.length) alerts.push(['red', 'เหตุค้างดำเนินการ', open.length + ' รายการยังไม่ปิดเหตุ']);
+    if (!navigator.onLine) alerts.push(['amber', 'ออฟไลน์', 'เครื่องนี้กำลังใช้งานแบบออฟไลน์']);
+    if (!alerts.length) alerts.push(['green', 'ระบบปกติ', 'ยังไม่พบความผิดปกติสำคัญในวันนี้']);
+    el.innerHTML = alerts.map(function(a) {
+      var cls = a[0] === 'green' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : a[0] === 'amber' ? 'bg-amber-50 border-amber-100 text-amber-700' : 'bg-red-50 border-red-100 text-red-700';
+      return '<div class="border '+cls+' rounded-2xl px-4 py-3"><p class="text-xs font-black">'+esc(a[1])+'</p><p class="text-[10px] font-bold opacity-80 mt-0.5">'+esc(a[2])+'</p></div>';
+    }).join('');
+  }
+
+  function renderMap() {
+    var div = document.getElementById('adminLiveMap');
+    if (!div || !window.L) return;
+    if (!AP.map) {
+      AP.map = L.map('adminLiveMap').setView([guardHouseLocation.lat || 12.981353, guardHouseLocation.lng || 101.143047], 16);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(AP.map);
+    }
+    AP.layers.forEach(function(m){ try { AP.map.removeLayer(m); } catch(e) {} });
+    AP.layers = [];
+    function add(lat, lng, label, icon) {
+      if (!lat || !lng) return;
+      var marker = L.marker([lat, lng]).addTo(AP.map).bindPopup(icon + ' ' + label);
+      AP.layers.push(marker);
+    }
+    Object.keys(window.checkpointsData || {}).forEach(function(k){ var cp = window.checkpointsData[k]; add(cp.lat, cp.lng, cp.name || k, '📍'); });
+    (AP.data.attend || []).slice(0,20).forEach(function(r){ add(r.lat, r.lng, (r.guard_name || r.emp_code) + ' ' + r.type, r.type === 'checkin' ? '✅' : '🚪'); });
+    (AP.data.patrols || []).slice(0,50).forEach(function(r){ add(r.lat, r.lng, (r.guard_name || '') + ' ตรวจ ' + r.checkpoint, '🔦'); });
+    (AP.data.reports || []).slice(0,30).forEach(function(r){ add(r.lat, r.lng, (r.incident_type || 'แจ้งเหตุ') + ' ' + statusLabel(r.status), '🚨'); });
+    setTimeout(function(){ try { AP.map.invalidateSize(); } catch(e) {} }, 100);
+  }
+
+  window.adminFitMap = function() {
+    if (!AP.map || !AP.layers.length) return;
+    AP.map.fitBounds(L.featureGroup(AP.layers).getBounds().pad(0.2));
+  };
+
+  function renderOffline() {
+    var el = document.getElementById('adminOfflineStatus');
+    if (!el || !window.indexedDB) return;
+    var req = indexedDB.open('svs_offline_db', 1);
+    req.onsuccess = function(e) {
+      var db = e.target.result;
+      if (!db.objectStoreNames.contains('queue')) { el.innerHTML = 'ไม่มีรายการค้างส่ง'; return; }
+      var tx = db.transaction('queue', 'readonly');
+      var all = tx.objectStore('queue').getAll();
+      all.onsuccess = function() {
+        var items = all.result || [];
+        el.innerHTML = '<div class="flex items-center justify-between"><span class="font-black text-gray-700">รายการค้างส่ง</span><span class="font-black '+(items.length ? 'text-orange-600' : 'text-emerald-600')+'">'+items.length+'</span></div>' + (items.length ? '<button onclick="manualSync()" class="mt-3 w-full bg-orange-500 text-white rounded-2xl py-3 text-xs font-black">ซิงก์เดี๋ยวนี้</button>' : '<p class="mt-1 text-[10px] text-emerald-600 font-bold">ข้อมูลส่งครบแล้ว</p>');
+      };
+    };
+    req.onerror = function(){ el.innerHTML = 'ตรวจสอบ Offline Queue ไม่สำเร็จ'; };
+  }
+
+  function toCsv(rows) {
+    if (!rows.length) return '';
+    var keys = Object.keys(rows[0]);
+    return keys.join(',') + '\n' + rows.map(function(r) {
+      return keys.map(function(k) { return '"' + String(r[k] == null ? '' : r[k]).replace(/"/g, '""') + '"'; }).join(',');
+    }).join('\n');
+  }
+
+  function downloadCsv(name, rows) {
+    var blob = new Blob(['\ufeff' + toCsv(rows)], { type:'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  }
+
+  window.adminExportCsv = function(type) {
+    var rows = [];
+    if (type === 'attendance' || type === 'all') rows = rows.concat((AP.data.attend || []).map(function(r){ return Object.assign({ data_type:'attendance' }, r); }));
+    if (type === 'patrol' || type === 'all') rows = rows.concat((AP.data.patrols || []).map(function(r){ return Object.assign({ data_type:'patrol' }, r); }));
+    if (type === 'report' || type === 'all') rows = rows.concat(filteredReports().map(function(r){ return Object.assign({ data_type:'report' }, r); }));
+    if (!rows.length) return showCustomAlert('ไม่มีข้อมูล', 'ไม่พบข้อมูลสำหรับ export', 'warning');
+    downloadCsv('svs_' + type + '_' + new Date().toISOString().slice(0,10) + '.csv', rows);
+  };
+
+  document.addEventListener('DOMContentLoaded', injectUI);
+})();
+</script>
+<!-- ADMIN_PRO_EXT_END -->
 </body>
 </html>
