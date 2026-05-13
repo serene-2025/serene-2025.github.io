@@ -411,7 +411,7 @@
                         <h3 class="text-sm font-black text-gray-800 flex items-center gap-2">
                             <span class="bg-red-100 text-red-600 p-1.5 rounded-lg text-xs">🛡</span> ระบบตรวจสอบอัตโนมัติ
                         </h3>
-                        <button onclick="runDmsNow && runDmsNow()"
+                        <button onclick="window.runDmsNow && window.runDmsNow()"
                             class="text-[10px] font-bold text-gray-400 hover:text-gray-600 bg-gray-50 px-2.5 py-1.5 rounded-xl active:scale-90 transition border border-gray-100">
                             ตรวจเดี๋ยวนี้
                         </button>
@@ -1455,6 +1455,9 @@
         const SUPABASE_URL  = "https://olwonvxplwlmqquzivjm.supabase.co";
         const SUPABASE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sd29udnhwbHdsbXFxdXppdmptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3OTM3OTYsImV4cCI6MjA5MzM2OTc5Nn0.hRhguKwikODZcpt9b0t43Th0-M8Yvv9fB6UNEOvYq4Y";
         const STORAGE_BUCKET = "patrol-photos";                      // ชื่อ bucket ใน Storage
+        window.SUPABASE_URL = SUPABASE_URL;
+        window.SUPABASE_KEY = SUPABASE_KEY;
+        window.STORAGE_BUCKET = STORAGE_BUCKET;
         const BOT_TOKEN = '7708637309:AAHU2swP8U67XVWITdjsxjQoqiXIL9KbBJs';
         const CHAT_ID   = '7585120244';
 
@@ -1546,7 +1549,7 @@
             // ── login ──────────────────────────────────────────
             if (p.action === 'login') {
                 var code = String(p.emp_code || '').replace(/^0+/, '') || p.emp_code;
-                var rows = await sbSelect('employees', { emp_code: 'eq.' + code, select: 'emp_code,full_name,profile_pic', limit: 1 });
+                var rows = await sbSelect('employees', { emp_code: 'eq.' + code, select: 'emp_code,full_name,profile_pic,role,is_active', is_active: 'eq.true', limit: 1 });
                 if (!rows || rows.length === 0) return { success: false, error: 'ไม่พบรหัสพนักงาน ' + p.emp_code + ' ในระบบ' };
                 return { success: true, data: rows[0] };
             }
@@ -2012,6 +2015,12 @@
             }
         }
 
+        function isAdminUser(user) {
+            var role = String((user && (user.role || user.user_role || user.position)) || '').trim().toLowerCase();
+            return role === 'admin' || role === 'administrator' || role === 'ผู้ดูแล' || role === 'หัวหน้า';
+        }
+        window.isAdminUser = isAdminUser;
+
         function launchApp() {
             document.getElementById('homeGuardName').innerText = 'คุณ ' + currentUser.full_name;
             document.getElementById('currentGuardName').innerText = currentUser.full_name;
@@ -2033,7 +2042,7 @@
             document.getElementById('bottomNav').classList.remove('hidden');
 
             // route ตาม role
-            if (currentUser.role === 'admin') {
+            if (isAdminUser(currentUser)) {
                 // แสดงปุ่ม Admin ใน header
                 var adminBtn = document.getElementById('adminNavBtn');
                 if (adminBtn) adminBtn.classList.remove('hidden');
@@ -2948,10 +2957,11 @@
                 });
 
                 if (result.success || result.message?.includes('mock')) {
+                    var reportImageForTelegram = currentReportImageBase64;
                     document.getElementById('loadingIcon').innerText = "✅"; document.getElementById('loadingText').innerText = "แจ้งเหตุสำเร็จ!";
                     document.getElementById('reportType').value = ''; document.getElementById('reportDetail').value = ''; window.removeReportPhoto();
                     saveToHistory(`แจ้งเหตุ: ${type}`, 'report');
-                    sendTelegramAlert(`🚨 แจ้งเหตุฉุกเฉิน 🚨\n\nผู้แจ้ง: ${currentUser.full_name}\nประเภท: ${type}\nรายละเอียด: ${details}\nเวลา: ${new Date().toLocaleString('th-TH')}`, currentReportImageBase64);
+                    sendTelegramAlert(`🚨 แจ้งเหตุฉุกเฉิน 🚨\n\nผู้แจ้ง: ${currentUser.full_name}\nประเภท: ${type}\nรายละเอียด: ${details}\nเวลา: ${new Date().toLocaleString('th-TH')}`, reportImageForTelegram);
                 } else {
                     throw new Error(result.error);
                 }
@@ -3932,7 +3942,7 @@
                                 var cpName = item.extraData ? item.extraData.cpName : item.payload.checkpoint;
                                 notifyPatrol(cpName, item.payload.base64_image);
                             } else if (item.actionType === 'report') {
-                                sendTelegramAlert('🚨 แจ้งเหตุฉุกเฉิน (Offline Sync)\n\nผู้แจ้ง: ' + item.payload.guard_name + '\nประเภท: ' + item.payload.incident_type + '\nรายละเอียด: ' + item.payload.details, null);
+                                sendTelegramAlert('🚨 แจ้งเหตุฉุกเฉิน (Offline Sync)\n\nผู้แจ้ง: ' + item.payload.guard_name + '\nประเภท: ' + item.payload.incident_type + '\nรายละเอียด: ' + item.payload.details, item.payload.base64_image);
                             }
                         } catch(te) {}
                     } else { failed++; }
@@ -4035,7 +4045,7 @@
                 }
                 if (typeof origConfirmSave === 'function') {
                     btn.disabled = false;
-                    origConfirmSave.call(this);
+                    return await origConfirmSave.call(this);
                 }
             };
 
@@ -5445,7 +5455,7 @@
         }
 
         async function fetchOpenReports() {
-            return sbSelect('incident_reports?status=eq.open&select=id,emp_code,guard_name,incident_type,details,recorded_at&order=recorded_at.desc&limit=50', {});
+            return sbSelect('incident_reports?status=eq.open&select=id,emp_code,guard_name,incident_type,details,status,recorded_at&order=recorded_at.desc&limit=50', {});
         }
 
         async function updateReportStatus(id, status) {
@@ -5496,7 +5506,13 @@
 
         function _renderKPIs(emps, attend, patrols, reports) {
             var total   = (emps   || []).length;
-            var onDuty  = new Set((attend || []).filter(function(r){ return r.type === 'checkin'; }).map(function(r){ return r.emp_code; })).size;
+            var latestByEmp = {};
+            (attend || []).forEach(function(r) {
+                var key = r.emp_code;
+                if (!key) return;
+                if (!latestByEmp[key] || new Date(r.recorded_at) > new Date(latestByEmp[key].recorded_at)) latestByEmp[key] = r;
+            });
+            var onDuty  = Object.keys(latestByEmp).filter(function(k){ return latestByEmp[k].type === 'checkin'; }).length;
             var patCnt  = new Set((patrols || []).map(function(r){ return r.emp_code; })).size;
             var repCnt  = (reports || []).length;
             _setText('adminKpiTotal',   total);
