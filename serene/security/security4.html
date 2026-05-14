@@ -1926,6 +1926,9 @@
             window.closeCustomAlert = function() {
                 clearSession();
                 currentUser = null;
+                if (typeof window.stopRealtimeSubscription === 'function') window.stopRealtimeSubscription();
+                clearInterval(window._adminAutoRefreshInterval);
+                window._adminAutoRefreshInterval = null;
                 document.getElementById('mainAppContainer').classList.add('hidden');
                 document.getElementById('mainAppContainer').classList.remove('flex');
                 document.getElementById('bottomNav').classList.add('hidden');
@@ -2116,6 +2119,9 @@
             // ดึง patrol วันนี้จาก Supabase
             setTimeout(function() {
                 if (typeof window.refreshPatrolProgressFromDB === 'function') window.refreshPatrolProgressFromDB();
+                loadRecentActivityFromDB();
+                // เริ่ม Realtime subscription
+                startRealtimeSubscription();
             }, 1500);
 
             // อัปเดต shift UI
@@ -2549,38 +2555,40 @@
         }
 
         // ============================================================
-        //  Duplicate Check — ตรวจลงเวลาซ้ำ
+        //  Duplicate Check — ตรวจลงเวลาซ้ำ (ใช้ in-memory cache แทน localStorage)
         // ============================================================
-        var DUPLICATE_MINUTES = 30; // นาที
+        var DUPLICATE_MINUTES = 30;
+
+        // in-memory last-action tracker
+        var _lastActions = {}; // { 'checkin': ts, 'checkout': ts, 'patrol_CP_ID': ts }
+        window._lastActions = _lastActions;
 
         function getLastRecord(type, cpId) {
-            // type: 'checkin' | 'checkout' | 'patrol'
-            // คืน record ล่าสุดของ type นั้น (และ cpId สำหรับ patrol)
-            try {
-                var history = JSON.parse(localStorage.getItem('guard_history_v2')) || [];
-                for (var i = 0; i < history.length; i++) {
-                    var rec = history[i];
-                    if (type === 'patrol') {
-                        if (rec.type === 'patrol' && rec.extra && rec.extra.checkpoint === cpId) return rec;
-                    } else {
-                        // checkin/checkout เก็บใน title เช่น "เข้างาน" / "ออกงาน"
-                        var keyword = type === 'checkin' ? 'เข้างาน' : 'ออกงาน';
-                        if (rec.title && rec.title.includes(keyword)) return rec;
-                    }
-                }
-            } catch(e) {}
-            return null;
+            var key = type === 'patrol' ? ('patrol_' + cpId) : type;
+            var ts  = _lastActions[key];
+            if (!ts) return null;
+            var d = new Date(ts);
+            return {
+                id:   ts,
+                time: d.toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit' })
+            };
         }
 
         function isDuplicate(type, cpId) {
             var last = getLastRecord(type, cpId);
             if (!last) return { dup: false };
-            var diffMs  = Date.now() - last.id; // id คือ timestamp
+            var diffMs  = Date.now() - last.id;
             var diffMin = Math.round(diffMs / 60000);
             if (diffMin < DUPLICATE_MINUTES) {
                 return { dup: true, diffMin: diffMin, last: last };
             }
             return { dup: false };
+        }
+
+        // อัปเดต last-action หลังบันทึกสำเร็จ
+        function recordLastAction(type, cpId) {
+            var key = type === 'patrol' ? ('patrol_' + cpId) : type;
+            _lastActions[key] = Date.now();
         }
 
         // แสดง modal ยืนยัน แล้ว callback เมื่อกด "บันทึกต่อ"
@@ -2862,6 +2870,9 @@
 
         function processSuccess(title, type, extraData) {
             showSheetState('success');
+            // บันทึก last-action ใน memory (ป้องกัน duplicate)
+            var cpId = extraData && extraData.checkpoint;
+            recordLastAction(type, cpId);
             saveToHistory(title, type, extraData);
             // ล้าง cache history เพื่อให้ครั้งถัดไปดึงข้อมูลใหม่
             invalidateCache('getHistory');
@@ -2878,66 +2889,271 @@
         }
 
         // ==========================================
-        // ระบบ Local History (ประวัติในเครื่อง)
+        // ระบบ History — ดึงตรงจาก Supabase (ไม่ใช้ localStorage)
         // ==========================================
+
+        // in-memory cache สำหรับ patrol progress (แทน localStorage)
+        var _patrolProgressCache = {};  // { 'checkpoint_name': timestamp_ms }
+        window._patrolProgressCache = _patrolProgressCache;
+
+        // in-memory last-action tracker (exposed for DMS/dashboard)
+        // _lastActions defined below in isDuplicate section
+
         function loadHistory() {
-            const history = JSON.parse(localStorage.getItem('guard_history_v2')) || [];
-            renderHistory(history);
+            // โหลดจาก Supabase ถ้า login แล้ว ไม่งั้นแสดงว่าง
+            if (currentUser) {
+                loadRecentActivityFromDB();
+            } else {
+                var container = document.getElementById('historyListContainer');
+                if (container) container.innerHTML = '<p class="text-center text-xs text-gray-400 py-4">กำลังโหลด...</p>';
+            }
+        }
+
+        // ดึง activity ล่าสุด 20 รายการจาก Supabase สำหรับ Home tab
+        async function loadRecentActivityFromDB() {
+            if (!currentUser) return;
+            var container = document.getElementById('historyListContainer');
+            if (!container) return;
+            container.innerHTML = '<div class="text-center py-4"><div class="loader border-slate-400 mx-auto mb-2" style="width:24px;height:24px;border-width:3px"></div><p class="text-xs text-gray-400">กำลังโหลด...</p></div>';
+
+            try {
+                var empCode = currentUser.emp_code;
+                var limit = 20;
+                var [resA, resP, resR] = await Promise.all([
+                    sbSelect('attendance', { emp_code: 'eq.' + empCode, order: 'recorded_at.desc', limit: limit, select: 'id,type,shift,recorded_at' }),
+                    sbSelect('patrol_logs', { emp_code: 'eq.' + empCode, order: 'recorded_at.desc', limit: limit, select: 'id,checkpoint,recorded_at' }),
+                    sbSelect('incident_reports', { emp_code: 'eq.' + empCode, order: 'recorded_at.desc', limit: limit, select: 'id,incident_type,recorded_at' })
+                ]);
+
+                var combined = [];
+                (resA || []).forEach(function(r) {
+                    combined.push({ _t: new Date(r.recorded_at).getTime(), type: r.type, title: r.type === 'checkin' ? 'เข้างาน' : 'ออกงาน', shift: r.shift, recorded_at: r.recorded_at });
+                });
+                (resP || []).forEach(function(r) {
+                    combined.push({ _t: new Date(r.recorded_at).getTime(), type: 'patrol', title: 'จุดตรวจ: ' + r.checkpoint, checkpoint: r.checkpoint, recorded_at: r.recorded_at });
+                });
+                (resR || []).forEach(function(r) {
+                    combined.push({ _t: new Date(r.recorded_at).getTime(), type: 'report', title: 'แจ้งเหตุ: ' + (r.incident_type || ''), recorded_at: r.recorded_at });
+                });
+                combined.sort(function(a, b) { return b._t - a._t; });
+                combined = combined.slice(0, 20);
+
+                renderHistory(combined);
+
+                // อัปเดต patrol progress cache จากข้อมูลล่าสุด
+                _patrolProgressCache = {};
+                window._patrolProgressCache = _patrolProgressCache;
+                (resP || []).forEach(function(r) {
+                    if (r.checkpoint && r.recorded_at) {
+                        var t = new Date(r.recorded_at).getTime();
+                        // เก็บล่าสุดของแต่ละจุดตรวจ
+                        if (!_patrolProgressCache[r.checkpoint] || t > _patrolProgressCache[r.checkpoint]) {
+                            _patrolProgressCache[r.checkpoint] = t;
+                        }
+                    }
+                });
+                updatePatrolProgress();
+
+            } catch(err) {
+                if (container) container.innerHTML = '<p class="text-center text-xs text-red-400 py-4">โหลดล้มเหลว: ' + (err.message || '') + '</p>';
+            }
         }
 
         function saveToHistory(title, type, extraData) {
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString('th-TH');
-            const dateStr = now.toLocaleDateString('th-TH');
-
-            const record = { id: Date.now(), title: title, time: timeStr, date: dateStr,
-                             type: type || 'patrol', extra: extraData || null };
-            const history = JSON.parse(localStorage.getItem('guard_history_v2')) || [];
-            history.unshift(record);
-            if (history.length > 50) history.pop();
-
-            localStorage.setItem('guard_history_v2', JSON.stringify(history));
-            renderHistory(history);
+            // อัปเดต patrol progress cache ทันทีโดยไม่ต้องรอ DB
+            if (type === 'patrol' && extraData && extraData.cpName) {
+                _patrolProgressCache[extraData.cpName] = Date.now();
+                window._patrolProgressCache = _patrolProgressCache;
+                // ถ้า checkpoint key ≠ name ให้ cache ทั้งคู่
+                if (extraData.checkpoint && extraData.checkpoint !== extraData.cpName) {
+                    _patrolProgressCache[extraData.checkpoint] = Date.now();
+                }
+            }
             // อัปเดต progress ทุกครั้งที่บันทึก
             updatePatrolProgress();
+
+            // รีเฟรช home history panel หลัง 1 วิ (ให้ DB commit ก่อน)
+            setTimeout(function() { loadRecentActivityFromDB(); }, 1200);
         }
 
-        function renderHistory(history) {
-            const container = document.getElementById('historyListContainer');
-            if (history.length === 0) {
-                container.innerHTML = '<p class="text-center text-xs text-gray-400 py-4">ยังไม่มีประวัติการทำรายการในเครื่องนี้</p>';
+        function renderHistory(items) {
+            var container = document.getElementById('historyListContainer');
+            if (!container) return;
+            if (!items || items.length === 0) {
+                container.innerHTML = '<p class="text-center text-xs text-gray-400 py-4">ยังไม่มีประวัติการทำรายการ</p>';
                 return;
             }
-
-            container.innerHTML = history.map(item => {
-                let iconStr = "🔦"; let bgClass = "bg-slate-50"; let textClass = "text-slate-700";
-                if (item.title.includes("เข้างาน")) { iconStr = "✅"; bgClass = "bg-emerald-50"; textClass = "text-emerald-700"; }
-                if (item.title.includes("ออกงาน")) { iconStr = "🚪"; bgClass = "bg-rose-50"; textClass = "text-rose-700"; }
-                if (item.title.includes("แจ้งเหตุ")) { iconStr = "🚨"; bgClass = "bg-red-100"; textClass = "text-red-800"; }
-
-                return `
-                    <div class="flex items-center justify-between p-3 rounded-xl border border-gray-100 ${bgClass}">
-                        <div class="flex items-center gap-3">
-                            <div class="text-xl">${iconStr}</div>
-                            <div>
-                                <div class="text-xs font-bold ${textClass}">${item.title}</div>
-                                <div class="text-[10px] text-gray-500 mt-0.5">${item.date}</div>
-                            </div>
-                        </div>
-                        <div class="font-mono text-xs font-bold text-slate-700 bg-white px-2 py-1 rounded-lg shadow-sm">
-                            ${item.time}
-                        </div>
-                    </div>
-                `;
+            container.innerHTML = items.map(function(item) {
+                var iconStr = '🔦', bgClass = 'bg-slate-50', textClass = 'text-slate-700';
+                if (item.type === 'checkin')  { iconStr = '✅'; bgClass = 'bg-emerald-50'; textClass = 'text-emerald-700'; }
+                if (item.type === 'checkout') { iconStr = '🚪'; bgClass = 'bg-rose-50';    textClass = 'text-rose-700'; }
+                if (item.type === 'report')   { iconStr = '🚨'; bgClass = 'bg-red-100';    textClass = 'text-red-800'; }
+                var d = item.recorded_at ? new Date(item.recorded_at) : null;
+                var timeStr = d ? d.toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit' }) : '--:--';
+                var dateStr = d ? d.toLocaleDateString('th-TH', { day:'numeric', month:'short' }) : '';
+                return '<div class="flex items-center justify-between p-3 rounded-xl border border-gray-100 ' + bgClass + '">'
+                    + '<div class="flex items-center gap-3">'
+                    + '<div class="text-xl">' + iconStr + '</div>'
+                    + '<div>'
+                    + '<div class="text-xs font-bold ' + textClass + '">' + (item.title || '-') + '</div>'
+                    + '<div class="text-[10px] text-gray-500 mt-0.5">' + dateStr + '</div>'
+                    + '</div></div>'
+                    + '<div class="font-mono text-xs font-bold text-slate-700 bg-white px-2 py-1 rounded-lg shadow-sm">' + timeStr + '</div>'
+                    + '</div>';
             }).join('');
         }
 
         window.clearHistory = function() {
-            if(confirm('ต้องการล้างประวัติในเครื่องนี้ใช่หรือไม่?')) {
-                localStorage.removeItem('guard_history_v2');
-                loadHistory();
+            if(confirm('ต้องการล้างแคชประวัติในเครื่องนี้ใช่หรือไม่?\n(ข้อมูลใน Supabase จะไม่ถูกลบ)')) {
+                _patrolProgressCache = {};
+                updatePatrolProgress();
+                loadRecentActivityFromDB();
+            }
+        };
+
+        // ============================================================
+        //  SUPABASE REALTIME — ติดตามข้อมูลแบบ real-time ผ่าน WebSocket
+        // ============================================================
+        var _realtimeWs = null;
+        var _realtimeReconnectTimer = null;
+        var _realtimeEnabled = false;
+        var _realtimeHeartbeat = null;
+
+        function startRealtimeSubscription() {
+            if (_realtimeEnabled) return;
+            if (!SUPABASE_URL || SUPABASE_URL.includes('YOUR_PROJECT')) return;
+            if (!currentUser) return;
+            _realtimeEnabled = true;
+            connectRealtime();
+        }
+
+        function connectRealtime() {
+            try {
+                // Supabase Realtime WebSocket endpoint
+                var wsUrl = SUPABASE_URL.replace('https://', 'wss://').replace('http://', 'ws://')
+                    + '/realtime/v1/websocket?apikey=' + SUPABASE_KEY + '&vsn=1.0.0';
+                _realtimeWs = new WebSocket(wsUrl);
+
+                _realtimeWs.onopen = function() {
+                    console.log('[Realtime] connected');
+                    updateRealtimePill(true);
+
+                    // Join channel สำหรับ 3 tables
+                    var tables = ['attendance', 'patrol_logs', 'incident_reports'];
+                    tables.forEach(function(table, idx) {
+                        var joinMsg = {
+                            topic: 'realtime:public:' + table,
+                            event: 'phx_join',
+                            payload: { config: { broadcast: { self: false }, presence: { key: '' }, postgres_changes: [{ event: '*', schema: 'public', table: table }] } },
+                            ref: String(idx + 1)
+                        };
+                        _realtimeWs.send(JSON.stringify(joinMsg));
+                    });
+
+                    // Heartbeat ทุก 25 วิ
+                    _realtimeHeartbeat = setInterval(function() {
+                        if (_realtimeWs && _realtimeWs.readyState === WebSocket.OPEN) {
+                            _realtimeWs.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: 'hb' }));
+                        }
+                    }, 25000);
+                };
+
+                _realtimeWs.onmessage = function(evt) {
+                    try {
+                        var msg = JSON.parse(evt.data);
+                        handleRealtimeMessage(msg);
+                    } catch(e) {}
+                };
+
+                _realtimeWs.onclose = function() {
+                    console.log('[Realtime] disconnected — reconnecting in 5s');
+                    clearInterval(_realtimeHeartbeat);
+                    updateRealtimePill(false);
+                    if (_realtimeEnabled) {
+                        _realtimeReconnectTimer = setTimeout(connectRealtime, 5000);
+                    }
+                };
+
+                _realtimeWs.onerror = function() {
+                    _realtimeWs.close();
+                };
+
+            } catch(e) {
+                console.warn('[Realtime] init failed:', e);
             }
         }
+
+        function handleRealtimeMessage(msg) {
+            if (!msg || !msg.event) return;
+            // รับ postgres_changes events
+            if (msg.event === 'postgres_changes' || (msg.payload && msg.payload.data && msg.payload.data.type)) {
+                var data = msg.payload && msg.payload.data;
+                var table = data && data.table;
+                var record = data && (data.record || data.new);
+
+                if (!table || !record) return;
+
+                // กรองเฉพาะของ user ปัจจุบัน (สำหรับ guard view)
+                var isMyRecord = record.emp_code && currentUser &&
+                    String(record.emp_code).toUpperCase() === String(currentUser.emp_code).toUpperCase();
+
+                if (table === 'patrol_logs' && isMyRecord && record.checkpoint) {
+                    // อัปเดต patrol progress ทันที
+                    _patrolProgressCache[record.checkpoint] = new Date(record.recorded_at || Date.now()).getTime();
+                    window._patrolProgressCache = _patrolProgressCache;
+                    updatePatrolProgress();
+                    loadRecentActivityFromDB();
+                } else if (table === 'attendance' && isMyRecord) {
+                    loadRecentActivityFromDB();
+                } else if (table === 'incident_reports' && isMyRecord) {
+                    loadRecentActivityFromDB();
+                }
+
+                // Admin panel — refresh ถ้าเปิดอยู่
+                var adminView = document.getElementById('adminView');
+                if (adminView && !adminView.classList.contains('hidden')) {
+                    if (typeof window.adminRefreshAll === 'function') {
+                        // debounce ไม่ให้ refresh ถี่เกิน
+                        clearTimeout(window._adminRealtimeDebounce);
+                        window._adminRealtimeDebounce = setTimeout(function() {
+                            window.adminRefreshAll();
+                        }, 800);
+                    }
+                }
+
+                // แสดง real-time indicator flash
+                flashRealtimePill();
+            }
+        }
+
+        function updateRealtimePill(online) {
+            var pill = document.getElementById('adminRealtimePill');
+            if (!pill) return;
+            if (online) {
+                pill.innerText = '● Realtime';
+                pill.className = 'text-[10px] font-black px-2.5 py-1 rounded-full bg-emerald-500/30 text-emerald-300 border border-emerald-500/30';
+            } else {
+                pill.innerText = '○ Reconnecting';
+                pill.className = 'text-[10px] font-black px-2.5 py-1 rounded-full bg-amber-500/30 text-amber-300 border border-amber-500/30';
+            }
+        }
+
+        var _flashTimer = null;
+        function flashRealtimePill() {
+            var pill = document.getElementById('adminRealtimePill');
+            if (!pill) return;
+            pill.innerText = '⚡ Live Update';
+            pill.className = 'text-[10px] font-black px-2.5 py-1 rounded-full bg-blue-500/40 text-blue-200 border border-blue-400/40';
+            clearTimeout(_flashTimer);
+            _flashTimer = setTimeout(function() { updateRealtimePill(true); }, 2000);
+        }
+
+        window.stopRealtimeSubscription = function() {
+            _realtimeEnabled = false;
+            clearInterval(_realtimeHeartbeat);
+            clearTimeout(_realtimeReconnectTimer);
+            if (_realtimeWs) { try { _realtimeWs.close(); } catch(e) {} _realtimeWs = null; }
+        };
 
         // ==========================================
         // แจ้งเหตุฉุกเฉิน (Report)
@@ -3251,7 +3467,7 @@
         // ==========================================
         // ============================================================
         //  PATROL PROGRESS SYSTEM
-        //  — คำนวณจุดที่ตรวจแล้วในรอบปัจจุบัน จาก localStorage
+        //  — คำนวณจุดที่ตรวจแล้วในรอบปัจจุบัน จาก Supabase (real-time cache)
         // ============================================================
 
         // กำหนดรอบตรวจและจุดที่ต้องตรวจแต่ละรอบ (ตรงกับตารางใน rulesView)
@@ -3322,12 +3538,8 @@
             return { start: startD.getTime(), end: endD.getTime() };
         }
 
-        // ดึง patrol records ที่บันทึกไว้ใน localStorage ในช่วง window
+        // ดึง patrol records จาก in-memory cache (โหลดจาก Supabase) ในช่วง window
         function getPatrolledInWindow(startMs, endMs) {
-            var history = [];
-            try { history = JSON.parse(localStorage.getItem('guard_history_v2')) || []; } catch(e) {}
-
-            // สร้าง lookup map ชื่อจุดตรวจจาก checkpointsData (ทั้ง key และ name)
             var cpLookup = {};
             if (window.checkpointsData) {
                 Object.keys(window.checkpointsData).forEach(function(k) {
@@ -3336,28 +3548,16 @@
                     if (name) cpLookup[name.trim().toLowerCase()] = k;
                 });
             }
-
             function normalizeCpName(raw) {
-                // ตัด prefix ต่างๆ ออก
-                var s = String(raw || '')
-                    .replace(/^📍\s*/, '')
-                    .replace(/^จุดตรวจ:\s*/i, '')
-                    .replace(/\s*\(รอส่ง\)\s*$/, '')
-                    .trim();
-                // ลองหาใน lookup ก่อน
-                var found = cpLookup[s.toLowerCase()];
-                return found || s;
+                var s = String(raw || '').replace(/^📍\s*/, '').replace(/^จุดตรวจ:\s*/i, '').replace(/\s*\(รอส่ง\)\s*$/, '').trim();
+                return cpLookup[s.toLowerCase()] || s;
             }
-
             var done = {};
-            history.forEach(function(rec) {
-                if (rec.type !== 'patrol') return;
-                if (rec.id >= startMs && rec.id < endMs) {
-                    var raw = (rec.extra && rec.extra.cpName)
-                        ? rec.extra.cpName
-                        : rec.title;
-                    var cpName = normalizeCpName(raw);
-                    done[cpName] = rec.id;
+            Object.keys(_patrolProgressCache || {}).forEach(function(cpRaw) {
+                var t = _patrolProgressCache[cpRaw];
+                if (t >= startMs && t < endMs) {
+                    var cpName = normalizeCpName(cpRaw);
+                    if (!done[cpName] || t > done[cpName]) done[cpName] = t;
                 }
             });
             return done;
@@ -4154,8 +4354,22 @@
 
         // ── helpers ───────────────────────────────────────────────
         function getHistory() {
-            try { return JSON.parse(localStorage.getItem('guard_history_v2')) || []; }
-            catch(e) { return []; }
+            // ใช้ in-memory patrol cache แทน localStorage
+            // คืน array รูปแบบเดิมเพื่อ backward compat กับ dashboard
+            var items = [];
+            Object.keys(window._patrolProgressCache || {}).forEach(function(cp) {
+                var t = window._patrolProgressCache[cp];
+                var d = new Date(t);
+                items.push({
+                    id: t, type: 'patrol',
+                    title: 'จุดตรวจ: ' + cp,
+                    date: d.toLocaleDateString('th-TH'),
+                    time: d.toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit' }),
+                    extra: { cpName: cp }
+                });
+            });
+            items.sort(function(a,b){ return b.id - a.id; });
+            return items;
         }
 
         function parseHistDate(item) {
@@ -4930,17 +5144,22 @@
         // Home quick-stats pills (เข้างานล่าสุด, เดินตรวจวันนี้)
         function _refreshHomePills() {
             try {
-                var hist = JSON.parse(localStorage.getItem('guard_history_v2')) || [];
-                var today = new Date().toLocaleDateString('th-TH');
-                var patrolToday = hist.filter(function(r) {
-                    return r.type === 'patrol' && r.date === today;
+                var today = new Date();
+                var todayStr = today.toLocaleDateString('th-TH');
+                var patrolToday = Object.keys(window._patrolProgressCache || {}).filter(function(cp) {
+                    var t = window._patrolProgressCache[cp];
+                    if (!t) return false;
+                    return new Date(t).toLocaleDateString('th-TH') === todayStr;
                 }).length;
-                var lastCheckin = hist.find(function(r) { return r.type === 'checkin'; });
 
-                var pillPatrol = document.getElementById('pillPatrolCount');
+                var pillPatrol  = document.getElementById('pillPatrolCount');
                 var pillCheckin = document.getElementById('pillLastCheckin');
-                if (pillPatrol)  pillPatrol.innerText = patrolToday + ' รอบ';
-                if (pillCheckin && lastCheckin) pillCheckin.innerText = lastCheckin.time;
+                if (pillPatrol) pillPatrol.innerText = patrolToday + ' รอบ';
+                // last checkin จาก _lastActions
+                var ciTs = window._lastActions && window._lastActions['checkin'];
+                if (pillCheckin && ciTs) {
+                    pillCheckin.innerText = new Date(ciTs).toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit' });
+                }
             } catch(e) {}
         }
 
@@ -5139,14 +5358,16 @@
         // ── 5e. สรุปจำนวนการตรวจวันนี้ใน home header ──────────
         function updateHomeStats() {
             try {
-                var hist = JSON.parse(localStorage.getItem('guard_history_v2')) || [];
                 var today = new Date().toLocaleDateString('th-TH');
-                var patrolToday = hist.filter(function(r) { return r.type === 'patrol' && r.date === today; }).length;
-                var checkinToday = hist.filter(function(r) { return r.type === 'checkin' && r.date === today; }).length;
+                var patrolToday = Object.keys(window._patrolProgressCache || {}).filter(function(cp) {
+                    var t = window._patrolProgressCache[cp];
+                    return t && new Date(t).toLocaleDateString('th-TH') === today;
+                }).length;
+                var checkinToday = (window._lastActions && window._lastActions['checkin'] &&
+                    new Date(window._lastActions['checkin']).toLocaleDateString('th-TH') === today) ? 1 : 0;
 
                 updatePatrolNavBadge(patrolToday);
 
-                // pills ใน homeView
                 var p = document.getElementById('pillPatrolCount');
                 var c = document.getElementById('pillCheckinCount');
                 if (p) p.innerText = patrolToday + ' จุด';
@@ -5241,11 +5462,8 @@
                 if (nowMin > graceMin + 90) return;      // เลยไปนานแล้ว หยุดเตือน
 
                 // ตรวจว่า checkin วันนี้แล้วหรือยัง
-                var hist = JSON.parse(localStorage.getItem('guard_history_v2') || '[]');
-                var today = now.toLocaleDateString('th-TH');
-                var hasCheckin = hist.some(function(r) {
-                    return (r.type === 'checkin') && r.date === today;
-                });
+                var hasCheckin = !!(window._lastActions && window._lastActions['checkin'] &&
+                    new Date(window._lastActions['checkin']).toLocaleDateString('th-TH') === now.toLocaleDateString('th-TH'));
                 if (hasCheckin) return;
 
                 // ยังไม่ checkin — ตรวจ state ว่าแจ้งไปแล้วหรือยัง
@@ -5336,18 +5554,13 @@
                 if (diffMin < 0) diffMin += 24 * 60;
                 if (diffMin < 0 || diffMin > 60) return;  // เฉพาะช่วง 1 ชั่วโมงหลัง
 
-                var hist    = JSON.parse(localStorage.getItem('guard_history_v2') || '[]');
-                var today   = now.toLocaleDateString('th-TH');
-                var hasCheckinForShift = hist.some(function(r) {
-                    var shiftText = String((r.extra && r.extra.shift) || r.title || '');
-                    return r.type === 'checkin' && r.date === today && shiftText.indexOf(cfg.shift) !== -1;
-                });
+                var today = now.toLocaleDateString('th-TH');
+                var hasCheckinForShift = !!(window._lastActions && window._lastActions['checkin'] &&
+                    new Date(window._lastActions['checkin']).toLocaleDateString('th-TH') === today);
                 if (!hasCheckinForShift) return;
 
-                var hasCheckout = hist.some(function(r) {
-                    var shiftText = String((r.extra && r.extra.shift) || r.title || '');
-                    return r.type === 'checkout' && r.date === today && shiftText.indexOf(cfg.shift) !== -1;
-                });
+                var hasCheckout = !!(window._lastActions && window._lastActions['checkout'] &&
+                    new Date(window._lastActions['checkout']).toLocaleDateString('th-TH') === today);
                 if (hasCheckout) return;
 
                 var key   = stateKey('checkout', cfg.shift);
@@ -5428,9 +5641,9 @@
             var today  = new Date().toLocaleDateString('th-TH');
 
             // checkin วันนี้?
-            var hist = JSON.parse(localStorage.getItem('guard_history_v2') || '[]');
-            var hasCheckin  = hist.some(function(r) { return r.type === 'checkin'  && r.date === today; });
-            var hasCheckout = hist.some(function(r) { return r.type === 'checkout' && r.date === today; });
+            var today = new Date().toLocaleDateString('th-TH');
+            var hasCheckin  = !!(window._lastActions && window._lastActions['checkin']  && new Date(window._lastActions['checkin']).toLocaleDateString('th-TH')  === today);
+            var hasCheckout = !!(window._lastActions && window._lastActions['checkout'] && new Date(window._lastActions['checkout']).toLocaleDateString('th-TH') === today);
 
             // นับ alerts ที่ส่งวันนี้
             var d = new Date();
@@ -5978,10 +6191,28 @@
       AP.data.attend = rows[1] || [];
       AP.data.patrols = rows[2] || [];
       AP.data.reports = rows[3] || [];
+      await loadAssignmentsFromDB();
       renderAll();
       setText('adminLastUpdate', 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit', second:'2-digit' }));
       var pill = document.getElementById('adminRealtimePill');
-      if (pill) { pill.innerText = '● Online'; pill.className = 'text-[10px] font-black px-2.5 py-1 rounded-full bg-emerald-500/30 text-emerald-300 border border-emerald-500/30'; }
+      if (pill) { pill.innerText = '● Realtime'; pill.className = 'text-[10px] font-black px-2.5 py-1 rounded-full bg-emerald-500/30 text-emerald-300 border border-emerald-500/30'; }
+
+      // เริ่ม admin auto-refresh ทุก 30 วิ (fallback จาก WebSocket)
+      if (!window._adminAutoRefreshInterval) {
+        window._adminAutoRefreshInterval = setInterval(function() {
+          var adminView = document.getElementById('adminView');
+          if (adminView && !adminView.classList.contains('hidden')) {
+            fetchRows().then(function(rows) {
+              AP.data.emps    = rows[0] || [];
+              AP.data.attend  = rows[1] || [];
+              AP.data.patrols = rows[2] || [];
+              AP.data.reports = rows[3] || [];
+              renderAll();
+              setText('adminLastUpdate', 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit', second:'2-digit' }));
+            }).catch(function(){});
+          }
+        }, 30000);
+      }
     } catch(err) {
       console.error('Admin Pro failed:', err);
       var p = document.getElementById('adminRealtimePill');
@@ -6177,25 +6408,51 @@
     catch(err) { showCustomAlert('เปลี่ยนสถานะไม่ได้', err.message || String(err), 'error'); }
   };
 
-  function assignments() { try { return JSON.parse(localStorage.getItem(AP.assignKey) || '[]'); } catch(e) { return []; } }
-  function saveAssignments(a) { localStorage.setItem(AP.assignKey, JSON.stringify(a)); }
+  // assignments — เก็บลง Supabase ตาราง assignments (ถ้ามี) หรือ fallback memory
+  var _assignmentsCache = [];
 
-  window.adminSaveAssignment = function() {
+  async function loadAssignmentsFromDB() {
+    try {
+      var rows = await sbSelect('assignments', { select: 'id,emp_code,shift,time,checkpoints,created_at', order: 'created_at.desc', limit: 200 });
+      _assignmentsCache = (rows || []).map(function(r) { return { id: r.id, emp_code: r.emp_code, shift: r.shift, time: r.time, checkpoints: r.checkpoints, createdAt: r.created_at }; });
+    } catch(e) {
+      // ตาราง assignments อาจยังไม่มี — ใช้ memory เดิม
+      console.warn('[Admin] assignments table not found, using local cache');
+    }
+    renderAssignments();
+  }
+
+  function assignments() { return _assignmentsCache; }
+  function saveAssignments(a) { _assignmentsCache = a; }
+
+  window.adminSaveAssignment = async function() {
     var emp = document.getElementById('adminAssignEmp').value;
     var shift = document.getElementById('adminAssignShift').value;
     var time = document.getElementById('adminAssignTime').value;
     var cp = document.getElementById('adminAssignCp').value.trim();
     if (!emp || !cp) return showCustomAlert('ข้อมูลไม่ครบ', 'เลือกพนักงานและระบุจุดตรวจ', 'warning');
-    var a = assignments();
-    a.push({ id: Date.now(), emp_code: emp, shift: shift, time: time, checkpoints: cp, createdAt: new Date().toISOString() });
-    saveAssignments(a);
+    var newRow = { emp_code: emp, shift: shift, time: time, checkpoints: cp, created_at: new Date().toISOString() };
+    try {
+      await sbPost('assignments', newRow);
+      await loadAssignmentsFromDB();
+    } catch(e) {
+      // ถ้า table ไม่มี ให้เก็บใน memory
+      _assignmentsCache.unshift({ id: Date.now(), ...newRow });
+      renderAssignments();
+    }
     document.getElementById('adminAssignCp').value = '';
-    renderAssignments();
   };
 
-  window.adminDeleteAssignment = function(id) {
-    saveAssignments(assignments().filter(function(a){ return a.id !== id; }));
-    renderAssignments();
+  window.adminDeleteAssignment = async function(id) {
+    try {
+      await fetchWithTimeout(SUPABASE_URL + '/rest/v1/assignments?id=eq.' + encodeURIComponent(id), {
+        method: 'DELETE', headers: sbHeaders()
+      });
+      await loadAssignmentsFromDB();
+    } catch(e) {
+      _assignmentsCache = _assignmentsCache.filter(function(a){ return a.id !== id; });
+      renderAssignments();
+    }
   };
 
   function renderAssignments() {
