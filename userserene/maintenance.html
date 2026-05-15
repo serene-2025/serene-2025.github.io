@@ -397,23 +397,33 @@
 
         // --- NOTIFICATION CONFIG ---
         // Telegram Settings
-        const TELEGRAM_BOT_TOKEN = '7708637309:AAHU2swP8U67XVWITdjsxjQoqiXIL9KbBJs';
-        const TELEGRAM_CHAT_ID = '7585120244';
+        const TELEGRAM_BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
+        const TELEGRAM_CHAT_ID = '-4574041962';
         
         // LINE Messaging API Settings
         const LINE_ACCESS_TOKEN = ''; // ใส่ Channel Access Token ของ LINE Messaging API
         const LINE_GROUP_ID = '';     // ใส่ Group ID ของกลุ่มไลน์ (มักขึ้นต้นด้วยตัว C)
 
-        // ฟังก์ชันส่งแจ้งเตือน Telegram
-        async function sendTelegramNotification(issue, imageUrl) {
+        // ฟังก์ชันส่งแจ้งเตือน Telegram (อัพเดทให้รองรับการแจ้งเตือนจาก Admin)
+        async function sendTelegramNotification(issue, imageUrl, isUpdate = false) {
             if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
             
-            let message = `🚨 <b>มีแจ้งซ่อมใหม่เข้าสู่ระบบ!</b>\n\n`;
-            message += `<b>รหัส:</b> ${issue.id}\n`;
-            message += `<b>บ้านเลขที่:</b> ${issue.houseNumber}\n`;
-            message += `<b>เบอร์โทร:</b> ${issue.phoneNumber || '-'}\n`;
-            message += `<b>หมวดหมู่:</b> ${issue.category}\n`;
-            message += `<b>รายละเอียด:</b> ${issue.detail}`;
+            let message = '';
+            if (isUpdate) {
+                let statusText = issue.status === 'completed' ? '✅ เสร็จเรียบร้อย' : (issue.status === 'in_progress' ? '⏳ กำลังดำเนินการ' : 'รอดำเนินการ');
+                message = `📢 <b>อัพเดทสถานะแจ้งซ่อม!</b>\n\n`;
+                message += `<b>รหัส:</b> ${issue.id}\n`;
+                message += `<b>บ้านเลขที่:</b> ${issue.houseNumber}\n`;
+                message += `<b>สถานะล่าสุด:</b> ${statusText}\n`;
+                if (issue.adminRemark) message += `<b>หมายเหตุ:</b> ${issue.adminRemark}\n`;
+            } else {
+                message = `🚨 <b>มีแจ้งซ่อมใหม่เข้าสู่ระบบ!</b>\n\n`;
+                message += `<b>รหัส:</b> ${issue.id}\n`;
+                message += `<b>บ้านเลขที่:</b> ${issue.houseNumber}\n`;
+                message += `<b>เบอร์โทร:</b> ${issue.phoneNumber || '-'}\n`;
+                message += `<b>หมวดหมู่:</b> ${issue.category}\n`;
+                message += `<b>รายละเอียด:</b> ${issue.detail}`;
+            }
             
             let apiUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
             let payload = { chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'HTML' };
@@ -435,11 +445,19 @@
             }
         }
 
-        // ฟังก์ชันส่งแจ้งเตือน LINE Messaging API
-        async function sendLineNotification(issue, imageUrl) {
+        // ฟังก์ชันส่งแจ้งเตือน LINE Messaging API (อัพเดทให้รองรับการแจ้งเตือนจาก Admin)
+        async function sendLineNotification(issue, imageUrl, isUpdate = false) {
             if (!LINE_ACCESS_TOKEN || !LINE_GROUP_ID) return;
             
-            let message = `🚨 มีแจ้งซ่อมใหม่!\n\nรหัส: ${issue.id}\nบ้านเลขที่: ${issue.houseNumber}\nเบอร์โทร: ${issue.phoneNumber || '-'}\nหมวดหมู่: ${issue.category}\nรายละเอียด: ${issue.detail}`;
+            let message = '';
+            if (isUpdate) {
+                let statusText = issue.status === 'completed' ? '✅ เสร็จเรียบร้อย' : (issue.status === 'in_progress' ? '⏳ กำลังดำเนินการ' : 'รอดำเนินการ');
+                message = `📢 อัพเดทสถานะแจ้งซ่อม!\n\nรหัส: ${issue.id}\nบ้านเลขที่: ${issue.houseNumber}\nสถานะล่าสุด: ${statusText}`;
+                if (issue.adminRemark) message += `\nหมายเหตุ: ${issue.adminRemark}`;
+            } else {
+                message = `🚨 มีแจ้งซ่อมใหม่!\n\nรหัส: ${issue.id}\nบ้านเลขที่: ${issue.houseNumber}\nเบอร์โทร: ${issue.phoneNumber || '-'}\nหมวดหมู่: ${issue.category}\nรายละเอียด: ${issue.detail}`;
+            }
+
             let messagesPayload = [{ type: 'text', text: message }];
             
             if (imageUrl) {
@@ -872,6 +890,20 @@
                     if (res.ok) {
                         showToast('อัพเดทข้อมูลเรียบร้อยแล้ว');
                         closeModal('modal-admin-edit');
+                        
+                        // ดึงข้อมูลเดิมมาประกอบร่างกับข้อมูลใหม่ เพื่อส่งแจ้งเตือน
+                        const originalIssue = currentIssues.find(i => i.id === currentEditIssueId);
+                        if (originalIssue) {
+                            const updatedIssueForNotify = {
+                                ...originalIssue,
+                                status: currentEditStatus,
+                                adminRemark: remark
+                            };
+                            // เรียกใช้ฟังก์ชันแจ้งเตือน โดยส่งค่า true ไปเป็น Parameter ตัวที่ 3 เพื่อบอกว่านี่คือ "การอัพเดท"
+                            sendTelegramNotification(updatedIssueForNotify, adminImageUrl, true);
+                            sendLineNotification(updatedIssueForNotify, adminImageUrl, true);
+                        }
+
                         await fetchIssues();
                     } else { throw new Error('Update failed'); }
                 } catch(e) {
