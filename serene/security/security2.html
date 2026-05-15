@@ -3220,21 +3220,19 @@
         document.getElementById('confirmSaveBtn').onclick = async function() {
             var btn = document.getElementById('confirmSaveBtn');
             btn.disabled = true;
-
             showSheetState('saving');
 
             var locStr = currentLocation
                 ? currentLocation.lat + ',' + currentLocation.lng
                 : '0,0';
 
-            // dataURL เต็ม (สำหรับ Telegram) และ raw base64 (สำหรับ Supabase)
             var fullDataUrl = pendingBase64Image || '';
             var rawB64 = fullDataUrl.includes(',') ? fullDataUrl.split(',')[1] : fullDataUrl;
 
             var payload = {
-                guard_id:    currentUser.emp_code,
-                guard_name:  currentUser.full_name,
-                lat_lng:     locStr,
+                guard_id:     currentUser.emp_code,
+                guard_name:   currentUser.full_name,
+                lat_lng:      locStr,
                 base64_image: rawB64
             };
 
@@ -3255,7 +3253,6 @@
                 extraData = { checkpoint: cpSel.value, cpName: cpSel.options[cpSel.selectedIndex].text };
             }
 
-            // ฟังก์ชันส่ง Telegram แบบ fire-and-forget (เรียกหลัง DB บันทึกสำเร็จ)
             function fireNotify() {
                 try {
                     if (pendingActionType === 'checkin' || pendingActionType === 'checkout') {
@@ -3266,6 +3263,58 @@
                 } catch(e) { console.error('[notify] fireNotify error:', e); }
             }
 
+            // ── ลอง Supabase โดยตรงก่อน (ข้าม callGasApi wrapper) ──────────
+            var dbOk = false;
+            try {
+                // อัปโหลดรูป (ล้มเหลวได้ — ไม่ block การบันทึก)
+                var photoUrl = '';
+                try {
+                    photoUrl = await sbUploadPhoto(rawB64,
+                        payload.action === 'attendance' ? 'attendance' :
+                        payload.action === 'patrol'     ? 'patrol'     : 'misc');
+                } catch(photoErr) {
+                    console.warn('[photo] upload failed, continuing without photo:', photoErr.message);
+                }
+
+                var [lat, lng] = locStr.split(',').map(parseFloat);
+
+                if (payload.action === 'attendance') {
+                    await sbInsert('attendance', {
+                        emp_code:    String(payload.guard_id).trim().toUpperCase(),
+                        guard_name:  payload.guard_name,
+                        type:        payload.type,
+                        shift:       payload.shift || '',
+                        lat:         lat || null,
+                        lng:         lng || null,
+                        photo_url:   photoUrl,
+                        recorded_at: new Date().toISOString()
+                    });
+                    dbOk = true;
+                } else if (payload.action === 'patrol') {
+                    await sbInsert('patrol_logs', {
+                        emp_code:    String(payload.guard_id).trim().toUpperCase(),
+                        guard_name:  payload.guard_name,
+                        checkpoint:  payload.checkpoint,
+                        lat:         lat || null,
+                        lng:         lng || null,
+                        photo_url:   photoUrl,
+                        recorded_at: new Date().toISOString()
+                    });
+                    dbOk = true;
+                }
+            } catch(dbErr) {
+                console.warn('[DB] insert failed, falling back to callGasApi:', dbErr.message);
+            }
+
+            if (dbOk) {
+                // ✅ DB สำเร็จ → แจ้งเตือน Telegram ทันที
+                processSuccess(titleHistory, payload.type || pendingActionType, extraData);
+                fireNotify();
+                btn.disabled = false;
+                return;
+            }
+
+            // fallback: ลอง callGasApi (offline queue)
             try {
                 var result = await callGasApi(payload);
                 if (result.success) {
@@ -3276,7 +3325,6 @@
                 }
             } catch (err) {
                 if (err.message.includes('ใส่ลิงก์') || err.message.includes('YOUR_PROJECT')) {
-                    // demo mode — ถือว่าสำเร็จ และยังส่ง Telegram ได้ถ้า token พร้อม
                     processSuccess(titleHistory, pendingActionType, extraData);
                     fireNotify();
                 } else {
