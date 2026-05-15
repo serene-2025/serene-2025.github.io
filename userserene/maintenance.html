@@ -637,15 +637,20 @@
         // --- UPLOAD IMAGE DIRECTORY TO SUPABASE ---
         async function uploadImage(fileInput, prefix = 'img') {
             if (!fileInput) return null;
+            // ถ้าเป็น URL อยู่แล้ว (เช่น กรณีแก้ไขแต่ไม่ได้เปลี่ยนรูป) ให้ส่งกลับได้เลย
             if (typeof fileInput === 'string' && fileInput.startsWith('http')) return fileInput;
+            // ถ้าเป็น Base64 อยู่แล้วให้ส่งกลับได้เลย
+            if (typeof fileInput === 'string' && fileInput.startsWith('data:')) return fileInput;
 
             try {
                 let contentType = fileInput.type || 'image/jpeg';
-                // ถ้าไฟล์มาจากการบีบอัดจะไม่มีชื่อ ให้ดึงนามสกุลมาใส่เอง
-                let fileExt = fileInput.name ? fileInput.name.split('.').pop() : 'jpg'; 
+                // ดึงนามสกุลไฟล์ ถ้าไม่มีให้ตั้งเป็น jpg
+                let fileExt = fileInput.name ? fileInput.name.split('.').pop() : 'jpg';
+                
+                // สร้างชื่อไฟล์ใหม่ที่ไม่ซ้ำกันแน่นอน
                 const fileName = `${prefix}-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
 
-                // แปลงไฟล์เป็น ArrayBuffer (เข้ากันได้กับทั้งเครื่องเก่า/ใหม่)
+                // แปลงไฟล์เป็นข้อมูลไบนารีดิบ (ArrayBuffer) เพื่อให้ส่งผ่าน REST API ได้สมบูรณ์ 100%
                 const arrayBuffer = await fileInput.arrayBuffer();
 
                 const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/maintenance_images/${fileName}`, {
@@ -653,8 +658,7 @@
                     headers: {
                         'apikey': SUPABASE_KEY,
                         'Authorization': `Bearer ${SUPABASE_KEY}`,
-                        'Content-Type': contentType,
-                        'x-upsert': 'true'
+                        'Content-Type': contentType
                     },
                     body: arrayBuffer 
                 });
@@ -665,9 +669,12 @@
                     throw new Error(errData.message || errData.error || 'Upload failed');
                 }
                 
+                // คืนค่าเป็น Direct Link (URL ตรงของรูปภาพใน Storage)
                 return `${SUPABASE_URL}/storage/v1/object/public/maintenance_images/${fileName}`;
             } catch (error) {
                 console.error('Upload error:', error);
+                showToast(`อัพโหลดรูปภาพไม่สำเร็จ กรุณาตรวจสอบสิทธิ์ Supabase Storage`);
+                // โยน Error กลับไปเพื่อให้ฟอร์มหยุดทำงานและไม่บันทึกข้อมูลถ้าอัพรูปไม่ผ่าน
                 throw error; 
             }
         }
