@@ -1490,6 +1490,9 @@
         window.STORAGE_BUCKET = STORAGE_BUCKET;
         const BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
         const CHAT_ID = '-4574041962';
+        // expose ให้ DMS และโมดูลอื่นใช้ได้
+        window.BOT_TOKEN = BOT_TOKEN;
+        window.CHAT_ID   = CHAT_ID;
 
         // ── Supabase REST helpers ────────────────────────────────
         function sbHeaders(extra) {
@@ -2801,21 +2804,15 @@
             var btn = document.getElementById('confirmSaveBtn');
             btn.disabled = true;
 
-            // แสดง saving state ใน bottom sheet
             showSheetState('saving');
 
-            // พิกัด GPS
             var locStr = currentLocation
                 ? currentLocation.lat + ',' + currentLocation.lng
                 : '0,0';
 
-            // raw base64 (ไม่มี prefix) — pendingBase64Image เก็บ dataURL
-            var rawB64 = '';
-            if (pendingBase64Image) {
-                rawB64 = pendingBase64Image.includes(',')
-                    ? pendingBase64Image.split(',')[1]
-                    : pendingBase64Image;
-            }
+            // dataURL เต็ม (สำหรับ Telegram) และ raw base64 (สำหรับ Supabase)
+            var fullDataUrl = pendingBase64Image || '';
+            var rawB64 = fullDataUrl.includes(',') ? fullDataUrl.split(',')[1] : fullDataUrl;
 
             var payload = {
                 guard_id:    currentUser.emp_code,
@@ -2841,26 +2838,32 @@
                 extraData = { checkpoint: cpSel.value, cpName: cpSel.options[cpSel.selectedIndex].text };
             }
 
+            // ฟังก์ชันส่ง Telegram แบบ fire-and-forget (เรียกหลัง DB บันทึกสำเร็จ)
+            function fireNotify() {
+                try {
+                    if (pendingActionType === 'checkin' || pendingActionType === 'checkout') {
+                        notifyCheckin(pendingActionType, payload.shift, fullDataUrl);
+                    } else if (pendingActionType === 'patrol') {
+                        notifyPatrol(extraData.cpName, fullDataUrl);
+                    }
+                } catch(e) { console.error('[notify] fireNotify error:', e); }
+            }
+
             try {
                 var result = await callGasApi(payload);
                 if (result.success) {
                     processSuccess(titleHistory, payload.type || pendingActionType, extraData);
-
-                    // Telegram notify (fire-and-forget)
-                    if (pendingActionType === 'checkin' || pendingActionType === 'checkout') {
-                        notifyCheckin(pendingActionType, payload.shift, rawB64);
-                    } else if (pendingActionType === 'patrol') {
-                        notifyPatrol(extraData.cpName, rawB64);
-                    }
+                    fireNotify();
                 } else {
                     throw new Error(result.error || 'เกิดข้อผิดพลาดจากเซิร์ฟเวอร์');
                 }
             } catch (err) {
                 if (err.message.includes('ใส่ลิงก์') || err.message.includes('YOUR_PROJECT')) {
-                    // demo mode — ถือว่าสำเร็จ
+                    // demo mode — ถือว่าสำเร็จ และยังส่ง Telegram ได้ถ้า token พร้อม
                     processSuccess(titleHistory, pendingActionType, extraData);
+                    fireNotify();
                 } else {
-                    showSheetState('confirm');   // กลับให้กดใหม่ได้
+                    showSheetState('confirm');
                     showCustomAlert('การบันทึกไม่สำเร็จ', err.message, 'error');
                 }
             } finally {
@@ -3212,11 +3215,12 @@
                 });
 
                 if (result.success || result.message?.includes('mock')) {
-                    var reportImageForTelegram = currentReportImageBase64;
                     document.getElementById('loadingIcon').innerText = "✅"; document.getElementById('loadingText').innerText = "แจ้งเหตุสำเร็จ!";
                     document.getElementById('reportType').value = ''; document.getElementById('reportDetail').value = ''; window.removeReportPhoto();
                     saveToHistory(`แจ้งเหตุ: ${type}`, 'report');
-                    sendTelegramAlert(`🚨 แจ้งเหตุฉุกเฉิน 🚨\n\nผู้แจ้ง: ${currentUser.full_name}\nประเภท: ${type}\nรายละเอียด: ${details}\nเวลา: ${new Date().toLocaleString('th-TH')}`, reportImageForTelegram);
+                    // ใช้ notifyReport ที่มีเบอร์โทรและ inline button
+                    notifyReport(type, details, currentReportImageBase64 || null);
+                    currentReportImageBase64 = null;
                 } else {
                     throw new Error(result.error);
                 }
@@ -3292,32 +3296,67 @@
             return normalizeShiftLabel(explicitShift) || currentSelectedShiftLabel(fallbackDate);
         }
 
-        // ส่ง text-only (HTML parse_mode)
+        // ส่ง text-only (HTML parse_mode) — ตรวจ token ก่อนเสมอ
         async function tgSendText(htmlText, replyMarkup) {
+            if (!BOT_TOKEN || BOT_TOKEN.includes('YOUR') || !CHAT_ID) {
+                console.warn('[Telegram] BOT_TOKEN หรือ CHAT_ID ยังไม่ได้ตั้งค่า');
+                return;
+            }
             var body = { chat_id: CHAT_ID, text: htmlText, parse_mode: 'HTML' };
             if (replyMarkup) body.reply_markup = replyMarkup;
-            await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage', {
+            var res = await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
             });
+            if (!res.ok) {
+                var errBody = await res.text();
+                console.error('[Telegram] sendMessage error:', res.status, errBody);
+            }
         }
 
-        // ส่งรูปพร้อม caption (HTML parse_mode)
+        // ส่งรูปพร้อม caption (HTML parse_mode) — ถ้าไม่มีรูป fallback เป็น text
         async function tgSendPhoto(imageData, captionHtml, replyMarkup) {
-            var raw   = imageData.includes(',') ? imageData.split(',')[1] : imageData;
-            var bytes = atob(raw);
-            var ab    = new ArrayBuffer(bytes.length);
-            var ia    = new Uint8Array(ab);
-            for (var i = 0; i < bytes.length; i++) ia[i] = bytes.charCodeAt(i);
-            var blob = new Blob([ab], { type: 'image/jpeg' });
-            var fd   = new FormData();
-            fd.append('chat_id', CHAT_ID);
-            fd.append('photo', blob, 'photo.jpg');
-            fd.append('caption', captionHtml);
-            fd.append('parse_mode', 'HTML');
-            if (replyMarkup) fd.append('reply_markup', JSON.stringify(replyMarkup));
-            await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/sendPhoto', { method: 'POST', body: fd });
+            if (!BOT_TOKEN || BOT_TOKEN.includes('YOUR') || !CHAT_ID) {
+                console.warn('[Telegram] BOT_TOKEN หรือ CHAT_ID ยังไม่ได้ตั้งค่า');
+                return;
+            }
+            // ถ้าไม่มีรูป ส่งเป็น text แทน
+            if (!imageData) {
+                return tgSendText(captionHtml, replyMarkup);
+            }
+            try {
+                // รองรับทั้ง dataURL ("data:image/...;base64,XXX") และ raw base64
+                var raw = (typeof imageData === 'string' && imageData.includes(','))
+                    ? imageData.split(',')[1]
+                    : imageData;
+                if (!raw || raw.length < 100) {
+                    // รูปว่างเปล่า ส่ง text แทน
+                    return tgSendText(captionHtml, replyMarkup);
+                }
+                var bytes = atob(raw);
+                var ab    = new ArrayBuffer(bytes.length);
+                var ia    = new Uint8Array(ab);
+                for (var i = 0; i < bytes.length; i++) ia[i] = bytes.charCodeAt(i);
+                var blob = new Blob([ab], { type: 'image/jpeg' });
+                var fd   = new FormData();
+                fd.append('chat_id', CHAT_ID);
+                fd.append('photo', blob, 'photo.jpg');
+                fd.append('caption', captionHtml);
+                fd.append('parse_mode', 'HTML');
+                if (replyMarkup) fd.append('reply_markup', JSON.stringify(replyMarkup));
+                var res = await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/sendPhoto', { method: 'POST', body: fd });
+                if (!res.ok) {
+                    var errBody = await res.text();
+                    console.error('[Telegram] sendPhoto error:', res.status, errBody);
+                    // fallback ส่ง text ถ้ารูปล้มเหลว
+                    return tgSendText(captionHtml, replyMarkup);
+                }
+            } catch(e) {
+                console.error('[Telegram] sendPhoto exception:', e);
+                // fallback ส่ง text
+                return tgSendText(captionHtml, replyMarkup);
+            }
         }
 
         // ============================================================
@@ -3338,6 +3377,14 @@
         // ============================================================
         //  ฟังก์ชันส่งแจ้งเตือนแต่ละประเภท
         // ============================================================
+
+        // แปลงเบอร์ไทย → wa.me (Telegram inline button รับเฉพาะ https://)
+        function waLink(phone) {
+            if (!phone) return null;
+            var d = phone.replace(/[-\s]/g, '');
+            var intl = d.startsWith('0') ? '66' + d.slice(1) : d;
+            return 'https://wa.me/' + intl;
+        }
 
         async function notifyCheckin(type, shift, imageData) {
             try {
@@ -3361,8 +3408,8 @@
                     '🏢 <b>กะที่บันทึก:</b> ' + tgEsc(notifyShiftLabel(shift, now));
 
                 var buttons = [];
-                if (mapUrl) buttons.push({ text: '📍 ดูพิกัดบน Maps', url: mapUrl });
-                if (phone)  buttons.push({ text: '📞 โทร ' + phone, url: 'tel:' + phone.replace(/[-\s]/g,'') });
+                if (mapUrl) buttons.push({ text: '📍 ดูพิกัด Maps', url: mapUrl });
+                if (phone) { var _wa1 = waLink(phone); if (_wa1) buttons.push({ text: '💬 WA ' + phone, url: _wa1 }); }
                 var markup = buttons.length ? { inline_keyboard: [buttons] } : null;
 
                 if (imageData) {
@@ -3392,8 +3439,8 @@
                     '📍 <b>พิกัด:</b> ' + (locStr ? tgEsc(locStr) : 'ไม่ทราบ');
 
                 var buttons = [];
-                if (mapUrl) buttons.push({ text: '📍 ดูพิกัดบน Maps', url: mapUrl });
-                if (phone)  buttons.push({ text: '📞 โทร ' + phone, url: 'tel:' + phone.replace(/[-\s]/g,'') });
+                if (mapUrl) buttons.push({ text: '📍 ดูพิกัด Maps', url: mapUrl });
+                if (phone) { var _wa2 = waLink(phone); if (_wa2) buttons.push({ text: '💬 WA ' + phone, url: _wa2 }); }
                 var markup = buttons.length ? { inline_keyboard: [buttons] } : null;
 
                 if (imageData) {
@@ -3434,8 +3481,8 @@
                     '🏢 <b>กะ:</b> ' + tgEsc(notifyShiftLabel(null, now));
 
                 var buttons = [];
-                if (mapUrl) buttons.push({ text: '📍 ดูพิกัดบน Maps', url: mapUrl });
-                if (phone)  buttons.push({ text: '📞 โทรกลับ ' + phone, url: 'tel:' + phone.replace(/[-\s]/g,'') });
+                if (mapUrl) buttons.push({ text: '📍 ดูพิกัด Maps', url: mapUrl });
+                if (phone) { var _wa3 = waLink(phone); if (_wa3) buttons.push({ text: '💬 WA โทรกลับ ' + phone, url: _wa3 }); }
 
                 var markup = buttons.length ? { inline_keyboard: [buttons] } : null;
 
@@ -6157,6 +6204,25 @@
       + '<div class="bg-white rounded-3xl shadow-sm border border-amber-100 overflow-hidden">'
       +   '<div class="px-5 py-4 border-b border-amber-50"><h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-amber-100 text-amber-600 p-1.5 rounded-lg text-xs">📦</span>สถานะ Offline Queue</h3></div>'
       +   '<div id="adminOfflineStatus" class="p-4 text-xs text-gray-500">กำลังตรวจสอบ...</div>'
+      + '</div>'
+      + '<div class="bg-white rounded-3xl shadow-sm border border-sky-100 overflow-hidden">'
+      +   '<div class="px-5 py-4 border-b border-sky-50 flex items-center justify-between">'
+      +     '<h3 class="text-sm font-black text-gray-800 flex items-center gap-2"><span class="bg-sky-100 text-sky-600 p-1.5 rounded-lg text-xs">📣</span>ทดสอบการแจ้งเตือน Telegram</h3>'
+      +     '<span id="tgTestStatusBadge" class="text-[10px] font-black px-2 py-1 rounded-full bg-gray-100 text-gray-400">ยังไม่ได้ทดสอบ</span>'
+      +   '</div>'
+      +   '<div class="p-4 space-y-3">'
+      +     '<div class="bg-sky-50 rounded-2xl p-3 text-[10px] text-sky-700 font-bold space-y-1">'
+      +       '<p>🤖 Bot: <span id="tgBotInfo" class="font-black">กำลังตรวจสอบ...</span></p>'
+      +       '<p>💬 Chat ID: <span class="font-black text-slate-700">' + (typeof CHAT_ID !== 'undefined' ? CHAT_ID : '-') + '</span></p>'
+      +     '</div>'
+      +     '<div class="grid grid-cols-2 gap-2">'
+      +       '<button onclick="adminTestTelegramText()" class="bg-sky-600 text-white rounded-2xl py-3 text-xs font-black active:scale-95">📨 ทดสอบข้อความ</button>'
+      +       '<button onclick="adminTestTelegramCheckin()" class="bg-emerald-600 text-white rounded-2xl py-3 text-xs font-black active:scale-95">✅ จำลองเข้างาน</button>'
+      +       '<button onclick="adminTestTelegramPatrol()" class="bg-orange-600 text-white rounded-2xl py-3 text-xs font-black active:scale-95">🔦 จำลองตรวจจุด</button>'
+      +       '<button onclick="adminTestTelegramReport()" class="bg-red-600 text-white rounded-2xl py-3 text-xs font-black active:scale-95">🚨 จำลองแจ้งเหตุ</button>'
+      +     '</div>'
+      +     '<div id="tgTestLog" class="bg-slate-50 border border-slate-100 rounded-2xl p-3 text-[10px] font-mono text-slate-600 space-y-1 min-h-[60px]">รอการทดสอบ...</div>'
+      +   '</div>'
       + '</div>');
   }
 
@@ -6203,6 +6269,8 @@
       setText('adminLastUpdate', 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit', second:'2-digit' }));
       var pill = document.getElementById('adminRealtimePill');
       if (pill) { pill.innerText = '● Realtime'; pill.className = 'text-[10px] font-black px-2.5 py-1 rounded-full bg-emerald-500/30 text-emerald-300 border border-emerald-500/30'; }
+      // ตรวจสอบ Telegram Bot อัตโนมัติ
+      setTimeout(window.adminCheckTelegramBot, 800);
 
       // เริ่ม admin auto-refresh ทุก 30 วิ (fallback จาก WebSocket)
       if (!window._adminAutoRefreshInterval) {
@@ -6461,11 +6529,18 @@
 
   async function loadAssignmentsFromDB() {
     try {
-      var rows = await sbSelect('assignments', { select: 'id,emp_code,shift,time,checkpoints,created_at', order: 'created_at.desc', limit: 200 });
-      _assignmentsCache = (rows || []).map(function(r) { return { id: r.id, emp_code: r.emp_code, shift: r.shift, time: r.time, checkpoints: r.checkpoints, createdAt: r.created_at }; });
+      var r = await fetch(SUPABASE_URL + '/rest/v1/assignments?select=id,emp_code,shift,time,checkpoints,created_at&order=created_at.desc&limit=200', {
+        headers: sbHeaders()
+      });
+      // 404 = ตารางไม่มี → ใช้ memory เดิมเงียบๆ
+      if (r.status === 404 || r.status === 400) { renderAssignments(); return; }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var rows = await r.json();
+      _assignmentsCache = (rows || []).map(function(row) {
+        return { id: row.id, emp_code: row.emp_code, shift: row.shift, time: row.time, checkpoints: row.checkpoints, createdAt: row.created_at };
+      });
     } catch(e) {
-      // ตาราง assignments อาจยังไม่มี — ใช้ memory เดิม
-      console.warn('[Admin] assignments table not found, using local cache');
+      // เงียบ — ตารางอาจยังไม่ถูกสร้าง
     }
     renderAssignments();
   }
@@ -6601,6 +6676,160 @@
     if (type === 'report' || type === 'all') rows = rows.concat(filteredReports().map(function(r){ return Object.assign({ data_type:'report' }, r); }));
     if (!rows.length) return showCustomAlert('ไม่มีข้อมูล', 'ไม่พบข้อมูลสำหรับ export', 'warning');
     downloadCsv('svs_' + type + '_' + new Date().toISOString().slice(0,10) + '.csv', rows);
+  };
+
+  // ──────────────────────────────────────────────────────────
+  //  TELEGRAM TEST FUNCTIONS (Admin Panel)
+  // ──────────────────────────────────────────────────────────
+  function tgLog(msg, ok) {
+    var el = document.getElementById('tgTestLog');
+    if (!el) return;
+    var t = new Date().toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+    var color = ok === true ? 'text-emerald-600' : ok === false ? 'text-red-500' : 'text-slate-500';
+    el.innerHTML = '<p class="' + color + ' font-bold">[' + t + '] ' + msg + '</p>' + el.innerHTML;
+  }
+
+  function setBadge(text, ok) {
+    var el = document.getElementById('tgTestStatusBadge');
+    if (!el) return;
+    el.innerText = text;
+    el.className = 'text-[10px] font-black px-2 py-1 rounded-full ' +
+      (ok === true  ? 'bg-emerald-100 text-emerald-700' :
+       ok === false ? 'bg-red-100 text-red-600' :
+                      'bg-amber-100 text-amber-600');
+  }
+
+  // ตรวจสอบ Bot token เมื่อเปิด Admin
+  window.adminCheckTelegramBot = async function() {
+    var token = window.BOT_TOKEN || '';
+    var el = document.getElementById('tgBotInfo');
+    if (!token || token.includes('YOUR')) {
+      if (el) el.innerText = '❌ ยังไม่ได้ตั้งค่า BOT_TOKEN';
+      setBadge('ไม่มี Token', false); return;
+    }
+    try {
+      var r = await fetch('https://api.telegram.org/bot' + token + '/getMe');
+      var d = await r.json();
+      if (d.ok) {
+        if (el) el.innerText = '✅ @' + d.result.username + ' (' + d.result.first_name + ')';
+        setBadge('Bot พร้อมใช้', true);
+        tgLog('Bot OK: @' + d.result.username, true);
+      } else {
+        if (el) el.innerText = '❌ Token ไม่ถูกต้อง: ' + d.description;
+        setBadge('Token ผิด', false);
+        tgLog('getMe failed: ' + d.description, false);
+      }
+    } catch(e) {
+      if (el) el.innerText = '⚠️ เชื่อมต่อไม่ได้: ' + e.message;
+      setBadge('เชื่อมต่อไม่ได้', false);
+      tgLog('network error: ' + e.message, false);
+    }
+  };
+
+  window.adminTestTelegramText = async function() {
+    var token = window.BOT_TOKEN || '';
+    var chatId = window.CHAT_ID || '';
+    if (!token || token.includes('YOUR') || !chatId) {
+      return tgLog('❌ ยังไม่ได้ตั้งค่า BOT_TOKEN หรือ CHAT_ID', false);
+    }
+    setBadge('กำลังส่ง...', null);
+    tgLog('กำลังส่งข้อความทดสอบ...', null);
+    try {
+      var res = await fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          parse_mode: 'HTML',
+          text: '🧪 <b>ทดสอบระบบแจ้งเตือน</b>\n' +
+                '━━━━━━━━━━━━━━━━━\n' +
+                '✅ Telegram Bot เชื่อมต่อสำเร็จ\n' +
+                '🕐 เวลา: ' + new Date().toLocaleString('th-TH') + '\n' +
+                '🖥️ ทดสอบจาก Admin Panel'
+        })
+      });
+      var d = await res.json();
+      if (d.ok) { setBadge('ส่งสำเร็จ ✅', true); tgLog('✅ ส่งข้อความสำเร็จ (msg_id: ' + d.result.message_id + ')', true); }
+      else       { setBadge('ส่งไม่ได้ ❌', false); tgLog('❌ ' + d.description, false); }
+    } catch(e) { setBadge('Error ❌', false); tgLog('❌ ' + e.message, false); }
+  };
+
+  window.adminTestTelegramCheckin = async function() {
+    var token = window.BOT_TOKEN || ''; var chatId = window.CHAT_ID || '';
+    if (!token || !chatId) return tgLog('❌ ไม่มี Token/Chat ID', false);
+    setBadge('กำลังส่ง...', null); tgLog('จำลองลงเวลาเข้างาน...', null);
+    var emp = (AP.data.emps || [])[0];
+    var phone = emp && emp.phone_number ? emp.phone_number : '08x-xxxxxxx';
+    var wa = phone.replace(/[-\s]/g,''); if (wa.startsWith('0')) wa = '66' + wa.slice(1);
+    try {
+      var r = await fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId, parse_mode: 'HTML',
+          text: '✅ <b>ลงเวลาเข้างาน [TEST]</b>\n━━━━━━━━━━━━━━━━━\n' +
+                '👤 <b>พนักงาน:</b> ' + (emp ? emp.full_name : 'ทดสอบ') + '\n' +
+                '🪪 <b>รหัส:</b> ' + (emp ? emp.emp_code : '000') + '\n' +
+                '📱 <b>เบอร์โทร:</b> ' + phone + '\n' +
+                '🔖 <b>กะ:</b> กะเช้า\n⏰ <b>เวลา:</b> ' + new Date().toLocaleString('th-TH'),
+          reply_markup: { inline_keyboard: [[{ text: '💬 WA ' + phone, url: 'https://wa.me/' + wa }]] }
+        })
+      });
+      var d = await r.json();
+      if (d.ok) { setBadge('✅ เข้างาน OK', true); tgLog('✅ จำลองเข้างานสำเร็จ', true); }
+      else       { setBadge('❌ ล้มเหลว', false); tgLog('❌ ' + d.description, false); }
+    } catch(e) { setBadge('❌ Error', false); tgLog('❌ ' + e.message, false); }
+  };
+
+  window.adminTestTelegramPatrol = async function() {
+    var token = window.BOT_TOKEN || ''; var chatId = window.CHAT_ID || '';
+    if (!token || !chatId) return tgLog('❌ ไม่มี Token/Chat ID', false);
+    setBadge('กำลังส่ง...', null); tgLog('จำลองเดินตรวจ...', null);
+    var emp = (AP.data.emps || [])[0];
+    var phone = emp && emp.phone_number ? emp.phone_number : '08x-xxxxxxx';
+    var wa = phone.replace(/[-\s]/g,''); if (wa.startsWith('0')) wa = '66' + wa.slice(1);
+    try {
+      var r = await fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId, parse_mode: 'HTML',
+          text: '🔦 <b>บันทึกจุดตรวจ [TEST]</b>\n━━━━━━━━━━━━━━━━━\n' +
+                '👤 <b>พนักงาน:</b> ' + (emp ? emp.full_name : 'ทดสอบ') + '\n' +
+                '📱 <b>เบอร์โทร:</b> ' + phone + '\n' +
+                '📌 <b>จุดตรวจ:</b> จุด A (ทดสอบ)\n' +
+                '⏰ <b>เวลา:</b> ' + new Date().toLocaleString('th-TH'),
+          reply_markup: { inline_keyboard: [[{ text: '💬 WA ' + phone, url: 'https://wa.me/' + wa }]] }
+        })
+      });
+      var d = await r.json();
+      if (d.ok) { setBadge('✅ จุดตรวจ OK', true); tgLog('✅ จำลองตรวจจุดสำเร็จ', true); }
+      else       { setBadge('❌ ล้มเหลว', false); tgLog('❌ ' + d.description, false); }
+    } catch(e) { setBadge('❌ Error', false); tgLog('❌ ' + e.message, false); }
+  };
+
+  window.adminTestTelegramReport = async function() {
+    var token = window.BOT_TOKEN || ''; var chatId = window.CHAT_ID || '';
+    if (!token || !chatId) return tgLog('❌ ไม่มี Token/Chat ID', false);
+    setBadge('กำลังส่ง...', null); tgLog('จำลองแจ้งเหตุ...', null);
+    var emp = (AP.data.emps || [])[0];
+    var phone = emp && emp.phone_number ? emp.phone_number : '08x-xxxxxxx';
+    var wa = phone.replace(/[-\s]/g,''); if (wa.startsWith('0')) wa = '66' + wa.slice(1);
+    try {
+      var r = await fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId, parse_mode: 'HTML',
+          text: '🚨🚨 <b>แจ้งเหตุฉุกเฉิน [TEST]</b> 🚨🚨\n━━━━━━━━━━━━━━━━━\n' +
+                '🥷 <b>ประเภท:</b> บุคคลต้องสงสัย\n📋 <b>รายละเอียด:</b> ทดสอบระบบแจ้งเตือน\n━━━━━━━━━━━━━━━━━\n' +
+                '👤 <b>ผู้แจ้ง:</b> ' + (emp ? emp.full_name : 'ทดสอบ') + '\n' +
+                '📱 <b>เบอร์โทร:</b> ' + phone + '\n' +
+                '⏰ <b>เวลา:</b> ' + new Date().toLocaleString('th-TH'),
+          reply_markup: { inline_keyboard: [[{ text: '💬 WA โทรกลับ ' + phone, url: 'https://wa.me/' + wa }]] }
+        })
+      });
+      var d = await r.json();
+      if (d.ok) { setBadge('✅ แจ้งเหตุ OK', true); tgLog('✅ จำลองแจ้งเหตุสำเร็จ', true); }
+      else       { setBadge('❌ ล้มเหลว', false); tgLog('❌ ' + d.description, false); }
+    } catch(e) { setBadge('❌ Error', false); tgLog('❌ ' + e.message, false); }
   };
 
   document.addEventListener('DOMContentLoaded', injectUI);
