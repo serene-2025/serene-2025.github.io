@@ -68,7 +68,12 @@
             z-index: 120 !important;
         }
         #adminView {
+            /* SECURITY: ซ่อนด้วย CSS ชั้นที่สองป้องกันการ override */
+            display: none !important;
             padding-bottom: 7rem;
+        }
+        #adminView.admin-unlocked {
+            display: block !important;
         }
 
         /* กดทับ Leaflet ทุก layer เมื่อ confirmSheet/backdrop เปิดอยู่ */
@@ -2075,6 +2080,11 @@
             window.closeCustomAlert = function() {
                 clearSession();
                 currentUser = null;
+                // SECURITY: ล้าง admin access
+                var av = document.getElementById('adminView');
+                if (av) av.classList.remove('admin-unlocked');
+                var adminBtn = document.getElementById('adminNavBtn');
+                if (adminBtn) adminBtn.classList.add('hidden');
                 if (typeof window.stopRealtimeSubscription === 'function') window.stopRealtimeSubscription();
                 clearInterval(window._adminAutoRefreshInterval);
                 window._adminAutoRefreshInterval = null;
@@ -2578,6 +2588,15 @@
         // Navigation & Tab Switch
         // ==========================================
         window.switchTab = function(activeTab) {
+            // ── SECURITY: ตรวจสิทธิ์ก่อนเข้า admin tab ────────────
+            if (activeTab === 'admin') {
+                if (!currentUser || !isAdminUser(currentUser)) {
+                    console.warn('[Security] Unauthorized admin access attempt by', currentUser && currentUser.emp_code);
+                    showCustomAlert('ไม่มีสิทธิ์', 'คุณไม่มีสิทธิ์เข้าถึงหน้า Admin', 'error');
+                    return; // หยุดทันที ไม่ switch tab
+                }
+            }
+            // ────────────────────────────────────────────────────────
             document.getElementById('previewSection').classList.add('hidden');
             // ปิด bottom sheet ถ้าเปิดอยู่
             var cs = document.getElementById('confirmSheet');
@@ -2595,7 +2614,17 @@
             const tabs = ['home', 'checkin', 'patrol', 'report', 'rules', 'history', 'dashboard', 'admin'];
             tabs.forEach(tab => {
                 const view = document.getElementById(tab + 'View');
-                if(view) view.classList.toggle('hidden', tab !== activeTab);
+                if (view) {
+                    view.classList.toggle('hidden', tab !== activeTab);
+                    // SECURITY: admin view ต้องใช้ class พิเศษด้วย
+                    if (tab === 'admin') {
+                        if (tab === activeTab && currentUser && isAdminUser(currentUser)) {
+                            view.classList.add('admin-unlocked');
+                        } else {
+                            view.classList.remove('admin-unlocked');
+                        }
+                    }
+                }
 
                 // จัดการแถบเมนูด้านล่าง (ยกเว้น history=มีปุ่ม, dashboard ไม่มี)
                 if(tab !== 'dashboard') {
@@ -6725,6 +6754,12 @@
 
   function injectUI() {
     if (AP.ready) return;
+    // ── SECURITY: ตรวจสิทธิ์ก่อนแสดง UI ────────────────────────
+    if (!currentUser || !isAdminUser(currentUser)) {
+      console.warn('[Security] injectUI blocked for', currentUser && currentUser.emp_code);
+      return;
+    }
+    // ────────────────────────────────────────────────────────────
     var view = document.getElementById('adminView');
     if (!view) return;
     AP.ready = true;
@@ -6930,6 +6965,12 @@
   }
 
   window.adminRefreshAll = async function() {
+    // ── SECURITY: ตรวจสิทธิ์ก่อนโหลดข้อมูล admin ──────────────
+    if (!currentUser || !isAdminUser(currentUser)) {
+      console.warn('[Security] adminRefreshAll blocked for', currentUser && currentUser.emp_code);
+      return;
+    }
+    // ────────────────────────────────────────────────────────────
     injectUI();
     var icon = document.getElementById('adminRefreshIcon');
     if (icon) icon.innerText = '⏳';
