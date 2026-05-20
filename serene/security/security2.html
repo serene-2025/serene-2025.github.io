@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Serene Smart Security V.3</title>
+    <title>Serene Smart Security V.2</title>
     <!-- โหลด Tailwind -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- โหลดไลบรารี html5-qrcode สำหรับสแกน QR -->
@@ -738,6 +738,15 @@
                         class="flex-1 py-2.5 rounded-xl text-xs font-black transition active:scale-95 text-gray-500">
                         🔦 ตรวจ
                     </button>
+
+                <!-- Debug Info Panel — แสดงเมื่อไม่มีข้อมูล -->
+                <div id="histDebugPanel" class="hidden bg-slate-800 rounded-2xl p-3 space-y-1">
+                    <div class="flex items-center justify-between">
+                        <p class="text-[10px] text-slate-400 font-black uppercase tracking-widest">🔧 Debug Info</p>
+                        <button onclick="document.getElementById('histDebugPanel').classList.add('hidden')" class="text-slate-500 text-xs">✕</button>
+                    </div>
+                    <div id="histDebugInfo" class="font-mono space-y-0.5"></div>
+                </div>
                     <button onclick="setHistTab('report')" id="histTabReport"
                         class="flex-1 py-2.5 rounded-xl text-xs font-black transition active:scale-95 text-gray-500">
                         🚨 เหตุ
@@ -2694,7 +2703,26 @@
         // normalize emp_code: ถ้าขึ้นต้น "00" ให้ตัด 0 นำหน้าออก
         function normalizeEmpCode(code) {
             if (!code) return '';
-            return String(code).replace(/^0+/, '') || '0';
+            // คืนค่าเดิมโดยไม่ตัด 0 นำหน้า — เพราะ Supabase เก็บตามที่บันทึกจริง
+            return String(code).trim();
+        }
+
+        // หา emp_code ทุกรูปแบบที่เป็นไปได้ (รองรับ "003" / "3" / "G003" ฯลฯ)
+        function empCodeVariants(code) {
+            if (!code) return [];
+            var s = String(code).trim();
+            var variants = [s];
+            // ตัด 0 นำหน้า: "003" → "3"
+            var stripped = s.replace(/^0+/, '') || s;
+            if (stripped !== s) variants.push(stripped);
+            // เติม 0 นำหน้า 3 หลัก: "3" → "003"
+            if (/^\d+$/.test(s) && s.length < 3) variants.push(s.padStart(3,'0'));
+            // uppercase
+            if (s.toUpperCase() !== s) variants.push(s.toUpperCase());
+            // ลบ prefix ตัวอักษร: "G003" → "003" / "3"
+            var numOnly = s.replace(/^[a-zA-Z]+/, '');
+            if (numOnly !== s) { variants.push(numOnly); variants.push(numOnly.replace(/^0+/,'') || numOnly); }
+            return [...new Set(variants)];
         }
 
         // parse วันที่จาก ISO timestamp (Supabase) หรือ "DD/MM/YYYY HH:MM:SS"
@@ -2912,10 +2940,25 @@
 
             showHistSkeleton();
 
-            var empCode = normalizeEmpCode(currentUser && currentUser.emp_code);
-            var limit   = 200;
+            // debug panel
+            var debugEl = document.getElementById('histDebugInfo');
+            if (debugEl) debugEl.innerHTML = '';
 
-            // คำนวณ date range จาก _histRange
+            var rawCode  = currentUser && currentUser.emp_code;
+            var variants = empCodeVariants(rawCode);
+
+            function addDebug(msg, ok) {
+                var panel = document.getElementById('histDebugPanel');
+                if (panel) panel.classList.remove('hidden');
+                if (!debugEl) return;
+                var c = ok === true ? '#10b981' : ok === false ? '#ef4444' : '#94a3b8';
+                debugEl.innerHTML += '<span style="color:' + c + ';display:block;font-size:10px">' + msg + '</span>';
+            }
+
+            addDebug('🔍 emp_code จาก session: "' + rawCode + '"');
+            addDebug('🔄 จะค้นหา: ' + variants.map(function(v){ return '"' + v + '"'; }).join(', '));
+
+            // คำนวณ date range
             var startDate = null;
             var now = new Date();
             if (_histRange === 'today') {
@@ -2925,55 +2968,75 @@
             } else if (_histRange === 'month') {
                 startDate = new Date(now); startDate.setDate(now.getDate() - 29); startDate.setHours(0,0,0,0);
             }
-            // 'all' = ไม่กรองวันที่
+
+            var startParam = startDate ? '&recorded_at=gte.' + startDate.toISOString() : '';
+            var limit      = 200;
 
             try {
-                var startParam = startDate ? '&recorded_at=gte.' + startDate.toISOString() : '';
-
-                var [resA, resP, resR] = await Promise.all([
-                    sbSelect('attendance?emp_code=eq.' + encodeURIComponent(empCode)
-                        + startParam
-                        + '&select=id,emp_code,guard_name,type,shift,lat,lng,photo_url,recorded_at'
-                        + '&order=recorded_at.desc&limit=' + limit, {}),
-                    sbSelect('patrol_logs?emp_code=eq.' + encodeURIComponent(empCode)
-                        + startParam
-                        + '&select=id,emp_code,guard_name,checkpoint,lat,lng,photo_url,recorded_at'
-                        + '&order=recorded_at.desc&limit=' + limit, {}),
-                    sbSelect('incident_reports?emp_code=eq.' + encodeURIComponent(empCode)
-                        + startParam
-                        + '&select=id,emp_code,guard_name,incident_type,details,status,lat,lng,photo_url,recorded_at'
-                        + '&order=recorded_at.desc&limit=' + limit, {})
-                ]);
-
                 var combined = [];
-                (resA || []).forEach(function(r){ r._type = 'attendance'; combined.push(r); });
-                (resP || []).forEach(function(r){ r._type = 'patrol';     combined.push(r); });
-                (resR || []).forEach(function(r){ r._type = 'report';     combined.push(r); });
 
-                // ลอง normalize emp_code อีกรูปแบบถ้าไม่มีข้อมูล (เช่น "003" vs "3")
-                if (combined.length === 0) {
-                    var altCode = empCode.replace(/^0+/, '') || empCode;
-                    if (altCode !== empCode) {
-                        var [rA2, rP2, rR2] = await Promise.all([
-                            sbSelect('attendance?emp_code=eq.' + encodeURIComponent(altCode) + startParam + '&select=id,emp_code,guard_name,type,shift,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=' + limit, {}),
-                            sbSelect('patrol_logs?emp_code=eq.' + encodeURIComponent(altCode) + startParam + '&select=id,emp_code,guard_name,checkpoint,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=' + limit, {}),
-                            sbSelect('incident_reports?emp_code=eq.' + encodeURIComponent(altCode) + startParam + '&select=id,emp_code,guard_name,incident_type,details,status,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=' + limit, {})
-                        ]);
-                        (rA2 || []).forEach(function(r){ r._type = 'attendance'; combined.push(r); });
-                        (rP2 || []).forEach(function(r){ r._type = 'patrol';     combined.push(r); });
-                        (rR2 || []).forEach(function(r){ r._type = 'report';     combined.push(r); });
+                // query ทุก variant พร้อมกัน
+                var allFetches = [];
+                variants.forEach(function(code) {
+                    var enc = encodeURIComponent(code);
+                    allFetches.push(
+                        sbSelect('attendance?emp_code=eq.' + enc + startParam + '&select=id,emp_code,guard_name,type,shift,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=' + limit, {})
+                            .then(function(r){ return { type:'attendance', code:code, rows:r||[] }; })
+                            .catch(function(){ return { type:'attendance', code:code, rows:[] }; }),
+                        sbSelect('patrol_logs?emp_code=eq.' + enc + startParam + '&select=id,emp_code,guard_name,checkpoint,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=' + limit, {})
+                            .then(function(r){ return { type:'patrol', code:code, rows:r||[] }; })
+                            .catch(function(){ return { type:'patrol', code:code, rows:[] }; }),
+                        sbSelect('incident_reports?emp_code=eq.' + enc + startParam + '&select=id,emp_code,guard_name,incident_type,details,status,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=' + limit, {})
+                            .then(function(r){ return { type:'report', code:code, rows:r||[] }; })
+                            .catch(function(){ return { type:'report', code:code, rows:[] }; })
+                    );
+                });
+
+                var results = await Promise.all(allFetches);
+
+                // รวม deduplicate ด้วย id
+                var seen = {};
+                results.forEach(function(res) {
+                    if (res.rows.length > 0) {
+                        addDebug('✅ "' + res.code + '" → ' + res.type + ': ' + res.rows.length + ' รายการ', true);
                     }
+                    res.rows.forEach(function(r) {
+                        var key = res.type + '_' + (r.id || r.recorded_at);
+                        if (!seen[key]) {
+                            seen[key] = true;
+                            r._type = res.type;
+                            combined.push(r);
+                        }
+                    });
+                });
+
+                if (combined.length === 0) {
+                    addDebug('⚠️ ไม่พบข้อมูลสำหรับ emp_code ทุก variant', false);
+                    // แสดง hint ให้ผู้ใช้ทราบ
+                    var wrap = document.getElementById('histListWrap');
+                    if (wrap) wrap.innerHTML =
+                        '<div class="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-center space-y-3">'
+                        + '<p class="text-2xl">🔍</p>'
+                        + '<p class="text-sm font-black text-amber-700">ไม่พบประวัติการทำงาน</p>'
+                        + '<p class="text-xs text-amber-600">รหัสที่ค้นหา: ' + variants.map(function(v){ return '"' + v + '"'; }).join(', ') + '</p>'
+                        + '<p class="text-[10px] text-amber-500">ตรวจสอบว่า emp_code ในตาราง Supabase ตรงกับรหัสที่ login</p>'
+                        + '</div>';
+                    _histAllRows = [];
+                    updateHistSummary([]);
+                    _histLoading = false;
+                    if (refreshBtn) refreshBtn.innerText = '🔄 รีเฟรช';
+                    return;
                 }
 
-                combined.sort(function(a, b) {
-                    return new Date(b.recorded_at) - new Date(a.recorded_at);
-                });
+                combined.sort(function(a,b){ return new Date(b.recorded_at) - new Date(a.recorded_at); });
+                addDebug('📋 รวม: ' + combined.length + ' รายการ', true);
 
                 _histAllRows = combined;
                 updateHistSummary(combined);
                 applyHistFilters();
 
             } catch(err) {
+                addDebug('❌ Error: ' + err.message, false);
                 var wrap = document.getElementById('histListWrap');
                 if (wrap) wrap.innerHTML =
                     '<div class="bg-red-50 border border-red-100 rounded-2xl p-6 text-center">'
@@ -3469,45 +3532,47 @@
             container.innerHTML = '<div class="text-center py-4"><div class="loader border-slate-400 mx-auto mb-2" style="width:24px;height:24px;border-width:3px"></div><p class="text-xs text-gray-400">กำลังโหลด...</p></div>';
 
             try {
-                var empCode = currentUser.emp_code;
-                var limit = 20;
-                var [resA, resP, resR] = await Promise.all([
-                    sbSelect('attendance', { emp_code: 'eq.' + empCode, order: 'recorded_at.desc', limit: limit, select: 'id,type,shift,recorded_at' }),
-                    sbSelect('patrol_logs', { emp_code: 'eq.' + empCode, order: 'recorded_at.desc', limit: limit, select: 'id,checkpoint,recorded_at' }),
-                    sbSelect('incident_reports', { emp_code: 'eq.' + empCode, order: 'recorded_at.desc', limit: limit, select: 'id,incident_type,recorded_at' })
-                ]);
+                var variants = empCodeVariants(currentUser.emp_code);
+                var limit    = 20;
+                var allA = [], allP = [], allR = [];
+
+                await Promise.all(variants.map(function(code) {
+                    return Promise.all([
+                        sbSelect('attendance', { emp_code: 'eq.' + code, order: 'recorded_at.desc', limit: limit, select: 'id,type,shift,recorded_at' })
+                            .then(function(r){ (r||[]).forEach(function(x){ allA.push(x); }); }).catch(function(){}),
+                        sbSelect('patrol_logs', { emp_code: 'eq.' + code, order: 'recorded_at.desc', limit: limit, select: 'id,checkpoint,recorded_at' })
+                            .then(function(r){ (r||[]).forEach(function(x){ allP.push(x); }); }).catch(function(){}),
+                        sbSelect('incident_reports', { emp_code: 'eq.' + code, order: 'recorded_at.desc', limit: limit, select: 'id,incident_type,recorded_at' })
+                            .then(function(r){ (r||[]).forEach(function(x){ allR.push(x); }); }).catch(function(){})
+                    ]);
+                }));
+
+                // deduplicate by id
+                function dedup(arr) {
+                    var seen = {};
+                    return arr.filter(function(r){ var k = r.id||r.recorded_at; if(seen[k]) return false; seen[k]=true; return true; });
+                }
 
                 var combined = [];
-                (resA || []).forEach(function(r) {
-                    combined.push({ _t: new Date(r.recorded_at).getTime(), type: r.type, title: r.type === 'checkin' ? 'เข้างาน' : 'ออกงาน', shift: r.shift, recorded_at: r.recorded_at });
-                });
-                (resP || []).forEach(function(r) {
-                    combined.push({ _t: new Date(r.recorded_at).getTime(), type: 'patrol', title: 'จุดตรวจ: ' + r.checkpoint, checkpoint: r.checkpoint, recorded_at: r.recorded_at });
-                });
-                (resR || []).forEach(function(r) {
-                    combined.push({ _t: new Date(r.recorded_at).getTime(), type: 'report', title: 'แจ้งเหตุ: ' + (r.incident_type || ''), recorded_at: r.recorded_at });
-                });
-                combined.sort(function(a, b) { return b._t - a._t; });
-                combined = combined.slice(0, 20);
+                dedup(allA).forEach(function(r){ combined.push({ _t: new Date(r.recorded_at).getTime(), type: r.type, title: r.type==='checkin'?'เข้างาน':'ออกงาน', shift: r.shift, recorded_at: r.recorded_at }); });
+                dedup(allP).forEach(function(r){ combined.push({ _t: new Date(r.recorded_at).getTime(), type: 'patrol', title: 'จุดตรวจ: '+r.checkpoint, checkpoint: r.checkpoint, recorded_at: r.recorded_at }); });
+                dedup(allR).forEach(function(r){ combined.push({ _t: new Date(r.recorded_at).getTime(), type: 'report', title: 'แจ้งเหตุ: '+(r.incident_type||''), recorded_at: r.recorded_at }); });
+                combined.sort(function(a,b){ return b._t - a._t; });
+                renderHistory(combined.slice(0, 20));
 
-                renderHistory(combined);
-
-                // อัปเดต patrol progress cache จากข้อมูลล่าสุด
+                // อัปเดต patrol progress cache
                 _patrolProgressCache = {};
-                window._patrolProgressCache = _patrolProgressCache;
-                (resP || []).forEach(function(r) {
+                dedup(allP).forEach(function(r) {
                     if (r.checkpoint && r.recorded_at) {
                         var t = new Date(r.recorded_at).getTime();
-                        // เก็บล่าสุดของแต่ละจุดตรวจ
-                        if (!_patrolProgressCache[r.checkpoint] || t > _patrolProgressCache[r.checkpoint]) {
-                            _patrolProgressCache[r.checkpoint] = t;
-                        }
+                        if (!_patrolProgressCache[r.checkpoint] || t > _patrolProgressCache[r.checkpoint]) _patrolProgressCache[r.checkpoint] = t;
                     }
                 });
+                window._patrolProgressCache = _patrolProgressCache;
                 updatePatrolProgress();
 
             } catch(err) {
-                if (container) container.innerHTML = '<p class="text-center text-xs text-red-400 py-4">โหลดล้มเหลว: ' + (err.message || '') + '</p>';
+                if (container) container.innerHTML = '<p class="text-center text-xs text-red-400 py-4">โหลดล้มเหลว: '+(err.message||'')+'</p>';
             }
         }
 
