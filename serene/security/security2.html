@@ -718,8 +718,8 @@
                             <p class="text-indigo-200 text-[9px] font-bold">แจ้งเหตุ</p>
                         </div>
                         <button onclick="loadAllHistory()" id="histRefreshBtn"
-                            class="ml-auto bg-white/15 border border-white/20 rounded-xl px-3 py-1.5 text-white text-xs font-black active:scale-90 transition flex items-center gap-1">
-                            🔄 รีเฟรช
+                            class="ml-auto bg-white/15 border border-white/20 rounded-xl w-9 h-9 text-white text-base font-black active:scale-90 transition flex items-center justify-center" title="รีเฟรช">
+                            🔄
                         </button>
                     </div>
                 </div>
@@ -738,15 +738,6 @@
                         class="flex-1 py-2.5 rounded-xl text-xs font-black transition active:scale-95 text-gray-500">
                         🔦 ตรวจ
                     </button>
-
-                <!-- Debug Info Panel — แสดงเมื่อไม่มีข้อมูล -->
-                <div id="histDebugPanel" class="hidden bg-slate-800 rounded-2xl p-3 space-y-1">
-                    <div class="flex items-center justify-between">
-                        <p class="text-[10px] text-slate-400 font-black uppercase tracking-widest">🔧 Debug Info</p>
-                        <button onclick="document.getElementById('histDebugPanel').classList.add('hidden')" class="text-slate-500 text-xs">✕</button>
-                    </div>
-                    <div id="histDebugInfo" class="font-mono space-y-0.5"></div>
-                </div>
                     <button onclick="setHistTab('report')" id="histTabReport"
                         class="flex-1 py-2.5 rounded-xl text-xs font-black transition active:scale-95 text-gray-500">
                         🚨 เหตุ
@@ -771,10 +762,9 @@
 
                 <!-- List area -->
                 <div id="histListWrap">
-                    <!-- skeleton / rows injected here -->
-                    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-center">
-                        <p class="text-3xl mb-2">📋</p>
-                        <p class="text-sm font-bold text-gray-400">กดรีเฟรชเพื่อดึงข้อมูล</p>
+                    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-center space-y-2">
+                        <div class="loader border-indigo-300 mx-auto" style="width:28px;height:28px;border-width:3px"></div>
+                        <p class="text-xs text-gray-400">กำลังโหลดข้อมูล...</p>
                     </div>
                 </div>
 
@@ -2895,7 +2885,7 @@
             renderHistRows(rows);
         }
 
-        // เปลี่ยน tab
+        // เปลี่ยน tab — ถ้ายังไม่มีข้อมูลให้ load อัตโนมัติ
         window.setHistTab = function(tab) {
             _histTab = tab;
             var tabs = ['all','attendance','patrol','report'];
@@ -2906,10 +2896,14 @@
                     ? 'flex-1 py-2.5 rounded-xl text-xs font-black transition active:scale-95 bg-indigo-500 text-white shadow-sm'
                     : 'flex-1 py-2.5 rounded-xl text-xs font-black transition active:scale-95 text-gray-500';
             });
-            applyHistFilters();
+            if (_histAllRows.length === 0) {
+                loadAllHistory();   // ยังไม่มีข้อมูล — ดึงใหม่
+            } else {
+                applyHistFilters(); // มีแล้ว — แค่ filter
+            }
         };
 
-        // เปลี่ยน date range
+        // เปลี่ยน date range — reload จาก Supabase ทันที
         window.setHistRange = function(range) {
             _histRange = range;
             var ranges = ['today','week','month','all'];
@@ -2920,16 +2914,17 @@
                     ? 'shrink-0 px-3 py-1.5 rounded-xl text-[10px] font-black bg-indigo-100 text-indigo-700 border border-indigo-200'
                     : 'shrink-0 px-3 py-1.5 rounded-xl text-[10px] font-black bg-gray-100 text-gray-500';
             });
-            applyHistFilters();
+            // ล้าง cache แล้ว reload ใหม่ทุกครั้งที่เปลี่ยน range
+            _histAllRows = [];
+            loadAllHistory();
         };
 
-        // ดึงข้อมูลจาก Supabase โดยตรง ทั้ง 3 ประเภทพร้อมกัน
         window.loadAllHistory = async function() {
             if (_histLoading) return;
             _histLoading = true;
 
             var refreshBtn = document.getElementById('histRefreshBtn');
-            if (refreshBtn) refreshBtn.innerText = '⏳ กำลังดึง...';
+            if (refreshBtn) { refreshBtn.innerText = '⏳'; refreshBtn.disabled = true; }
 
             if (currentUser) {
                 var nameEl = document.getElementById('histEmpName');
@@ -2940,114 +2935,62 @@
 
             showHistSkeleton();
 
-            // debug panel
-            var debugEl = document.getElementById('histDebugInfo');
-            if (debugEl) debugEl.innerHTML = '';
-
-            var rawCode  = currentUser && currentUser.emp_code;
-            var variants = empCodeVariants(rawCode);
-
-            function addDebug(msg, ok) {
-                var panel = document.getElementById('histDebugPanel');
-                if (panel) panel.classList.remove('hidden');
-                if (!debugEl) return;
-                var c = ok === true ? '#10b981' : ok === false ? '#ef4444' : '#94a3b8';
-                debugEl.innerHTML += '<span style="color:' + c + ';display:block;font-size:10px">' + msg + '</span>';
-            }
-
-            addDebug('🔍 emp_code จาก session: "' + rawCode + '"');
-            addDebug('🔄 จะค้นหา: ' + variants.map(function(v){ return '"' + v + '"'; }).join(', '));
-
-            // คำนวณ date range
+            var variants  = empCodeVariants(currentUser && currentUser.emp_code);
+            var limit     = 200;
             var startDate = null;
-            var now = new Date();
+            var now       = new Date();
             if (_histRange === 'today') {
                 startDate = new Date(now); startDate.setHours(0,0,0,0);
             } else if (_histRange === 'week') {
-                startDate = new Date(now); startDate.setDate(now.getDate() - 6); startDate.setHours(0,0,0,0);
+                startDate = new Date(now); startDate.setDate(now.getDate()-6); startDate.setHours(0,0,0,0);
             } else if (_histRange === 'month') {
-                startDate = new Date(now); startDate.setDate(now.getDate() - 29); startDate.setHours(0,0,0,0);
+                startDate = new Date(now); startDate.setDate(now.getDate()-29); startDate.setHours(0,0,0,0);
             }
-
             var startParam = startDate ? '&recorded_at=gte.' + startDate.toISOString() : '';
-            var limit      = 200;
 
             try {
                 var combined = [];
+                var seen     = {};
 
-                // query ทุก variant พร้อมกัน
                 var allFetches = [];
                 variants.forEach(function(code) {
                     var enc = encodeURIComponent(code);
                     allFetches.push(
                         sbSelect('attendance?emp_code=eq.' + enc + startParam + '&select=id,emp_code,guard_name,type,shift,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=' + limit, {})
-                            .then(function(r){ return { type:'attendance', code:code, rows:r||[] }; })
-                            .catch(function(){ return { type:'attendance', code:code, rows:[] }; }),
+                            .then(function(r){ return { _type:'attendance', rows:r||[] }; }).catch(function(){ return { _type:'attendance', rows:[] }; }),
                         sbSelect('patrol_logs?emp_code=eq.' + enc + startParam + '&select=id,emp_code,guard_name,checkpoint,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=' + limit, {})
-                            .then(function(r){ return { type:'patrol', code:code, rows:r||[] }; })
-                            .catch(function(){ return { type:'patrol', code:code, rows:[] }; }),
+                            .then(function(r){ return { _type:'patrol', rows:r||[] }; }).catch(function(){ return { _type:'patrol', rows:[] }; }),
                         sbSelect('incident_reports?emp_code=eq.' + enc + startParam + '&select=id,emp_code,guard_name,incident_type,details,status,lat,lng,photo_url,recorded_at&order=recorded_at.desc&limit=' + limit, {})
-                            .then(function(r){ return { type:'report', code:code, rows:r||[] }; })
-                            .catch(function(){ return { type:'report', code:code, rows:[] }; })
+                            .then(function(r){ return { _type:'report', rows:r||[] }; }).catch(function(){ return { _type:'report', rows:[] }; })
                     );
                 });
 
                 var results = await Promise.all(allFetches);
-
-                // รวม deduplicate ด้วย id
-                var seen = {};
                 results.forEach(function(res) {
-                    if (res.rows.length > 0) {
-                        addDebug('✅ "' + res.code + '" → ' + res.type + ': ' + res.rows.length + ' รายการ', true);
-                    }
                     res.rows.forEach(function(r) {
-                        var key = res.type + '_' + (r.id || r.recorded_at);
-                        if (!seen[key]) {
-                            seen[key] = true;
-                            r._type = res.type;
-                            combined.push(r);
-                        }
+                        var key = res._type + '_' + (r.id || r.recorded_at);
+                        if (!seen[key]) { seen[key] = true; r._type = res._type; combined.push(r); }
                     });
                 });
 
-                if (combined.length === 0) {
-                    addDebug('⚠️ ไม่พบข้อมูลสำหรับ emp_code ทุก variant', false);
-                    // แสดง hint ให้ผู้ใช้ทราบ
-                    var wrap = document.getElementById('histListWrap');
-                    if (wrap) wrap.innerHTML =
-                        '<div class="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-center space-y-3">'
-                        + '<p class="text-2xl">🔍</p>'
-                        + '<p class="text-sm font-black text-amber-700">ไม่พบประวัติการทำงาน</p>'
-                        + '<p class="text-xs text-amber-600">รหัสที่ค้นหา: ' + variants.map(function(v){ return '"' + v + '"'; }).join(', ') + '</p>'
-                        + '<p class="text-[10px] text-amber-500">ตรวจสอบว่า emp_code ในตาราง Supabase ตรงกับรหัสที่ login</p>'
-                        + '</div>';
-                    _histAllRows = [];
-                    updateHistSummary([]);
-                    _histLoading = false;
-                    if (refreshBtn) refreshBtn.innerText = '🔄 รีเฟรช';
-                    return;
-                }
-
                 combined.sort(function(a,b){ return new Date(b.recorded_at) - new Date(a.recorded_at); });
-                addDebug('📋 รวม: ' + combined.length + ' รายการ', true);
 
                 _histAllRows = combined;
                 updateHistSummary(combined);
                 applyHistFilters();
 
             } catch(err) {
-                addDebug('❌ Error: ' + err.message, false);
                 var wrap = document.getElementById('histListWrap');
                 if (wrap) wrap.innerHTML =
                     '<div class="bg-red-50 border border-red-100 rounded-2xl p-6 text-center">'
                     + '<p class="text-2xl mb-2">⚠️</p>'
                     + '<p class="text-sm font-black text-red-600">ดึงข้อมูลล้มเหลว</p>'
-                    + '<p class="text-xs text-red-400 mt-1">' + (err.message || '') + '</p>'
-                    + '<button onclick="loadAllHistory()" class="mt-3 bg-red-500 text-white px-4 py-2 rounded-xl text-xs font-black active:scale-95 transition">ลองใหม่</button>'
+                    + '<p class="text-xs text-red-400 mt-1">' + (err.message||'') + '</p>'
+                    + '<button onclick="loadAllHistory()" class="mt-3 bg-red-500 text-white px-4 py-2 rounded-xl text-xs font-black">ลองใหม่</button>'
                     + '</div>';
             } finally {
                 _histLoading = false;
-                if (refreshBtn) refreshBtn.innerText = '🔄 รีเฟรช';
+                if (refreshBtn) { refreshBtn.innerText = '🔄'; refreshBtn.disabled = false; }
             }
         };
 
@@ -4724,7 +4667,7 @@
             if (tab === 'home')      updatePatrolProgress();
             if (tab === 'patrol')    onPatrolTabOpen();
             if (tab === 'dashboard') { if (typeof buildDashboard === 'function') buildDashboard(); }
-            if (tab === 'history')   { if (typeof loadAllHistory === 'function' && _histAllRows.length === 0) loadAllHistory(); }
+            if (tab === 'history')   { if (typeof loadAllHistory === 'function') loadAllHistory(); }
         };
     </script>
 
