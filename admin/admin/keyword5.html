@@ -8927,6 +8927,7 @@ async function renderPointsSettingsView() {
                     <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">ตั้งจำนวนแต้มที่จะให้สำหรับแต่ละกิจกรรม · มีผลกับทั้งระบบทันที</p>
                 </div>
                 <div class="flex gap-2 flex-wrap">
+                    <button onclick="openResetSystemModal()" class="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl font-bold text-sm shadow-md flex items-center gap-2 border-2 border-rose-700"><i data-lucide="alert-octagon" class="w-4 h-4"></i> Reset ข้อมูล</button>
                     <button onclick="openBulkAdjustModal()" class="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl font-bold text-sm shadow-md flex items-center gap-2"><i data-lucide="users-2" class="w-4 h-4"></i> Bulk Adjust</button>
                     <button onclick="triggerPointExpiry()" class="px-4 py-2.5 bg-slate-600 hover:bg-slate-700 text-white rounded-2xl font-bold text-sm shadow-md flex items-center gap-2"><i data-lucide="hourglass" class="w-4 h-4"></i> รัน Expiry</button>
                     <button onclick="triggerBirthdayCheck()" class="px-4 py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold text-sm shadow-md flex items-center gap-2"><i data-lucide="cake" class="w-4 h-4"></i> รัน Birthday</button>
@@ -9386,6 +9387,242 @@ async function runBulkAdjust(btn) {
             ${d.errors ? `<details class="mt-2"><summary class="text-xs cursor-pointer">ดู errors</summary><pre class="text-[10px] bg-rose-50 p-2 rounded mt-1 max-h-32 overflow-y-auto">${escapeHtml(JSON.stringify(d.errors, null, 2))}</pre></details>` : ''}
         </div>`);
         bulkAdjustSelected.clear();
+    } catch (e) {
+        showToast(e.message, 'error');
+    } finally {
+        setBtnLoading(btn, false);
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// ⚠️ DANGEROUS: Reset System
+// ────────────────────────────────────────────────────────────
+// 3-step confirmation:
+//   1. เลือก type ที่จะ reset (single select)
+//   2. ดู preview จำนวน records ที่จะกระทบ
+//   3. พิมพ์ "RESET" ตัวพิมพ์ใหญ่ → กดยืนยัน
+// ════════════════════════════════════════════════════════════
+let resetState = { type: null, preview: null };
+
+const RESET_TYPES = {
+    points:   { icon:'💎', name:'แต้มทั้งหมด',     desc:'set user_profiles.points = 0 + clear tier', danger:'high', tables:['user_profiles'] },
+    history:  { icon:'📜', name:'ประวัติแต้ม',     desc:'ลบ points_history ทั้งหมด',                  danger:'high', tables:['points_history'] },
+    daily:    { icon:'☀️', name:'Daily Check-in', desc:'ลบ daily_checkins ทั้งหมด',                   danger:'medium', tables:['daily_checkins'] },
+    fees:     { icon:'🏠', name:'ค่าส่วนกลาง',     desc:'ลบ house_payments + common_fees',           danger:'high', tables:['house_payments', 'common_fees'] },
+    events:   { icon:'🎉', name:'Event + AGM',     desc:'ลบ event_checkins + agm_votes',             danger:'high', tables:['event_checkins', 'agm_votes'] },
+    birthday: { icon:'🎂', name:'Birthday Log',    desc:'ลบ birthday_log (ให้แต้มวันเกิดได้ใหม่)',     danger:'low',  tables:['birthday_log'] },
+    full:     { icon:'☢️', name:'FULL RESET',      desc:'ล้างทุกอย่างยกเว้น user_profiles structure', danger:'extreme', tables:['ALL'] }
+};
+
+async function openResetSystemModal() {
+    resetState = { type: null, preview: null };
+    document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="alert-octagon" class="w-6 h-6 text-rose-500"></i> ⚠️ Reset System</div>';
+    document.getElementById('modal-content').innerHTML = `
+        <div class="space-y-4">
+            <!-- Warning banner -->
+            <div class="bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 text-sm">
+                <div class="font-extrabold text-rose-700 mb-2 flex items-center gap-2"><i data-lucide="alert-triangle" class="w-5 h-5"></i> คำเตือนสำคัญ</div>
+                <ul class="text-rose-700 text-xs space-y-1 list-disc pl-5">
+                    <li>การ Reset <b>ไม่สามารถ undo ได้</b> ข้อมูลจะหายถาวร</li>
+                    <li>ใช้สำหรับ <b>initial setup ก่อน production launch</b> เท่านั้น</li>
+                    <li>แนะนำให้ <b>Export ข้อมูลเก่าก่อน reset</b> เพื่อสำรอง</li>
+                    <li>ระบบจะบันทึก log ทุกครั้งที่ reset (admin + เวลา)</li>
+                </ul>
+            </div>
+
+            <!-- Step 1: Select type -->
+            <div>
+                <div class="text-sm font-bold text-slate-700 mb-2">เลือกสิ่งที่ต้องการ Reset:</div>
+                <div class="space-y-2" id="reset-type-list">
+                    ${Object.entries(RESET_TYPES).map(([key, info]) => {
+                        const dangerColor = { low:'amber', medium:'orange', high:'rose', extreme:'red' }[info.danger];
+                        return `<label class="block bg-white border-2 border-slate-200 hover:border-${dangerColor}-300 rounded-2xl p-3 cursor-pointer transition-colors">
+                            <div class="flex items-start gap-3">
+                                <input type="radio" name="reset-type" value="${key}" onchange="onResetTypeSelect('${key}')" class="mt-1.5 accent-${dangerColor}-500">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-2xl">${info.icon}</span>
+                                        <span class="font-bold text-slate-800">${info.name}</span>
+                                        ${info.danger === 'extreme' ? '<span class="text-[10px] bg-red-600 text-white px-2 py-0.5 rounded-full font-bold animate-pulse">EXTREME</span>'
+                                          : info.danger === 'high' ? '<span class="text-[10px] bg-rose-500 text-white px-2 py-0.5 rounded-full font-bold">อันตรายสูง</span>'
+                                          : info.danger === 'medium' ? '<span class="text-[10px] bg-orange-500 text-white px-2 py-0.5 rounded-full font-bold">ปานกลาง</span>'
+                                          : '<span class="text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold">ต่ำ</span>'}
+                                    </div>
+                                    <div class="text-xs text-slate-500 mt-1">${info.desc}</div>
+                                    <div class="text-[10px] text-slate-400 mt-1 font-mono">tables: ${info.tables.join(', ')}</div>
+                                </div>
+                            </div>
+                        </label>`;
+                    }).join('')}
+                </div>
+            </div>
+
+            <!-- Step 2: Preview (จะ render หลังเลือก type) -->
+            <div id="reset-preview" class="hidden"></div>
+
+            <!-- Step 3: Confirm input -->
+            <div id="reset-confirm" class="hidden">
+                <div class="bg-rose-50 border-2 border-rose-400 rounded-2xl p-4">
+                    <div class="text-sm font-bold text-rose-800 mb-2">📝 ยืนยันการ Reset</div>
+                    <div class="text-xs text-rose-700 mb-3">พิมพ์ <code class="bg-white px-2 py-0.5 rounded font-bold text-rose-600">RESET</code> เพื่อยืนยัน (case-sensitive)</div>
+                    <input id="reset-confirm-input" type="text" placeholder="พิมพ์ RESET ที่นี่" oninput="onResetConfirmInput(this.value)" class="w-full rounded-xl border-2 border-rose-300 px-4 py-3 text-center text-lg font-bold font-mono uppercase tracking-widest focus:border-rose-500 outline-none">
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex gap-3 pt-3 border-t border-slate-100">
+                <button onclick="closeModal()" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold border-2 border-slate-200">❌ ยกเลิก</button>
+                <button onclick="exportBeforeReset()" id="reset-export-btn" class="px-4 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2 disabled:opacity-50" disabled><i data-lucide="download" class="w-4 h-4"></i> Export ก่อน</button>
+                <button onclick="executeReset(this)" id="reset-execute-btn" class="px-6 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl font-bold text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled><i data-lucide="trash-2" class="w-4 h-4"></i> ลบข้อมูล</button>
+            </div>
+        </div>`;
+    openModal();
+    lucide.createIcons();
+}
+
+async function onResetTypeSelect(type) {
+    resetState.type = type;
+    document.getElementById('reset-preview').classList.remove('hidden');
+    document.getElementById('reset-preview').innerHTML = '<div class="text-center text-slate-400 py-4 text-sm">⚙️ กำลังโหลด preview...</div>';
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/reset_preview`);
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || 'fail');
+        resetState.preview = d;
+
+        const info = RESET_TYPES[type];
+        const affected = getAffectedFromPreview(type, d);
+
+        document.getElementById('reset-preview').innerHTML = `
+            <div class="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                <div class="text-sm font-bold text-slate-700 mb-2">📊 จำนวนข้อมูลที่จะถูกลบ:</div>
+                ${affected.map(a => `<div class="flex justify-between py-1 text-sm">
+                    <span class="text-slate-600">${escapeHtml(a.label)}</span>
+                    <span class="font-bold text-rose-600">${a.count.toLocaleString()} ${a.unit || 'records'}</span>
+                </div>`).join('')}
+                ${affected.every(a => a.count === 0) ? '<div class="text-center text-slate-400 text-xs py-2">✓ ไม่มีข้อมูลให้ลบ — แต่ก็ยังกดได้</div>' : ''}
+            </div>`;
+
+        // Show confirm input
+        document.getElementById('reset-confirm').classList.remove('hidden');
+        document.getElementById('reset-confirm-input').value = '';
+        document.getElementById('reset-execute-btn').disabled = true;
+        document.getElementById('reset-export-btn').disabled = false;
+    } catch (e) {
+        document.getElementById('reset-preview').innerHTML = `<div class="bg-rose-50 border border-rose-200 rounded-xl p-3 text-rose-700 text-xs font-bold">${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function getAffectedFromPreview(type, preview) {
+    const p = preview || {};
+    switch (type) {
+        case 'points':
+            return [
+                { label: 'ผู้ใช้ที่มีแต้ม', count: p.users_with_points || 0, unit: 'คน' },
+                { label: 'แต้มรวมที่จะหาย', count: p.total_points || 0, unit: 'แต้ม' }
+            ];
+        case 'history':  return [{ label: 'รายการประวัติแต้ม', count: p.history_count || 0 }];
+        case 'daily':    return [{ label: 'Daily check-ins', count: p.daily_count || 0 }];
+        case 'fees':     return [{ label: 'รายการจ่ายค่าส่วนกลาง', count: p.fees_count || 0 }];
+        case 'events':   return [
+            { label: 'Event check-ins', count: p.events_count || 0 },
+            { label: 'AGM votes', count: p.agm_votes_count || 0 }
+        ];
+        case 'birthday': return [{ label: 'Birthday log', count: p.birthday_count || 0 }];
+        case 'full': return [
+            { label: 'ผู้ใช้ที่มีแต้ม', count: p.users_with_points || 0, unit: 'คน' },
+            { label: 'แต้มรวม', count: p.total_points || 0, unit: 'แต้ม' },
+            { label: 'ประวัติแต้ม', count: p.history_count || 0 },
+            { label: 'Daily check-ins', count: p.daily_count || 0 },
+            { label: 'House payments', count: p.fees_count || 0 },
+            { label: 'Event check-ins', count: p.events_count || 0 },
+            { label: 'AGM votes', count: p.agm_votes_count || 0 },
+            { label: 'Birthday log', count: p.birthday_count || 0 },
+            { label: 'Tier queue', count: p.tier_queue_count || 0 },
+            { label: 'Bulk adjustments', count: p.bulk_count || 0 },
+            { label: 'Point lots', count: p.lots_count || 0 }
+        ];
+        default: return [];
+    }
+}
+
+function onResetConfirmInput(val) {
+    document.getElementById('reset-execute-btn').disabled = (val !== 'RESET');
+}
+
+async function exportBeforeReset() {
+    if (!resetState.type) return showToast('เลือกประเภท Reset ก่อน', 'warning');
+
+    showToast('⚙️ กำลัง export...', 'info');
+    try {
+        const tableMap = {
+            points: 'user_profiles',
+            history: 'points_history',
+            daily: 'daily_checkins',
+            fees: 'house_payments',
+            events: 'event_checkins',
+            birthday: 'birthday_log',
+            full: null  // export all
+        };
+        const tables = resetState.type === 'full'
+            ? ['user_profiles', 'points_history', 'daily_checkins', 'house_payments', 'event_checkins', 'birthday_log']
+            : [tableMap[resetState.type]].filter(Boolean);
+
+        let allCsv = '';
+        for (const t of tables) {
+            const { data } = await supabaseClient.from(t).select('*').limit(5000);
+            if (!data || data.length === 0) continue;
+            const headers = Object.keys(data[0]);
+            allCsv += `\n\n=== ${t} (${data.length} rows) ===\n`;
+            allCsv += headers.join(',') + '\n';
+            allCsv += data.map(r => headers.map(h => {
+                const v = r[h];
+                if (v === null || v === undefined) return '';
+                const s = JSON.stringify(v).replace(/^"|"$/g, '');
+                return /[,"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+            }).join(',')).join('\n');
+        }
+
+        const blob = new Blob(['\uFEFF' + allCsv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `backup_${resetState.type}_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('✓ ดาวน์โหลด backup แล้ว — สามารถ reset ได้', 'success');
+    } catch (e) {
+        showToast('Export ล้มเหลว: ' + e.message, 'error');
+    }
+}
+
+async function executeReset(btn) {
+    if (!resetState.type) return;
+    const confirmVal = document.getElementById('reset-confirm-input').value;
+    if (confirmVal !== 'RESET') return showToast('พิมพ์ RESET ให้ถูกต้อง', 'warning');
+
+    const info = RESET_TYPES[resetState.type];
+    setBtnLoading(btn, true);
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/reset_execute`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: resetState.type,
+                adminId: window.currentUserEmail || 'admin',
+                confirmCode: 'RESET'
+            })
+        });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || 'reset fail');
+
+        showModal('✅ Reset สำเร็จ', `<div class="space-y-2 text-sm">
+            <div class="text-emerald-600 font-bold text-lg">${info.icon} ${info.name} → ลบสำเร็จ</div>
+            <pre class="text-[11px] bg-slate-50 p-2 rounded max-h-40 overflow-y-auto">${escapeHtml(JSON.stringify(d, null, 2))}</pre>
+            <div class="text-[11px] text-slate-500 mt-2">บันทึก reset log แล้ว — ตรวจสอบได้ในตาราง reset_log</div>
+        </div>`);
+        closeModal();
     } catch (e) {
         showToast(e.message, 'error');
     } finally {
