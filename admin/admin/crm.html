@@ -1345,6 +1345,13 @@
                     } catch (e2) { /* skip */ }
                     this.loading = false;
                 }
+
+                // ─── 🔗 Detect direct-link parameters → auto-action ────────
+                // รองรับ:
+                //   ?event=ABC123          → auto check-in event
+                //   ?tab=rewards           → เปิด tab ที่ระบุ
+                //   ?coupon=XYZ            → เปิด coupon detail
+                this.handleDeepLink().catch(e => console.warn('deep link', e));
             },
             watch: {
                 currentTab(newVal) {
@@ -1417,9 +1424,6 @@
                     this.fetchDailyStatus().catch(() => {});
                 },
 
-                // ════════════════════════════════════════════════════════════
-                // ☀️ DAILY CHECK-IN
-                // ════════════════════════════════════════════════════════════
                 async fetchDailyStatus() {
                     try {
                         const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/daily_status?userId=${this.userProfile.userId}`);
@@ -1428,6 +1432,117 @@
                         this.dailyStatus = d || { enabled: false };
                     } catch (e) { this.dailyStatus = { enabled: false }; }
                 },
+
+                // ════════════════════════════════════════════════════════════
+                // 🔗 DEEP LINK HANDLING
+                // รองรับ:
+                //   ?event=CODE     → auto check-in event
+                //   ?tab=TABNAME    → เปิด tab ที่ระบุ
+                //   ?coupon=XYZ     → เปิด coupon ค้นหา
+                // ════════════════════════════════════════════════════════════
+                async handleDeepLink() {
+                    if (!this.userProfile?.userId) return;   // ต้อง login ก่อน
+
+                    const params = new URLSearchParams(window.location.search);
+                    const eventCode = (params.get('event') || params.get('e') || '').trim().toUpperCase();
+                    const tabName   = (params.get('tab') || '').trim();
+                    const couponCode = (params.get('coupon') || '').trim();
+
+                    // ─── A) Auto-checkin event ───────────────────────────
+                    if (eventCode) {
+                        await this.autoCheckinFromLink(eventCode);
+                        // Clean URL หลัง process
+                        const url = new URL(window.location.href);
+                        ['event', 'e'].forEach(p => url.searchParams.delete(p));
+                        history.replaceState(null, '', url.toString());
+                        return;
+                    }
+
+                    // ─── B) Switch to tab ──────────────────────────────
+                    const validTabs = ['home', 'rewards', 'coupons', 'news', 'profile', 'history', 'checkin', 'agm', 'payments', 'keycard'];
+                    if (tabName && validTabs.includes(tabName)) {
+                        this.currentTab = tabName;
+                        const url = new URL(window.location.href);
+                        url.searchParams.delete('tab');
+                        history.replaceState(null, '', url.toString());
+                    }
+
+                    // ─── C) Auto-search coupon by code ─────────────────
+                    if (couponCode) {
+                        this.currentTab = 'coupons';
+                        // (อนาคต: highlight coupon code)
+                    }
+                },
+
+                async autoCheckinFromLink(code) {
+                    // แสดง loading dialog
+                    Swal.fire({
+                        title: '⚡ กำลังเช็คอิน...',
+                        html: `<div style="font-size:48px">🎯</div>
+                               <div style="margin-top:8px">รหัส: <code style="background:#f1f5f9;padding:4px 8px;border-radius:6px;font-weight:bold">${code}</code></div>`,
+                        allowOutsideClick: false,
+                        didOpen: () => Swal.showLoading()
+                    });
+
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/checkin_event`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ userId: this.userProfile.userId, code, method: 'link' })
+                        });
+                        const d = await res.json();
+                        if (!res.ok) throw new Error(d.error || 'check-in fail');
+
+                        // ─── Success — celebration ─────────────────────
+                        Swal.fire({
+                            icon: 'success',
+                            title: '🎉 เช็คอินสำเร็จ!',
+                            html: `<div style="font-size:64px;margin:12px 0">${d.event_icon || '🎉'}</div>
+                                   <div style="font-size:18px;font-weight:bold;color:#0f172a">${d.event_name || 'กิจกรรม'}</div>
+                                   ${d.event_location ? `<div style="font-size:12px;color:#64748b;margin-top:4px">📍 ${d.event_location}</div>` : ''}
+                                   <div style="font-size:32px;font-weight:900;color:#10b981;margin:16px 0">+${d.points_awarded || 0} แต้ม</div>
+                                   <div style="font-size:11px;color:#94a3b8">เช็คอิน ${new Date().toLocaleString('th-TH')}</div>`,
+                            confirmButtonColor: '#10b981',
+                            confirmButtonText: 'ดูประวัติ',
+                            showCancelButton: true,
+                            cancelButtonText: 'ปิด'
+                        }).then((result) => {
+                            if (result.isConfirmed) this.currentTab = 'checkin';
+                        });
+
+                        // Refresh data
+                        await this.fetchMyData();
+                    } catch (e) {
+                        // ─── Error — แสดงเหตุผลชัดเจน ───────────────────
+                        let title = 'เช็คอินไม่สำเร็จ';
+                        let icon = 'error';
+                        const msg = e.message || '';
+
+                        if (msg.includes('ไม่พบ') || msg.includes('not found')) {
+                            title = '❌ ไม่พบกิจกรรม';
+                            icon = 'warning';
+                        } else if (msg.includes('ปิด') || msg.includes('expired') || msg.includes('ended')) {
+                            title = '⏰ กิจกรรมหมดเวลา';
+                            icon = 'warning';
+                        } else if (msg.includes('ยังไม่เริ่ม') || msg.includes('not started')) {
+                            title = '⏳ ยังไม่ถึงเวลาเช็คอิน';
+                            icon = 'info';
+                        } else if (msg.includes('แล้ว') || msg.includes('already')) {
+                            title = '✋ เช็คอินไปแล้ว';
+                            icon = 'info';
+                        } else if (msg.includes('เต็ม') || msg.includes('full')) {
+                            title = '👥 จำนวนเต็มแล้ว';
+                            icon = 'warning';
+                        }
+
+                        Swal.fire({
+                            icon, title,
+                            html: `<div style="font-size:14px;color:#64748b">${msg}</div>
+                                   <div style="font-size:11px;color:#94a3b8;margin-top:8px">รหัส: <code>${code}</code></div>`,
+                            confirmButtonColor: '#64748b'
+                        });
+                    }
+                },
+
 
                 async doDailyCheckin() {
                     if (this.dailyCheckingIn) return;
