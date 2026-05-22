@@ -7775,6 +7775,7 @@ async function renderCarManagementView() {
                                 <th class="text-left p-3 font-bold">เจ้าของ</th>
                                 <th class="text-left p-3 font-bold">บ้าน</th>
                                 <th class="text-center p-3 font-bold">สถานะ</th>
+                                <th class="text-center p-3 font-bold">หมดอายุ</th>
                                 <th class="text-center p-3 font-bold">รูป</th>
                                 <th class="text-center p-3 font-bold">จัดการ</th>
                             </tr>
@@ -7855,6 +7856,18 @@ function renderCarTable() {
                 <span class="px-2 py-1 rounded-full text-[11px] font-bold bg-${sc}-100 text-${sc}-700">${sl}</span>
             </td>
             <td class="p-3 text-center">
+                ${(() => {
+                    if (!r.end_date) return `<button onclick="setCarExpiry('${r.id}','${escapeHtml(r.plate_number)}','${escapeHtml(r.house_number)}')" class="text-[11px] text-slate-400 hover:text-indigo-600 border border-dashed border-slate-300 rounded-lg px-2 py-1">+ ตั้งวัน</button>`;
+                    const ed = new Date(r.end_date);
+                    const today = new Date(); today.setHours(0,0,0,0);
+                    const days = Math.ceil((ed-today)/(1000*60*60*24));
+                    const color = days < 0 ? 'rose' : days <= 30 ? 'amber' : 'emerald';
+                    return `<div class="text-[11px] font-bold text-${color}-600">${ed.toLocaleDateString('th-TH',{year:'numeric',month:'short',day:'numeric'})}</div>
+                            <div class="text-[10px] text-slate-400">${days < 0 ? 'หมดแล้ว' : 'เหลือ ' + days + ' วัน'}</div>
+                            <button onclick="setCarExpiry('${r.id}','${escapeHtml(r.plate_number)}','${escapeHtml(r.house_number)}','${r.end_date}')" class="text-[10px] text-slate-400 hover:text-indigo-500 underline mt-0.5">แก้ไข</button>`;
+                })()}
+            </td>
+            <td class="p-3 text-center">
                 ${r.image_url
                     ? `<img src="${escapeHtml(r.image_url)}" class="w-16 h-10 object-cover rounded-lg border border-slate-200 mx-auto cursor-pointer hover:scale-105 transition-transform" onclick="viewCarImage('${escapeHtml(r.image_url)}')">`
                     : '<span class="text-slate-300 text-xs">ไม่มีรูป</span>'}
@@ -7881,11 +7894,115 @@ function renderCarTable() {
 
 function carGoPage(p) { carPage = p; renderCarTable(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
+async function setCarExpiry(carId, plate, houseNo, currentEndDate = '') {
+    const { value: dates, isConfirmed } = await Swal.fire({
+        title: `⏰ ตั้งวันหมดอายุ`,
+        html: `<div class="text-sm text-slate-600 mb-3">ทะเบียน <b>${escapeHtml(plate)}</b> · บ้าน ${escapeHtml(houseNo)}</div>
+               <div class="grid grid-cols-2 gap-2 text-left">
+                 <div><label class="block text-xs font-bold mb-1 text-slate-700">วันเริ่มใช้งาน</label>
+                 <input type="date" id="swal-start" value="${new Date().toISOString().slice(0,10)}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"></div>
+                 <div><label class="block text-xs font-bold mb-1 text-slate-700">วันหมดอายุ</label>
+                 <input type="date" id="swal-end" value="${currentEndDate || ''}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"></div>
+               </div>`,
+        showCancelButton: true,
+        confirmButtonText: 'บันทึก',
+        cancelButtonText: 'ยกเลิก',
+        confirmButtonColor: '#6366f1',
+        preConfirm: () => ({
+            start: document.getElementById('swal-start').value,
+            end: document.getElementById('swal-end').value
+        })
+    });
+    if (!isConfirmed || !dates.end) return;
+
+    try {
+        // Update car_registrations
+        await supabaseClient.from('car_registrations')
+            .update({ start_date: dates.start || null, end_date: dates.end })
+            .eq('id', carId);
+
+        // Update allowed_cars ถ้ามี (match plate + house)
+        const { data: ac } = await supabaseClient.from('allowed_cars')
+            .select('id').eq('plate_number', plate).eq('house_number', houseNo).maybeSingle();
+        if (ac) {
+            await supabaseClient.from('allowed_cars')
+                .update({ start_date: dates.start || null, end_date: dates.end, status: 'pending_update' })
+                .eq('id', ac.id);
+            showToast('✅ บันทึก + sync allowed_cars แล้ว', 'success');
+        } else {
+            showToast('✅ บันทึกแล้ว', 'success');
+        }
+        loadCarData();
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
 async function updateCarStatus(carId, status) {
     try {
-        const { error } = await supabaseClient.from('car_registrations').update({ status }).eq('id', carId);
+        // ดึงข้อมูลรถก่อน update
+        const { data: car, error: fetchErr } = await supabaseClient
+            .from('car_registrations').select('*').eq('id', carId).maybeSingle();
+        if (fetchErr) throw fetchErr;
+
+        // Update status ใน car_registrations
+        const { error } = await supabaseClient
+            .from('car_registrations').update({ status }).eq('id', carId);
         if (error) throw error;
-        showToast(status === 'approved' ? '✅ อนุมัติแล้ว' : '❌ ปฏิเสธแล้ว', 'success');
+
+        // ─── ถ้า approved → upsert ลง allowed_cars ───────────────────────
+        if (status === 'approved' && car) {
+            // ตั้งวันหมดอายุ default = 1 ปีจากวันนี้ (ถ้ายังไม่มี)
+            const today = new Date().toISOString().slice(0, 10);
+            const defaultEnd = new Date();
+            defaultEnd.setFullYear(defaultEnd.getFullYear() + 1);
+            const defaultEndStr = defaultEnd.toISOString().slice(0, 10);
+
+            const allowedPayload = {
+                plate_number:      car.plate_number,
+                house_number:      car.house_number,
+                province:          car.province || null,
+                status:            'pending_update',     // รอ sync ลง LPR
+                list_type:         'allowlist',
+                start_date:        today,
+                end_date:          defaultEndStr,
+                // ถ้า car_registrations มี allowed_car_id อยู่แล้ว → เก็บไว้
+            };
+
+            // ตรวจว่ามี record ใน allowed_cars อยู่แล้วไหม (match plate + house)
+            const { data: existing } = await supabaseClient
+                .from('allowed_cars')
+                .select('id, start_date, end_date')
+                .eq('plate_number', car.plate_number)
+                .eq('house_number', car.house_number)
+                .maybeSingle();
+
+            if (existing) {
+                // update — ไม่เปลี่ยน start/end ถ้ามีอยู่แล้ว
+                await supabaseClient.from('allowed_cars').update({
+                    ...allowedPayload,
+                    start_date: existing.start_date || today,
+                    end_date:   existing.end_date   || defaultEndStr,
+                    status: 'pending_update'
+                }).eq('id', existing.id);
+
+                // sync allowed_car_id กลับไปที่ car_registrations
+                await supabaseClient.from('car_registrations')
+                    .update({ allowed_car_id: String(existing.id), start_date: existing.start_date, end_date: existing.end_date })
+                    .eq('id', carId);
+                showToast('✅ อนุมัติ + sync กับ allowed_cars แล้ว', 'success');
+            } else {
+                // insert ใหม่
+                const { data: newAc } = await supabaseClient
+                    .from('allowed_cars').insert(allowedPayload).select().maybeSingle();
+                if (newAc) {
+                    await supabaseClient.from('car_registrations')
+                        .update({ allowed_car_id: String(newAc.id), start_date: today, end_date: defaultEndStr })
+                        .eq('id', carId);
+                }
+                showToast('✅ อนุมัติ + เพิ่มลง allowed_cars แล้ว', 'success');
+            }
+        } else {
+            showToast(status === 'approved' ? '✅ อนุมัติแล้ว' : '❌ ปฏิเสธแล้ว', 'success');
+        }
         loadCarData();
     } catch (e) { showToast(e.message, 'error'); }
 }
