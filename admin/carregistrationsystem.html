@@ -1118,7 +1118,7 @@
                 const { data, error } = await supabaseClient
                     .from('car_registrations')
                     .select('*')
-                    .eq('status', 'pending')
+                    .in('status', ['pending', 'renewal_pending'])
                     .order('created_at', { ascending: false });
 
                 if (error) throw error;
@@ -1150,28 +1150,37 @@
                 
                 const isMotoReq = req.car_type === 'รถจักรยานยนต์';
                 const iconDisplay = isMotoReq ? '🏍️' : '🚗';
+                const isRenewal = req.status === 'renewal_pending';
+                const borderColor = isRenewal ? 'border-l-amber-500' : 'border-l-fuchsia-500';
+                const statusBadge = isRenewal
+                    ? `<span class="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">🔁 ต่ออายุ</span>`
+                    : `<span class="inline-flex items-center gap-1 text-[10px] font-bold bg-fuchsia-100 text-fuchsia-700 px-2 py-0.5 rounded-full">✨ ใหม่</span>`;
 
                 const div = document.createElement('div');
-                div.className = `glass-panel rounded-2xl p-5 shadow-sm slide-up border-l-4 border-l-fuchsia-500`;
+                div.className = `glass-panel rounded-2xl p-5 shadow-sm slide-up border-l-4 ${borderColor}`;
                 div.style.animationDelay = `${Math.min(i*50,500)}ms`;
                 
                 div.innerHTML = `
                     <div class="flex flex-col sm:flex-row gap-5">
                         <div class="w-full sm:w-1/3">
-                            <img src="${req.image_url}" onerror="this.src='https://placehold.co/400x300?text=No+Image'" class="w-full h-32 object-cover rounded-xl border border-slate-200 shadow-sm cursor-pointer" onclick="Swal.fire({imageUrl: '${req.image_url}', imageWidth: '100%', imageAlt: 'Car Image', showConfirmButton: false, showCloseButton: true})">
+                            <img src="${req.image_url || ''}" onerror="this.src='https://placehold.co/400x300?text=No+Image'" class="w-full h-32 object-cover rounded-xl border border-slate-200 shadow-sm cursor-pointer" onclick="Swal.fire({imageUrl: '${req.image_url}', imageWidth: '100%', imageAlt: 'Car Image', showConfirmButton: false, showCloseButton: true})">
                         </div>
                         <div class="w-full sm:w-2/3 flex flex-col justify-between">
                             <div>
                                 <div class="flex justify-between items-start mb-2">
-                                    <div class="plate-box px-3 py-1 shadow-sm inline-block"><span class="text-sm font-bold text-slate-900">${req.plate_number}</span><span class="text-[8px] text-slate-500 block text-center">${req.province}</span></div>
+                                    <div class="flex items-center gap-2">
+                                        <div class="plate-box px-3 py-1 shadow-sm inline-block"><span class="text-sm font-bold text-slate-900">${req.plate_number}</span><span class="text-[8px] text-slate-500 block text-center">${req.province}</span></div>
+                                        ${statusBadge}
+                                    </div>
                                     <span class="text-[10px] text-slate-400"><i data-lucide="clock" class="w-3 h-3 inline"></i> ${date}</span>
                                 </div>
                                 <div class="grid grid-cols-2 gap-2 text-sm text-slate-700 dark:text-slate-300 mt-3">
                                     <div><span class="font-bold text-slate-500">🏠 บ้านเลขที่:</span> ${req.house_number}</div>
                                     <div><span class="font-bold text-slate-500">👤 ชื่อ:</span> ${req.fullname}</div>
-                                    <div><span class="font-bold text-slate-500">📱 โทร:</span> <a href="tel:${req.phone}" class="text-blue-500 hover:underline">${req.phone}</a></div>
+                                    <div><span class="font-bold text-slate-500">📱 โทร:</span> <a href="tel:${req.phone}" class="text-blue-500 hover:underline">${req.phone || '—'}</a></div>
                                     <div><span class="font-bold text-slate-500">ประเภท:</span> ${iconDisplay} ${req.car_type}</div>
                                 </div>
+                                ${req.renewal_note ? `<div class="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">📝 หมายเหตุ: <b>${req.renewal_note}</b></div>` : ''}
                             </div>
                             <div class="flex gap-2 mt-4">
                                 <button onclick='approveRegistration(${safe})' class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-xl text-sm font-bold shadow-sm transition-all flex justify-center items-center gap-1"><i data-lucide="check-circle" class="w-4 h-4"></i> อนุมัติ</button>
@@ -1191,44 +1200,121 @@
             const defaultEndDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
             const todayStr = getThaiYMD();
 
-            let syncStatus = 'pending'; 
+            let syncStatus = 'pending';
             let finalProvince = req.province;
+            const isMoto = req.car_type === 'รถจักรยานยนต์';
 
-            if (req.car_type === 'รถจักรยานยนต์') {
+            if (isMoto) {
                 syncStatus = 'ignore_sync';
-                finalProvince = req.province + ' (มอไซค์)';
+                finalProvince = req.province.includes('(มอไซค์)') ? req.province : req.province + ' (มอไซค์)';
             }
 
-            const { value: confirm } = await Swal.fire({
+            // ── ตรวจว่ามี plate นี้ใน allowed_cars อยู่แล้วหรือยัง ──────────
+            const { data: existing } = await supabaseClient
+                .from('allowed_cars')
+                .select('id, start_date, end_date, status')
+                .eq('plate_number', req.plate_number)
+                .eq('house_number', req.house_number)
+                .maybeSingle();
+
+            const isRenewal = req.status === 'renewal_pending';
+            const existingMsg = existing
+                ? `<div class="mt-2 text-xs bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-700">⚠️ ทะเบียนนี้มีอยู่ใน Whitelist แล้ว<br>จะ<b>อัปเดต</b>ข้อมูลแทนการเพิ่มใหม่</div>`
+                : '';
+            const renewalMsg = isRenewal
+                ? `<div class="mt-2 text-xs bg-blue-50 border border-blue-200 rounded-lg p-2 text-blue-700">🔁 คำขอต่ออายุ${req.renewal_note ? ` — หมายเหตุ: <b>${req.renewal_note}</b>` : ''}</div>`
+                : '';
+
+            const { value: formValues } = await Swal.fire({
                 title: 'ยืนยันการอนุมัติ?',
-                html: `ต้องการอนุมัติ <b>${req.plate_number}</b> หรือไม่?<br>${req.car_type === 'รถจักรยานยนต์' ? '<span class="text-sm text-slate-500">(ระบบจะบันทึกประวัติไว้แต่<b>ไม่ส่งเข้ากล้อง</b>)</span>' : ''}`,
+                html: `
+                    <div class="text-left text-sm space-y-3">
+                        <div>อนุมัติ <b class="text-lg">${req.plate_number}</b> · ${req.car_type}</div>
+                        ${isMoto ? '<div class="text-xs text-slate-500 bg-slate-50 rounded-lg p-2">(มอเตอร์ไซค์ — บันทึกประวัติ <b>ไม่ส่งเข้ากล้อง</b>)</div>' : ''}
+                        ${existingMsg}${renewalMsg}
+                        <div class="grid grid-cols-2 gap-2 mt-3">
+                            <div>
+                                <label class="text-xs font-bold text-slate-600 block mb-1">วันเริ่มใช้งาน</label>
+                                <input type="date" id="swal-start" value="${existing?.start_date || todayStr}"
+                                    class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-600 block mb-1">วันหมดอายุ</label>
+                                <input type="date" id="swal-end" value="${existing?.end_date || defaultEndDate}"
+                                    class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+                            </div>
+                        </div>
+                    </div>`,
                 icon: 'question',
                 showCancelButton: true,
                 confirmButtonColor: '#4f46e5',
-                confirmButtonText: 'อนุมัติ'
+                confirmButtonText: 'อนุมัติ',
+                cancelButtonText: 'ยกเลิก',
+                preConfirm: () => ({
+                    start: document.getElementById('swal-start').value,
+                    end:   document.getElementById('swal-end').value
+                })
             });
 
-            if(!confirm) return;
+            if (!formValues) return;
+
+            const { start: startDate, end: endDate } = formValues;
+            if (!endDate) return Swal.fire('Error', 'กรุณาระบุวันหมดอายุ', 'error');
+
             Swal.fire({ title: 'กำลังบันทึกข้อมูล...', didOpen: () => Swal.showLoading() });
 
             try {
-                const payload = {
-                    plate_number: req.plate_number,
-                    province: finalProvince,
-                    house_number: req.house_number,
-                    list_type: 'allowlist',
-                    start_date: todayStr,
-                    end_date: defaultEndDate,
-                    status: syncStatus 
-                };
-                
-                const { error: insertError } = await supabaseClient.from('allowed_cars').insert([payload]);
-                if (insertError) throw insertError;
+                let allowedCarId = existing?.id || null;
 
-                await supabaseClient.from('car_registrations').update({ status: 'approved' }).eq('id', req.id);
+                if (existing) {
+                    // ── UPDATE allowed_cars (Smart Sync: pending_update → sync.js จะลบแล้วเพิ่มใหม่) ──
+                    const { error: updateErr } = await supabaseClient.from('allowed_cars').update({
+                        province:   finalProvince,
+                        list_type:  'allowlist',
+                        start_date: startDate,
+                        end_date:   endDate,
+                        status:     isMoto ? 'ignore_sync' : 'pending_update'
+                    }).eq('id', existing.id);
+                    if (updateErr) throw updateErr;
+                    allowedCarId = existing.id;
+                } else {
+                    // ── INSERT allowed_cars ────────────────────────────────
+                    const { data: newAc, error: insertErr } = await supabaseClient.from('allowed_cars').insert([{
+                        plate_number: req.plate_number,
+                        province:     finalProvince,
+                        house_number: req.house_number,
+                        list_type:    'allowlist',
+                        start_date:   startDate,
+                        end_date:     endDate,
+                        status:       syncStatus
+                    }]).select().maybeSingle();
+                    if (insertErr) throw insertErr;
+                    allowedCarId = newAc?.id || null;
+                }
 
-                Swal.fire('อนุมัติสำเร็จ', 'บันทึกข้อมูลเรียบร้อยแล้ว', 'success');
-                fetchPendingRequests(); 
+                // ── Sync วันที่ + allowed_car_id กลับไปที่ car_registrations ──
+                const { error: crErr } = await supabaseClient.from('car_registrations').update({
+                    status:         'approved',
+                    start_date:     startDate,
+                    end_date:       endDate,
+                    allowed_car_id: allowedCarId ? String(allowedCarId) : null,
+                    renewal_note:   null   // clear หลังอนุมัติ
+                }).eq('id', req.id);
+                if (crErr) throw crErr;
+
+                const syncMsg = isMoto
+                    ? '🏍️ บันทึกประวัติแล้ว (ไม่ส่งเข้ากล้อง)'
+                    : existing
+                        ? `✅ อัปเดต Whitelist + ส่งคำสั่ง sync กล้อง`
+                        : `✅ เพิ่ม Whitelist + ส่งคำสั่ง sync กล้อง`;
+
+                Swal.fire({
+                    icon: 'success',
+                    title: 'อนุมัติสำเร็จ!',
+                    html: `<div class="text-sm">${syncMsg}<br>
+                           <span class="text-slate-500">วันหมดอายุ: ${new Date(endDate).toLocaleDateString('th-TH', {year:'numeric',month:'long',day:'numeric'})}</span></div>`
+                });
+                fetchPendingRequests();
 
             } catch(err) {
                 Swal.fire('Error', err.message, 'error');
