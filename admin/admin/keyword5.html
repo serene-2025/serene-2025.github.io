@@ -1138,6 +1138,9 @@ async function updateAllUserProfiles() {
                                 <i data-lucide="search" class="w-5 h-5"></i>
                             </button>
                         </div>
+                        <button onclick="openVipDebugModal()" class="bg-slate-700 hover:bg-slate-800 text-white px-4 py-3 rounded-2xl flex items-center justify-center gap-2 transition-all font-semibold text-sm active:scale-95 whitespace-nowrap">
+                            <i data-lucide="bug" class="w-5 h-5"></i> Debug
+                        </button>
                         <button onclick="openPermissionModal()" class="bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-amber-200 font-semibold text-sm active:scale-95 group whitespace-nowrap">
                             <i data-lucide="plus" class="w-5 h-5 group-hover:scale-110 transition-transform"></i> เพิ่มสิทธิ์
                         </button>
@@ -1600,6 +1603,80 @@ async function updateAllUserProfiles() {
             lucide.createIcons();
             // Focus userId input
             setTimeout(() => document.getElementById('perm-userId')?.focus(), 100);
+        }
+
+        // ─── VIP Debug Modal ─────────────────────────────────────────────
+        function openVipDebugModal() {
+            document.getElementById('modal-title').innerHTML = '<div class="flex items-center gap-2"><i data-lucide="bug" class="w-5 h-5 text-slate-600"></i> Debug VIP Permission</div>';
+            document.getElementById('modal-content').innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 text-xs text-slate-600">
+                        ใช้ตรวจสอบว่า User ID + Keyword จะผ่าน VIP check หรือไม่
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">User ID</label>
+                        <input id="dbg-userId" type="text" placeholder="Uxxxxxxxx..." class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-mono outline-none focus:ring-2 focus:ring-slate-400">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Keyword</label>
+                        <input id="dbg-keyword" type="text" placeholder="เช่น โปรลับVIP" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-slate-400">
+                    </div>
+                    <button onclick="runVipDebug()" class="w-full py-2.5 bg-slate-700 hover:bg-slate-800 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2">
+                        <i data-lucide="search" class="w-4 h-4"></i> ตรวจสอบ
+                    </button>
+                    <div id="dbg-result"></div>
+                </div>`;
+            openModal();
+            lucide.createIcons();
+        }
+
+        async function runVipDebug() {
+            const userId  = document.getElementById('dbg-userId').value.trim();
+            const keyword = document.getElementById('dbg-keyword').value.trim();
+            if (!userId || !keyword) return showToast('กรุณากรอกทั้ง User ID และ Keyword', 'warning');
+
+            const res = document.getElementById('dbg-result');
+            res.innerHTML = '<div class="text-center text-slate-400 py-3 text-sm">กำลังตรวจสอบ...</div>';
+
+            try {
+                const r = await fetch(`${API_BASE_URL}/api/admin/audience/vip_check?userId=${encodeURIComponent(userId)}&keyword=${encodeURIComponent(keyword)}`);
+                const d = await r.json();
+
+                const verdictColor = d.verdict?.includes('✅') ? 'emerald' : 'rose';
+                res.innerHTML = `
+                    <div class="space-y-3">
+                        <div class="p-3 bg-${verdictColor}-50 border border-${verdictColor}-200 rounded-xl font-bold text-${verdictColor}-700">
+                            ${escapeHtml(d.verdict || '')}
+                        </div>
+
+                        <div class="bg-slate-50 rounded-xl p-3 text-xs">
+                            <div class="font-bold text-slate-700 mb-2">🔑 Keywords ที่พบใน DB (${d.keywords_found.length} รายการ):</div>
+                            ${d.keywords_found.length === 0
+                                ? '<span class="text-rose-500">❌ ไม่พบ keyword นี้ในตาราง keywords เลย — ตรวจการสะกด</span>'
+                                : d.keywords_found.map(k => `<div class="flex gap-2 py-1 border-b border-slate-100">
+                                    <span class="font-mono">${escapeHtml(k.keyword)}</span>
+                                    <span class="${k.require_vip ? 'text-amber-600 font-bold' : 'text-slate-400'}">${k.require_vip ? '🔒 require_vip=true' : 'require_vip=false'}</span>
+                                  </div>`).join('')
+                            }
+                        </div>
+
+                        <div class="bg-slate-50 rounded-xl p-3 text-xs">
+                            <div class="font-bold text-slate-700 mb-2">🛡️ Permissions ที่พบ (${d.permissions_found.length} รายการ):</div>
+                            ${d.permissions_found.length === 0
+                                ? '<span class="text-rose-500">❌ ไม่พบสิทธิ์ใน keyword_permissions — กด "เพิ่มสิทธิ์" ก่อน</span>'
+                                : d.permissions_found.map(p => `<div class="py-1">userId: ${escapeHtml(p.userId)} · keyword: ${escapeHtml(p.keyword)} · vip: <b>${p.vip}</b></div>`).join('')
+                            }
+                        </div>
+
+                        ${d.keywords_found.length > 0 && !d.keywords_found[0].require_vip
+                            ? '<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">⚠️ Keyword นี้ไม่ได้ตั้ง require_vip=true — ไม่ต้องมีสิทธิ์ก็ใช้ได้</div>'
+                            : ''
+                        }
+                    </div>`;
+                lucide.createIcons();
+            } catch (e) {
+                res.innerHTML = `<div class="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-700">${escapeHtml(e.message)}</div>`;
+            }
         }
 
         async function savePermission(btn) {
