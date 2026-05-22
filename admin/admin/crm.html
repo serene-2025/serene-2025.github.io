@@ -920,9 +920,202 @@
         </main>
 
         <!-- ═══════ CAR TAB ═══════ -->
-        <!-- inserted as overlay page, triggered from home tab -->
         <div v-if="currentTab === 'cars'" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-indigo-50/30 overflow-y-auto z-20">
             <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
+
+                <!-- Header -->
+                <div class="mb-5 flex items-center gap-3">
+                    <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="flex-1">
+                        <h2 class="text-2xl font-extrabold text-slate-800">รถของฉัน</h2>
+                        <p class="text-xs text-slate-500">บ้านเลขที่ {{ carHouseNumber || '—' }}</p>
+                    </div>
+                    <button @click="openCarForm(null)" class="px-4 py-2 bg-indigo-500 rounded-2xl text-white text-sm font-bold flex items-center gap-2 shadow-md">
+                        <i class="fa-solid fa-plus"></i> เพิ่มรถ
+                    </button>
+                </div>
+
+                <!-- Loading -->
+                <div v-if="carLoading" class="bg-white rounded-3xl p-12 text-center shadow-sm">
+                    <div class="w-10 h-10 mx-auto mb-3 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin"></div>
+                    <p class="text-sm text-slate-500 font-bold">กำลังโหลด...</p>
+                </div>
+
+                <!-- Empty -->
+                <div v-else-if="myCars.length === 0" class="bg-white rounded-3xl p-10 text-center shadow-sm">
+                    <div class="text-6xl mb-3">🚗</div>
+                    <p class="font-bold text-slate-700 mb-1">ยังไม่มีรถที่ลงทะเบียน</p>
+                    <p class="text-xs text-slate-400 mb-4">กดปุ่ม "เพิ่มรถ" เพื่อเริ่มลงทะเบียน</p>
+                    <button @click="openCarForm(null)" class="px-6 py-2.5 bg-indigo-500 text-white rounded-2xl font-bold text-sm">+ เพิ่มรถ</button>
+                </div>
+
+                <!-- Car cards -->
+                <div v-else class="space-y-4">
+                    <div v-for="car in myCars" :key="car.id"
+                         class="rounded-3xl shadow-md overflow-hidden border-2 transition-all"
+                         :class="{
+                             'border-emerald-400 bg-emerald-50':   car.display_status === 'active',
+                             'border-amber-400  bg-amber-50':      car.display_status === 'pending' || car.display_status === 'expiring_soon' || car.display_status === 'renewal_pending',
+                             'border-rose-400   bg-rose-50':       car.display_status === 'expired' || car.display_status === 'rejected',
+                             'border-slate-300  bg-white':         !['active','pending','expiring_soon','renewal_pending','expired','rejected'].includes(car.display_status)
+                         }">
+
+                        <!-- Status bar -->
+                        <div class="px-4 py-2 flex items-center justify-between text-xs font-bold"
+                             :class="{
+                                 'bg-emerald-500 text-white': car.display_status === 'active',
+                                 'bg-amber-500 text-white':   car.display_status === 'pending' || car.display_status === 'expiring_soon' || car.display_status === 'renewal_pending',
+                                 'bg-rose-500 text-white':    car.display_status === 'expired' || car.display_status === 'rejected',
+                                 'bg-slate-400 text-white':   !['active','pending','expiring_soon','renewal_pending','expired','rejected'].includes(car.display_status)
+                             }">
+                            <span>
+                                {{ {
+                                    active: '✅ ยืนยันการใช้งาน',
+                                    pending: '⏳ รอการอนุมัติ',
+                                    approved: '✅ อนุมัติ',
+                                    expiring_soon: '⚠️ ใกล้หมดอายุ',
+                                    renewal_pending: '🔁 รอต่ออายุ',
+                                    expired: '❌ หมดอายุ',
+                                    rejected: '🚫 ไม่อนุมัติ'
+                                }[car.display_status] || car.display_status }}
+                            </span>
+                            <span v-if="car.days_left !== null && car.display_status !== 'expired'">
+                                เหลือ {{ car.days_left }} วัน
+                            </span>
+                            <span v-else-if="car.display_status === 'expired'">หมดอายุแล้ว</span>
+                        </div>
+
+                        <div class="p-4">
+                            <!-- Plate + type -->
+                            <div class="flex items-start justify-between mb-3">
+                                <div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-2xl">{{ car.car_type === 'รถจักรยานยนต์' ? '🏍️' : '🚗' }}</span>
+                                        <span class="text-xl font-extrabold text-slate-800 tracking-wider">{{ car.plate_number }}</span>
+                                    </div>
+                                    <div class="text-xs text-slate-500 ml-8">{{ car.province }}</div>
+                                </div>
+                                <!-- allowed_car status badge -->
+                                <div v-if="car.allowed_car" class="text-[10px] px-2 py-1 rounded-full font-bold bg-white/60 border"
+                                     :class="car.allowed_car.status === 'synced' ? 'border-emerald-300 text-emerald-700' : 'border-slate-200 text-slate-500'">
+                                    {{ car.allowed_car.status === 'synced' ? '🔒 อยู่ใน Whitelist' : '⏳ ' + car.allowed_car.status }}
+                                </div>
+                            </div>
+
+                            <!-- Details grid -->
+                            <div class="grid grid-cols-2 gap-2 text-xs mb-3">
+                                <div><div class="text-slate-400">เจ้าของ</div><div class="font-bold text-slate-700 truncate">{{ car.fullname }}</div></div>
+                                <div><div class="text-slate-400">ประเภท</div><div class="font-bold text-slate-700">{{ car.car_type }}</div></div>
+                                <div><div class="text-slate-400">บ้าน</div><div class="font-bold text-slate-700">{{ car.house_number }}</div></div>
+                                <div><div class="text-slate-400">เบอร์</div><div class="font-bold text-slate-700">{{ formatPhone(car.phone) }}</div></div>
+                            </div>
+
+                            <!-- Dates -->
+                            <div v-if="car.start_date || car.end_date" class="grid grid-cols-2 gap-2 text-xs mb-3 bg-white/60 rounded-xl p-2">
+                                <div>
+                                    <div class="text-slate-400">วันเริ่มใช้งาน</div>
+                                    <div class="font-bold text-slate-700">{{ formatThaiDate(car.start_date) }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-slate-400">วันหมดอายุ</div>
+                                    <div class="font-bold" :class="car.days_left !== null && car.days_left <= 30 ? 'text-rose-600' : 'text-slate-700'">
+                                        {{ formatThaiDate(car.end_date) }}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Photo -->
+                            <img v-if="car.image_url" :src="car.image_url" class="w-full h-32 object-cover rounded-2xl border border-white/80 mb-3" @error="$event.target.style.display='none'">
+
+                            <!-- Actions -->
+                            <div class="flex gap-2 pt-2 border-t border-white/60">
+                                <!-- ต่ออายุ (ถ้าใกล้หมด/หมดแล้ว) -->
+                                <button v-if="car.display_status === 'expiring_soon' || car.display_status === 'expired'"
+                                        @click="renewCar(car)"
+                                        class="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5">
+                                    <i class="fa-solid fa-rotate-right"></i> ต่ออายุ
+                                </button>
+                                <!-- แก้ไข + ลบ -->
+                                <button @click="openCarForm(car)"
+                                        class="flex-1 py-2.5 bg-white/80 hover:bg-white text-slate-700 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 border border-slate-200">
+                                    <i class="fa-solid fa-pen"></i> แก้ไข
+                                </button>
+                                <button @click="deleteCar(car)"
+                                        class="px-4 py-2.5 bg-rose-100 hover:bg-rose-200 text-rose-600 rounded-2xl text-xs font-bold">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════ Car Form Modal ═══════ -->
+        <div v-if="carFormModal" @click.self="carFormModal = false" class="fixed inset-0 modal-bg z-50 flex items-end md:items-center justify-center p-3">
+            <div class="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl slide-up max-h-[90vh] overflow-y-auto">
+                <div class="flex items-center gap-2 mb-4">
+                    <div class="text-2xl">{{ carForm.id ? '✏️' : '🚗' }}</div>
+                    <h3 class="text-lg font-extrabold text-slate-800">{{ carForm.id ? 'แก้ไขรถ' : 'เพิ่มรถใหม่' }}</h3>
+                </div>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">ชื่อเจ้าของรถ *</label>
+                        <input v-model="carForm.fullname" type="text" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">บ้านเลขที่ *</label>
+                        <input v-model="carForm.house_number" type="text" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">ประเภทรถ *</label>
+                            <select v-model="carForm.car_type" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                                <option>รถยนต์</option>
+                                <option>รถจักรยานยนต์</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">เบอร์โทร</label>
+                            <input v-model="carForm.phone" type="tel" maxlength="10" inputmode="numeric"
+                                   @input="carForm.phone = carForm.phone.replace(/[^0-9]/g,'').replace(/^0*/,'0')"
+                                   placeholder="0xxxxxxxxx"
+                                   class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">ทะเบียน *</label>
+                            <input v-model="carForm.plate_number" type="text" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm font-bold tracking-wider focus:ring-2 focus:ring-indigo-400 outline-none" placeholder="กก 1234">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">จังหวัด *</label>
+                            <input v-model="carForm.province" type="text" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none" placeholder="ระยอง">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">รูปป้ายทะเบียน</label>
+                        <input type="file" accept="image/*" @change="onCarImageChange" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                        <div v-if="carForm.image_url" class="mt-2">
+                            <img :src="carForm.image_url" class="h-24 w-full object-cover rounded-xl border">
+                        </div>
+                        <div v-if="carImageUploading" class="mt-1 text-xs text-indigo-500 flex items-center gap-1">
+                            <i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลด...
+                        </div>
+                    </div>
+                </div>
+                <div class="flex gap-2 mt-5">
+                    <button @click="carFormModal = false" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold">ยกเลิก</button>
+                    <button @click="saveCar" :disabled="carSaving || carImageUploading" class="flex-1 py-3 bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-300 text-white rounded-2xl font-bold flex items-center justify-center gap-2">
+                        <i v-if="carSaving" class="fa-solid fa-spinner fa-spin"></i>
+                        <i v-else class="fa-solid fa-save"></i>
+                        {{ carForm.id ? 'บันทึก' : 'เพิ่มรถ' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════ Settings Sheet (slide up จากล่าง) ═══════ -->
                 <div class="mb-5 flex items-center gap-3">
                     <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500"><i class="fa-solid fa-arrow-left"></i></button>
                     <div class="flex-1">
@@ -2163,7 +2356,7 @@
                     if (!file) return;
                     this.carImageUploading = true;
                     try {
-                        // compress
+                        // Compress ก่อนอัปโหลด
                         const canvas = document.createElement('canvas');
                         const img = await new Promise((res, rej) => {
                             const i = new Image();
@@ -2178,14 +2371,17 @@
                         canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
                         const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.8));
 
-                        const fileName = `${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
-                        const { data, error } = await this.supabase.storage
-                            .from('car_images')
-                            .upload(`public/${fileName}`, blob, { contentType: 'image/jpeg', upsert: false });
+                        // อัปโหลดผ่าน backend endpoint (ใช้ service role ข้าม RLS)
+                        const formData = new FormData();
+                        formData.append('file', blob, `car_${Date.now()}.jpg`);
 
-                        if (error) throw error;
-                        const { data: urlData } = this.supabase.storage.from('car_images').getPublicUrl(`public/${fileName}`);
-                        this.carForm.image_url = urlData.publicUrl;
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/upload_car_image`, {
+                            method: 'POST',
+                            body: formData
+                        });
+                        const d = await res.json();
+                        if (!res.ok) throw new Error(d.error || 'อัปโหลดไม่สำเร็จ');
+                        this.carForm.image_url = d.url;
                     } catch (err) {
                         Swal.fire('อัปโหลดไม่สำเร็จ', err.message, 'error');
                     } finally {
@@ -2251,6 +2447,54 @@
                         await this.loadMyCars();
                     } catch (err) {
                         Swal.fire('ไม่สำเร็จ', err.message, 'error');
+                    }
+                },
+
+                formatPhone(phone) {
+                    if (!phone) return '—';
+                    const s = String(phone).replace(/\D/g, '');
+                    return s.startsWith('0') ? s : '0' + s;
+                },
+
+                formatThaiDate(dateStr) {
+                    if (!dateStr) return '—';
+                    try {
+                        const d = new Date(dateStr);
+                        return d.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+                    } catch { return dateStr; }
+                },
+
+                async renewCar(car) {
+                    const { value: note, isConfirmed } = await Swal.fire({
+                        title: '🔁 ต่ออายุทะเบียนรถ',
+                        html: `<div style="text-align:left;font-size:13px;color:#64748b;margin-bottom:8px">ทะเบียน <b>${car.plate_number}</b></div>`,
+                        input: 'textarea',
+                        inputPlaceholder: 'หมายเหตุ (ถ้ามี)...',
+                        inputAttributes: { rows: 2 },
+                        showCancelButton: true,
+                        confirmButtonText: 'ส่งคำขอต่ออายุ',
+                        cancelButtonText: 'ยกเลิก',
+                        confirmButtonColor: '#f59e0b',
+                    });
+                    if (!isConfirmed) return;
+
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/renew_car`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                userId: this.userProfile.userId,
+                                displayName: this.userProfile.displayName,
+                                carId: car.id,
+                                renewalNote: note || null
+                            })
+                        });
+                        const d = await res.json();
+                        if (!res.ok) throw new Error(d.error);
+                        Swal.fire({ icon: 'success', title: '🔁 ส่งคำขอต่ออายุแล้ว', html: '<small>รอ admin อนุมัติ</small>', timer: 2000, showConfirmButton: false });
+                        await this.loadMyCars();
+                    } catch (e) {
+                        Swal.fire('ไม่สำเร็จ', e.message, 'error');
                     }
                 },
 
