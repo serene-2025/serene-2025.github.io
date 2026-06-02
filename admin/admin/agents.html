@@ -3390,6 +3390,169 @@ const bubbleMessages = {
 // Map char index to agent key
 const charKeys = ['finance', 'car', 'summary', 'keycard', 'alert'];
 
+// ══════════════════════════════════════════════════════
+// 🔊 WEB SPEECH TTS ENGINE
+// ══════════════════════════════════════════════════════
+const TTS = (() => {
+  const synth = window.speechSynthesis;
+  let enabled = true;
+  let thVoice = null;
+
+  // โหลด voices (async ใน Chrome)
+  function loadVoice() {
+    const voices = synth.getVoices();
+    thVoice =
+      voices.find(v => v.lang === 'th-TH') ||
+      voices.find(v => v.lang.startsWith('th')) ||
+      voices.find(v => v.lang === 'th') ||
+      null;
+  }
+  loadVoice();
+  if (synth.onvoiceschanged !== undefined) synth.onvoiceschanged = loadVoice;
+
+  function speak(text, opts = {}) {
+    if (!enabled || !synth) return;
+    synth.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    if (thVoice) utt.voice = thVoice;
+    utt.lang  = 'th-TH';
+    utt.rate  = opts.rate  ?? 1.05;
+    utt.pitch = opts.pitch ?? 1.0;
+    utt.volume= opts.volume?? 0.95;
+    synth.speak(utt);
+  }
+
+  function stop()   { synth.cancel(); }
+  function toggle() { enabled = !enabled; return enabled; }
+  function isOn()   { return enabled; }
+
+  return { speak, stop, toggle, isOn };
+})();
+
+// ── สร้างปุ่ม toggle เสียงใน header ──────────────────
+(function addSoundToggle() {
+  const actions = document.querySelector('.header-actions');
+  if (!actions) return;
+  const btn = document.createElement('button');
+  btn.id = 'tts-toggle';
+  btn.className = 'btn btn-ghost';
+  btn.title = 'เปิด/ปิดเสียงพูด';
+  btn.innerHTML = '🔊';
+  btn.style.fontSize = '16px';
+  btn.onclick = () => {
+    const on = TTS.toggle();
+    btn.innerHTML = on ? '🔊' : '🔇';
+    btn.style.opacity = on ? '1' : '.5';
+    if (on) TTS.speak('เปิดเสียงแล้วครับ');
+  };
+  // ใส่ก่อนปุ่มแรก
+  actions.insertBefore(btn, actions.firstChild);
+})();
+
+// ── สร้างข้อความรายงานภาษาไทย ────────────────────────
+function buildSpeechText(key) {
+  const d = agentData;
+  const now = new Date().toLocaleTimeString('th-TH',{timeZone:'Asia/Bangkok',hour:'2-digit',minute:'2-digit',hour12:false});
+
+  const scripts = {
+    finance: () => {
+      if (!d.finance) return 'Finance Agent ยังไม่ได้รันครับ กดปุ่ม Run เพื่อเริ่มต้น';
+      const u = d.finance.unpaid, s = d.finance.slipPending;
+      const parts = [];
+      if (u > 0) parts.push(`บ้านค้างชำระ ${u} หลัง`);
+      else parts.push('ทุกบ้านชำระค่าส่วนกลางครบแล้ว');
+      if (s > 0) parts.push(`สลิปรอยืนยัน ${s} รายการ`);
+      return `Finance Agent รายงาน เวลา ${now} ครับ ${parts.join(' และ ')}`;
+    },
+    car: () => {
+      if (!d.car) return 'Car Agent ยังไม่ได้รันครับ';
+      const parts = [];
+      if (d.car.pending  > 0) parts.push(`รอ Approve ${d.car.pending} คัน`);
+      if (d.car.expiring > 0) parts.push(`ใกล้หมดอายุ ${d.car.expiring} คัน`);
+      if (d.car.expired  > 0) parts.push(`หมดอายุแล้ว ${d.car.expired} คัน`);
+      return parts.length
+        ? `Car Agent แจ้ง ${parts.join(' ')} ครับ`
+        : 'Car Agent รายงาน รถทุกคันสถานะปกติครับ';
+    },
+    member: () => {
+      if (!d.member) return 'Member Agent ยังไม่ได้รันครับ';
+      return `Member Agent รายงาน สมาชิกลงทะเบียน LINE แล้ว ${d.member.registered} บ้าน จากทั้งหมด ${d.member.totalHouses} บ้านครับ` +
+        (d.member.newToday > 0 ? ` มีสมาชิกใหม่วันนี้ ${d.member.newToday} คนครับ` : '');
+    },
+    keycard: () => {
+      if (!d.keycard) return 'Keycard Agent ยังไม่ได้รันครับ';
+      return d.keycard.pending > 0
+        ? `Keycard Agent แจ้ง มีบัตรรออนุมัติ ${d.keycard.pending} ใบครับ`
+        : 'Keycard Agent รายงาน ไม่มีบัตรรออนุมัติครับ';
+    },
+    points: () => {
+      if (!d.points) return 'Points Agent ยังไม่ได้รันครับ';
+      return `Points Agent รายงาน Check-in วันนี้ ${d.points.checkinToday} คน แต้มรวม ${Number(d.points.totalPts||0).toLocaleString()} คะแนนครับ`;
+    },
+    repair: () => {
+      if (!d.repair) return 'Repair Agent ยังไม่ได้รันครับ';
+      return d.repair.pending > 0
+        ? `Repair Agent แจ้ง มีแจ้งซ่อมรอดำเนินการ ${d.repair.pending} รายการ กำลังซ่อม ${d.repair.inprog} รายการครับ`
+        : `Repair Agent รายงาน ไม่มีแจ้งซ่อมค้างอยู่ เสร็จแล้ว ${d.repair.done} รายการครับ`;
+    },
+    visitor: () => {
+      if (!d.visitor) return 'Visitor Agent ยังไม่ได้รันครับ';
+      return `Visitor Agent รายงาน วันนี้มีผู้มาเยือน ${d.visitor.todayCount} คน เดือนนี้ทั้งหมด ${d.visitor.monthCount} คนครับ`;
+    },
+    weekly: () => {
+      if (!d.weekly) return 'Weekly Agent ยังไม่ได้รันครับ';
+      return `Weekly Agent รายงาน ผู้ติดตาม LINE OA ${Number(d.weekly.followers||0).toLocaleString()} คน ส่งข้อความ ${Number(d.weekly.messages||0).toLocaleString()} ครั้งครับ`;
+    },
+    security: () => {
+      if (!d.security) return 'Security Agent ยังไม่ได้รันครับ';
+      return d.security.black > 0
+        ? `Security Agent แจ้งเตือน มีรถใน Blacklist ${d.security.black} คัน ขอ CCTV ${d.security.cctv} รายการครับ`
+        : `Security Agent รายงาน ไม่พบรถ Blacklist วันนี้ Access log ${d.security.access} รายการครับ`;
+    },
+    gls: () => {
+      if (!d.gls) return 'GLS Agent ยังไม่ได้รันครับ';
+      return `GLS Agent รายงาน สินทรัพย์ ${d.gls.assets} รายการ สัญญา ${d.gls.contracts} ฉบับ รายการวันนี้ ${d.gls.txToday} รายการครับ`;
+    },
+    content: () => {
+      if (!d.content) return 'Content Agent ยังไม่ได้รันครับ';
+      return `Content Agent รายงาน ข่าววันนี้ ${d.content.newsToday} รายการ ประกาศ ${d.content.notices} รายการ Narrowcast ${d.content.narrow} แม่แบบครับ`;
+    },
+    community: () => {
+      if (!d.community) return 'Community Agent ยังไม่ได้รันครับ';
+      return d.community.bday > 0
+        ? `Community Agent แจ้ง วันนี้มีวันเกิด ${d.community.bday} คนครับ Check-in ${d.community.checkins} รายการ`
+        : `Community Agent รายงาน Check-in วันนี้ ${d.community.checkins} รายการ AGM ${d.community.agm} กิจกรรมครับ`;
+    },
+    aimon: () => {
+      if (!d.aimon) return 'AI Monitor ยังไม่ได้รันครับ';
+      return d.aimon.errors > 0
+        ? `AI Monitor แจ้งเตือน มี App Error ${d.aimon.errors} รายการ AI Gaps ${d.aimon.openGaps} รายการครับ`
+        : `AI Monitor รายงาน ระบบปกติ ไม่มี Error วันนี้ครับ`;
+    },
+    alert: () => {
+      if (!d.alerts) return 'Alert Agent ยังไม่ได้รันครับ กด Run All ก่อนครับ';
+      const crit = d.alerts.critical, pend = d.alerts.pending;
+      if (crit > 0) return `Alert Agent แจ้งด่วน มีงานเร่งด่วน ${crit} รายการ รอดำเนินการ ${pend} รายการครับ`;
+      if (pend > 0) return `Alert Agent แจ้ง มีงานรอดำเนินการ ${pend} รายการครับ`;
+      return 'Alert Agent รายงาน ทุกระบบปกติ ไม่มีงานค้างครับ';
+    },
+    lineoa: () => {
+      if (!d.lineoa) return 'LINE OA Agent ยังไม่ได้รันครับ';
+      return `LINE OA Agent รายงาน ผู้ติดตาม ${Number(d.lineoa.followers||0).toLocaleString()} คน Block rate ${d.lineoa.blockRate} เปอร์เซ็นต์ โควต้าเหลือ ${Number(d.lineoa.quotaLeft||0).toLocaleString()} ข้อความครับ`;
+    },
+    summary: () => {
+      if (!allRan) return 'กด Run All เพื่อรวบรวมข้อมูลจากทุก Agent ก่อนครับ';
+      const crit = d.alerts?.critical || 0, pend = d.alerts?.pending || 0;
+      return crit > 0
+        ? `สรุปภาพรวม เวลา ${now} มีงานด่วน ${crit} รายการ รอดำเนินการ ${pend} รายการครับ`
+        : `สรุปภาพรวม เวลา ${now} ทุกระบบปกติดีครับ`;
+    },
+  };
+
+  const fn = scripts[key] || scripts.summary;
+  return fn();
+}
+
 function showBubble(key, customMsg) {
   const aliases = { summary: 'weekly', aimon: 'aimon' };
   const agentKey = aliases[key] || key;
@@ -3406,9 +3569,44 @@ function showBubble(key, customMsg) {
     }
     setTimeout(() => el.classList.remove('visible'), 3500);
   }
+  // 🔊 พูดข้อมูลจริงเสมอ ไม่ใช่แค่ bubble text
+  TTS.speak(buildSpeechText(key));
 }
 
-// Auto speech bubbles — แต่ละตัวพูดตามลำดับ
+// ══════════════════════════════════════════════════════
+// 🖱️ HOVER → TTS (mouseenter บน iso-agent buttons)
+// ══════════════════════════════════════════════════════
+(function attachHoverTTS() {
+  let hoverTimer = null;
+
+  document.querySelectorAll('.iso-agent[title]').forEach(btn => {
+    const title = btn.getAttribute('title') || '';
+    // หา key จาก title
+    const keyMap = {
+      'Finance Agent':'finance','Car Agent':'car','Member Agent':'member',
+      'Keycard Agent':'keycard','Points Agent':'points','Repair Agent':'repair',
+      'Visitor Agent':'visitor','Weekly Agent':'weekly','Security Agent':'security',
+      'GLS Agent':'gls','Content Agent':'content','Community Agent':'community',
+      'AI Monitor Agent':'aimon','Alert Agent':'alert','LINE OA Agent':'lineoa',
+    };
+    const key = keyMap[title];
+    if (!key) return;
+
+    btn.addEventListener('mouseenter', () => {
+      // delay เล็กน้อย ไม่พูดถ้าแค่ผ่าน
+      hoverTimer = setTimeout(() => {
+        TTS.speak(buildSpeechText(key), { rate: 1.0 });
+        showBubble(key);
+      }, 600);
+    });
+
+    btn.addEventListener('mouseleave', () => {
+      clearTimeout(hoverTimer);
+      // ถ้า hover ออกเร็ว หยุดเสียง
+      // (ไม่ stop ถ้าพูดไปแล้ว ให้พูดจบ)
+    });
+  });
+})();
 const officeAgents = [
   { id:'finance', name:'Finance Agent', color:'#38bdf8', x:13, y:45, work:'ตรวจสลิปและยอดค้าง', talk:'Finance: ยอดล่าสุดพร้อมสรุปแล้วครับ' },
   { id:'car', name:'Car Agent', color:'#fb923c', x:24, y:53, work:'ตรวจทะเบียนรถ', talk:'Car: มีรายการรออนุมัติให้เช็กครับ' },
