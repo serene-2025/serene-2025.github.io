@@ -3553,7 +3553,9 @@ function buildSpeechText(key) {
   return fn();
 }
 
-function showBubble(key, customMsg) {
+let _ttsSource = null; // ติดตามว่าใครสั่งพูด
+
+function showBubble(key, customMsg, source = 'click') {
   const aliases = { summary: 'weekly', aimon: 'aimon' };
   const agentKey = aliases[key] || key;
   const el = document.getElementById('bubble-' + agentKey);
@@ -3569,7 +3571,7 @@ function showBubble(key, customMsg) {
     }
     setTimeout(() => el.classList.remove('visible'), 3500);
   }
-  // 🔊 พูดข้อมูลจริงเสมอ ไม่ใช่แค่ bubble text
+  // 🔊 พูดครั้งเดียว — cancel ก่อนถ้ากำลังพูดอยู่
   TTS.speak(buildSpeechText(key));
 }
 
@@ -3578,10 +3580,10 @@ function showBubble(key, customMsg) {
 // ══════════════════════════════════════════════════════
 (function attachHoverTTS() {
   let hoverTimer = null;
+  let lastKey    = null;
 
   document.querySelectorAll('.iso-agent[title]').forEach(btn => {
     const title = btn.getAttribute('title') || '';
-    // หา key จาก title
     const keyMap = {
       'Finance Agent':'finance','Car Agent':'car','Member Agent':'member',
       'Keycard Agent':'keycard','Points Agent':'points','Repair Agent':'repair',
@@ -3593,17 +3595,19 @@ function showBubble(key, customMsg) {
     if (!key) return;
 
     btn.addEventListener('mouseenter', () => {
-      // delay เล็กน้อย ไม่พูดถ้าแค่ผ่าน
+      clearTimeout(hoverTimer);
       hoverTimer = setTimeout(() => {
-        TTS.speak(buildSpeechText(key), { rate: 1.0 });
-        showBubble(key);
+        // showBubble จัดการพูดเองผ่าน TTS — ไม่ต้องเรียก TTS.speak ซ้ำ
+        if (lastKey !== key) {
+          lastKey = key;
+          showBubble(key);   // ← จุดเดียวที่พูด
+        }
       }, 600);
     });
 
     btn.addEventListener('mouseleave', () => {
       clearTimeout(hoverTimer);
-      // ถ้า hover ออกเร็ว หยุดเสียง
-      // (ไม่ stop ถ้าพูดไปแล้ว ให้พูดจบ)
+      lastKey = null;
     });
   });
 })();
@@ -3680,11 +3684,30 @@ function startAgentOfficeLife() {
   }, 6200);
 }
 
+// แสดง bubble ข้อความเฉยๆ ไม่พูด (สำหรับ auto loop)
+function showBubbleSilent(key, msg) {
+  const aliases = { summary: 'weekly', aimon: 'aimon' };
+  const agentKey = aliases[key] || key;
+  const el = document.getElementById('bubble-' + agentKey);
+  if (el) {
+    el.textContent = msg || '...';
+    el.classList.add('visible');
+    const agent = el.closest('.iso-agent');
+    if (agent) {
+      agent.classList.add('is-talking');
+      setTimeout(() => agent.classList.remove('is-talking'), 3600);
+    }
+    setTimeout(() => el.classList.remove('visible'), 3500);
+  }
+}
+
 function startAutoBubbles() {
   let idx = 0;
   setInterval(() => {
+    // ไม่พูดถ้า TTS กำลังพูดอยู่ (จาก hover/click)
+    if (window.speechSynthesis?.speaking) { idx++; return; }
     const agent = officeAgents[idx % officeAgents.length];
-    showBubble(agent.id, agent.work);
+    showBubbleSilent(agent.id, agent.work); // แค่แสดงข้อความ ไม่พูด
     idx++;
   }, 5200);
 }
