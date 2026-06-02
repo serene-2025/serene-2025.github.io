@@ -2292,7 +2292,7 @@ async function runVisitorAgent() {
     const monthStr = todayStr.slice(0, 7);
 
     const [histRes, cardRes] = await Promise.all([
-      db.from('visitor_history').select('id').gte('created_at', todayStr),
+      db.from('visitor_history').select('id').gte('archived_at', todayStr),
       db.from('visitor_cards').select('id, status, created_at'),
     ]);
 
@@ -2303,7 +2303,7 @@ async function runVisitorAgent() {
 
     // เดือนนี้ (จาก visitor_history ถ้า query ใหม่ได้)
     const { data: monthData } = await db.from('visitor_history')
-      .select('id').gte('created_at', monthStr + '-01');
+      .select('id').gte('archived_at', monthStr + '-01');
     const monthCount = monthData?.length || 0;
 
     setText('m-vis-today',   todayCount,  'green');
@@ -2335,7 +2335,7 @@ async function runWeeklyAgent() {
   document.querySelector('#card-weekly .run-btn').disabled = true;
   try {
     const { data, error } = await db.from('weekly_stats')
-      .select('*').order('created_at', { ascending: false }).limit(2);
+      .select('*').order('id', { ascending: false }).limit(2);
     if (error) throw error;
     const latest = data?.[0] || {};
     const prev   = data?.[1] || {};
@@ -2427,7 +2427,7 @@ async function loadVisitorPanel() {
     const todayStr = todayBKK().toISOString().slice(0, 10);
     const { data, error } = await db.from('visitor_history')
       .select('*')
-      .gte('created_at', todayStr)
+      .gte('archived_at', todayStr)
       .order('created_at', { ascending: false }).limit(40);
     if (error) throw error;
     const rows = data || [];
@@ -2467,7 +2467,7 @@ async function loadWeeklyPanel() {
   body.innerHTML = '<div class="dp-empty">กำลังโหลด...</div>';
   try {
     const { data, error } = await db.from('weekly_stats')
-      .select('*').order('created_at', { ascending: false }).limit(8);
+      .select('*').order('id', { ascending: false }).limit(8);
     if (error) throw error;
     const rows = data || [];
     if (!rows.length) { body.innerHTML = '<div class="dp-empty">ไม่มีข้อมูลสถิติ</div>'; return; }
@@ -2590,10 +2590,10 @@ async function runGLSAgent() {
   document.querySelector('#card-gls .run-btn').disabled = true;
   try {
     const [bdRes, asRes, coRes, txRes] = await Promise.all([
-      db.from('gls_budgets').select('id,total_amount,used_amount').limit(1).order('created_at',{ascending:false}),
+      db.from('gls_budgets').select('*').limit(1).order('id',{ascending:false}),
       db.from('gls_assets').select('id', {count:'exact',head:true}),
       db.from('gls_contracts').select('id', {count:'exact',head:true}),
-      db.from('gls_transactions').select('id').gte('created_at', todayBKK().toISOString().slice(0,10)),
+      db.from('gls_transactions').select('id').limit(100),
     ]);
     const budget   = bdRes.data?.[0]?.total_amount || 0;
     const assets   = asRes.count || 0;
@@ -2669,10 +2669,10 @@ async function runCommunityAgent() {
     const mmdd = `${String(bkk.getMonth()+1).padStart(2,'0')}-${String(bkk.getDate()).padStart(2,'0')}`;
 
     const [agmRes, bdRes, ciRes, lbRes] = await Promise.all([
-      db.from('agm_events').select('id', {count:'exact',head:true}),
-      db.from('birthday_log').select('id').like('birthday', `%-${mmdd}`).limit(10),
+      db.from('agm_events').select('id').limit(500),
+      db.from('birthday_log').select('id').limit(20),
       db.from('check_ins').select('id').gte('created_at', todayStr),
-      db.from('leaderboard_history').select('*').order('points',{ascending:false}).limit(1),
+      db.from('leaderboard_history').select('*').order('id',{ascending:false}).limit(1),
     ]);
     const agm      = agmRes.count || 0;
     const bday     = bdRes.data?.length || 0;
@@ -2707,14 +2707,13 @@ async function runAIMonAgent() {
   try {
     const todayStr = todayBKK().toISOString().slice(0,10);
     const [fbRes, gpRes, alRes] = await Promise.all([
-      db.from('ai_feedback').select('id').gte('created_at', todayStr),
-      db.from('ai_gaps').select('id,status').limit(100),
-      db.from('app_logs').select('level,created_at').gte('created_at', todayStr),
+      db.from('ai_feedback').select('id').limit(100),
+      db.from('ai_gaps').select('*').limit(100),
+      db.from('app_logs').select('*').limit(100),
     ]);
     const feedback = fbRes.data?.length || 0;
     const gaps     = gpRes.data?.length || 0;
     const openGaps = (gpRes.data||[]).filter(g => g.status !== 'resolved').length;
-    const logs     = alRes.data?.length || 0;
     const errors   = (alRes.data||[]).filter(l => ['error','critical','fatal'].includes((l.level||'').toLowerCase())).length;
 
     setText('m-ai-feedback', feedback, feedback > 0 ? 'blue'  : 'green');
@@ -2751,9 +2750,9 @@ async function loadSecurityPanel() {
   try {
     const todayStr = todayBKK().toISOString().slice(0,10);
     const [blRes, acRes, ccRes] = await Promise.all([
-      db.from('blacklist_cars').select('plate_number,province,reason,created_at').order('created_at',{ascending:false}).limit(10),
-      db.from('access_logs').select('plate_number,camera_name,created_at').order('created_at',{ascending:false}).gte('created_at',todayStr).limit(20),
-      db.from('cctv_requests').select('house_number,request_date,status,created_at').order('created_at',{ascending:false}).limit(10),
+      db.from('blacklist_cars').select('*').order('id',{ascending:false}).limit(10),
+      db.from('access_logs').select('*').order('id',{ascending:false}).limit(20),
+      db.from('cctv_requests').select('*').order('id',{ascending:false}).limit(10),
     ]);
 
     let html = '';
@@ -2764,10 +2763,10 @@ async function loadSecurityPanel() {
       html += blRes.data.map(r => `<div class="dp-row">
         <div style="flex:1">
           <div style="display:flex;gap:8px;align-items:center">
-            <span class="dp-house" style="color:var(--rose)">${escHtml(r.plate_number||'—')}</span>
-            <span class="dp-time">${escHtml(r.province||'')}</span>
+            <span class="dp-house" style="color:var(--rose)">${escHtml(r.plate_number||r.license_plate||r.car_plate||'—')}</span>
+            <span class="dp-time">${escHtml(r.province||r.car_province||'')}</span>
           </div>
-          <div class="dp-time">${escHtml((r.reason||'').slice(0,40))||'ไม่ระบุสาเหตุ'}</div>
+          <div class="dp-time">${escHtml((r.reason||r.note||r.description||'').slice(0,40))||'ไม่ระบุสาเหตุ'}</div>
         </div>
         <div class="dp-time">${timeBKK(r.created_at)}</div>
       </div>`).join('');
@@ -2779,8 +2778,8 @@ async function loadSecurityPanel() {
       html += ccRes.data.map(r => {
         const stCls = r.status==='approved'?'fee-paid':r.status==='pending'?'fee-partial':'fee-unpaid';
         return `<div class="dp-row">
-          <span class="dp-house">${escHtml(r.house_number||'—')}</span>
-          <span class="dp-name dp-time">${escHtml(r.request_date||'')}</span>
+          <span class="dp-house">${escHtml(r.house_number||r.house_no||'—')}</span>
+          <span class="dp-name dp-time">${escHtml(r.request_date||r.created_at||r.date||'')}</span>
           <span class="dp-status ${stCls}">${escHtml(r.status||'—')}</span>
         </div>`;
       }).join('');
@@ -2790,8 +2789,8 @@ async function loadSecurityPanel() {
     if (acRes.data?.length) {
       html += `<div style="padding:6px 14px;font-family:var(--font-mono);font-size:9px;font-weight:700;color:var(--green);border-bottom:1px solid var(--border);border-top:1px solid var(--border)">✅ ACCESS วันนี้ (${acRes.data.length})</div>`;
       html += acRes.data.slice(0,8).map(r => `<div class="dp-row">
-        <span class="dp-house">${escHtml(r.plate_number||'—')}</span>
-        <span class="dp-name dp-time">${escHtml(r.camera_name||'—')}</span>
+        <span class="dp-house">${escHtml(r.plate_number||r.license_plate||r.car_plate||'—')}</span>
+        <span class="dp-name dp-time">${escHtml(r.camera_name||r.camera||r.location||r.source||'—')}</span>
         <span class="dp-time">${timeBKK(r.created_at).split(' ').pop()}</span>
       </div>`).join('');
     }
@@ -2806,10 +2805,10 @@ async function loadGLSPanel() {
   body.innerHTML = '<div class="dp-empty">กำลังโหลด...</div>';
   try {
     const [bdRes, asRes, coRes, txRes] = await Promise.all([
-      db.from('gls_budgets').select('name,total_amount,used_amount,year').order('year',{ascending:false}).limit(5),
-      db.from('gls_assets').select('name,category,value,status').order('created_at',{ascending:false}).limit(10),
-      db.from('gls_contracts').select('title,contractor,amount,end_date').order('created_at',{ascending:false}).limit(5),
-      db.from('gls_transactions').select('type,amount,description,created_at').order('created_at',{ascending:false}).limit(8),
+      db.from('gls_budgets').select('*').order('id',{ascending:false}).limit(5),
+      db.from('gls_assets').select('*').order('id',{ascending:false}).limit(10),
+      db.from('gls_contracts').select('*').order('id',{ascending:false}).limit(5),
+      db.from('gls_transactions').select('*').order('id',{ascending:false}).limit(8),
     ]);
 
     let html = '';
@@ -2817,13 +2816,14 @@ async function loadGLSPanel() {
 
     if (bdRes.data?.length) {
       html += `<div style="padding:6px 14px;font-family:var(--font-mono);font-size:9px;font-weight:700;color:var(--accent);border-bottom:1px solid var(--border)">💰 งบประมาณ</div>`;
-      html += bdRes.data.map(r => {
+      html += todayBdayRows.map(r => {
+        const budgetName = r.name||r.budget_name||r.title||'งบประมาณ';
         const pct = r.total_amount > 0 ? Math.round((r.used_amount||0)/r.total_amount*100) : 0;
         const barColor = pct > 80 ? 'var(--rose)' : pct > 60 ? 'var(--amber)' : 'var(--green)';
         return `<div class="dp-row" style="flex-direction:column;align-items:flex-start;gap:4px">
           <div style="display:flex;justify-content:space-between;width:100%">
-            <span style="font-size:11px;font-weight:600;color:var(--text)">${escHtml(r.name||'—')}</span>
-            <span class="dp-time">${r.year||'—'}</span>
+            <span style="font-size:11px;font-weight:600;color:var(--text)">${escHtml(budgetName)}</span>
+            <span class="dp-time">${r.year||r.fiscal_year||'—'}</span>
           </div>
           <div style="width:100%;background:var(--border);border-radius:3px;height:5px">
             <div style="width:${pct}%;background:${barColor};border-radius:3px;height:5px;transition:width .3s"></div>
@@ -2839,10 +2839,12 @@ async function loadGLSPanel() {
     if (txRes.data?.length) {
       html += `<div style="padding:6px 14px;font-family:var(--font-mono);font-size:9px;font-weight:700;color:var(--amber);border-bottom:1px solid var(--border);border-top:1px solid var(--border)">📋 รายการล่าสุด</div>`;
       html += txRes.data.map(r => {
-        const isIncome = (r.type||'').toLowerCase().includes('income')||(r.type||'').toLowerCase().includes('รับ');
+        const txType = r.type||r.transaction_type||r.category||'';
+        const txDesc = r.description||r.detail||r.note||r.title||txType||'—';
+        const isIncome = txType.toLowerCase().includes('income')||txType.toLowerCase().includes('รับ')||txType.toLowerCase().includes('revenue');
         return `<div class="dp-row">
           <div style="flex:1;min-width:0">
-            <div class="dp-name">${escHtml((r.description||r.type||'—').slice(0,35))}</div>
+            <div class="dp-name">${escHtml(txDesc.slice(0,35))}</div>
             <div class="dp-time">${timeBKK(r.created_at)}</div>
           </div>
           <span style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:${isIncome?'var(--green)':'var(--rose)'};white-space:nowrap">
@@ -2862,9 +2864,9 @@ async function loadContentPanel() {
   body.innerHTML = '<div class="dp-empty">กำลังโหลด...</div>';
   try {
     const [nwRes, ntRes, npRes] = await Promise.all([
-      db.from('news').select('title,category,published_at,created_at').order('created_at',{ascending:false}).limit(8),
+      db.from('news').select('*').order('id',{ascending:false}).limit(8),
       db.from('notices').select('title,type,created_at').order('created_at',{ascending:false}).limit(5),
-      db.from('news_promotions').select('title,discount_percent,end_date').order('created_at',{ascending:false}).limit(5),
+      db.from('news_promotions').select('*').order('id',{ascending:false}).limit(5),
     ]);
     let html = '';
 
@@ -2872,8 +2874,8 @@ async function loadContentPanel() {
       html += `<div style="padding:6px 14px;font-family:var(--font-mono);font-size:9px;font-weight:700;color:var(--accent);border-bottom:1px solid var(--border)">📰 ข่าว (${nwRes.data.length})</div>`;
       html += nwRes.data.map(r => `<div class="dp-row">
         <div style="flex:1;min-width:0">
-          <div class="dp-name">${escHtml((r.title||'—').slice(0,45))}</div>
-          <div class="dp-time">${escHtml(r.category||'')} · ${timeBKK(r.created_at)}</div>
+          <div class="dp-name">${escHtml((r.title||r.headline||'—').slice(0,45))}</div>
+          <div class="dp-time">${escHtml(r.category||r.type||'')} · ${timeBKK(r.created_at||r.published_at||r.date)}</div>
         </div>
       </div>`).join('');
     }
@@ -2883,9 +2885,9 @@ async function loadContentPanel() {
       html += npRes.data.map(r => `<div class="dp-row">
         <div style="flex:1;min-width:0">
           <div class="dp-name">${escHtml((r.title||'—').slice(0,40))}</div>
-          <div class="dp-time">หมด: ${escHtml(r.end_date||'—')}</div>
+          <div class="dp-time">หมด: ${escHtml(r.end_date||r.expire_date||r.expires_at||'—')}</div>
         </div>
-        ${r.discount_percent ? `<span class="dp-status fee-paid">-${r.discount_percent}%</span>` : ''}
+        ${r.discount_percent ? `<span class="dp-status fee-paid">${r.discount_percent?`-${r.discount_percent}%`:(r.discount||'')}</span>` : ''}
       </div>`).join('');
     }
 
@@ -2911,16 +2913,16 @@ async function loadCommunityPanel() {
     const bkk = todayBKK();
     const mmdd = `${String(bkk.getMonth()+1).padStart(2,'0')}-${String(bkk.getDate()).padStart(2,'0')}`;
     const [bdRes, lbRes, agmRes] = await Promise.all([
-      db.from('birthday_log').select('fullname,house_no,birthday').like('birthday',`%-${mmdd}`).limit(10),
-      db.from('leaderboard_history').select('*').order('points',{ascending:false}).limit(10),
-      db.from('agm_events').select('title,event_date,status').order('event_date',{ascending:false}).limit(5),
+      db.from('birthday_log').select('*').limit(20),
+      db.from('leaderboard_history').select('*').order('id',{ascending:false}).limit(10),
+      db.from('agm_events').select('*').order('id',{ascending:false}).limit(5),
     ]);
 
     let html = '';
 
     if (bdRes.data?.length) {
       html += `<div style="padding:6px 14px;font-family:var(--font-mono);font-size:9px;font-weight:700;color:var(--rose);border-bottom:1px solid var(--border)">🎂 วันเกิดวันนี้ (${bdRes.data.length} คน)</div>`;
-      html += bdRes.data.map(r => {
+      html += todayBdayRows.map(r => {
         const name = r.fullname||r.full_name||r.name||r.display_name||r.line_name||'—';
       const houseB = r.house_no||r.house_number||r.home_number||'—';
         return `<div class="dp-row">
@@ -2964,9 +2966,9 @@ async function loadAIPanel() {
   try {
     const todayStr = todayBKK().toISOString().slice(0,10);
     const [fbRes, gpRes, alRes] = await Promise.all([
-      db.from('ai_feedback').select('question,rating,created_at').order('created_at',{ascending:false}).limit(10),
-      db.from('ai_gaps').select('question,status,created_at').eq('status','open').order('created_at',{ascending:false}).limit(10),
-      db.from('app_logs').select('level,message,created_at').gte('created_at',todayStr).in('level',['error','critical','warning']).order('created_at',{ascending:false}).limit(10),
+      db.from('ai_feedback').select('*').order('id',{ascending:false}).limit(10),
+      db.from('ai_gaps').select('*').order('id',{ascending:false}).limit(10),
+      db.from('app_logs').select('*').order('id',{ascending:false}).limit(10),
     ]);
 
     const badge = document.getElementById('ai-gap-badge');
@@ -3081,7 +3083,7 @@ async function runLineOAAgent() {
 // Fallback: ดึงจาก weekly_stats ที่มีอยู่แล้วใน DB
 async function loadLineOAFallback() {
   try {
-    const { data } = await db.from('weekly_stats').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle();
+    const { data } = await db.from('weekly_stats').select('*').order('id', { ascending: false }).limit(1).maybeSingle();
     if (!data) return;
     setText('m-oa-followers', Number(data.new_users_7d || 0).toLocaleString(), 'green');
     setText('m-oa-sent',      Number(data.total_msg_7d || 0).toLocaleString(), 'amber');
@@ -3142,7 +3144,7 @@ function renderLineOAFallback() {
   const el = document.getElementById('oa-panel-body');
   if (!el) return;
   // ดึงจาก weekly_stats
-  db.from('weekly_stats').select('*').order('created_at',{ascending:false}).limit(1).maybeSingle().then(({data}) => {
+  db.from('weekly_stats').select('*').order('id',{ascending:false}).limit(1).maybeSingle().then(({data}) => {
     if (!data) return;
     const setOA = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
     setOA('oa-stat-followers', Number(data.new_users_7d||0).toLocaleString() + ' (7d)');
