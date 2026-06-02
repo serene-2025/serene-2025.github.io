@@ -2292,7 +2292,7 @@ async function runVisitorAgent() {
     const monthStr = todayStr.slice(0, 7);
 
     const [histRes, cardRes] = await Promise.all([
-      db.from('visitor_history').select('id').gte('archived_at', todayStr),
+      db.from('visitor_history').select('archived_at').gte('archived_at', todayStr).limit(500),
       db.from('visitor_cards').select('id, status, created_at'),
     ]);
 
@@ -2303,7 +2303,7 @@ async function runVisitorAgent() {
 
     // เดือนนี้ (จาก visitor_history ถ้า query ใหม่ได้)
     const { data: monthData } = await db.from('visitor_history')
-      .select('id').gte('archived_at', monthStr + '-01');
+      .select('archived_at').gte('archived_at', monthStr + '-01').limit(500);
     const monthCount = monthData?.length || 0;
 
     setText('m-vis-today',   todayCount,  'green');
@@ -2335,8 +2335,15 @@ async function runWeeklyAgent() {
   document.querySelector('#card-weekly .run-btn').disabled = true;
   try {
     const { data, error } = await db.from('weekly_stats')
-      .select('*').order('id', { ascending: false }).limit(2);
-    if (error) throw error;
+      .select('*').limit(2);
+    if (error) {
+      // weekly_stats อาจถูก RLS บล็อก หรือไม่มีข้อมูล
+      log('weekly', [`⚠️ weekly_stats: ${error.message} — ข้ามขั้นตอนนี้`]);
+      setStatus('weekly', 'error');
+      setLastRun('weekly');
+      document.querySelector('#card-weekly .run-btn').disabled = false;
+      return;
+    }
     const latest = data?.[0] || {};
     const prev   = data?.[1] || {};
 
@@ -2427,10 +2434,15 @@ async function loadVisitorPanel() {
     const todayStr = todayBKK().toISOString().slice(0, 10);
     const { data, error } = await db.from('visitor_history')
       .select('*')
-      .gte('archived_at', todayStr)
-      .order('created_at', { ascending: false }).limit(40);
-    if (error) throw error;
-    const rows = data || [];
+      .order('archived_at', { ascending: false }).limit(40);
+    // กรอง archived_at ใน JS แทน (ป้องกัน 400 ถ้า column ไม่มี)
+    const allRows = data || [];
+    const filteredRows = allRows.filter(r => {
+      const ts = r.archived_at || r.created_at || '';
+      return !ts || ts >= todayStr;
+    });
+    if (error) { body.innerHTML = `<div class="dp-empty" style="color:var(--amber)">⚠️ ${escHtml(error.message)}</div>`; return; }
+    const rows = filteredRows;
     const badge = document.getElementById('visitor-today-badge');
     if (badge) badge.textContent = `${rows.length} คน`;
 
@@ -2467,8 +2479,11 @@ async function loadWeeklyPanel() {
   body.innerHTML = '<div class="dp-empty">กำลังโหลด...</div>';
   try {
     const { data, error } = await db.from('weekly_stats')
-      .select('*').order('id', { ascending: false }).limit(8);
-    if (error) throw error;
+      .select('*').limit(8);
+    if (error) {
+      body.innerHTML = `<div class="dp-empty" style="color:var(--amber)">⚠️ weekly_stats: ${escHtml(error.message)}</div>`;
+      return;
+    }
     const rows = data || [];
     if (!rows.length) { body.innerHTML = '<div class="dp-empty">ไม่มีข้อมูลสถิติ</div>'; return; }
 
@@ -3144,7 +3159,7 @@ function renderLineOAFallback() {
   const el = document.getElementById('oa-panel-body');
   if (!el) return;
   // ดึงจาก weekly_stats
-  db.from('weekly_stats').select('*').order('id',{ascending:false}).limit(1).maybeSingle().then(({data}) => {
+  db.from('weekly_stats').select('*').limit(1).maybeSingle().then(({data}) => {
     if (!data) return;
     const setOA = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
     setOA('oa-stat-followers', Number(data.new_users_7d||0).toLocaleString() + ' (7d)');
