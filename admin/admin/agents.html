@@ -2150,7 +2150,7 @@ async function runRepairAgent() {
   setStatus('repair', 'running');
   document.querySelector('#card-repair .run-btn').disabled = true;
   try {
-    const { data, error } = await db.from('repair_requests').select('status, created_at');
+    const { data, error } = await db.from('repair_requests').select('*');
     if (error) throw error;
     const rows = data || [];
     const pending = rows.filter(r => ['pending','open','new'].includes((r.status||'').toLowerCase())).length;
@@ -2191,7 +2191,7 @@ async function runVisitorAgent() {
     const monthStr = todayStr.slice(0, 7);
 
     const [histRes, cardRes] = await Promise.all([
-      db.from('visitor_history').select('id, created_at').gte('created_at', todayStr),
+      db.from('visitor_history').select('id').gte('created_at', todayStr),
       db.from('visitor_cards').select('id, status, created_at'),
     ]);
 
@@ -2234,15 +2234,15 @@ async function runWeeklyAgent() {
   document.querySelector('#card-weekly .run-btn').disabled = true;
   try {
     const { data, error } = await db.from('weekly_stats')
-      .select('*').order('week_start', { ascending: false }).limit(2);
+      .select('*').order('created_at', { ascending: false }).limit(2);
     if (error) throw error;
     const latest = data?.[0] || {};
     const prev   = data?.[1] || {};
 
-    const followers = latest.followers || latest.total_followers || latest.follower_count || 0;
-    const messages  = latest.messages_sent || latest.total_messages || latest.message_count || 0;
-    const blocked   = latest.blocked || latest.block_count || 0;
-    const weekLabel = latest.week_start ? latest.week_start.slice(0,10) : '—';
+    const followers = latest.new_users_7d || latest.followers || latest.total_followers || 0;
+    const messages  = latest.total_msg_7d || latest.messages_sent || latest.total_messages || 0;
+    const blocked   = latest.silent_7d || latest.blocked || 0;
+    const weekLabel = latest.created_at ? latest.created_at.slice(0,10) : (latest.week_start ? latest.week_start.slice(0,10) : '—');
 
     setText('m-wk-followers', Number(followers).toLocaleString(), 'green');
     setText('m-wk-messages',  Number(messages).toLocaleString(),  'blue');
@@ -2278,7 +2278,7 @@ async function loadRepairPanel() {
   body.innerHTML = '<div class="dp-empty">กำลังโหลด...</div>';
   try {
     const { data, error } = await db.from('repair_requests')
-      .select('id, house_number, title, description, status, created_at, category')
+      .select('*')
       .order('created_at', { ascending: false }).limit(40);
     if (error) throw error;
     const rows = data || [];
@@ -2298,15 +2298,17 @@ async function loadRepairPanel() {
 
     body.innerHTML = rows.map(r => {
       const [cls, label] = statusStyle(r.status);
-      const title = r.title || r.description || 'ไม่ระบุหัวข้อ';
+      const houseNo = r.house_number || r.house_no || r.home_number || r.unit_number || '—';
+      const title   = r.title || r.issue_title || r.description || r.detail || 'ไม่ระบุหัวข้อ';
+      const cat     = r.category || r.issue_type || r.type || '';
       return `<div class="dp-row">
         <div style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
-            <span class="dp-house">${escHtml(r.house_number||'—')}</span>
+            <span class="dp-house">${escHtml(houseNo)}</span>
             <span class="dp-status ${cls}">${label}</span>
           </div>
           <div class="dp-name">${escHtml(String(title).slice(0,50))}</div>
-          <div class="dp-time">${r.category ? escHtml(r.category)+' · ' : ''}${timeBKK(r.created_at)}</div>
+          <div class="dp-time">${cat ? escHtml(cat)+' · ' : ''}${timeBKK(r.created_at)}</div>
         </div>
       </div>`;
     }).join('');
@@ -2323,7 +2325,7 @@ async function loadVisitorPanel() {
   try {
     const todayStr = todayBKK().toISOString().slice(0, 10);
     const { data, error } = await db.from('visitor_history')
-      .select('id, visitor_name, house_number, plate_number, visit_purpose, created_at')
+      .select('*')
       .gte('created_at', todayStr)
       .order('created_at', { ascending: false }).limit(40);
     if (error) throw error;
@@ -2334,16 +2336,19 @@ async function loadVisitorPanel() {
     if (!rows.length) { body.innerHTML = '<div class="dp-empty">ยังไม่มีผู้มาเยือนวันนี้</div>'; return; }
 
     body.innerHTML = rows.map(r => {
-      const name = r.visitor_name || '—';
+      const name = r.visitor_name || r.name || r.line_display_name || r.display_name || '—';
+      const house = r.house_number || r.house_no || r.home_number || '—';
+      const plate = r.plate_number || r.license_plate || r.car_plate || '';
+      const purpose = r.visit_purpose || r.purpose || r.reason || '';
       const color = avatarColor(name);
       return `<div class="dp-row">
         <div class="dp-avatar" style="background:${color};font-size:10px">${escHtml(initials(name))}</div>
         <div style="flex:1;min-width:0">
           <div class="dp-name" style="font-weight:600">${escHtml(name)}</div>
           <div class="dp-time">
-            🏠 ${escHtml(r.house_number||'—')}
-            ${r.plate_number ? ' · 🚗 '+escHtml(r.plate_number) : ''}
-            ${r.visit_purpose ? ' · '+escHtml(r.visit_purpose) : ''}
+            🏠 ${escHtml(house)}
+            ${plate ? ' · 🚗 '+escHtml(plate) : ''}
+            ${purpose ? ' · '+escHtml(purpose) : ''}
           </div>
         </div>
         <div class="dp-time">${timeBKK(r.created_at).split(' ').pop()}</div>
@@ -2361,27 +2366,33 @@ async function loadWeeklyPanel() {
   body.innerHTML = '<div class="dp-empty">กำลังโหลด...</div>';
   try {
     const { data, error } = await db.from('weekly_stats')
-      .select('*').order('week_start', { ascending: false }).limit(8);
+      .select('*').order('created_at', { ascending: false }).limit(8);
     if (error) throw error;
     const rows = data || [];
     if (!rows.length) { body.innerHTML = '<div class="dp-empty">ไม่มีข้อมูลสถิติ</div>'; return; }
 
     body.innerHTML = rows.map((r, i) => {
-      const followers = r.followers || r.total_followers || r.follower_count || 0;
-      const messages  = r.messages_sent || r.total_messages || r.message_count || 0;
-      const prev = rows[i+1];
-      const diffF = prev ? (followers - (prev.followers || prev.total_followers || 0)) : 0;
+      const newUsers = r.new_users_7d || r.followers || r.total_followers || 0;
+      const msgs    = r.total_msg_7d || r.messages_sent || r.total_messages || 0;
+      const aiMsgs  = r.ai_msg_7d || 0;
+      const silent  = r.silent_7d || r.blocked || 0;
+      const gaps    = r.total_pending_gaps || 0;
+      const dateStr = r.created_at ? r.created_at.slice(0,10) : (r.week_start||'').slice(0,10);
+      const prev2 = rows[i+1];
+      const diffF = prev2 ? (newUsers - (prev2.new_users_7d||prev2.followers||0)) : 0;
       const diffArrow = diffF > 0 ? `<span style="color:var(--green)">▲${diffF}</span>` : diffF < 0 ? `<span style="color:var(--rose)">▼${Math.abs(diffF)}</span>` : '';
       return `<div class="dp-row">
         <div style="flex:1">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
-            <span class="dp-house" style="min-width:80px">${escHtml((r.week_start||'').slice(0,10))}</span>
+            <span class="dp-house" style="min-width:80px">${escHtml(dateStr)}</span>
             ${diffArrow}
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
-            <div class="dp-time">👥 ${Number(followers).toLocaleString()} ผู้ติดตาม</div>
-            <div class="dp-time">📨 ${Number(messages).toLocaleString()} ข้อความ</div>
-            ${r.blocked||r.block_count ? `<div class="dp-time" style="color:var(--rose)">🚫 ${Number(r.blocked||r.block_count).toLocaleString()} บล็อก</div>` : ''}
+            <div class="dp-time">🆕 ${Number(newUsers).toLocaleString()} สมาชิกใหม่</div>
+            <div class="dp-time">📨 ${Number(msgs).toLocaleString()} ข้อความ</div>
+            ${aiMsgs ? `<div class="dp-time">🤖 AI ${Number(aiMsgs).toLocaleString()}</div>` : ''}
+            ${silent  ? `<div class="dp-time" style="color:var(--rose)">🔇 Silent ${Number(silent).toLocaleString()}</div>` : ''}
+            ${gaps    ? `<div class="dp-time" style="color:var(--amber)">❓ Gaps ${gaps}</div>` : ''}
           </div>
         </div>
       </div>`;
@@ -2398,7 +2409,7 @@ async function loadResidentPanel() {
   body.innerHTML = '<div class="dp-empty">กำลังโหลด...</div>';
   try {
     const { data, error } = await db.from('residents')
-      .select('id, fullname, house_number, phone, role, created_at')
+      .select('*')
       .order('created_at', { ascending: false }).limit(60);
     if (error) throw error;
     const rows = data || [];
@@ -2408,7 +2419,10 @@ async function loadResidentPanel() {
     if (!rows.length) { body.innerHTML = '<div class="dp-empty">ไม่มีข้อมูลผู้พักอาศัย</div>'; return; }
 
     body.innerHTML = rows.map(r => {
-      const name  = r.fullname || '—';
+      const name  = r.fullname || r.full_name || r.name || r.first_name || '—';
+      const house2 = r.house_number || r.house_no || r.home_number || '—';
+      const phone2 = r.phone || r.phone_number || r.mobile || '';
+      const role2  = r.role || r.resident_type || '';
       const color = avatarColor(r.house_number || name);
       const role  = r.role ? `<span class="dp-status fee-partial" style="font-size:9px">${escHtml(r.role)}</span>` : '';
       return `<div class="dp-row">
@@ -2416,9 +2430,9 @@ async function loadResidentPanel() {
         <div style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:6px">
             <span class="dp-name" style="font-weight:600">${escHtml(name)}</span>
-            ${role}
+            ${role2 ? `<span class="dp-status fee-partial" style="font-size:9px">${escHtml(role2)}</span>` : ''}
           </div>
-          <div class="dp-time">🏠 ${escHtml(r.house_number||'—')}${r.phone?' · 📞 '+escHtml(r.phone):''}</div>
+          <div class="dp-time">🏠 ${escHtml(house2)}${phone2?' · 📞 '+escHtml(phone2):''}</div>
         </div>
         <div class="dp-time">${timeBKK(r.created_at)}</div>
       </div>`;
@@ -2557,7 +2571,7 @@ async function runCommunityAgent() {
       db.from('agm_events').select('id', {count:'exact',head:true}),
       db.from('birthday_log').select('id').like('birthday', `%-${mmdd}`).limit(10),
       db.from('check_ins').select('id').gte('created_at', todayStr),
-      db.from('leaderboard_history').select('user_id,points').order('points',{ascending:false}).limit(1),
+      db.from('leaderboard_history').select('*').order('points',{ascending:false}).limit(1),
     ]);
     const agm      = agmRes.count || 0;
     const bday     = bdRes.data?.length || 0;
@@ -2797,7 +2811,7 @@ async function loadCommunityPanel() {
     const mmdd = `${String(bkk.getMonth()+1).padStart(2,'0')}-${String(bkk.getDate()).padStart(2,'0')}`;
     const [bdRes, lbRes, agmRes] = await Promise.all([
       db.from('birthday_log').select('fullname,house_no,birthday').like('birthday',`%-${mmdd}`).limit(10),
-      db.from('leaderboard_history').select('display_name,house_no,points,tier_name').order('points',{ascending:false}).limit(10),
+      db.from('leaderboard_history').select('*').order('points',{ascending:false}).limit(10),
       db.from('agm_events').select('title,event_date,status').order('event_date',{ascending:false}).limit(5),
     ]);
 
@@ -2806,12 +2820,13 @@ async function loadCommunityPanel() {
     if (bdRes.data?.length) {
       html += `<div style="padding:6px 14px;font-family:var(--font-mono);font-size:9px;font-weight:700;color:var(--rose);border-bottom:1px solid var(--border)">🎂 วันเกิดวันนี้ (${bdRes.data.length} คน)</div>`;
       html += bdRes.data.map(r => {
-        const name = r.fullname||'—';
+        const name = r.fullname||r.full_name||r.name||r.display_name||r.line_name||'—';
+      const houseB = r.house_no||r.house_number||r.home_number||'—';
         return `<div class="dp-row">
           <div class="dp-avatar" style="background:${avatarColor(name)};font-size:10px">${escHtml(initials(name))}</div>
           <div style="flex:1;min-width:0">
             <div class="dp-name" style="font-weight:600">${escHtml(name)} 🎂</div>
-            <div class="dp-time">🏠 ${escHtml(r.house_no||'—')}</div>
+            <div class="dp-time">🏠 ${escHtml(houseB)}</div>
           </div>
         </div>`;
       }).join('');
@@ -2822,12 +2837,15 @@ async function loadCommunityPanel() {
     if (lbRes.data?.length) {
       html += `<div style="padding:6px 14px;font-family:var(--font-mono);font-size:9px;font-weight:700;color:var(--amber);border-top:1px solid var(--border)">🏆 Leaderboard Top 10</div>`;
       html += lbRes.data.map((r,i) => {
+        const lbName  = r.display_name||r.line_name||r.fullname||r.name||'—';
+        const lbHouse = r.house_no||r.house_number||r.home_number||'—';
+        const lbTier  = r.tier_name||r.tier||'';
         const medal = ['🥇','🥈','🥉'][i] || `${i+1}.`;
         return `<div class="dp-row">
           <span style="font-size:14px;width:20px;flex-shrink:0">${medal}</span>
           <div style="flex:1;min-width:0">
-            <div class="dp-name">${escHtml(r.display_name||'—')}${r.tier_name?` <span style="font-size:9px;color:var(--muted)">[${escHtml(r.tier_name)}]</span>`:''}</div>
-            <div class="dp-time">🏠 ${escHtml(r.house_no||'—')}</div>
+            <div class="dp-name">${escHtml(lbName)}${lbTier?` <span style="font-size:9px;color:var(--muted)">[${escHtml(lbTier)}]</span>`:''}</div>
+            <div class="dp-time">🏠 ${escHtml(lbHouse)}</div>
           </div>
           <span class="dp-amount">${Number(r.points||0).toLocaleString()}</span>
         </div>`;
