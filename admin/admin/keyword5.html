@@ -5941,23 +5941,35 @@ async function updateAllUserProfiles() {
                 document.getElementById('stat-ai-replies').innerText = aiCount || 0;
                 document.getElementById('stat-knowledge').innerText = knowledgeCount || 0;
 
-                // วาดกราฟ 1: ปริมาณข้อความ 7 วัน (ข้อมูลจริงจาก RPC dashboard_weekly_activity)
+                // วาดกราฟ 1: ปริมาณข้อความ 7 วัน
                 let dayLabels = ['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'];
                 let totalData = [0, 0, 0, 0, 0, 0, 0];
-                let aiData = [0, 0, 0, 0, 0, 0, 0];
+                let aiData    = [0, 0, 0, 0, 0, 0, 0];
 
                 try {
-                    const actRes = await fetch(`${API_BASE_URL}/api/admin/chat/dashboard_activity`);
-                    if (actRes.ok) {
-                        const actJson = await actRes.json();
-                        if (actJson.data && actJson.data.length > 0) {
-                            const thaiDayMap = { Mon: 'จ.', Tue: 'อ.', Wed: 'พ.', Thu: 'พฤ.', Fri: 'ศ.', Sat: 'ส.', Sun: 'อา.' };
-                            dayLabels = actJson.data.map(d => thaiDayMap[d.day_label?.trim()] || d.day_label);
-                            totalData = actJson.data.map(d => d.total_msg || 0);
-                            aiData    = actJson.data.map(d => d.ai_msg    || 0);
-                        }
+                    // ดึงข้อมูล 7 วันย้อนหลังจาก chat_history โดยตรง
+                    const since7d = new Date(Date.now() - 7 * 86400000).toISOString();
+                    const { data: chatRows } = await supabaseClient
+                        .from('chat_history')
+                        .select('created_at, role')
+                        .gte('created_at', since7d)
+                        .order('created_at', { ascending: true });
+
+                    if (chatRows && chatRows.length > 0) {
+                        const dayMap = {}; // 'YYYY-MM-DD' → { total, ai }
+                        chatRows.forEach(r => {
+                            const day = r.created_at?.slice(0, 10);
+                            if (!day) return;
+                            if (!dayMap[day]) dayMap[day] = { total: 0, ai: 0 };
+                            dayMap[day].total++;
+                            if (r.role === 'assistant') dayMap[day].ai++;
+                        });
+                        const thaiDay = ['อา.','จ.','อ.','พ.','พฤ.','ศ.','ส.'];
+                        dayLabels = Object.keys(dayMap).map(d => thaiDay[new Date(d).getDay()]);
+                        totalData = Object.values(dayMap).map(v => v.total);
+                        aiData    = Object.values(dayMap).map(v => v.ai);
                     }
-                } catch (e) { console.warn("Dashboard activity fetch failed:", e); }
+                } catch (e) { console.warn('Dashboard chart:', e); }
 
                 const ctxActivity = document.getElementById('activityChart').getContext('2d');
                 new Chart(ctxActivity, {
