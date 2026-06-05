@@ -459,11 +459,79 @@ async function handleSubmit(e) {
   }
 
   try {
-    // UPSERT ลง Supabase (รองรับทั้ง insert ใหม่และอัพเดตถ้ามีแล้ว)
+    // UPSERT ลง Supabase
     const { error } = await db.from('userhome').upsert([payload], { onConflict: 'uid' });
     if (error) throw error;
 
     registeredData = { ...payload, displayName: liffProfile.displayName, pictureUrl: liffProfile.pictureUrl };
+
+    // ── ส่ง Flex ข้อมูลลงทะเบียนผ่าน liff.sendMessages() — ไม่เสียโควต้า
+    try {
+      await liff.sendMessages([{
+        type: 'flex',
+        altText: `✅ ลงทะเบียนสำเร็จ บ้าน ${payload.house_no} ${payload.soi}`,
+        contents: {
+          type: 'bubble',
+          size: 'kilo',
+          header: {
+            type: 'box', layout: 'vertical',
+            backgroundColor: '#00695C', paddingAll: '16px',
+            contents: [
+              { type: 'text', text: '✅ ลงทะเบียนเรียบร้อยแล้ว!', weight: 'bold', size: 'md', color: '#FFFFFF' }
+            ]
+          },
+          body: {
+            type: 'box', layout: 'vertical', paddingAll: '16px', spacing: 'sm',
+            contents: [
+              { type: 'box', layout: 'horizontal', contents: [
+                { type: 'text', text: '🏠 ชื่อ-สกุล',     size: 'sm', color: '#607D8B', flex: 4 },
+                { type: 'text', text: payload.fullname     || '-', size: 'sm', weight: 'bold', flex: 5, align: 'end', wrap: true }
+              ]},
+              { type: 'box', layout: 'horizontal', contents: [
+                { type: 'text', text: '📋 บ้านเลขที่',    size: 'sm', color: '#607D8B', flex: 4 },
+                { type: 'text', text: payload.house_no     || '-', size: 'sm', weight: 'bold', flex: 5, align: 'end' }
+              ]},
+              { type: 'box', layout: 'horizontal', contents: [
+                { type: 'text', text: '🛣️ ซอย',           size: 'sm', color: '#607D8B', flex: 4 },
+                { type: 'text', text: payload.soi          || '-', size: 'sm', weight: 'bold', flex: 5, align: 'end' }
+              ]},
+              { type: 'box', layout: 'horizontal', contents: [
+                { type: 'text', text: '🏡 การอยู่อาศัย',  size: 'sm', color: '#607D8B', flex: 4 },
+                { type: 'text', text: payload.living_status|| '-', size: 'sm', weight: 'bold', flex: 5, align: 'end' }
+              ]},
+              { type: 'box', layout: 'horizontal', contents: [
+                { type: 'text', text: '👥 จำนวนสมาชิก',   size: 'sm', color: '#607D8B', flex: 4 },
+                { type: 'text', text: String(payload.member_count || '-') + ' คน', size: 'sm', weight: 'bold', flex: 5, align: 'end' }
+              ]},
+              { type: 'box', layout: 'horizontal', contents: [
+                { type: 'text', text: '📱 โทรศัพท์',      size: 'sm', color: '#607D8B', flex: 4 },
+                { type: 'text', text: payload.phone        || '-', size: 'sm', weight: 'bold', flex: 5, align: 'end' }
+              ]},
+              { type: 'separator', margin: 'md' },
+              { type: 'box', layout: 'vertical', backgroundColor: '#F5F7FA', cornerRadius: '8px', paddingAll: '10px', margin: 'md',
+                contents: [
+                  { type: 'text', text: 'Uid :', size: 'xs', color: '#90A4AE' },
+                  { type: 'text', text: liffProfile.userId, size: 'xs', color: '#607D8B', wrap: true }
+                ]
+              },
+              { type: 'text', text: `💬 ชื่อไลน์ : ${liffProfile.displayName || '-'}`, size: 'xs', color: '#607D8B', margin: 'sm' },
+              { type: 'text', text: 'คลิกปุ่มด้านล่างเพื่อเข้าระบบ', size: 'xs', color: '#90A4AE', margin: 'sm', align: 'center' }
+            ]
+          },
+          footer: {
+            type: 'box', layout: 'vertical', paddingAll: '12px', backgroundColor: '#F5F7FA',
+            contents: [{
+              type: 'button', style: 'primary', color: '#43A047', height: 'sm',
+              action: { type: 'uri', label: 'คลิกเข้าระบบ', uri: 'https://serene-2025.github.io/admin/crm.html' }
+            }]
+          }
+        }
+      }]);
+    } catch (e) {
+      // liff.sendMessages ใช้ได้เฉพาะเมื่อเปิดใน LINE app
+      console.warn('sendMessages:', e.message);
+    }
+
     populateSuccess(registeredData);
     showScreen('success');
     showToast('✅ บันทึกข้อมูลสำเร็จ', 'success');
@@ -486,34 +554,49 @@ async function completeRegistration() {
   btn.textContent = '⏳ กำลังดำเนินการ...';
 
   try {
-    // เรียก webhook เพื่อ: 1) เปลี่ยน Rich Menu  2) ส่ง Flex Welcome
-    const res = await fetch(`${WEBHOOK_URL}/api/register/complete`, {
+    // 1️⃣ เปลี่ยน Rich Menu ผ่าน backend (ไม่เสียโควต้า)
+    fetch(`${WEBHOOK_URL}/api/register/complete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId:      liffProfile.userId,
-        displayName: liffProfile.displayName,
-        pictureUrl:  liffProfile.pictureUrl,
-        richMenuId:  MEMBER_RICHMENU,
-        userData:    registeredData,
-      }),
-    });
+      body: JSON.stringify({ userId: liffProfile.userId, richMenuId: MEMBER_RICHMENU }),
+    }).catch(e => console.warn('richMenu:', e));
 
-    // ไม่ต้อง check response เพราะ endpoint อาจยังไม่มี — ใช้ fallback
-    if (!res.ok) throw new Error('webhook ' + res.status);
+    // 2️⃣ ส่ง Flex Welcome ผ่าน liff.sendMessages() — ไม่เสียโควต้า
+    try {
+      await liff.sendMessages([{
+        type: 'flex',
+        altText: `ยินดีต้อนรับ ${liffProfile.displayName} เข้าสู่ระบบ Serene`,
+        contents: {
+          type: 'bubble',
+          size: 'mega',
+          hero: {
+            type: 'image',
+            url: liffProfile.pictureUrl || 'https://via.placeholder.com/600x200',
+            size: 'full', aspectRatio: '20:13', aspectMode: 'cover',
+          },
+          body: {
+            type: 'box', layout: 'vertical', paddingAll: '20px', spacing: 'md',
+            contents: [
+              { type: 'text', text: liffProfile.displayName || '', weight: 'bold', size: 'xl', align: 'center', color: '#F9A825' },
+              { type: 'text', text: 'ยินดีต้อนรับเข้าสู่ระบบ', weight: 'bold', size: 'lg', align: 'center' },
+              { type: 'text', text: 'สามารถใช้งานระบบได้แล้ว หากมีข้อสงสัย สามารถสอบถามได้ครับ',
+                size: 'sm', align: 'center', color: '#607D8B', wrap: true },
+              { type: 'separator', margin: 'lg' },
+              { type: 'text', text: '↕ ระบบจะเปลี่ยนเป็นระบบอัตโนมัติ',
+                size: 'xs', align: 'center', color: '#90A4AE', margin: 'md' }
+            ]
+          }
+        }
+      }]);
+    } catch (e) {
+      console.warn('sendMessages welcome:', e.message);
+    }
 
-    document.getElementById('welcome-msg').innerHTML =
-      `${registeredData.displayName}<br>สามารถใช้งานระบบได้แล้ว หากมีข้อสงสัย สามารถสอบถามได้ครับ`;
     showScreen('welcome');
-
-    // ปิดหน้าต่างหลัง 4 วิ
     setTimeout(() => { try { liff.closeWindow(); } catch(_){} }, 4000);
 
   } catch (err) {
     console.error('complete error:', err);
-    // Fallback: ไม่มี backend endpoint — แสดง welcome โดยตรง
-    document.getElementById('welcome-msg').innerHTML =
-      `ยินดีต้อนรับ ${registeredData.displayName}<br>สามารถใช้งานระบบได้แล้ว หากมีข้อสงสัย สามารถสอบถามได้ครับ`;
     showScreen('welcome');
     setTimeout(() => { try { liff.closeWindow(); } catch(_){} }, 4000);
   }
