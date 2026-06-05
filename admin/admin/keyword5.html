@@ -6459,10 +6459,11 @@ async function updateAllUserProfiles() {
                 </div>`;
 
             try {
-                const [{ data: stats }, { data: tierGroups }, { data: recent }] = await Promise.all([
+                const [{ data: stats }, { data: tierGroups }, { data: recent }, { data: allTiers }] = await Promise.all([
                     supabaseClient.from('crm_stats').select('*').maybeSingle(),
-                    supabaseClient.from('user_profiles').select('tier_id, tiers:tier_id(name, color_theme)').not('tier_id', 'is', null),
-                    supabaseClient.from('points_history').select('*, user:user_id(displayName)').order('created_at', { ascending: false }).limit(15)
+                    supabaseClient.from('user_profiles').select('tier_id').not('tier_id', 'is', null),
+                    supabaseClient.from('points_history').select('user_id, delta, reason, created_at').order('created_at', { ascending: false }).limit(15),
+                    supabaseClient.from('tiers').select('id, name, color_theme')
                 ]);
 
                 const s = stats || {};
@@ -6479,31 +6480,41 @@ async function updateAllUserProfiles() {
                         <div class="text-3xl font-extrabold mt-1">${val}</div>
                     </div>`).join('');
 
-                // tier distribution
+                // tier distribution — join ใน JS (ไม่ใช้ Supabase relation)
+                const tierMap = {};
+                (allTiers || []).forEach(t => { tierMap[t.id] = t.name; });
                 const tierCount = {};
                 (tierGroups || []).forEach(u => {
-                    const n = u.tiers?.name || 'Member';
+                    const n = (u.tier_id && tierMap[u.tier_id]) || 'Member';
                     tierCount[n] = (tierCount[n] || 0) + 1;
                 });
                 const total = Object.values(tierCount).reduce((a, b) => a + b, 0) || 1;
-                const tierColors = { Member: 'bg-slate-500', Silver: 'bg-slate-300', Gold: 'bg-amber-400', Platinum: 'bg-indigo-300' };
-                document.getElementById('tier-distribution').innerHTML = Object.entries(tierCount).map(([name, count]) => {
-                    const pct = Math.round((count / total) * 100);
-                    return `<div><div class="flex justify-between text-sm mb-1"><span class="font-bold text-slate-700">${name}</span><span class="text-slate-500">${count} คน (${pct}%)</span></div>
-                        <div class="h-2 bg-slate-100 rounded-full overflow-hidden"><div class="h-full ${tierColors[name] || 'bg-slate-400'}" style="width:${pct}%"></div></div></div>`;
-                }).join('') || '<p class="text-sm text-slate-400">ยังไม่มีข้อมูล tier</p>';
+                const tierColorMap = { Member:'bg-slate-500', Silver:'bg-slate-300', Gold:'bg-amber-400', Platinum:'bg-indigo-300' };
+                document.getElementById('tier-distribution').innerHTML = Object.entries(tierCount)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([name, count]) => {
+                        const pct = Math.round((count / total) * 100);
+                        return `<div class="mb-3"><div class="flex justify-between text-sm mb-1">
+                            <span class="font-bold text-slate-700">${escapeHtml(name)}</span>
+                            <span class="text-slate-500">${count} คน (${pct}%)</span></div>
+                            <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+                                <div class="h-full ${tierColorMap[name] || 'bg-slate-400'}" style="width:${pct}%"></div>
+                            </div></div>`;
+                    }).join('') || '<p class="text-sm text-slate-400">ยังไม่มีข้อมูล tier</p>';
 
-                // recent activities
+                // recent activities — column ชื่อ delta (ไม่ใช่ points_delta)
                 document.getElementById('recent-points').innerHTML = (recent || []).map(r => {
-                    const cls = r.points_delta > 0 ? 'text-emerald-600 bg-emerald-50' : 'text-rose-600 bg-rose-50';
-                    const sign = r.points_delta > 0 ? '+' : '';
+                    const d = r.delta ?? 0;
+                    const cls = d >= 0 ? 'text-emerald-600 bg-emerald-50' : 'text-rose-600 bg-rose-50';
+                    const sign = d > 0 ? '+' : '';
                     return `<div class="flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition-colors">
-                        <span class="text-xs font-bold ${cls} px-2.5 py-1 rounded-lg min-w-[60px] text-center">${sign}${r.points_delta}</span>
+                        <span class="text-xs font-bold ${cls} px-2.5 py-1 rounded-lg min-w-[60px] text-center">${sign}${d}</span>
                         <div class="flex-1 min-w-0">
                             <div class="text-sm font-medium text-slate-700 truncate">${escapeHtml(r.reason || '—')}</div>
-                            <div class="text-[11px] text-slate-400 font-mono truncate">${r.user_id.substring(0, 12)}... · ${new Date(r.created_at).toLocaleString('th-TH')}</div>
+                            <div class="text-[11px] text-slate-400 font-mono truncate">${(r.user_id||'').substring(0,12)}... · ${new Date(r.created_at).toLocaleString('th-TH')}</div>
                         </div></div>`;
                 }).join('') || '<p class="text-sm text-slate-400 text-center py-4">ยังไม่มีกิจกรรม</p>';
+
             } catch (e) { showToast('โหลดข้อมูลล้มเหลว: ' + e.message, 'error'); }
             lucide.createIcons();
         }
