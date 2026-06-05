@@ -107,7 +107,16 @@
         .kbd { display: inline-block; padding: 1px 5px; background: #e2e8f0; color: #475569; border-radius: 4px; font-size: 11px; font-family: monospace; border: 1px solid #cbd5e1; }
         html.dark .kbd { background: #334155; color: #cbd5e1; border-color: #475569; }
 
-        /* CSS สำหรับ Map */
+        /* CSS สำหรับ Map (Blueprint Style) */
+        .blueprint-bg {
+            background-image: linear-gradient(rgba(51, 65, 85, 0.05) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(51, 65, 85, 0.05) 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+        html.dark .blueprint-bg {
+            background-image: linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+        }
         .map-house-block {
             transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             position: relative;
@@ -409,6 +418,7 @@
                             </div>
                         </div>
                     </div>
+                    <!-- Map Container -->
                     <div class="grid grid-cols-1 gap-6" id="villageMapContainer">
                         <div class="text-center py-20 text-slate-400">กำลังสร้างแผนผังหมู่บ้าน...</div>
                     </div>
@@ -843,6 +853,9 @@ async function fetchSupabaseHouses() {
     return allHouseData;
 }
 
+// -------------------------------------------------------------
+// UPDATED: renderVillageMap ให้แสดงผลเหมือนผังหมู่บ้านจริง
+// -------------------------------------------------------------
 function renderVillageMap() {
     const container = document.getElementById('villageMapContainer');
     if (!container) return;
@@ -865,6 +878,7 @@ function renderVillageMap() {
         soiGroups[soi].push(house);
     });
 
+    // เรียงซอยตามหมายเลข (1, 2, 3...)
     const sortedSois = Object.keys(soiGroups).sort((a, b) => {
         const numA = parseInt(a.replace(/\D/g, ''));
         const numB = parseInt(b.replace(/\D/g, ''));
@@ -872,65 +886,110 @@ function renderVillageMap() {
         return a.localeCompare(b, 'th');
     });
 
-    let html = '<div class="flex flex-nowrap gap-8 overflow-x-auto pb-6 pt-2 snap-x px-4">';
+    // พื้นหลังสไตล์ Blueprint โครงการบ้าน
+    let html = '<div class="relative bg-slate-100 dark:bg-slate-900 p-6 pt-12 pb-28 rounded-2xl border-4 border-slate-300 dark:border-slate-700 overflow-x-auto shadow-inner min-h-[500px] blueprint-bg">';
+    
+    // ถนนเมนหลัก (Main Road) ด้านล่าง เชื่อมซอยทั้งหมด
+    html += `
+        <div class="absolute bottom-6 left-6 right-6 h-20 bg-slate-400 dark:bg-slate-800 rounded-lg flex items-center shadow-lg border-2 border-slate-500 dark:border-slate-600 z-0">
+            <div class="w-full border-t-4 border-dashed border-white/60"></div>
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span class="bg-slate-400 dark:bg-slate-800 px-6 py-1 text-white font-black tracking-[0.3em] text-xl opacity-90 rounded-full border border-white/20 shadow-sm">ถนนเมนหลัก (MAIN ROAD)</span>
+            </div>
+        </div>
+    `;
+
+    // คอนเทนเนอร์รวมทุกซอย
+    html += '<div class="flex gap-10 min-w-max pb-4 px-4 items-end relative z-10">';
     
     sortedSois.forEach(soi => {
         const houses = soiGroups[soi];
-        houses.sort((a, b) => String(a.house_numbe).localeCompare(String(b.house_numbe), 'th', { numeric: true }));
+        
+        // เรียงบ้านเลขที่ตามตัวเลข เช่น 998/1, 998/2 ... เพื่อให้เรียงถูกลำดับ
+        houses.sort((a, b) => {
+            const aParts = a.house_numbe.split('/');
+            const bParts = b.house_numbe.split('/');
+            const numA1 = parseInt(aParts[0].replace(/\D/g, '')) || 0;
+            const numB1 = parseInt(bParts[0].replace(/\D/g, '')) || 0;
+            if(numA1 !== numB1) return numA1 - numB1;
+            const numA2 = parseInt(aParts[1] ? aParts[1].replace(/\D/g, '') : 0);
+            const numB2 = parseInt(bParts[1] ? bParts[1].replace(/\D/g, '') : 0);
+            return numA2 - numB2;
+        });
 
-        const mid = Math.ceil(houses.length / 2);
-        const leftHouses = houses.slice(0, mid);
-        const rightHouses = houses.slice(mid);
+        // แบ่งบ้านเป็น 2 ฝั่ง ซ้าย/ขวา ของซอย (คู่คี่ หรือสลับกันตามลำดับ)
+        const leftHouses = [];
+        const rightHouses = [];
+        houses.forEach((h, index) => {
+            if (index % 2 === 0) leftHouses.push(h);
+            else rightHouses.push(h);
+        });
 
         html += `
-        <div class="snap-center shrink-0 flex flex-col items-center">
-            <div class="bg-slate-800 dark:bg-slate-700 text-white font-bold py-1.5 px-10 rounded-t-xl mb-1 shadow-md z-10 relative">ซอย ${soi}</div>
+        <div class="flex flex-col items-center group">
+            <!-- ป้ายชื่อซอย -->
+            <div class="bg-slate-700 dark:bg-slate-600 text-white font-bold py-1.5 px-6 rounded-md mb-3 shadow-md text-sm z-20 border border-slate-500">ซอย ${soi}</div>
             
-            <div class="flex gap-2 bg-slate-100 dark:bg-slate-800/80 p-3 rounded-xl border-4 border-slate-200 dark:border-slate-700 shadow-inner relative">
-                
-                <!-- บ้านฝั่งซ้าย -->
-                <div class="flex flex-col gap-2">
-                    ${leftHouses.map(h => renderHousePlot(h)).join('')}
+            <div class="flex gap-0.5 relative z-10">
+                <!-- บ้านฝั่งซ้าย (สร้างจากล่างขึ้นบนเพื่อให้บ้านเลขที่แรกๆ ติดถนนเมน) -->
+                <div class="flex flex-col-reverse gap-1 justify-start">
+                    ${leftHouses.map(h => renderHousePlot(h, 'left')).join('')}
                 </div>
 
-                <!-- ถนนตรงกลาง -->
-                <div class="w-10 relative bg-slate-300 dark:bg-slate-600 flex justify-center rounded-sm">
-                    <div class="w-0.5 h-full bg-transparent border-l-4 border-dashed border-white opacity-60 mt-2"></div>
+                <!-- ถนนในซอย -->
+                <div class="w-14 bg-slate-300 dark:bg-slate-700 relative flex justify-center rounded-t-xl border-x-2 border-t-2 border-slate-400 dark:border-slate-600 z-0">
+                    <div class="w-0.5 h-full border-l-2 border-dashed border-white/50"></div>
                 </div>
 
-                <!-- บ้านฝั่งขวา -->
-                <div class="flex flex-col gap-2">
-                    ${rightHouses.map(h => renderHousePlot(h)).join('')}
+                <!-- บ้านฝั่งขวา (สร้างจากล่างขึ้นบนเช่นกัน) -->
+                <div class="flex flex-col-reverse gap-1 justify-start">
+                    ${rightHouses.map(h => renderHousePlot(h, 'right')).join('')}
                 </div>
-
             </div>
-            <div class="text-xs text-slate-400 mt-2 font-medium">${houses.length} หลัง</div>
+            
+            <!-- ทางเชื่อมต่อกับถนนเมนหลัก -->
+            <div class="w-14 h-6 bg-slate-300 dark:bg-slate-700 border-x-2 border-slate-400 dark:border-slate-600 z-10 mt-[-2px]"></div>
         </div>`;
     });
 
-    html += '</div>';
+    html += '</div></div>';
     container.innerHTML = html;
+    lucide.createIcons();
 }
 
-function renderHousePlot(house) {
+function renderHousePlot(house, side) {
     const totals = calculateHouseTotal(house);
     
-    let bgClass = 'bg-slate-200 border-slate-300 text-slate-600'; 
-    let pingHtml = '';
+    // ตั้งค่า Style ของแต่ละแปลง
+    let bgClass = 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'; 
+    let statusIndicator = '<div class="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600"></div>';
     
     if (totals.unpaid > 0) {
-        bgClass = 'bg-red-100 border-red-500 text-red-800 shadow-sm'; 
+        bgClass = 'bg-red-50 dark:bg-red-900/30 border-red-400 dark:border-red-500 text-red-700 dark:text-red-400'; 
+        statusIndicator = '<div class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>';
     } else if (totals.waiting > 0) {
-        bgClass = 'bg-yellow-100 border-yellow-500 text-yellow-800 shadow-sm'; 
-        pingHtml = `<span class="absolute -top-1.5 -right-1.5 flex h-3.5 w-3.5"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span><span class="relative inline-flex rounded-full h-3.5 w-3.5 bg-yellow-500 border-2 border-white"></span></span>`;
+        bgClass = 'bg-yellow-50 dark:bg-yellow-900/30 border-yellow-400 dark:border-yellow-500 text-yellow-700 dark:text-yellow-400'; 
+        statusIndicator = '<div class="w-2 h-2 rounded-full bg-yellow-400"></div>';
     } else if (totals.paid > 0) {
-        bgClass = 'bg-green-100 border-green-500 text-green-800 shadow-sm'; 
+        bgClass = 'bg-green-50 dark:bg-green-900/30 border-green-400 dark:border-green-500 text-green-700 dark:text-green-400'; 
+        statusIndicator = '<div class="w-2 h-2 rounded-full bg-green-500"></div>';
     }
 
-    const shortNo = house.house_numbe.split('/').pop() || house.house_numbe; 
+    // มีโน้ตแอดมินหรือไม่
+    const noteItem = adminNotes[house.house_numbe];
+    const hasNote = noteItem && noteItem.note.trim() !== "";
+    const noteIcon = hasNote ? `<i data-lucide="sticky-note" class="absolute -top-2 -right-2 w-4 h-4 text-yellow-500 drop-shadow bg-white rounded-full"></i>` : '';
+
+    // แยกเลขที่บ้านให้สั้นลงเพื่อแสดงผลได้สวยๆ เช่น 998/123 -> แสดงแค่ /123
+    const parts = house.house_numbe.split('/');
+    const shortNo = parts.length > 1 ? parts[1] : house.house_numbe; 
+
+    // ทรงของบล็อกบ้าน ให้ด้านที่ติดถนนมนน้อยกว่าเพื่อความเป็นสัดส่วน
+    const marginClass = side === 'left' ? 'mr-1' : 'ml-1';
+    const radiusClass = side === 'left' ? 'rounded-l-md rounded-r-sm' : 'rounded-r-md rounded-l-sm';
 
     return `
-        <div class="map-house-block relative w-16 h-10 rounded border-2 ${bgClass} flex items-center justify-center cursor-pointer font-bold text-xs transition-all"
+        <div class="map-house-block relative w-24 h-11 border-2 ${radiusClass} ${bgClass} ${marginClass} flex items-center justify-between px-2 cursor-pointer shadow-sm"
              data-house="${house.house_numbe}" 
              data-owner="${house.owner_name || '-'}"
              data-paid="${totals.paid}"
@@ -941,8 +1000,12 @@ function renderHousePlot(house) {
              onmouseleave="hideMapTooltip()"
              onmousemove="moveMapTooltip(event)"
              >
-            ${shortNo}
-            ${pingHtml}
+            <div class="flex flex-col leading-none">
+                <span class="text-[10px] text-slate-400 dark:text-slate-500">${parts[0] ? parts[0]+'/' : ''}</span>
+                <span class="text-sm font-black tracking-tighter">${shortNo}</span>
+            </div>
+            ${statusIndicator}
+            ${noteIcon}
         </div>
     `;
 }
