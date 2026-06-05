@@ -8728,11 +8728,11 @@ function renderUserhomeTable() {
         const phoneFormatted = r.phone ? (r.phone.length === 10 ? r.phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : r.phone) : '';
         return `<tr class="border-t border-slate-100 hover:bg-white/60">
             <td class="p-3">
-                <img src="${r.profile || 'https://cdn-icons-png.flaticon.com/512/9368/9368192.png'}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/9368/9368192.png'" class="w-10 h-10 rounded-full border border-slate-200 object-cover">
+                <img src="${r.profile || 'https://cdn-icons-png.flaticon.com/512/9368/9368192.png'}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/9368/9368192.png'" class="w-10 h-10 rounded-full border border-slate-200 object-cover uh-avatar">
             </td>
             <td class="p-3">
                 <div class="font-bold text-slate-800 text-sm">${escapeHtml(r.fullname || '—')}</div>
-                <div class="text-[11px] text-slate-500">LINE: ${escapeHtml(r.line_name || '—')}</div>
+                <div class="text-[11px] text-slate-500">LINE: <span class="uh-linename">${escapeHtml(r.line_name || '—')}</span></div>
             </td>
             <td class="p-3">
                 <div class="font-bold text-slate-700 text-sm">${escapeHtml(r.house_no || '—')}</div>
@@ -8759,6 +8759,7 @@ function renderUserhomeTable() {
                 <div class="flex gap-1 justify-center">
                     <button onclick="viewUserhomeDetail('${escapeHtml(r.uid)}')" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg" title="ดูข้อมูล"><i data-lucide="eye" class="w-4 h-4"></i></button>
                     <button onclick="syncOneUser('${escapeHtml(r.uid)}', '${escapeHtml(r.fullname || '').replace(/'/g, '&apos;')}')" class="p-1.5 text-purple-600 hover:bg-purple-50 rounded-lg" title="Sync ข้อมูล"><i data-lucide="git-merge" class="w-4 h-4"></i></button>
+                    <button onclick="refreshOneLineProfile(this, '${escapeHtml(r.uid)}')" class="p-1.5 text-sky-600 hover:bg-sky-50 rounded-lg" title="อัปเดต LINE Profile"><i data-lucide="user-check" class="w-4 h-4"></i></button>
                     <button onclick="editUserhome('${escapeHtml(r.uid)}')" class="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="แก้ไข"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
                     <button onclick="quickPushUser('${escapeHtml(r.uid)}', '${escapeHtml(r.fullname || r.line_name || '').replace(/'/g, '&apos;')}')" class="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg" title="ส่งข้อความ"><i data-lucide="send" class="w-4 h-4"></i></button>
                     <button onclick="deleteUserhome('${escapeHtml(r.uid)}', '${escapeHtml(r.fullname || '').replace(/'/g, '&apos;')}')" class="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg" title="ลบ"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
@@ -9110,6 +9111,61 @@ async function runSyncAll(btn) {
         showToast(e.message, 'error');
     } finally {
         setBtnLoading(btn, false);
+    }
+}
+
+// ─── Refresh LINE Profile — รายบุคคล ─────────────────────────
+async function refreshOneLineProfile(btn, uid) {
+    if (!uid) return;
+    const icon = btn.querySelector('i');
+    btn.disabled = true;
+    if (icon) icon.setAttribute('data-lucide', 'loader-circle');
+    lucide.createIcons();
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/users/updateProfile`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: uid })
+        });
+
+        if (!res.ok) throw new Error('LINE API ไม่ตอบสนอง');
+        const d = await res.json();
+
+        const newName = d.displayName || d.profile?.displayName;
+        const newPic  = d.pictureUrl  || d.profile?.pictureUrl;
+
+        if (newName || newPic) {
+            const patch = { updated_at: new Date().toISOString() };
+            if (newName) patch.line_name = newName;
+            if (newPic)  patch.profile   = newPic;
+
+            const { error } = await supabaseClient
+                .from('userhome').update(patch).eq('uid', uid);
+            if (error) throw error;
+
+            // อัปเดต UI ทันทีโดยไม่ต้องรีโหลดทั้งตาราง
+            const row = userhomeData.find(r => r.uid === uid);
+            if (row) {
+                if (newName) row.line_name = newName;
+                if (newPic)  row.profile   = newPic;
+            }
+            // อัปเดตรูปใน row ทันที
+            const imgEl = btn.closest('tr')?.querySelector('img.uh-avatar');
+            if (imgEl && newPic) imgEl.src = newPic;
+            const nameEl = btn.closest('tr')?.querySelector('.uh-linename');
+            if (nameEl && newName) nameEl.textContent = newName;
+
+            showToast(`✅ อัปเดต ${newName || uid} สำเร็จ`, 'success');
+        } else {
+            showToast('ไม่พบข้อมูล LINE Profile', 'warning');
+        }
+    } catch (e) {
+        showToast('❌ ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+        if (icon) icon.setAttribute('data-lucide', 'user-check');
+        lucide.createIcons();
     }
 }
 
