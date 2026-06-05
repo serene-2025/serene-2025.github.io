@@ -939,7 +939,7 @@ async function updateAllUserProfiles() {
             const from = (currentPage - 1) * ITEMS_PER_PAGE;
             const to = from + ITEMS_PER_PAGE - 1;
 
-            let query = supabaseClient.from('user_profiles').select('*', { count: 'exact' }).order('updated_at', { ascending: false });
+            let query = supabaseClient.from('user_profiles').select('*, house_no, soi', { count: 'exact' }).order('updated_at', { ascending: false });
 
             if (searchQuery) {
                 query = query.or(`displayName.ilike.%${searchQuery}%,userId.ilike.%${searchQuery}%`);
@@ -1028,7 +1028,8 @@ async function updateAllUserProfiles() {
                                 </div>
                             </td>
                             <td class="px-6 py-5">
-                                <div class="font-bold text-slate-800 text-[15px] mb-1">${escapeHtml(u.displayName)}</div>
+                                <div class="font-bold text-slate-800 text-[15px] mb-0.5">${escapeHtml(u.displayName)}</div>
+                                ${u.house_no ? `<div class="text-xs text-teal-600 font-bold mb-0.5">🏠 ${escapeHtml(u.house_no)}${u.soi ? ' '+escapeHtml(u.soi) : ''}</div>` : ''}
                                 <div class="flex items-center gap-1.5 text-xs text-slate-400 group cursor-pointer hover:text-indigo-500 transition-colors w-fit" onclick="copyToClipboard('${u.userId}')" title="Copy ID">
                                     <span class="font-mono truncate max-w-[120px] bg-white px-1.5 py-0.5 rounded border border-slate-100 shadow-sm">${u.userId}</span>
                                     <i data-lucide="copy" class="w-3 h-3 opacity-50 group-hover:opacity-100 transition-opacity"></i>
@@ -6947,7 +6948,7 @@ async function updateAllUserProfiles() {
             // โหลด members ทั้งหมด (ไม่ join เพราะ tier_id อาจ null)
             const { data: members, error } = await supabaseClient
                 .from('user_profiles')
-                .select('userId, displayName, pictureUrl, points, last_activity, status')
+                .select('userId, displayName, pictureUrl, points, last_activity, status, house_no, soi')
                 .order('points', { ascending: false, nullsFirst: false })
                 .limit(500);
 
@@ -7026,7 +7027,11 @@ async function updateAllUserProfiles() {
                     <td class="p-4">
                         <div class="flex items-center gap-3">
                             <img src="${m.pictureUrl || 'https://cdn-icons-png.flaticon.com/512/8188/8188362.png'}" class="w-10 h-10 rounded-full border-2 border-white shadow-sm" onerror="this.src='https://cdn-icons-png.flaticon.com/512/8188/8188362.png'">
-                            <div class="min-w-0"><div class="font-bold text-slate-800 truncate">${escapeHtml(m.displayName || 'ไม่มีชื่อ')}</div><div class="text-[10px] text-slate-400 font-mono truncate">${m.userId.substring(0, 18)}...</div></div>
+                            <div class="min-w-0">
+                                <div class="font-bold text-slate-800 truncate">${escapeHtml(m.displayName || 'ไม่มีชื่อ')}</div>
+                                ${m.house_no ? `<div class="text-[10px] text-teal-600 font-bold">🏠 ${escapeHtml(m.house_no)}${m.soi?' '+escapeHtml(m.soi):''}</div>` : ''}
+                                <div class="text-[10px] text-slate-400 font-mono truncate">${m.userId.substring(0,18)}...</div>
+                            </div>
                         </div>
                     </td>
                     <td class="p-4 text-center"><span class="text-[10px] font-bold px-2.5 py-1 rounded-lg border ${tierCls} inline-flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full ${tier.color_theme}"></span>${escapeHtml(tier.name)}</span></td>
@@ -8961,36 +8966,136 @@ function quickPushUser(uid, name) {
     document.getElementById('modal-content').innerHTML = `
         <div class="space-y-3">
             <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-700">
-                <i data-lucide="info" class="w-3.5 h-3.5 inline"></i> ส่งผ่าน LINE Push API ตรงถึง user คนเดียว
+                <i data-lucide="info" class="w-3.5 h-3.5 inline"></i>
+                ส่งผ่าน LINE Push API ตรงถึง user คนเดียว · เลือกประเภทข้อความด้านล่าง
             </div>
-            <div>
+
+            <!-- ประเภทข้อความ -->
+            <div class="flex gap-2 flex-wrap">
+                <button onclick="qpSetType('text')"   id="qp-tab-text"   class="qp-tab px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-500 text-white">💬 ข้อความ</button>
+                <button onclick="qpSetType('image')"  id="qp-tab-image"  class="qp-tab px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-600">🖼️ รูปภาพ</button>
+                <button onclick="qpSetType('flex')"   id="qp-tab-flex"   class="qp-tab px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-600">✨ Flex</button>
+                <button onclick="qpSetType('sticker')" id="qp-tab-sticker" class="qp-tab px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-600">🎭 Sticker</button>
+            </div>
+
+            <!-- text -->
+            <div id="qp-panel-text">
                 <label class="block text-xs font-bold text-slate-700 mb-1">ข้อความ *</label>
-                <textarea id="qp-text" rows="5" placeholder="พิมพ์ข้อความ..." class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></textarea>
+                <textarea id="qp-text" rows="4" placeholder="พิมพ์ข้อความ..." class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm resize-none focus:ring-2 focus:ring-indigo-300 outline-none"></textarea>
             </div>
+
+            <!-- image -->
+            <div id="qp-panel-image" class="hidden space-y-2">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">URL รูปภาพ (Original) *</label>
+                    <input id="qp-img-orig" type="url" placeholder="https://example.com/image.jpg" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">URL Preview (ขนาดเล็ก)</label>
+                    <input id="qp-img-prev" type="url" placeholder="ถ้าไม่ใส่จะใช้ URL เดียวกัน" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
+                </div>
+            </div>
+
+            <!-- flex -->
+            <div id="qp-panel-flex" class="hidden space-y-2">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Alt Text *</label>
+                    <input id="qp-flex-alt" type="text" placeholder="ข้อความสำรอง (ถ้า Flex แสดงไม่ได้)" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Flex JSON (contents) *</label>
+                    <textarea id="qp-flex-json" rows="8" placeholder='{"type":"bubble","body":{"type":"box","layout":"vertical","contents":[{"type":"text","text":"Hello!"}]}}' class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-mono resize-none focus:ring-2 focus:ring-indigo-300 outline-none"></textarea>
+                </div>
+                <div class="text-[10px] text-slate-400">💡 วาง Flex JSON ที่ได้จาก <a href="https://developers.line.biz/flex-simulator/" target="_blank" class="text-indigo-500 underline">LINE Flex Simulator</a></div>
+            </div>
+
+            <!-- sticker -->
+            <div id="qp-panel-sticker" class="hidden space-y-2">
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Package ID *</label>
+                        <input id="qp-stk-pkg" type="text" value="446" placeholder="446" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Sticker ID *</label>
+                        <input id="qp-stk-id" type="text" value="1988" placeholder="1988" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
+                    </div>
+                </div>
+                <div class="text-[10px] text-slate-400">💡 ดู ID ได้ที่ <a href="https://developers.line.biz/en/docs/messaging-api/sticker-list/" target="_blank" class="text-indigo-500 underline">LINE Sticker List</a></div>
+            </div>
+
             <div class="flex gap-2 pt-3 border-t border-slate-100">
                 <button onclick="closeModal()" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold">ยกเลิก</button>
-                <button onclick="sendQuickPush('${escapeHtml(uid)}', this)" id="qp-send-btn" class="flex-1 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2"><i data-lucide="send" class="w-4 h-4"></i> ส่ง</button>
+                <button onclick="sendQuickPush('${escapeHtml(uid)}', this)" id="qp-send-btn" class="flex-1 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2">
+                    <i data-lucide="send" class="w-4 h-4"></i> ส่ง
+                </button>
             </div>
         </div>`;
     openModal();
     lucide.createIcons();
+    window._qpType = 'text';
+}
+
+function qpSetType(type) {
+    window._qpType = type;
+    ['text','image','flex','sticker'].forEach(t => {
+        const panel = document.getElementById(`qp-panel-${t}`);
+        const tab   = document.getElementById(`qp-tab-${t}`);
+        if (panel) panel.classList.toggle('hidden', t !== type);
+        if (tab) {
+            tab.className = t === type
+                ? 'qp-tab px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-500 text-white'
+                : 'qp-tab px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-600';
+        }
+    });
 }
 
 async function sendQuickPush(uid, btn) {
-    const text = document.getElementById('qp-text').value.trim();
-    if (!text) return showToast('กรุณาพิมพ์ข้อความ', 'warning');
+    const type = window._qpType || 'text';
+    let message;
+
+    // ── สร้าง message object ตาม type ──────────────────────────
+    if (type === 'text') {
+        const text = document.getElementById('qp-text')?.value.trim();
+        if (!text) return showToast('กรุณาพิมพ์ข้อความ', 'warning');
+        message = { type: 'text', text };
+
+    } else if (type === 'image') {
+        const orig = document.getElementById('qp-img-orig')?.value.trim();
+        if (!orig) return showToast('กรุณาใส่ URL รูปภาพ', 'warning');
+        const prev = document.getElementById('qp-img-prev')?.value.trim() || orig;
+        message = { type: 'image', originalContentUrl: orig, previewImageUrl: prev };
+
+    } else if (type === 'flex') {
+        const alt  = document.getElementById('qp-flex-alt')?.value.trim();
+        const json = document.getElementById('qp-flex-json')?.value.trim();
+        if (!alt)  return showToast('กรุณาใส่ Alt Text', 'warning');
+        if (!json) return showToast('กรุณาใส่ Flex JSON', 'warning');
+        let contents;
+        try { contents = JSON.parse(json); }
+        catch(e) { return showToast('Flex JSON ไม่ถูกต้อง: ' + e.message, 'error'); }
+        message = { type: 'flex', altText: alt, contents };
+
+    } else if (type === 'sticker') {
+        const pkg = document.getElementById('qp-stk-pkg')?.value.trim();
+        const sid = document.getElementById('qp-stk-id')?.value.trim();
+        if (!pkg || !sid) return showToast('กรุณาใส่ Package ID และ Sticker ID', 'warning');
+        message = { type: 'sticker', packageId: pkg, stickerId: sid };
+    }
+
+    if (!message) return;
     setBtnLoading(btn, true);
     try {
         const res = await fetch(`${API_BASE_URL}/api/admin/audience/targeted_push`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userIds: [uid], messages: [{ type: 'text', text }] })
+            body: JSON.stringify({ userIds: [uid], messages: [message] })
         });
         const d = await res.json();
         if (!res.ok) throw new Error(d.error || 'ส่งไม่สำเร็จ');
         if (d.failed > 0) {
             showToast(`ส่งไม่สำเร็จ: ${(d.errors || ['unknown']).join(', ').slice(0, 100)}`, 'error');
         } else {
-            showToast('ส่งสำเร็จ', 'success');
+            showToast('✅ ส่งสำเร็จ', 'success');
             closeModal();
         }
     } catch (e) {
