@@ -863,7 +863,7 @@ async function fetchSupabaseHouses() {
     return allHouseData;
 }
 
-//function renderVillageMap() {
+function renderVillageMap() {
     const container = document.getElementById('villageMapContainer');
     if (!container) return;
 
@@ -896,54 +896,84 @@ async function fetchSupabaseHouses() {
         return a.localeCompare(b, 'th');
     });
 
-    let html = '';
+    // สร้าง Layout แบบถนน (Street View) เลื่อนแนวนอน
+    let html = '<div class="flex flex-nowrap gap-8 overflow-x-auto pb-6 pt-2 snap-x">';
+    
     sortedSois.forEach(soi => {
         const houses = soiGroups[soi];
         // เรียงบ้านเลขที่ในซอย
         houses.sort((a, b) => String(a.house_numbe).localeCompare(String(b.house_numbe), 'th', { numeric: true }));
 
+        // จำลองฝั่งซ้าย-ขวาของถนน (แบ่งครึ่งจำนวนบ้าน)
+        const mid = Math.ceil(houses.length / 2);
+        const leftHouses = houses.slice(0, mid);
+        const rightHouses = houses.slice(mid);
+
         html += `
-        <div class="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4 border border-slate-100 dark:border-slate-700">
-            <h3 class="font-bold text-slate-700 dark:text-slate-200 mb-3 border-b border-slate-200 dark:border-slate-600 pb-2">📍 ซอย ${soi} <span class="text-xs font-normal text-slate-400">(${houses.length} หลัง)</span></h3>
-            <div class="flex flex-wrap gap-2">
-        `;
-
-        houses.forEach(house => {
-            const totals = calculateHouseTotal(house);
-            let colorClass = 'bg-slate-300 dark:bg-slate-600'; // Default gray (no data)
-            let pingHtml = '';
+        <div class="snap-center shrink-0 flex flex-col items-center">
+            <div class="bg-slate-800 dark:bg-slate-700 text-white font-bold py-1.5 px-10 rounded-t-xl mb-1 shadow-md z-10 relative">ซอย ${soi}</div>
             
-            if (totals.unpaid > 0) {
-                colorClass = 'bg-red-500'; // ค้าง
-            } else if (totals.waiting > 0) {
-                colorClass = 'bg-yellow-400'; // รอตรวจ
-                pingHtml = `<span class="absolute -top-1 -right-1 flex h-3 w-3"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span><span class="relative inline-flex rounded-full h-3 w-3 bg-yellow-500 border border-white"></span></span>`;
-            } else if (totals.paid > 0) {
-                colorClass = 'bg-green-500'; // จ่ายครบ
-            }
-
-            // Data attributes สำหรับ Tooltip
-            html += `
-                <div class="map-house-block w-12 h-12 rounded-lg ${colorClass} shadow-sm border border-black/5 flex items-center justify-center cursor-pointer text-white font-bold text-xs"
-                     data-house="${house.house_numbe}" 
-                     data-owner="${house.owner_name || '-'}"
-                     data-paid="${totals.paid}"
-                     data-unpaid="${totals.unpaid}"
-                     data-waiting="${totals.waiting}"
-                     onclick="jumpToHouseDashboard('${house.house_numbe}')"
-                     onmouseenter="showMapTooltip(event, this)"
-                     onmouseleave="hideMapTooltip()"
-                     onmousemove="moveMapTooltip(event)"
-                     >
-                    <span class="drop-shadow-md leading-none text-center px-1">${house.house_numbe.split('/').pop() || house.house_numbe}</span>
-                    ${pingHtml}
+            <div class="flex gap-2 bg-slate-100 dark:bg-slate-800/80 p-3 rounded-xl border-4 border-slate-200 dark:border-slate-700 shadow-inner relative">
+                
+                <!-- บ้านฝั่งซ้าย -->
+                <div class="flex flex-col gap-2">
+                    ${leftHouses.map(h => renderHousePlot(h)).join('')}
                 </div>
-            `;
-        });
-        html += `</div></div>`;
+
+                <!-- ถนนตรงกลาง -->
+                <div class="w-10 relative bg-slate-300 dark:bg-slate-600 flex justify-center rounded-sm">
+                    <div class="w-0.5 h-full bg-transparent border-l-4 border-dashed border-white opacity-60 mt-2"></div>
+                </div>
+
+                <!-- บ้านฝั่งขวา -->
+                <div class="flex flex-col gap-2">
+                    ${rightHouses.map(h => renderHousePlot(h)).join('')}
+                </div>
+
+            </div>
+            <div class="text-xs text-slate-400 mt-2 font-medium">${houses.length} หลัง</div>
+        </div>`;
     });
 
+    html += '</div>';
     container.innerHTML = html;
+}
+
+// ฟังก์ชันย่อยสำหรับวาดบล็อกบ้านแต่ละหลัง (คล้ายโฉนด)
+function renderHousePlot(house) {
+    const totals = calculateHouseTotal(house);
+    
+    // กำหนดสีตามผัง Blueprint
+    let bgClass = 'bg-slate-200 border-slate-300 text-slate-600'; // ไม่มีข้อมูล
+    let pingHtml = '';
+    
+    if (totals.unpaid > 0) {
+        bgClass = 'bg-red-100 border-red-500 text-red-800 shadow-sm'; // ค้าง
+    } else if (totals.waiting > 0) {
+        bgClass = 'bg-yellow-100 border-yellow-500 text-yellow-800 shadow-sm'; // รอตรวจ
+        pingHtml = `<span class="absolute -top-1.5 -right-1.5 flex h-3.5 w-3.5"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span><span class="relative inline-flex rounded-full h-3.5 w-3.5 bg-yellow-500 border-2 border-white"></span></span>`;
+    } else if (totals.paid > 0) {
+        bgClass = 'bg-green-100 border-green-500 text-green-800 shadow-sm'; // จ่ายครบ
+    }
+
+    const shortNo = house.house_numbe.split('/').pop() || house.house_numbe; // เอาเฉพาะเลขหลังทับ
+
+    return `
+        <div class="map-house-block relative w-16 h-10 rounded border-2 ${bgClass} flex items-center justify-center cursor-pointer font-bold text-xs transition-all"
+             data-house="${house.house_numbe}" 
+             data-owner="${house.owner_name || '-'}"
+             data-paid="${totals.paid}"
+             data-unpaid="${totals.unpaid}"
+             data-waiting="${totals.waiting}"
+             onclick="jumpToHouseDashboard('${house.house_numbe}')"
+             onmouseenter="showMapTooltip(event, this)"
+             onmouseleave="hideMapTooltip()"
+             onmousemove="moveMapTooltip(event)"
+             >
+            ${shortNo}
+            ${pingHtml}
+        </div>
+    `;
 }
 
 // Tooltip Logic
