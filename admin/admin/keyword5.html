@@ -8570,6 +8570,9 @@ async function renderUserhomeView() {
                     <button onclick="openSyncAllModal()" class="px-4 py-2.5 bg-purple-500 hover:bg-purple-600 text-white rounded-2xl font-bold shadow-md flex items-center gap-2 text-sm">
                         <i data-lucide="git-merge" class="w-4 h-4"></i> Sync ข้อมูลทั้งหมด
                     </button>
+                    <button onclick="refreshUserhomeLineProfiles(this)" class="px-4 py-2.5 bg-slate-600 hover:bg-slate-700 text-white rounded-2xl font-bold shadow-md flex items-center gap-2 text-sm">
+                        <i data-lucide="refresh-cw" class="w-4 h-4"></i> อัปเดต LINE Profile
+                    </button>
                     <button onclick="exportUserhomeCSV()" class="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-2xl font-bold shadow-sm flex items-center gap-2 text-sm">
                         <i data-lucide="download" class="w-4 h-4"></i> Export CSV
                     </button>
@@ -9108,6 +9111,54 @@ async function runSyncAll(btn) {
     } finally {
         setBtnLoading(btn, false);
     }
+}
+
+// ─── Refresh LINE Profile (line_name + profile) ───────────────
+async function refreshUserhomeLineProfiles(btn) {
+    const total = userhomeData.length;
+    if (!total) return showToast('ไม่มีข้อมูล', 'warning');
+
+    showConfirmModal(
+        '🔄 อัปเดต LINE Profile',
+        `จะดึงชื่อและรูปโปรไฟล์ล่าสุดจาก LINE สำหรับ <b>${total} คน</b><br>
+         <small class="text-slate-500">อัปเดตเฉพาะ line_name และ profile — ไม่แตะข้อมูลบ้าน</small>`,
+        async () => {
+            setBtnLoading(btn, true);
+            let succeeded = 0, failed = 0;
+
+            for (let i = 0; i < userhomeData.length; i++) {
+                const r = userhomeData[i];
+                if (!r.uid) { failed++; continue; }
+                try {
+                    const res = await fetch(`${API_BASE_URL}/api/admin/users/updateProfile`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ userId: r.uid })
+                    });
+                    if (res.ok) {
+                        const d = await res.json();
+                        const newName = d.displayName || d.profile?.displayName;
+                        const newPic  = d.pictureUrl  || d.profile?.pictureUrl;
+                        if (newName || newPic) {
+                            const patch = { updated_at: new Date().toISOString() };
+                            if (newName) patch.line_name = newName;
+                            if (newPic)  patch.profile   = newPic;
+                            await supabaseClient.from('userhome').update(patch).eq('uid', r.uid);
+                        }
+                        succeeded++;
+                    } else { failed++; }
+                } catch (e) { failed++; }
+
+                if ((i + 1) % 10 === 0 || i === userhomeData.length - 1)
+                    showToast(`⏳ ${i+1}/${total}...`, 'loading');
+                await new Promise(r => setTimeout(r, 120));
+            }
+
+            setBtnLoading(btn, false);
+            showToast(`✅ สำเร็จ ${succeeded} · ล้มเหลว ${failed}`, 'success');
+            loadUserhomeData();
+        }
+    );
 }
 
 // ─── Export CSV ───────────────────────────────────────────────
