@@ -8000,52 +8000,103 @@ async function updateAllUserProfiles() {
         ];
 
         function openFeeReminderSchedule() {
+            // โหลด config ที่บันทึกไว้
+            const saved = JSON.parse(localStorage.getItem('fee_reminder_config') || '{}');
             const html =
                 '<div class="space-y-3 text-left">' +
-                '<p class="text-sm text-slate-600">ตั้งเวลาส่ง LINE แจ้งเตือนค่าส่วนกลางอัตโนมัติทุกเดือน</p>' +
+                '<div class="bg-orange-50 border border-orange-200 rounded-xl p-3 text-xs text-orange-700">' +
+                '<i data-lucide="info" class="w-3.5 h-3.5 inline"></i> ' +
+                'ระบบจะรัน <b>ตรวจสอบบ้านค้างชำระ → ส่ง LINE Flex แจ้งเตือน</b> อัตโนมัติทุกเดือน' +
+                ' (เหมือนกด "ตรวจสอบ" + "ส่งแจ้งเตือน" ด้วยตัวเอง)</div>' +
                 '<div class="grid grid-cols-2 gap-2">' +
-                '<div><label class="block text-xs font-bold text-slate-700 mb-1">วันที่แจ้งเตือน (ต้นเดือน)</label>' +
-                '<input id="fee-sch-day" type="number" min="1" max="31" value="20" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-300"></div>' +
+                '<div><label class="block text-xs font-bold text-slate-700 mb-1">วันที่รัน (ต้นเดือน)</label>' +
+                '<input id="fee-sch-day" type="number" min="1" max="31" value="' + (saved.run_day||20) + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-300"></div>' +
                 '<div><label class="block text-xs font-bold text-slate-700 mb-1">เวลา</label>' +
-                '<input id="fee-sch-time" type="time" value="09:00" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-300"></div>' +
+                '<input id="fee-sch-time" type="time" value="' + (saved.run_time||'09:00') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-300"></div>' +
                 '</div>' +
-                '<div><label class="block text-xs font-bold text-slate-700 mb-1">ข้อความแจ้งเตือน</label>' +
-                '<textarea id="fee-sch-msg" rows="3" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none outline-none focus:ring-2 focus:ring-orange-300">🏠 แจ้งเตือน: ค่าส่วนกลางประจำเดือนถึงกำหนดชำระแล้วครับ กรุณาชำระภายในวันที่ 25 ของเดือน หากมีข้อสงสัยติดต่อนิติบุคคล</textarea></div>' +
+                '<div><label class="block text-xs font-bold text-slate-700 mb-1">วันครบกำหนดที่แจ้งในข้อความ</label>' +
+                '<input id="fee-sch-dueday" type="number" min="1" max="31" value="' + (saved.due_day||25) + '" placeholder="25" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-300"></div>' +
+                '<div><label class="block text-xs font-bold text-slate-700 mb-1">เบอร์ติดต่อนิติฯ ในข้อความ</label>' +
+                '<input id="fee-sch-phone" type="tel" value="' + (saved.contact_phone||'') + '" placeholder="02-xxx-xxxx" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-300"></div>' +
+                '<div class="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600">' +
+                '⚡ การรันอัตโนมัติต้องใช้ Supabase pg_cron หรือ external cron<br>' +
+                '🔵 กด <b>"รันเดี๋ยวนี้"</b> เพื่อทดสอบทันที</div>' +
                 '<div class="flex gap-2 pt-2">' +
-                '<button onclick="saveFeeReminderSchedule()" class="flex-1 py-2.5 bg-orange-500 text-white rounded-2xl font-bold text-sm">💾 บันทึกตั้งเวลา</button>' +
-                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 text-slate-700 rounded-2xl font-bold text-sm">ยกเลิก</button>' +
+                '<button onclick="saveFeeReminderSchedule()" class="flex-1 py-2.5 bg-orange-500 text-white rounded-2xl font-bold text-sm">💾 บันทึกการตั้งค่า</button>' +
+                '<button onclick="runFeeReminderNow()" class="px-4 py-2.5 bg-emerald-500 text-white rounded-2xl font-bold text-sm">▶ รันเดี๋ยวนี้</button>' +
+                '<button onclick="closeModal()" class="px-4 py-2.5 bg-slate-100 text-slate-700 rounded-2xl font-bold text-sm">ยกเลิก</button>' +
                 '</div></div>';
-            showModal('⏰ ตั้งเวลาแจ้งเตือนค่าส่วนกลาง', html);
+            showModal('⏰ ตั้งค่าแจ้งเตือนค่าส่วนกลางอัตโนมัติ', html);
+            setTimeout(() => lucide.createIcons(), 100);
         }
 
-        async function saveFeeReminderSchedule() {
-            const day  = parseInt(document.getElementById('fee-sch-day')?.value) || 20;
-            const time = document.getElementById('fee-sch-time')?.value || '09:00';
-            const text = document.getElementById('fee-sch-msg')?.value?.trim();
-            if (!text) return showToast('กรุณาพิมพ์ข้อความ', 'warning');
-
-            const payload = {
-                name:          'แจ้งเตือนค่าส่วนกลางอัตโนมัติ',
-                message_type:  'text',
-                message_json:  { type: 'text', text },
-                sender_id:     'none',
-                schedule_type: 'monthly',
-                run_day:       day,
-                run_time:      time,
-                target_type:   'all',
-                status:        'pending',
-                template_name: 'fee_reminder',
-                updated_at:    new Date().toISOString(),
+        function saveFeeReminderSchedule() {
+            const config = {
+                run_day:       parseInt(document.getElementById('fee-sch-day')?.value)  || 20,
+                run_time:      document.getElementById('fee-sch-time')?.value           || '09:00',
+                due_day:       parseInt(document.getElementById('fee-sch-dueday')?.value)|| 25,
+                contact_phone: document.getElementById('fee-sch-phone')?.value?.trim()  || '',
             };
+            localStorage.setItem('fee_reminder_config', JSON.stringify(config));
+            showToast('✅ บันทึกการตั้งค่าสำเร็จ · จะรันวันที่ ' + config.run_day + ' เวลา ' + config.run_time + ' ทุกเดือน', 'success');
+            // บันทึกลง system_settings ด้วย
+            supabaseClient.from('system_settings').upsert([
+                { key: 'fee_reminder_run_day',   value: String(config.run_day) },
+                { key: 'fee_reminder_run_time',  value: config.run_time },
+                { key: 'fee_reminder_due_day',   value: String(config.due_day) },
+                { key: 'fee_reminder_phone',     value: config.contact_phone },
+            ], { onConflict: 'key' }).then(() => closeModal());
+        }
 
-            const res = await fetch(API_BASE_URL + '/api/admin/scheduled?action=save', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (!res.ok) return showToast('บันทึกไม่สำเร็จ', 'error');
-            showToast('✅ ตั้งเวลาสำเร็จ · วันที่ ' + day + ' เวลา ' + time + ' ทุกเดือน', 'success');
+        async function runFeeReminderNow() {
+            // บันทึก config ก่อน
+            const config = {
+                run_day:       parseInt(document.getElementById('fee-sch-day')?.value)  || 20,
+                due_day:       parseInt(document.getElementById('fee-sch-dueday')?.value)|| 25,
+                contact_phone: document.getElementById('fee-sch-phone')?.value?.trim()  || '',
+            };
             closeModal();
+            showToast('⏳ กำลังตรวจสอบและส่งแจ้งเตือน...', 'info');
+
+            try {
+                // 1. เรียก maintenance_check เพื่อดึงรายการบ้านค้างชำระ
+                const now = new Date();
+                const monthLabel = TH_MONTHS[now.getMonth()].col;
+                const year = String(now.getFullYear() + 543);
+
+                const checkUrl = `${API_BASE_URL}/api/admin/audience?action=maintenance_check&month=${encodeURIComponent(monthLabel)}&year=${encodeURIComponent(year)}`;
+                const res = await fetch(checkUrl);
+                const data = await res.json();
+                if (!res.ok || !data.items?.length) {
+                    showToast('ไม่พบบ้านค้างชำระในเดือนนี้', 'warning');
+                    return;
+                }
+
+                // 2. ส่งแจ้งเตือนทุกบ้านที่มี LINE
+                const items = data.items.filter(i => i.registered_users?.length > 0);
+                if (!items.length) {
+                    showToast('ไม่มีบ้านที่มี LINE ลงทะเบียน', 'warning');
+                    return;
+                }
+
+                const res2 = await fetch(`${API_BASE_URL}/api/admin/audience/maintenance_notify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        items,
+                        monthLabel,
+                        year,
+                        dueDay: String(config.due_day),
+                        contactPhone: config.contact_phone,
+                        auto: true,
+                    })
+                });
+                const d2 = await res2.json();
+                if (!res2.ok) throw new Error(d2.error || 'ส่งล้มเหลว');
+                showToast('✅ ส่งแจ้งเตือนสำเร็จ · ' + (d2.sent || items.length) + ' บ้าน', 'success');
+            } catch(e) {
+                showToast('❌ ' + e.message, 'error');
+            }
         }
 
         async function renderCrmMaintenanceView() {
