@@ -7024,91 +7024,129 @@ async function updateAllUserProfiles() {
             const el = document.getElementById('settings-body');
             if (!el) return;
 
-            const chkRow = (key, label, icon, defaultOn=true) =>
-                '<label class="flex items-center gap-2.5 p-3 bg-white border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50">' +
-                '<input type="checkbox" id="cfg-' + key + '" ' + (cfg[key]!=='false' && (cfg[key]==='true' || defaultOn) ? 'checked' : '') +
-                ' class="w-4 h-4 accent-blue-500" onchange="saveSingleSetting('' + key + '', this.checked.toString())">' +
-                '<span class="text-sm">' + icon + ' ' + label + '</span></label>';
+            // helpers — ไม่ใช้ nested string ที่ซับซ้อน
+            function chkRow(key, label, icon, defaultOn=true) {
+                const checked = cfg[key] !== 'false' && (cfg[key] === 'true' || defaultOn);
+                return '<label class="flex items-center gap-2.5 p-3 bg-white border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50">' +
+                    '<input type="checkbox" id="cfg-' + key + '" ' + (checked ? 'checked' : '') +
+                    ' class="w-4 h-4 accent-blue-500" data-key="' + key + '" onchange="saveSingleSetting(this.dataset.key, this.checked.toString())">' +
+                    '<span class="text-sm">' + icon + ' ' + label + '</span></label>';
+            }
 
-            const inpRow = (key, val, label, mono=false) =>
+            function inpRow(key, val, label, mono) {
+                return '<div><label class="block text-xs font-bold text-slate-600 mb-1">' + label + '</label>' +
+                    '<input id="cfg-' + key + '" value="' + escapeHtml(val||'') + '"' +
+                    ' class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm ' + (mono?'font-mono':'') + ' outline-none focus:ring-2 focus:ring-blue-200"></div>';
+            }
+
+            // Sender rows
+            const senders = [
+                {id:'admin',   def:'ผู้ช่วย Admin', img:'1762019017975'},
+                {id:'ai_auto', def:'AI อัตโนมัติ',  img:'1762019020067'},
+                {id:'serene',  def:'น้องซีรีน AI',  img:'1762019021118'},
+            ];
+            const senderRows = senders.map(s => {
+                const nk = 'sender_' + s.id + '_name';
+                const ik = 'sender_' + s.id + '_icon';
+                const nv = cfg[nk] || s.def;
+                const iv = cfg[ik] || 'https://kiumelolsilduqnvrekf.supabase.co/storage/v1/object/public/user-images/U3b4ebbe5e514a74a6a8e18de19c4bf03/' + s.img + '.jpeg';
+                return '<div class="grid grid-cols-5 gap-2 items-center">' +
+                    '<img id="preview-' + s.id + '" src="' + escapeHtml(iv) + '" class="w-10 h-10 rounded-full border-2 border-slate-200 object-cover">' +
+                    '<input id="cfg-' + nk + '" value="' + escapeHtml(nv) + '" maxlength="20" placeholder="' + s.def + '" class="col-span-2 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-200">' +
+                    '<input id="cfg-' + ik + '" value="' + escapeHtml(iv) + '" placeholder="URL รูป" data-preview="preview-' + s.id + '"' +
+                    ' class="col-span-2 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-blue-200"' +
+                    ' oninput="document.getElementById(this.dataset.preview).src=this.value">' +
+                    '</div>';
+            }).join('');
+
+            // Award mode radios
+            const awardModes = [['all','ทุกคนในบ้าน'],['per_house','1 บ้าน 1 แต้ม'],['owner_only','เฉพาะเจ้าของบ้าน']];
+            const awardRows = awardModes.map(([val, label]) => {
+                const active = (cfg.award_mode||'all') === val;
+                return '<label class="flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer text-sm font-bold ' +
+                    (active ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-slate-200 text-slate-600') + '">' +
+                    '<input type="radio" name="cfg-award-mode" value="' + val + '" ' + (active?'checked':'') +
+                    ' class="accent-amber-500" data-key="award_mode" onchange="saveSingleSetting(this.dataset.key, this.value)">' +
+                    label + '</label>';
+            }).join('');
+
+            // Points rows
+            const pointItems = [
+                ['points-fee-ontime', cfg.points_fee_ontime||'100', 'ค่าส่วนกลาง ตรงเวลา'],
+                ['points-fee-early',  cfg.points_fee_early ||'150', 'ค่าส่วนกลาง ล่วงหน้า'],
+                ['points-birthday',   cfg.points_birthday  ||'200', 'วันเกิด'],
+                ['points-checkin',    cfg.points_checkin   ||'50',  'Check-in รายวัน'],
+            ];
+            const pointRows = pointItems.map(([key, val, label]) =>
                 '<div><label class="block text-xs font-bold text-slate-600 mb-1">' + label + '</label>' +
-                '<input id="cfg-' + key + '" value="' + escapeHtml(val||'') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm ' + (mono?'font-mono':'') + ' outline-none focus:ring-2 focus:ring-blue-200"></div>';
+                '<div class="flex items-center gap-1"><input id="cfg-' + key + '" type="number" min="0" value="' + escapeHtml(val) + '"' +
+                ' class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm text-center font-bold outline-none focus:ring-2 focus:ring-amber-200">' +
+                '<span class="text-xs text-slate-400 whitespace-nowrap">แต้ม</span></div></div>'
+            ).join('');
 
             el.innerHTML =
-            // ── TELEGRAM ──────────────────────────────────────
-            '<div class="glass rounded-3xl p-5 mb-5">' +
-            '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">📣</span><div><div class="font-bold text-slate-800">Telegram การแจ้งเตือน</div><div class="text-xs text-slate-500">Token และ Chat ID ของกลุ่มที่รับแจ้งเตือน</div></div></div>' +
-            '<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">' +
-            inpRow('tg-niti-token', cfg.tg_niti_token||'7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY', 'Bot Token (นิติ)', true) +
-            inpRow('tg-niti-chat',  cfg.tg_niti_chat_id||'-4574041962', 'Chat ID กลุ่มนิติ', true) +
-            '</div>' +
-            '<div class="text-xs font-bold text-slate-600 mb-2">เปิด/ปิด การแจ้งเตือนแต่ละประเภท</div>' +
-            '<div class="grid grid-cols-2 md:grid-cols-3 gap-2">' +
-            chkRow('notify_register',     'ลงทะเบียนใหม่',    '📝') +
-            chkRow('notify_slip',         'อนุมัติสลิป',       '💰') +
-            chkRow('notify_repair',       'แจ้งซ่อม',          '🔧') +
-            chkRow('notify_visitor',      'ผู้มาเยือน',        '🚪') +
-            chkRow('notify_birthday',     'วันเกิดสมาชิก',     '🎂') +
-            chkRow('notify_daily_report', 'รายงานประจำวัน',   '📊') +
-            '</div></div>' +
+                // TELEGRAM
+                '<div class="glass rounded-3xl p-5 mb-5">' +
+                '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">📣</span>' +
+                '<div><div class="font-bold text-slate-800">Telegram การแจ้งเตือน</div>' +
+                '<div class="text-xs text-slate-500">Token และ Chat ID ของกลุ่มที่รับแจ้งเตือน</div></div></div>' +
+                '<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">' +
+                inpRow('tg-niti-token', cfg.tg_niti_token||'7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY', 'Bot Token (นิติ)', true) +
+                inpRow('tg-niti-chat',  cfg.tg_niti_chat_id||'-4574041962', 'Chat ID กลุ่มนิติ', true) +
+                '</div>' +
+                '<div class="text-xs font-bold text-slate-600 mb-2">เปิด/ปิด การแจ้งเตือนแต่ละประเภท</div>' +
+                '<div class="grid grid-cols-2 md:grid-cols-3 gap-2">' +
+                chkRow('notify_register',     'ลงทะเบียนใหม่',   '📝') +
+                chkRow('notify_slip',         'อนุมัติสลิป',      '💰') +
+                chkRow('notify_repair',       'แจ้งซ่อม',         '🔧') +
+                chkRow('notify_visitor',      'ผู้มาเยือน',       '🚪') +
+                chkRow('notify_birthday',     'วันเกิดสมาชิก',    '🎂') +
+                chkRow('notify_daily_report', 'รายงานประจำวัน',  '📊') +
+                '</div></div>' +
 
-            // ── SENDER ────────────────────────────────────────
-            '<div class="glass rounded-3xl p-5 mb-5">' +
-            '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">🤖</span><div><div class="font-bold text-slate-800">LINE Sender Profiles</div><div class="text-xs text-slate-500">ชื่อและรูป Sender (max 20 ตัวอักษร)</div></div></div>' +
-            '<div class="space-y-3">' +
-            ['admin,ผู้ช่วย Admin,1762019017975','ai_auto,AI อัตโนมัติ,1762019020067','serene,น้องซีรีน AI,1762019021118'].map(s => {
-                const [id, def, imgId] = s.split(',');
-                const nameKey = 'sender_'+id+'_name', iconKey = 'sender_'+id+'_icon';
-                const nameVal = cfg[nameKey]||def;
-                const iconVal = cfg[iconKey]||('https://kiumelolsilduqnvrekf.supabase.co/storage/v1/object/public/user-images/U3b4ebbe5e514a74a6a8e18de19c4bf03/'+imgId+'.jpeg');
-                return '<div class="grid grid-cols-5 gap-2 items-center">' +
-                    '<img id="preview-'+id+'" src="'+escapeHtml(iconVal)+'" class="w-10 h-10 rounded-full border-2 border-slate-200 object-cover">' +
-                    '<input id="cfg-'+nameKey+'" value="'+escapeHtml(nameVal)+'" maxlength="20" placeholder="'+def+'" class="col-span-2 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-200">' +
-                    '<input id="cfg-'+iconKey+'" value="'+escapeHtml(iconVal)+'" placeholder="URL รูป" class="col-span-2 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-blue-200" oninput="document.getElementById('preview-'+id+'').src=this.value">' +
-                    '</div>';
-            }).join('') +
-            '</div></div>' +
+                // SENDER
+                '<div class="glass rounded-3xl p-5 mb-5">' +
+                '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">🤖</span>' +
+                '<div><div class="font-bold text-slate-800">LINE Sender Profiles</div>' +
+                '<div class="text-xs text-slate-500">ชื่อและรูป Sender (max 20 ตัวอักษร)</div></div></div>' +
+                '<div class="space-y-3">' + senderRows + '</div></div>' +
 
-            // ── RICH MENU ─────────────────────────────────────
-            '<div class="glass rounded-3xl p-5 mb-5">' +
-            '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">📱</span><div><div class="font-bold text-slate-800">Rich Menu IDs</div><div class="text-xs text-slate-500">Rich Menu หลังลงทะเบียน / ค่าเริ่มต้น</div></div></div>' +
-            '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">' +
-            inpRow('member-richmenu',  cfg.member_richmenu||'richmenu-6dbab648fe7753fd311142e0c706ae1f', 'Rich Menu สมาชิก', true) +
-            inpRow('default-richmenu', cfg.default_richmenu||'', 'Rich Menu ค่าเริ่มต้น (ก่อนลงทะเบียน)', true) +
-            '</div></div>' +
+                // RICH MENU
+                '<div class="glass rounded-3xl p-5 mb-5">' +
+                '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">📱</span>' +
+                '<div><div class="font-bold text-slate-800">Rich Menu IDs</div>' +
+                '<div class="text-xs text-slate-500">Rich Menu หลังลงทะเบียน / ค่าเริ่มต้น</div></div></div>' +
+                '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">' +
+                inpRow('member-richmenu',  cfg.member_richmenu ||'richmenu-6dbab648fe7753fd311142e0c706ae1f', 'Rich Menu สมาชิก', true) +
+                inpRow('default-richmenu', cfg.default_richmenu||'', 'Rich Menu ค่าเริ่มต้น', true) +
+                '</div></div>' +
 
-            // ── POINTS ────────────────────────────────────────
-            '<div class="glass rounded-3xl p-5 mb-5">' +
-            '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">⭐</span><div><div class="font-bold text-slate-800">นโยบายแต้ม</div><div class="text-xs text-slate-500">แต้มแต่ละกิจกรรม และนโยบายแจก</div></div></div>' +
-            '<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">' +
-            [['points-fee-ontime',cfg.points_fee_ontime||'100','ค่าส่วนกลาง ตรงเวลา'],['points-fee-early',cfg.points_fee_early||'150','ค่าส่วนกลาง ล่วงหน้า'],['points-birthday',cfg.points_birthday||'200','วันเกิด'],['points-checkin',cfg.points_checkin||'50','Check-in รายวัน']].map(([key,val,label]) =>
-                '<div><label class="block text-xs font-bold text-slate-600 mb-1">'+label+'</label>' +
-                '<div class="flex items-center gap-1"><input id="cfg-'+key+'" type="number" min="0" value="'+escapeHtml(val)+'" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm text-center font-bold outline-none focus:ring-2 focus:ring-amber-200"><span class="text-xs text-slate-400 whitespace-nowrap">แต้ม</span></div></div>'
-            ).join('') +
-            '</div>' +
-            '<div><label class="block text-xs font-bold text-slate-600 mb-2">นโยบายแจกแต้มค่าส่วนกลาง</label>' +
-            '<div class="flex gap-2 flex-wrap">' +
-            [['all','ทุกคนในบ้าน'],['per_house','1 บ้าน 1 แต้ม'],['owner_only','เฉพาะเจ้าของบ้าน']].map(([val,label]) =>
-                '<label class="flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer text-sm font-bold ' +
-                ((cfg.award_mode||'all')===val ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-slate-200 text-slate-600') + '">' +
-                '<input type="radio" name="cfg-award-mode" value="'+val+'" '+((cfg.award_mode||'all')===val?'checked':'') +
-                ' class="accent-amber-500" onchange="saveSingleSetting('award_mode',''+val+'')">'+label+'</label>'
-            ).join('') +
-            '</div></div></div>' +
+                // POINTS
+                '<div class="glass rounded-3xl p-5 mb-5">' +
+                '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">⭐</span>' +
+                '<div><div class="font-bold text-slate-800">นโยบายแต้ม</div>' +
+                '<div class="text-xs text-slate-500">แต้มแต่ละกิจกรรม และนโยบายแจก</div></div></div>' +
+                '<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">' + pointRows + '</div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-2">นโยบายแจกแต้มค่าส่วนกลาง</label>' +
+                '<div class="flex gap-2 flex-wrap">' + awardRows + '</div></div></div>' +
 
-            // ── LINE OA ───────────────────────────────────────
-            '<div class="glass rounded-3xl p-5 mb-5">' +
-            '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">💬</span><div><div class="font-bold text-slate-800">LINE OA & LIFF</div><div class="text-xs text-slate-500">LIFF ID / Webhook URL</div></div></div>' +
-            '<div class="space-y-2">' +
-            inpRow('liff-id',     cfg.liff_id||'2000143615-GxkrLkE5', 'LIFF ID (ลงทะเบียน)', true) +
-            inpRow('webhook-url', cfg.webhook_url||'https://kiumelolsilduqnvrekf.supabase.co/functions/v1/line-webhook', 'Webhook URL', true) +
-            '</div></div>' +
+                // LINE OA
+                '<div class="glass rounded-3xl p-5 mb-5">' +
+                '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">💬</span>' +
+                '<div><div class="font-bold text-slate-800">LINE OA & LIFF</div>' +
+                '<div class="text-xs text-slate-500">LIFF ID / Webhook URL</div></div></div>' +
+                '<div class="space-y-2">' +
+                inpRow('liff-id',     cfg.liff_id    ||'2000143615-GxkrLkE5', 'LIFF ID (ลงทะเบียน)', true) +
+                inpRow('webhook-url', cfg.webhook_url||'https://kiumelolsilduqnvrekf.supabase.co/functions/v1/line-webhook', 'Webhook URL', true) +
+                '</div></div>' +
 
-            // ── SAVE BUTTON ───────────────────────────────────
-            '<div class="flex gap-3 pb-4">' +
-            '<button onclick="saveAllSettings(this)" class="flex-1 py-3.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-2xl font-bold text-base shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-5 h-5"></i> บันทึกการตั้งค่าทั้งหมด</button>' +
-            '<button onclick="testTelegram()" class="px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-bold flex items-center gap-2"><i data-lucide="send" class="w-4 h-4"></i> ทดสอบ TG</button>' +
-            '</div>';
+                // SAVE
+                '<div class="flex gap-3 pb-4">' +
+                '<button onclick="saveAllSettings(this)" class="flex-1 py-3.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-2xl font-bold text-base shadow-lg flex items-center justify-center gap-2">' +
+                '<i data-lucide="save" class="w-5 h-5"></i> บันทึกการตั้งค่าทั้งหมด</button>' +
+                '<button onclick="testTelegram()" class="px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-bold flex items-center gap-2">' +
+                '<i data-lucide="send" class="w-4 h-4"></i> ทดสอบ TG</button>' +
+                '</div>';
 
             lucide.createIcons();
         }
