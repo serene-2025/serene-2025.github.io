@@ -6633,7 +6633,13 @@ async function updateAllUserProfiles() {
             const { data: homes } = await supabaseClient
                 .from('userhome').select('uid, house_no, soi, fullname, line_name, phone');
             const homeMap = {};
-            (homes||[]).forEach(h => { homeMap[h.house_no] = h; });
+            const homeMapNorm = {}; // normalized key สำหรับ fuzzy match
+            const norm = s => (s||'').toString().replace(/\s+/g,'').toLowerCase();
+            (homes||[]).forEach(h => {
+                homeMap[h.house_no] = h;
+                homeMapNorm[norm(h.house_no)] = h;
+            });
+            const findHome = key => homeMap[key] || homeMapNorm[norm(key)] || null;
 
             // กรองตาม filter
             let list;
@@ -6644,10 +6650,10 @@ async function updateAllUserProfiles() {
                     soi:       p.soi,
                     owner_name: p.owner_name,
                     status:    p[month] || 'ยังไม่จ่าย',
-                    uid:       homeMap[p.house_numbe]?.uid || null,
-                    fullname:  homeMap[p.house_numbe]?.fullname || homeMap[p.house_numbe]?.line_name || p.owner_name || '—',
-                    phone:     homeMap[p.house_numbe]?.phone || null,
-                    line_name: homeMap[p.house_numbe]?.line_name || null,
+                    uid:       findHome(p.house_numbe)?.uid || null,
+                    fullname:  findHome(p.house_numbe)?.fullname || findHome(p.house_numbe)?.line_name || p.owner_name || '—',
+                    phone:     findHome(p.house_numbe)?.phone || null,
+                    line_name: findHome(p.house_numbe)?.line_name || null,
                 }));
             } else {
                 list = (payments||[]).map(p => ({
@@ -6655,10 +6661,10 @@ async function updateAllUserProfiles() {
                     soi:       p.soi,
                     owner_name: p.owner_name,
                     status:    p[month] || 'ยังไม่จ่าย',
-                    uid:       homeMap[p.house_numbe]?.uid || null,
-                    fullname:  homeMap[p.house_numbe]?.fullname || homeMap[p.house_numbe]?.line_name || p.owner_name || '—',
-                    phone:     homeMap[p.house_numbe]?.phone || null,
-                    line_name: homeMap[p.house_numbe]?.line_name || null,
+                    uid:       findHome(p.house_numbe)?.uid || null,
+                    fullname:  findHome(p.house_numbe)?.fullname || findHome(p.house_numbe)?.line_name || p.owner_name || '—',
+                    phone:     findHome(p.house_numbe)?.phone || null,
+                    line_name: findHome(p.house_numbe)?.line_name || null,
                 }));
             }
 
@@ -6950,45 +6956,63 @@ async function updateAllUserProfiles() {
 
         async function sendInvoiceLine(idx, btn) {
             const d = buildInvoiceData(idx);
-            if (!d.h.uid) return showToast('บ้านนี้ไม่มี LINE UID','warning');
+            if (!d.h.uid) {
+                showToast('❌ บ้าน ' + (d.h.house_no||'') + ' ไม่มี LINE UID — ลูกบ้านยังไม่ได้ลงทะเบียน LINE', 'error');
+                return;
+            }
             if (btn) btn.disabled = true;
             try {
-                const unpaidList = d.unpaidMonths.map(c=>TH_MONTHS.find(m=>m.col===c)?.label||c).join(', ');
+                const unpaidList = d.unpaidMonths.map(c => TH_MONTHS.find(m => m.col===c)?.label || c).join(', ');
                 const flexMsg = {
-                    type:'flex', altText:'📄 ใบแจ้งหนี้ค่าส่วนกลาง บ้าน '+d.h.house_no,
+                    type:'flex', altText:'📄 ใบแจ้งหนี้ค่าส่วนกลาง บ้าน ' + d.h.house_no,
                     contents:{
-                        type:'bubble',size:'kilo',
-                        header:{type:'box',layout:'vertical',backgroundColor:'#059669',paddingAll:'16px',contents:[
-                            {type:'text',text:'📄 ใบแจ้งหนี้ค่าส่วนกลาง',weight:'bold',size:'md',color:'#FFFFFF'},
-                            {type:'text',text:d.villageName,size:'xs',color:'rgba(255,255,255,0.8)',margin:'sm'}]},
-                        body:{type:'box',layout:'vertical',paddingAll:'16px',spacing:'sm',contents:[
-                            {type:'box',layout:'horizontal',contents:[{type:'text',text:'🏠 บ้านเลขที่',size:'sm',color:'#64748b',flex:4},{type:'text',text:(d.h.house_no||'—')+' '+(d.h.soi||''),size:'sm',weight:'bold',flex:5,align:'end'}]},
-                            {type:'box',layout:'horizontal',contents:[{type:'text',text:'👤 ชื่อ',size:'sm',color:'#64748b',flex:4},{type:'text',text:d.h.fullname||d.h.line_name||'—',size:'sm',weight:'bold',flex:5,align:'end',wrap:true}]},
-                            {type:'separator',margin:'md'},
-                            {type:'text',text:'รายการค้างชำระ',weight:'bold',size:'sm',margin:'md'},
-                            {type:'text',text:unpaidList,size:'xs',color:'#ef4444',wrap:true},
-                            {type:'separator',margin:'md'},
-                            {type:'box',layout:'horizontal',contents:[{type:'text',text:'ยอดรวมทั้งสิ้น',weight:'bold',size:'md',flex:1},{type:'text',text:d.total.toLocaleString()+' ฿',weight:'bold',size:'lg',color:'#ef4444',align:'end'}]},
-                            {type:'separator',margin:'md'},
-                            {type:'text',text:'ข้อมูลการชำระ',weight:'bold',size:'xs',color:'#64748b',margin:'md'},
-                            {type:'text',text:'ธนาคาร: '+d.bankName,size:'xs',color:'#475569'},
-                            {type:'text',text:'ชื่อบัญชี: '+d.accountName,size:'xs',color:'#475569',wrap:true},
-                            {type:'text',text:'เลขบัญชี: '+d.accountNo,size:'sm',weight:'bold',color:'#1d4ed8'},
-                            {type:'text',text:'กำหนดชำระ: วันที่ '+d.dueDayNum+' ของเดือน',size:'xs',color:'#ef4444',margin:'sm'},
+                        type:'bubble', size:'kilo',
+                        header:{ type:'box', layout:'vertical', backgroundColor:'#059669', paddingAll:'16px', contents:[
+                            { type:'text', text:'📄 ใบแจ้งหนี้ค่าส่วนกลาง', weight:'bold', size:'md', color:'#FFFFFF' },
+                            { type:'text', text:d.villageName, size:'xs', color:'rgba(255,255,255,0.8)', margin:'sm' }]},
+                        body:{ type:'box', layout:'vertical', paddingAll:'16px', spacing:'sm', contents:[
+                            { type:'box', layout:'horizontal', contents:[
+                                { type:'text', text:'🏠 บ้านเลขที่', size:'sm', color:'#64748b', flex:4 },
+                                { type:'text', text:(d.h.house_no||'—')+' '+(d.h.soi||''), size:'sm', weight:'bold', flex:5, align:'end' }]},
+                            { type:'box', layout:'horizontal', contents:[
+                                { type:'text', text:'👤 ชื่อ', size:'sm', color:'#64748b', flex:4 },
+                                { type:'text', text:d.h.fullname||'—', size:'sm', weight:'bold', flex:5, align:'end', wrap:true }]},
+                            { type:'separator', margin:'md' },
+                            { type:'text', text:'รายการค้างชำระ', weight:'bold', size:'sm', margin:'md' },
+                            { type:'text', text:unpaidList, size:'xs', color:'#ef4444', wrap:true },
+                            { type:'separator', margin:'md' },
+                            { type:'box', layout:'horizontal', contents:[
+                                { type:'text', text:'ยอดรวมทั้งสิ้น', weight:'bold', size:'md', flex:1 },
+                                { type:'text', text:d.total.toLocaleString()+' บาท', weight:'bold', size:'lg', color:'#ef4444', align:'end' }]},
+                            { type:'separator', margin:'md' },
+                            { type:'text', text:'ข้อมูลการชำระเงิน', weight:'bold', size:'xs', color:'#64748b', margin:'md' },
+                            { type:'text', text:'ธนาคาร: '+d.bankName, size:'xs', color:'#475569' },
+                            { type:'text', text:'ชื่อบัญชี: '+d.accountName, size:'xs', color:'#475569', wrap:true },
+                            { type:'text', text:'เลขบัญชี: '+d.accountNo, size:'sm', weight:'bold', color:'#1d4ed8' },
+                            { type:'text', text:'กำหนดชำระ: วันที่ '+d.dueDayNum+' ของเดือน', size:'xs', color:'#ef4444', margin:'sm' },
                         ]},
-                        footer:{type:'box',layout:'vertical',backgroundColor:'#f8fafc',paddingAll:'12px',contents:[
-                            {type:'text',text:'📲 '+d.footerNote,size:'xs',color:'#94a3b8',align:'center',wrap:true}]}
+                        footer:{ type:'box', layout:'vertical', backgroundColor:'#f8fafc', paddingAll:'12px', contents:[
+                            { type:'text', text:'📲 '+d.footerNote, size:'xs', color:'#94a3b8', align:'center', wrap:true }]}
                     }
                 };
+
+                // ใช้ push API โดยตรง (1 user = pushMessage ไม่ใช่ multicast)
                 const res = await fetch(API_BASE_URL + '/api/admin/audience/targeted_push', {
-                    method:'POST',headers:{'Content-Type':'application/json'},
-                    body:JSON.stringify({userIds:[d.h.uid],messages:[flexMsg]})
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userIds: [d.h.uid], messages: [flexMsg] })
                 });
                 const rd = await res.json();
-                if (!res.ok) throw new Error(rd.error||'ส่งไม่สำเร็จ');
-                showToast('✅ ส่ง LINE: บ้าน '+d.h.house_no,'success');
-            } catch(e) { showToast('❌ '+e.message,'error'); }
-            finally { if (btn) btn.disabled = false; }
+
+                if (!res.ok) throw new Error(rd.error || 'ส่งไม่สำเร็จ (HTTP ' + res.status + ')');
+                if (rd.failed > 0) throw new Error('LINE ปฏิเสธ: ' + JSON.stringify(rd.errors || rd));
+
+                showToast('✅ ส่ง LINE สำเร็จ: บ้าน ' + d.h.house_no, 'success');
+            } catch(e) {
+                showToast('❌ บ้าน ' + (d.h.house_no||'') + ': ' + e.message, 'error');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
         }
 
         async function sendAllInvoices(btn) {
