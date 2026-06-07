@@ -6547,13 +6547,22 @@ async function updateAllUserProfiles() {
         // ─── Members + Points ──────────────────────────────
         // ─── INVOICE PDF ─────────────────────────────────────────────
         async function renderInvoiceView() {
+            // โหลดปีจาก house_payments จริง
+            const now = new Date();
+            const curYearTH = now.getFullYear() + 543;
+            const curMonthCol = TH_MONTHS[now.getMonth()].col;
+            const { data: yearsData } = await supabaseClient
+                .from('house_payments').select('year').order('year', { ascending: false });
+            const years = [...new Set((yearsData||[]).map(r=>r.year))].filter(Boolean);
+            if (!years.length) years.push(curYearTH);
+
             document.getElementById('content-area').innerHTML =
                 '<div class="slide-in p-2">' +
                 '<div class="mb-6 flex justify-between items-end">' +
                 '<div><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
                 '<span class="bg-emerald-100 text-emerald-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="file-text" class="w-8 h-8"></i></span>' +
                 'ใบแจ้งหนี้ค่าส่วนกลาง</h1>' +
-                '<p class="text-sm text-slate-500 mt-2 ml-1">สร้างและส่งใบแจ้งหนี้ให้ลูกบ้านผ่าน LINE</p></div>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">สร้างและส่งใบแจ้งหนี้ PDF ให้ลูกบ้านผ่าน LINE</p></div>' +
                 '<div class="flex gap-2">' +
                 '<button onclick="invSelectAllAndSend(this)" class="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2 shadow">' +
                 '<i data-lucide="send" class="w-4 h-4"></i> ส่ง LINE ทุกบ้านที่ค้าง</button>' +
@@ -6562,19 +6571,21 @@ async function updateAllUserProfiles() {
                 '<div class="grid grid-cols-1 md:grid-cols-4 gap-3">' +
                 '<div><label class="block text-xs font-bold text-slate-600 mb-1">เดือน</label>' +
                 '<select id="inv-month" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white">' +
-                TH_MONTHS.map(m => '<option value="' + m.col + '">' + m.label + '</option>').join('') +
+                TH_MONTHS.map(m => '<option value="' + m.col + '"' + (m.col === curMonthCol ? ' selected' : '') + '>' + m.label + '</option>').join('') +
                 '</select></div>' +
                 '<div><label class="block text-xs font-bold text-slate-600 mb-1">ปี (พ.ศ.)</label>' +
-                '<input id="inv-year" type="number" value="' + (new Date().getFullYear()+543) + '" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"></div>' +
+                '<select id="inv-year" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white">' +
+                years.map(y => '<option value="' + y + '"' + (y === curYearTH || y === years[0] ? ' selected' : '') + '>' + y + '</option>').join('') +
+                '</select></div>' +
                 '<div><label class="block text-xs font-bold text-slate-600 mb-1">แสดงเฉพาะ</label>' +
                 '<select id="inv-filter" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white">' +
                 '<option value="unpaid">ค้างชำระ</option><option value="all">ทุกบ้าน</option>' +
                 '</select></div>' +
                 '<div class="flex items-end"><button onclick="loadInvoiceList()" class="w-full px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-bold text-sm">ดูรายการ</button></div>' +
                 '</div></div>' +
-                '<div id="invoice-list">กำลังโหลด...</div></div>';
+                '<div id="invoice-list"><div class="glass rounded-3xl p-8 text-center text-slate-400">เลือกเดือนและปี แล้วกด "ดูรายการ"</div></div>' +
+                '</div>';
             lucide.createIcons();
-            await loadInvoiceList();
         }
 
         async function loadInvoiceList() {
@@ -6587,17 +6598,18 @@ async function updateAllUserProfiles() {
             const cfg = {};
             (ps||[]).forEach(r => { cfg[r.key] = r.value; });
 
-            const month  = document.getElementById('inv-month')?.value;   // เช่น 'jan'
-            const year   = document.getElementById('inv-year')?.value;    // พ.ศ. เช่น '2568'
+            const month  = document.getElementById('inv-month')?.value;   // เช่น 'jun'
+            const year   = document.getElementById('inv-year')?.value;    // พ.ศ. เช่น '2569'
             const filter = document.getElementById('inv-filter')?.value || 'unpaid';
-            const yearAD  = parseInt(year) - 543;  // แปลงเป็น ค.ศ. สำหรับ query
+            // house_payments เก็บปีเป็น พ.ศ. ตรงๆ ไม่ต้องแปลง
+            const yearVal = parseInt(year);
             const monthLabel = TH_MONTHS.find(m => m.col === month)?.label || month;
 
             // โหลด house_payments ของปีนั้น
             const { data: payments, error: payErr } = await supabaseClient
                 .from('house_payments')
                 .select('house_numbe, soi, owner_name, year, ' + month)
-                .eq('year', yearAD);
+                .eq('year', yearVal);
 
             if (payErr) {
                 el.innerHTML = '<div class="glass rounded-3xl p-8 text-center text-rose-500">❌ โหลดข้อมูลไม่ได้: ' + escapeHtml(payErr.message) + '</div>';
