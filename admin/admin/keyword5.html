@@ -6580,27 +6580,96 @@ async function updateAllUserProfiles() {
         async function loadInvoiceList() {
             const el = document.getElementById('invoice-list');
             if (!el) return;
+            el.innerHTML = '<div class="text-center py-8 text-slate-400">⏳ กำลังโหลด...</div>';
+
+            // โหลด payment_settings
             const { data: ps } = await supabaseClient.from('payment_settings').select('key,value');
             const cfg = {};
             (ps||[]).forEach(r => { cfg[r.key] = r.value; });
-            const { data: homes } = await supabaseClient.from('userhome')
-                .select('uid, fullname, house_no, soi, phone, line_name')
-                .not('uid','is',null).order('house_no');
-            if (!homes?.length) { el.innerHTML = '<div class="glass rounded-3xl p-8 text-center text-slate-400">ไม่มีข้อมูลบ้าน</div>'; return; }
-            const month  = document.getElementById('inv-month')?.value;
-            const year   = document.getElementById('inv-year')?.value;
+
+            const month  = document.getElementById('inv-month')?.value;   // เช่น 'jan'
+            const year   = document.getElementById('inv-year')?.value;    // พ.ศ. เช่น '2568'
             const filter = document.getElementById('inv-filter')?.value || 'unpaid';
-            const allCols = TH_MONTHS.map(m => m.col);
-            const { data: payments } = await supabaseClient.from('house_payments').select('*');
-            const payMap = {};
-            (payments||[]).forEach(p => { payMap[p.house_no] = p; });
-            let list = homes;
-            if (filter === 'unpaid') list = homes.filter(h => { const p=payMap[h.house_no]; return !p||!p[month]; });
-            window._invCfg=cfg; window._invHomes=list; window._invPayMap=payMap; window._invMonth=month; window._invYear=year;
-            if (!list.length) { el.innerHTML='<div class="glass rounded-3xl p-8 text-center text-emerald-600 font-bold">✅ ไม่มีบ้านค้างชำระในเดือนนี้</div>'; return; }
+            const yearAD  = parseInt(year) - 543;  // แปลงเป็น ค.ศ. สำหรับ query
+            const monthLabel = TH_MONTHS.find(m => m.col === month)?.label || month;
+
+            // โหลด house_payments ของปีนั้น
+            const { data: payments, error: payErr } = await supabaseClient
+                .from('house_payments')
+                .select('house_numbe, soi, owner_name, year, ' + month)
+                .eq('year', yearAD);
+
+            if (payErr) {
+                el.innerHTML = '<div class="glass rounded-3xl p-8 text-center text-rose-500">❌ โหลดข้อมูลไม่ได้: ' + escapeHtml(payErr.message) + '</div>';
+                return;
+            }
+
+            // แยกบ้านที่จ่ายแล้ว / ค้างชำระ
+            const paid_statuses = ['จ่ายแล้ว', 'ล่วงหน้า'];
+            const paidSet   = new Set();
+            const unpaidList = [];
+            const allPayMap = {};
+
+            (payments||[]).forEach(p => {
+                const val = (p[month]||'').toString().trim();
+                allPayMap[p.house_numbe] = val;
+                if (paid_statuses.includes(val)) paidSet.add(p.house_numbe);
+                else unpaidList.push(p);
+            });
+
+            // โหลด userhome เพื่อ join LINE uid
+            const { data: homes } = await supabaseClient
+                .from('userhome').select('uid, house_no, soi, fullname, line_name, phone');
+            const homeMap = {};
+            (homes||[]).forEach(h => { homeMap[h.house_no] = h; });
+
+            // กรองตาม filter
+            let list;
+            if (filter === 'unpaid') {
+                // บ้านที่ค้างชำระเดือนนี้ = ค่าไม่ใช่ "จ่ายแล้ว" และไม่ใช่ "ล่วงหน้า"
+                list = unpaidList.map(p => ({
+                    house_no:  p.house_numbe,
+                    soi:       p.soi,
+                    owner_name: p.owner_name,
+                    status:    p[month] || 'ยังไม่จ่าย',
+                    uid:       homeMap[p.house_numbe]?.uid || null,
+                    fullname:  homeMap[p.house_numbe]?.fullname || homeMap[p.house_numbe]?.line_name || p.owner_name || '—',
+                    phone:     homeMap[p.house_numbe]?.phone || null,
+                    line_name: homeMap[p.house_numbe]?.line_name || null,
+                }));
+            } else {
+                list = (payments||[]).map(p => ({
+                    house_no:  p.house_numbe,
+                    soi:       p.soi,
+                    owner_name: p.owner_name,
+                    status:    p[month] || 'ยังไม่จ่าย',
+                    uid:       homeMap[p.house_numbe]?.uid || null,
+                    fullname:  homeMap[p.house_numbe]?.fullname || homeMap[p.house_numbe]?.line_name || p.owner_name || '—',
+                    phone:     homeMap[p.house_numbe]?.phone || null,
+                    line_name: homeMap[p.house_numbe]?.line_name || null,
+                }));
+            }
+
+            // บันทึก state
+            window._invCfg      = cfg;
+            window._invHomes    = list;
+            window._invPayMap   = allPayMap;
+            window._invMonth    = month;
+            window._invYear     = year;
+            window._invYearAD   = yearAD;
+            window._invMonthLabel = monthLabel;
+
+            if (!list.length) {
+                el.innerHTML = filter === 'unpaid'
+                    ? '<div class="glass rounded-3xl p-8 text-center text-emerald-600 font-bold">✅ ทุกบ้านจ่ายครบแล้วในเดือน ' + monthLabel + '</div>'
+                    : '<div class="glass rounded-3xl p-8 text-center text-slate-400">ไม่มีข้อมูลปี ' + year + '</div>';
+                return;
+            }
+
             const amount = parseFloat(cfg.amount||'0');
+            const stColor = { 'จ่ายแล้ว':'bg-emerald-100 text-emerald-700', 'ล่วงหน้า':'bg-amber-100 text-amber-700', 'ยังไม่จ่าย':'bg-rose-100 text-rose-700' };
+
             el.innerHTML =
-                // action bar เลือกส่ง
                 '<div class="glass rounded-3xl p-4 mb-3 flex flex-wrap items-center gap-3">' +
                 '<div class="flex items-center gap-2">' +
                 '<input type="checkbox" id="inv-select-all" class="w-4 h-4 accent-emerald-500" onchange="invToggleAll()">' +
@@ -6611,37 +6680,35 @@ async function updateAllUserProfiles() {
                 '<button onclick="sendSelectedInvoicesLine(this)" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow">' +
                 '<i data-lucide="send" class="w-3.5 h-3.5"></i> ส่ง LINE ที่เลือก</button>' +
                 '<button onclick="downloadSelectedPDFs()" class="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-xl text-xs font-bold flex items-center gap-1.5">' +
-                '<i data-lucide="download" class="w-3.5 h-3.5"></i> Download PDF ที่เลือก</button>' +
+                '<i data-lucide="download" class="w-3.5 h-3.5"></i> PDF ที่เลือก</button>' +
                 '</div></div>' +
-                // ตาราง
                 '<div class="glass rounded-3xl overflow-hidden shadow-sm">' +
                 '<div class="p-4 border-b border-slate-100 flex justify-between items-center">' +
-                '<div class="font-bold text-slate-800">พบ ' + list.length + ' บ้าน</div>' +
-                '<div class="text-sm text-slate-500">ยอดรวม: <b class="text-rose-600">' + (list.length*amount).toLocaleString() + ' บาท</b></div>' +
+                '<div class="font-bold text-slate-800">' + monthLabel + ' ' + year + ' · ' + list.length + ' บ้าน</div>' +
+                '<div class="text-sm text-slate-500">ค้างชำระ: <b class="text-rose-600">' + (list.filter(h=>!paid_statuses.includes(h.status)).length * amount).toLocaleString() + ' บาท</b></div>' +
                 '</div><div class="overflow-x-auto"><table class="w-full text-sm">' +
                 '<thead class="bg-slate-50"><tr>' +
-                '<th class="p-3 w-10 text-center"><input type="checkbox" id="inv-th-check" class="w-4 h-4 accent-emerald-500" onchange="invToggleAll()"></th>' +
-                '<th class="text-left p-3">บ้านเลขที่</th><th class="text-left p-3">เจ้าของ</th>' +
-                '<th class="text-left p-3">ซอย</th><th class="text-center p-3">ยอดค้าง</th><th class="text-center p-3">ดำเนินการ</th>' +
+                '<th class="p-3 w-10"><input type="checkbox" id="inv-th-check" class="w-4 h-4 accent-emerald-500" onchange="invToggleAll()"></th>' +
+                '<th class="text-left p-3">บ้านเลขที่</th>' +
+                '<th class="text-left p-3">เจ้าของ</th>' +
+                '<th class="text-left p-3">ซอย</th>' +
+                '<th class="text-center p-3">สถานะ ' + monthLabel + '</th>' +
+                '<th class="text-center p-3">ดำเนินการ</th>' +
                 '</tr></thead><tbody>' +
                 list.map((h, idx) => {
-                    const p = payMap[h.house_no]||{};
-                    const unpaidMonths = allCols.filter(c=>!p[c]);
-                    const total = unpaidMonths.length * amount;
                     const hasUid = !!h.uid;
+                    const sc = stColor[h.status] || 'bg-slate-100 text-slate-600';
                     return '<tr class="border-t border-slate-100 hover:bg-slate-50">' +
-                        '<td class="p-3 text-center">' +
-                        '<input type="checkbox" class="inv-row-check w-4 h-4 accent-emerald-500" data-idx="' + idx + '" onchange="invUpdateCount()"' + (hasUid?'':' disabled title="ไม่มี LINE UID"') + '>' +
-                        '</td>' +
+                        '<td class="p-3 text-center"><input type="checkbox" class="inv-row-check w-4 h-4 accent-emerald-500" data-idx="' + idx + '" onchange="invUpdateCount()"' + (hasUid?'':' disabled title="ไม่มี LINE"') + '></td>' +
                         '<td class="p-3 font-bold text-slate-800">' + escapeHtml(h.house_no||'—') + '</td>' +
-                        '<td class="p-3">' + escapeHtml(h.fullname||h.line_name||'—') + '</td>' +
+                        '<td class="p-3 text-slate-700">' + escapeHtml(h.fullname||'—') + '</td>' +
                         '<td class="p-3 text-slate-500">' + escapeHtml(h.soi||'—') + '</td>' +
-                        '<td class="p-3 text-center"><span class="text-rose-600 font-bold">' + total.toLocaleString() + '</span>' +
-                        '<div class="text-[10px] text-slate-400">' + unpaidMonths.length + ' เดือน</div></td>' +
+                        '<td class="p-3 text-center"><span class="text-[11px] font-bold px-2.5 py-1 rounded-full ' + sc + '">' + escapeHtml(h.status) + '</span></td>' +
                         '<td class="p-3"><div class="flex gap-1.5 justify-center">' +
                         '<button data-idx="' + idx + '" onclick="previewInvoice(this.dataset.idx)" class="px-2.5 py-1.5 bg-blue-100 text-blue-700 rounded-xl text-xs font-bold hover:bg-blue-200">👁</button>' +
                         '<button data-idx="' + idx + '" onclick="downloadInvoicePDF(this.dataset.idx)" class="px-2.5 py-1.5 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-200">⬇</button>' +
-                        '<button data-idx="' + idx + '" onclick="sendInvoiceLine(this.dataset.idx,this)" class="px-2.5 py-1.5 bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold hover:bg-emerald-200"' + (hasUid?'':' disabled title="ไม่มี LINE"') + '>📤</button>' +
+                        (hasUid ? '<button data-idx="' + idx + '" onclick="sendInvoiceLine(this.dataset.idx,this)" class="px-2.5 py-1.5 bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold hover:bg-emerald-200">📤</button>' :
+                                  '<span class="px-2.5 py-1.5 text-slate-300 text-xs">—</span>') +
                         '</div></td></tr>';
                 }).join('') +
                 '</tbody></table></div></div>';
@@ -6731,24 +6798,31 @@ async function updateAllUserProfiles() {
         }
 
         function buildInvoiceData(idx) {
-            const h = window._invHomes[parseInt(idx)];
-            const cfg = window._invCfg||{};
-            const payMap = window._invPayMap||{};
-            const allCols = TH_MONTHS.map(m=>m.col);
-            const p = payMap[h.house_no]||{};
-            const unpaidMonths = allCols.filter(c=>!p[c]);
-            const amount = parseFloat(cfg.amount||'0');
-            const dueDayNum = parseInt(cfg.due_day||'25');
-            const issueDate = new Date().toLocaleDateString('th-TH',{year:'numeric',month:'long',day:'numeric'});
-            return { h, cfg, unpaidMonths, amount, total:unpaidMonths.length*amount, issueDate, dueDayNum,
-                villageName: cfg.village_name||'Golden Land Serene',
-                juristic:    cfg.juristic_name||'นิติบุคคลหมู่บ้านจัดสรร GOLDENLAND SERENE',
-                bankName:    cfg.bank_name||'ไทยพาณิชย์',
-                accountName: cfg.account_name||'นิติบุคคลหมู่บ้านจัดสรร GOLDENLAND SERENE',
-                accountNo:   cfg.account_no||'4271924463',
-                phone:       cfg.contact_phone||'',
-                address:     cfg.address||'',
-                footerNote:  cfg.footer_note||'กรุณาส่งสลิปการโอนเงินผ่าน LINE OA หลังชำระเงิน',
+            const h   = window._invHomes[parseInt(idx)];
+            const cfg = window._invCfg || {};
+            const amount     = parseFloat(cfg.amount || '0');
+            const dueDayNum  = parseInt(cfg.due_day || '25');
+            const issueDate  = new Date().toLocaleDateString('th-TH', {year:'numeric',month:'long',day:'numeric'});
+            // ใบแจ้งหนี้แสดงเฉพาะเดือนที่เลือก
+            const month      = window._invMonth;
+            const monthLabel = window._invMonthLabel || TH_MONTHS.find(m=>m.col===month)?.label || month;
+            return {
+                h,
+                cfg,
+                amount,
+                total:       amount,  // 1 เดือน = 1 ยอด
+                unpaidMonths: [month],
+                monthLabel,
+                issueDate,
+                dueDayNum,
+                villageName: cfg.village_name  || 'Golden Land Serene',
+                juristic:    cfg.juristic_name || 'นิติบุคคลหมู่บ้านจัดสรร GOLDENLAND SERENE',
+                bankName:    cfg.bank_name     || 'ไทยพาณิชย์',
+                accountName: cfg.account_name  || 'นิติบุคคลหมู่บ้านจัดสรร GOLDENLAND SERENE',
+                accountNo:   cfg.account_no    || '4271924463',
+                phone:       cfg.contact_phone || '',
+                address:     cfg.address       || '',
+                footerNote:  cfg.footer_note   || 'กรุณาส่งสลิปการโอนเงินผ่าน LINE OA หลังชำระเงิน',
             };
         }
 
