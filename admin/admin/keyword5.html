@@ -6591,7 +6591,7 @@ async function updateAllUserProfiles() {
             const year   = document.getElementById('inv-year')?.value;
             const filter = document.getElementById('inv-filter')?.value || 'unpaid';
             const allCols = TH_MONTHS.map(m => m.col);
-            const { data: payments } = await supabaseClient.from('house_payments').select('house_no,' + allCols.join(','));
+            const { data: payments } = await supabaseClient.from('house_payments').select('*');
             const payMap = {};
             (payments||[]).forEach(p => { payMap[p.house_no] = p; });
             let list = homes;
@@ -6721,19 +6721,13 @@ async function updateAllUserProfiles() {
 
         async function downloadSelectedPDFs() {
             const selected = [...document.querySelectorAll('.inv-row-check:checked')];
-            if (!selected.length) return showToast('เลือกบ้านที่ต้องการ Download ก่อน', 'warning');
-            if (!window.pdfMake) {
-                showToast('⏳ กำลังโหลด pdfmake...', 'info');
-                await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js');
-                await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js');
-                await new Promise(r => setTimeout(r, 600));
-            }
-            showToast('⏳ กำลังสร้าง PDF ' + selected.length + ' ไฟล์...', 'info');
+            if (!selected.length) return showToast('เลือกบ้านที่ต้องการก่อน', 'warning');
+            showToast('⏳ กำลังเปิด ' + selected.length + ' ใบแจ้งหนี้...', 'info');
             for (const cb of selected) {
                 await downloadInvoicePDF(cb.dataset.idx);
-                await new Promise(r => setTimeout(r, 400));
+                await new Promise(r => setTimeout(r, 600));
             }
-            showToast('✅ Download ครบ ' + selected.length + ' ไฟล์', 'success');
+            showToast('✅ เปิดครบ ' + selected.length + ' หน้าต่าง · กด พิมพ์ ในแต่ละหน้า', 'success');
         }
 
         function buildInvoiceData(idx) {
@@ -6801,52 +6795,72 @@ async function updateAllUserProfiles() {
 
         async function downloadInvoicePDF(idx) {
             const d = buildInvoiceData(idx);
-            if (!window.pdfMake) {
-                showToast('⏳ กำลังโหลด pdfmake...','info');
-                await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js');
-                await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js');
-                await new Promise(r=>setTimeout(r,600));
-            }
             const rows = d.unpaidMonths.map(c => {
-                const mLabel = TH_MONTHS.find(m=>m.col===c)?.label||c;
-                return [mLabel, {text:d.amount.toLocaleString()+' ฿',alignment:'right'}];
-            });
-            rows.push([{text:'รวมทั้งสิ้น',bold:true},{text:d.total.toLocaleString()+' ฿',alignment:'right',bold:true,color:'#ef4444',fontSize:14}]);
-            const docDef = {
-                pageSize:'A4', pageMargins:[40,40,40,40],
-                defaultStyle:{font:'Roboto',fontSize:11,lineHeight:1.4},
-                content:[
-                    {text:d.villageName,fontSize:16,bold:true,alignment:'center'},
-                    {text:d.juristic,fontSize:9,color:'#64748b',alignment:'center',margin:[0,2,0,0]},
-                    d.address?{text:d.address,fontSize:9,color:'#64748b',alignment:'center',margin:[0,1,0,0]}:{},
-                    {text:'ใบแจ้งหนี้ค่าส่วนกลาง',fontSize:13,bold:true,color:'#059669',alignment:'center',margin:[0,8,0,4]},
-                    {text:'วันที่ออก: '+d.issueDate,fontSize:10,color:'#64748b',alignment:'center',margin:[0,0,0,12]},
-                    {columns:[
-                        {stack:[
-                            {text:'บ้านเลขที่: '+(d.h.house_no||'—')+' '+(d.h.soi||''),bold:true},
-                            {text:'ชื่อ: '+(d.h.fullname||d.h.line_name||'—'),margin:[0,2,0,0]},
-                            d.h.phone?{text:'โทร: '+d.h.phone,margin:[0,2,0,0]}:{},
-                        ]},
-                        {stack:[
-                            {text:'กำหนดชำระ:',bold:true,alignment:'right'},
-                            {text:'วันที่ '+d.dueDayNum+' ของเดือน',color:'#ef4444',bold:true,alignment:'right'},
-                        ]}
-                    ],margin:[0,0,0,12]},
-                    {table:{widths:['*','auto'],body:[
-                        [{text:'รายการ',bold:true,fillColor:'#f8fafc'},{text:'จำนวนเงิน',bold:true,fillColor:'#f8fafc',alignment:'right'}],
-                        ...rows
-                    ]},layout:{hLineWidth:(i,n)=>i===0||i===1||i===n.table.body.length?1:0.5,vLineWidth:()=>0,hLineColor:()=>'#e2e8f0'},margin:[0,0,0,16]},
-                    {canvas:[{type:'line',x1:0,y1:0,x2:515,y2:0,lineWidth:0.5,lineColor:'#e2e8f0'}],margin:[0,0,0,12]},
-                    {text:'ข้อมูลการชำระเงิน',bold:true,margin:[0,0,0,6]},
-                    {columns:[{text:'ธนาคาร:',color:'#64748b'},{text:d.bankName}],columnGap:8,margin:[0,2,0,0]},
-                    {columns:[{text:'ชื่อบัญชี:',color:'#64748b'},{text:d.accountName,wrap:true}],columnGap:8,margin:[0,2,0,0]},
-                    {columns:[{text:'เลขบัญชี:',color:'#64748b'},{text:d.accountNo,bold:true,color:'#1d4ed8',fontSize:13}],columnGap:8,margin:[0,2,0,8]},
-                    d.phone?{text:'สอบถาม: '+d.phone,fontSize:10,color:'#64748b'}:{},
-                    {text:d.footerNote,fontSize:9,color:'#94a3b8',margin:[0,8,0,0]},
-                ]
-            };
-            window.pdfMake.createPdf(docDef).download('invoice_'+(d.h.house_no||'house').replace(/\//g,'-')+'_'+window._invMonth+'.pdf');
-            showToast('✅ ดาวน์โหลด PDF แล้ว','success');
+                const mLabel = TH_MONTHS.find(m => m.col===c)?.label || c;
+                return '<tr><td style="padding:8px 12px;border-bottom:1px solid #f1f5f9">' + mLabel + '</td>' +
+                    '<td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;text-align:right">' + d.amount.toLocaleString() + ' บาท</td></tr>';
+            }).join('');
+
+            const html = `<!DOCTYPE html>
+<html lang="th"><head><meta charset="UTF-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap');
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Sarabun',sans-serif; font-size:13px; color:#1e293b; padding:40px; max-width:600px; margin:0 auto; }
+  .header { text-align:center; margin-bottom:20px; }
+  .header h1 { font-size:20px; font-weight:700; }
+  .header p { font-size:11px; color:#64748b; margin-top:3px; }
+  .badge { display:inline-block; margin-top:8px; padding:4px 14px; background:#dcfce7; color:#059669; border-radius:20px; font-weight:700; font-size:13px; }
+  .info-box { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:12px 16px; margin-bottom:16px; }
+  .info-row { display:flex; justify-content:space-between; margin-bottom:4px; }
+  .due { color:#ef4444; font-weight:700; }
+  table { width:100%; border-collapse:collapse; margin-bottom:16px; }
+  thead th { background:#f8fafc; padding:8px 12px; text-align:left; border-bottom:2px solid #e2e8f0; font-weight:600; }
+  thead th:last-child { text-align:right; }
+  tfoot td { padding:10px 12px; font-weight:700; border-top:2px solid #e2e8f0; }
+  tfoot td:last-child { text-align:right; color:#ef4444; font-size:15px; }
+  .bank-box { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:12px 16px; }
+  .bank-box h3 { font-weight:700; margin-bottom:8px; }
+  .bank-row { display:flex; margin-bottom:4px; }
+  .bank-row .label { color:#64748b; width:90px; flex-shrink:0; }
+  .acno { font-size:16px; font-weight:700; color:#1d4ed8; }
+  .footer { margin-top:16px; font-size:11px; color:#94a3b8; text-align:center; }
+  @media print { body { padding:20px; } button { display:none !important; } }
+</style>
+</head><body>
+<div class="header">
+  <h1>${d.villageName}</h1>
+  <p>${d.juristic}</p>
+  ${d.address ? '<p>' + d.address + '</p>' : ''}
+  <span class="badge">ใบแจ้งหนี้ค่าส่วนกลาง</span>
+  <p style="margin-top:6px;color:#64748b">วันที่ออก: ${d.issueDate}</p>
+</div>
+<div class="info-box">
+  <div class="info-row"><span><b>บ้านเลขที่:</b> ${d.h.house_no||'—'} ${d.h.soi||''}</span><span class="due">กำหนดชำระ: วันที่ ${d.dueDayNum}</span></div>
+  <div class="info-row"><span><b>ชื่อ:</b> ${d.h.fullname||d.h.line_name||'—'}</span>${d.h.phone?'<span>โทร: '+d.h.phone+'</span>':''}</div>
+</div>
+<table>
+  <thead><tr><th>รายการ</th><th style="text-align:right">จำนวนเงิน</th></tr></thead>
+  <tbody>${rows}</tbody>
+  <tfoot><tr><td>รวมทั้งสิ้น</td><td>${d.total.toLocaleString()} บาท</td></tr></tfoot>
+</table>
+<div class="bank-box">
+  <h3>ข้อมูลการชำระเงิน</h3>
+  <div class="bank-row"><span class="label">ธนาคาร</span><span>${d.bankName}</span></div>
+  <div class="bank-row"><span class="label">ชื่อบัญชี</span><span>${d.accountName}</span></div>
+  <div class="bank-row"><span class="label">เลขบัญชี</span><span class="acno">${d.accountNo}</span></div>
+  ${d.phone ? '<div class="bank-row"><span class="label">สอบถาม</span><span>' + d.phone + '</span></div>' : ''}
+</div>
+<p class="footer">${d.footerNote}</p>
+<div style="margin-top:20px;text-align:center">
+  <button onclick="window.print()" style="padding:10px 28px;background:#059669;color:white;border:none;border-radius:10px;font-family:Sarabun,sans-serif;font-size:14px;font-weight:700;cursor:pointer">🖨️ พิมพ์ / บันทึก PDF</button>
+</div>
+</body></html>`;
+
+            const w = window.open('', '_blank', 'width=700,height=900');
+            w.document.write(html);
+            w.document.close();
+            showToast('✅ เปิดหน้าใบแจ้งหนี้ · กด "พิมพ์" เพื่อบันทึก PDF', 'success');
         }
 
         async function sendInvoiceLine(idx, btn) {
