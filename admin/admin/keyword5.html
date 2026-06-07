@@ -7326,12 +7326,39 @@ async function updateAllUserProfiles() {
 
                 // RICH MENU
                 '<div class="glass rounded-3xl p-5 mb-5">' +
-                '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">📱</span>' +
+                '<div class="flex items-center justify-between mb-4">' +
+                '<div class="flex items-center gap-3"><span class="text-2xl">📱</span>' +
                 '<div><div class="font-bold text-slate-800">Rich Menu IDs</div>' +
-                '<div class="text-xs text-slate-500">Rich Menu หลังลงทะเบียน / ค่าเริ่มต้น</div></div></div>' +
-                '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">' +
-                inpRow('member-richmenu',  cfg.member_richmenu ||'richmenu-6dbab648fe7753fd311142e0c706ae1f', 'Rich Menu สมาชิก', true) +
-                inpRow('default-richmenu', cfg.default_richmenu||'', 'Rich Menu ค่าเริ่มต้น', true) +
+                '<div class="text-xs text-slate-500">ตั้งค่า Rich Menu · บันทึกแล้วมีผลทันที</div></div></div>' +
+                '<button onclick="applyRichMenuNow()" class="px-3 py-1.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-xl text-xs font-bold flex items-center gap-1.5">' +
+                '<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Apply ให้สมาชิกทุกคนทันที</button></div>' +
+                '<div class="space-y-4">' +
+
+                // Member rich menu
+                '<div class="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl">' +
+                '<label class="block text-xs font-bold text-emerald-700 mb-2">✅ Rich Menu สมาชิก (หลังลงทะเบียน)</label>' +
+                '<div class="flex gap-2 items-center">' +
+                '<input id="cfg-member-richmenu" value="' + escapeHtml(cfg.member_richmenu||'richmenu-6dbab648fe7753fd311142e0c706ae1f') + '"' +
+                ' class="flex-1 border border-emerald-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-emerald-300" placeholder="richmenu-xxx">' +
+                '<button onclick="previewRichMenu(\'member\')" class="px-3 py-2 bg-white border border-emerald-200 rounded-xl text-xs font-bold text-emerald-700 hover:bg-emerald-50">👁 Preview</button>' +
+                '</div>' +
+                '<div class="text-[11px] text-emerald-600 mt-1.5">ใช้กับ: สมาชิกที่ลงทะเบียนแล้ว · ลงทะเบียน LIFF · auto-check ทุกครั้งที่เปิดลิงก์</div></div>' +
+
+                // Default rich menu
+                '<div class="p-3 bg-slate-50 border border-slate-200 rounded-2xl">' +
+                '<label class="block text-xs font-bold text-slate-700 mb-2">🔘 Rich Menu ค่าเริ่มต้น (ก่อนลงทะเบียน)</label>' +
+                '<div class="flex gap-2 items-center">' +
+                '<input id="cfg-default-richmenu" value="' + escapeHtml(cfg.default_richmenu||'') + '"' +
+                ' class="flex-1 border border-slate-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-slate-300" placeholder="richmenu-xxx (ปล่อยว่างถ้าไม่มี)">' +
+                '<button onclick="previewRichMenu(\'default\')" class="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100">👁 Preview</button>' +
+                '</div>' +
+                '<div class="text-[11px] text-slate-500 mt-1.5">ใช้กับ: user ที่ยังไม่ได้ลงทะเบียน · ผู้ติดตามใหม่</div></div>' +
+
+                // preview box
+                '<div id="rm-preview-box" class="hidden p-3 bg-blue-50 border border-blue-200 rounded-2xl text-xs text-blue-700">' +
+                '<div class="font-bold mb-1">Rich Menu Preview</div>' +
+                '<div id="rm-preview-content"></div></div>' +
+
                 '</div></div>' +
 
                 // POINTS
@@ -7409,6 +7436,71 @@ async function updateAllUserProfiles() {
 
         async function saveSingleSetting(key, value) {
             await supabaseClient.from('system_settings').upsert({ key, value }, { onConflict: 'key' });
+        }
+
+        async function previewRichMenu(type) {
+            const id = document.getElementById(type === 'member' ? 'cfg-member-richmenu' : 'cfg-default-richmenu')?.value?.trim();
+            const box = document.getElementById('rm-preview-box');
+            const content = document.getElementById('rm-preview-content');
+            if (!id || !box || !content) return showToast('ใส่ Rich Menu ID ก่อน', 'warning');
+            box.classList.remove('hidden');
+            content.innerHTML = '⏳ กำลังโหลด...';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/richmenu/detail?id=${encodeURIComponent(id)}`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดไม่สำเร็จ');
+                const rm = d.richMenu || d;
+                content.innerHTML =
+                    '<div class="grid grid-cols-2 gap-2 mt-1">' +
+                    '<div><span class="text-blue-500 font-bold">ID:</span> ' + escapeHtml(rm.richMenuId || id) + '</div>' +
+                    '<div><span class="text-blue-500 font-bold">ชื่อ:</span> ' + escapeHtml(rm.name || '-') + '</div>' +
+                    '<div><span class="text-blue-500 font-bold">Size:</span> ' + (rm.size ? rm.size.width + 'x' + rm.size.height : '-') + '</div>' +
+                    '<div><span class="text-blue-500 font-bold">Areas:</span> ' + (rm.areas?.length || 0) + ' ปุ่ม</div>' +
+                    '</div>';
+            } catch(e) {
+                content.innerHTML = '❌ ' + escapeHtml(e.message) + ' — ตรวจสอบ ID ว่าถูกต้อง';
+            }
+        }
+
+        async function applyRichMenuNow() {
+            const memberId  = document.getElementById('cfg-member-richmenu')?.value?.trim();
+            if (!memberId) return showToast('ใส่ Rich Menu สมาชิกก่อน', 'warning');
+            showConfirmModal(
+                '🔄 Apply Rich Menu ให้ทุกคน?',
+                'ระบบจะเปลี่ยน Rich Menu ให้สมาชิกทุกคนที่ลงทะเบียนแล้ว<br>' +
+                '<small class="text-slate-500">อาจใช้เวลาสักครู่ตาม LINE API rate limit</small>',
+                async () => {
+                    showToast('⏳ กำลัง apply...', 'info');
+                    try {
+                        // ดึง userId ทุกคนจาก userhome
+                        const { data: members } = await supabaseClient
+                            .from('userhome').select('uid').not('uid', 'is', null);
+                        if (!members?.length) return showToast('ไม่พบสมาชิก', 'warning');
+
+                        let ok = 0, fail = 0;
+                        for (let i = 0; i < members.length; i += 50) {
+                            const chunk = members.slice(i, i + 50);
+                            for (const m of chunk) {
+                                try {
+                                    const r = await fetch(`${API_BASE_URL}/api/register/complete`, {
+                                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ userId: m.uid, richMenuId: memberId, silent: true })
+                                    });
+                                    r.ok ? ok++ : fail++;
+                                } catch(_) { fail++; }
+                                await new Promise(r => setTimeout(r, 80)); // rate limit
+                            }
+                            showToast('⏳ ' + Math.min(i+50, members.length) + '/' + members.length + ' คน...', 'loading');
+                        }
+                        showToast('✅ Apply สำเร็จ ' + ok + ' คน · ล้มเหลว ' + fail + ' คน', 'success');
+
+                        // บันทึก member_richmenu ลง settings ด้วย
+                        await supabaseClient.from('system_settings').upsert(
+                            { key: 'member_richmenu', value: memberId }, { onConflict: 'key' }
+                        );
+                    } catch(e) { showToast('❌ ' + e.message, 'error'); }
+                }
+            );
         }
 
         async function saveAllSettings(btn) {
