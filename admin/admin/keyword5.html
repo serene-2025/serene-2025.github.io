@@ -6548,199 +6548,198 @@ async function updateAllUserProfiles() {
 
         // ─── Members + Points ──────────────────────────────
         // ─── VILLAGE MAP ──────────────────────────────────────────────
+        // ─── VILLAGE MAP (Layout ตามแผนผังจริง) ───────────────────
+        window._mapData = {};
+
         async function renderVillageMapView() {
+            const now = new Date();
+            const curYearTH = now.getFullYear() + 543;
+            const { data: yearsData } = await supabaseClient
+                .from('house_payments').select('year').order('year', { ascending: false });
+            const years = [...new Set((yearsData||[]).map(r=>r.year))].filter(Boolean);
+            if (!years.length) years.push(curYearTH);
+
             document.getElementById('content-area').innerHTML =
                 '<div class="slide-in p-2">' +
-                '<div class="mb-6 flex justify-between items-end">' +
+                '<div class="mb-5 flex flex-wrap justify-between items-end gap-3">' +
                 '<div><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
                 '<span class="bg-teal-100 text-teal-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="map" class="w-8 h-8"></i></span>' +
                 'แผนผังหมู่บ้าน</h1>' +
-                '<p class="text-sm text-slate-500 mt-2 ml-1">คลิกบ้านเพื่อดูข้อมูล · สีแสดงสถานะการจ่าย</p></div>' +
-                '<div class="flex gap-2 items-center">' +
+                '<p class="text-sm text-slate-500 mt-1 ml-1">คลิกบ้านเพื่อดูข้อมูล · ยึดถนนกลางเป็นแกน</p></div>' +
+                '<div class="flex gap-2 items-center flex-wrap">' +
                 '<select id="map-year" class="border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white">' +
+                years.map(y => '<option value="' + y + '"' + (y === years[0] ? ' selected' : '') + '>' + y + '</option>').join('') +
                 '</select>' +
                 '<select id="map-month" class="border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white">' +
-                TH_MONTHS.map((m,i) => '<option value="' + m.col + '"' + (i === new Date().getMonth() ? ' selected' : '') + '>' + m.label + '</option>').join('') +
+                TH_MONTHS.map((m,i) => '<option value="' + m.col + '"' + (i === now.getMonth() ? ' selected' : '') + '>' + m.label + '</option>').join('') +
                 '</select>' +
                 '<button onclick="loadVillageMap()" class="px-4 py-2 bg-teal-500 hover:bg-teal-600 text-white rounded-xl font-bold text-sm">โหลดแผนผัง</button>' +
                 '</div></div>' +
-                // legend
-                '<div class="flex flex-wrap gap-3 mb-4 text-xs font-bold">' +
-                '<span class="flex items-center gap-1.5"><span class="w-4 h-4 rounded bg-emerald-500 inline-block"></span>จ่ายแล้ว</span>' +
-                '<span class="flex items-center gap-1.5"><span class="w-4 h-4 rounded bg-amber-400 inline-block"></span>ล่วงหน้า</span>' +
-                '<span class="flex items-center gap-1.5"><span class="w-4 h-4 rounded bg-rose-500 inline-block"></span>ค้างชำระ</span>' +
-                '<span class="flex items-center gap-1.5"><span class="w-4 h-4 rounded bg-slate-300 inline-block"></span>ไม่มีข้อมูล</span>' +
-                '<span class="flex items-center gap-1.5"><span class="w-4 h-4 rounded bg-blue-500 inline-block"></span>มี LINE</span>' +
+                '<div class="flex flex-wrap gap-x-4 gap-y-1 mb-4 text-xs font-bold">' +
+                '<span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm inline-block" style="background:#22c55e"></span>จ่ายแล้ว</span>' +
+                '<span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm inline-block" style="background:#f59e0b"></span>ล่วงหน้า</span>' +
+                '<span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm inline-block" style="background:#ef4444"></span>ค้างชำระ</span>' +
+                '<span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm inline-block" style="background:#cbd5e1"></span>ไม่มีข้อมูล</span>' +
+                '<span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full inline-block" style="background:#3b82f6"></span>มี LINE</span>' +
                 '</div>' +
-                '<div id="map-container" class="glass rounded-3xl p-4 min-h-[400px]">' +
-                '<div class="text-center py-16 text-slate-400">เลือกเดือนและปี แล้วกด "โหลดแผนผัง"</div>' +
+                '<div id="map-container" class="glass rounded-3xl p-4 overflow-auto min-h-64">' +
+                '<div class="text-center py-16 text-slate-400 text-sm">เลือกเดือนและปี แล้วกด โหลดแผนผัง</div>' +
                 '</div>' +
-                // info panel
-                '<div id="map-info" class="hidden glass rounded-3xl p-5 mt-4 border-l-4 border-teal-400">' +
-                '</div>' +
+                '<div id="map-info" class="hidden glass rounded-3xl p-4 mt-4 border-l-4 border-teal-400"></div>' +
+                '<div id="map-stats" class="hidden"></div>' +
                 '</div>';
             lucide.createIcons();
-
-            // โหลดปีจาก house_payments
-            const { data: yearsData } = await supabaseClient.from('house_payments').select('year').order('year', { ascending: false });
-            const years = [...new Set((yearsData||[]).map(r=>r.year))].filter(Boolean);
-            const curYearTH = new Date().getFullYear() + 543;
-            if (!years.length) years.push(curYearTH);
-            const yearSel = document.getElementById('map-year');
-            if (yearSel) yearSel.innerHTML = years.map(y =>
-                '<option value="' + y + '"' + (y === years[0] ? ' selected' : '') + '>' + y + '</option>'
-            ).join('');
         }
 
         async function loadVillageMap() {
             const container = document.getElementById('map-container');
             const month = document.getElementById('map-month')?.value;
-            const year  = parseInt(document.getElementById('map-year')?.value || new Date().getFullYear()+543);
-            if (!container || !month) return;
+            const year  = parseInt(document.getElementById('map-year')?.value || 0);
+            if (!container || !month || !year) return;
+            container.innerHTML = '<div class="text-center py-12 text-slate-400">กำลังโหลด...</div>';
+            document.getElementById('map-info').classList.add('hidden');
+            document.getElementById('map-stats').classList.add('hidden');
+            window._mapData = {};
 
-            container.innerHTML = '<div class="text-center py-12 text-slate-400">⏳ กำลังโหลดข้อมูล...</div>';
-
-            // โหลดข้อมูลพร้อมกัน
             const [{ data: payments }, { data: homes }] = await Promise.all([
                 supabaseClient.from('house_payments').select('house_numbe, soi, owner_name, ' + month).eq('year', year),
                 supabaseClient.from('userhome').select('uid, house_no, soi, fullname, line_name, living_status, phone, profile'),
             ]);
 
-            // map ข้อมูล
+            if (!payments?.length) { container.innerHTML = '<div class="text-center py-12 text-slate-400">ไม่พบข้อมูลปี ' + year + '</div>'; return; }
+
+            const norm = s => (s||'').toString().replace(/\s+/g,'').toLowerCase();
             const homeMap = {};
-            const normKey = s => (s||'').toString().replace(/\s+/g,'').toLowerCase();
-            (homes||[]).forEach(h => { homeMap[normKey(h.house_no)] = h; });
+            (homes||[]).forEach(h => { homeMap[norm(h.house_no)] = h; });
 
-            // group by soi
-            const soiMap = {};
-            (payments||[]).forEach(p => {
-                const soi = p.soi || 'ไม่ระบุซอย';
-                if (!soiMap[soi]) soiMap[soi] = [];
-                const status = (p[month]||'').trim();
-                const home = homeMap[normKey(p.house_numbe)] || {};
-                soiMap[soi].push({
-                    house_no: p.house_numbe,
-                    owner: p.owner_name || home.fullname || home.line_name || '—',
-                    status,
-                    uid: home.uid || null,
-                    profile: home.profile || null,
-                    living_status: home.living_status || '',
-                    phone: home.phone || '',
-                    line_name: home.line_name || '',
-                });
-            });
-
-            // sort sois
-            const sois = Object.keys(soiMap).sort((a,b) => {
-                const na = parseInt(a.replace(/\D/g,''))||0, nb = parseInt(b.replace(/\D/g,''))||0;
-                return na - nb;
-            });
-
-            const getColor = (status) => {
-                if (status === 'จ่ายแล้ว') return { bg:'#dcfce7', border:'#16a34a', text:'#15803d', dot:'#22c55e' };
-                if (status === 'ล่วงหน้า') return { bg:'#fef9c3', border:'#ca8a04', text:'#92400e', dot:'#f59e0b' };
-                if (!status)               return { bg:'#f1f5f9', border:'#cbd5e1', text:'#64748b', dot:'#94a3b8' };
-                return { bg:'#fee2e2', border:'#dc2626', text:'#991b1b', dot:'#ef4444' };
+            const PAID = ['จ่ายแล้ว','ล่วงหน้า'];
+            const getCol = st => {
+                if (st === 'จ่ายแล้ว') return { bg:'#dcfce7', bd:'#16a34a', tx:'#166534', dot:'#22c55e' };
+                if (st === 'ล่วงหน้า') return { bg:'#fef9c3', bd:'#d97706', tx:'#78350f', dot:'#f59e0b' };
+                if (!st)               return { bg:'#f1f5f9', bd:'#94a3b8', tx:'#475569', dot:'#cbd5e1' };
+                return { bg:'#fee2e2', bd:'#dc2626', tx:'#7f1d1d', dot:'#ef4444' };
             };
 
-            // สร้าง SVG map
-            const HOUSE_W = 68, HOUSE_H = 46, GAP_X = 8, GAP_Y = 40;
-            const PADDING = 16;
-            const maxPerRow = Math.max(...sois.map(s => soiMap[s].length), 1);
-            const totalW = maxPerRow * (HOUSE_W + GAP_X) + PADDING * 2;
-            const totalH = sois.reduce((sum, soi) => sum + (HOUSE_H + GAP_Y) + 24, PADDING * 2);
-
-            let svgContent = '';
-            let y = PADDING + 8;
-
-            sois.forEach(soi => {
-                const houses = soiMap[soi];
-                // SOI label
-                svgContent += `<text x="${PADDING}" y="${y}" font-size="13" font-weight="700" fill="#334155" font-family="Sarabun,sans-serif">${soi} (${houses.length} หลัง)</text>`;
-                y += 6;
-
-                houses.forEach((h, i) => {
-                    const x = PADDING + i * (HOUSE_W + GAP_X);
-                    const col = getColor(h.status);
-                    const hasLine = !!h.uid;
-                    const houseId = 'house-' + encodeURIComponent(h.house_no).replace(/%/g,'_');
-
-                    svgContent +=
-                        // กล่องบ้าน
-                        `<g class="house-box" id="${houseId}" style="cursor:pointer" onclick="mapClickHouse(${JSON.stringify(JSON.stringify(h)).slice(1,-1)})">` +
-                        `<rect x="${x}" y="${y}" width="${HOUSE_W}" height="${HOUSE_H}" rx="6" ry="6" fill="${col.bg}" stroke="${col.border}" stroke-width="1.5"/>` +
-                        // สถานะ dot
-                        `<circle cx="${x+HOUSE_W-7}" cy="${y+7}" r="4" fill="${col.dot}"/>` +
-                        // LINE dot
-                        (hasLine ? `<circle cx="${x+7}" cy="${y+7}" r="4" fill="#06C755"/>` : '') +
-                        // house_no
-                        `<text x="${x+HOUSE_W/2}" y="${y+HOUSE_H/2-2}" text-anchor="middle" font-size="11" font-weight="700" fill="${col.text}" font-family="Sarabun,sans-serif">${h.house_no}</text>` +
-                        // owner name (truncate)
-                        `<text x="${x+HOUSE_W/2}" y="${y+HOUSE_H/2+12}" text-anchor="middle" font-size="9" fill="#64748b" font-family="Sarabun,sans-serif">${(h.owner||'').substring(0,8)}</text>` +
-                        '</g>';
-                });
-                y += HOUSE_H + GAP_Y;
+            const soiMap = {};
+            (payments||[]).forEach(p => {
+                const soi = (p.soi||'').trim() || 'ไม่ระบุ';
+                if (!soiMap[soi]) soiMap[soi] = [];
+                const status = (p[month]||'').trim();
+                const home = homeMap[norm(p.house_numbe)] || {};
+                const key = 'k' + soiMap[soi].length + '_' + soi.replace(/\W/g,'');
+                const data = { key, house_no:p.house_numbe, owner:p.owner_name||home.fullname||home.line_name||'—',
+                    status, uid:home.uid||null, profile:home.profile||null,
+                    living_status:home.living_status||'', phone:home.phone||'', line_name:home.line_name||'' };
+                window._mapData[key] = data;
+                soiMap[soi].push(data);
             });
 
-            const svgEl = `<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}"
-                style="max-width:100%;height:auto;display:block;overflow:visible">
-                <rect width="${totalW}" height="${totalH}" rx="12" fill="#f8fafc"/>
-                ${svgContent}
-            </svg>`;
+            Object.values(soiMap).forEach(arr => arr.sort((a,b) => {
+                const na = parseInt((a.house_no||'').split('/')[1]||0);
+                const nb = parseInt((b.house_no||'').split('/')[1]||0);
+                return na - nb;
+            }));
 
-            container.innerHTML =
-                '<div style="overflow-x:auto;overflow-y:auto;max-height:70vh">' + svgEl + '</div>';
+            // Layout ตามแผนผังจริง — ถนนกลางแบ่งซ้าย/ขวา
+            const LAYOUT = [
+                { label:'ฝั่งซ้าย (3L/3K/3J)', sois:['3L','3K','3J'], border:'right:2px solid #94a3b8' },
+                { label:'', sois:[], road:true },
+                { label:'กลาง (3H/3G/3F)', sois:['3H','3G','3F'], border:'right:1px dashed #cbd5e1' },
+                { label:'กลาง (3D/3B)', sois:['3D','3B'], border:'right:1px dashed #cbd5e1' },
+                { label:'ฝั่งขวา (3E/3C/3A)', sois:['3E','3C','3A','3'], border:'' },
+            ];
+
+            const allLayout = LAYOUT.flatMap(l => l.sois);
+            const others = Object.keys(soiMap).filter(s => !allLayout.includes(s)).sort();
+            if (others.length) LAYOUT.push({ label:'อื่นๆ', sois:others, border:'' });
+
+            const makeCell = h => {
+                const c = getCol(h.status);
+                return '<div data-key="' + escapeHtml(h.key) + '" onclick="mapClickHouse(this.dataset.key)" style="' +
+                    'background:' + c.bg + ';border:1.5px solid ' + c.bd + ';color:' + c.tx + ';' +
+                    'cursor:pointer;border-radius:6px;padding:3px 5px;margin:2px;min-width:60px;max-width:72px;' +
+                    'text-align:center;position:relative;transition:transform 0.1s,box-shadow 0.1s' +
+                    '" onmouseover="this.style.transform=\'scale(1.1)\';this.style.boxShadow=\'0 2px 8px rgba(0,0,0,0.2)\'"' +
+                    ' onmouseout="this.style.transform=\'\';this.style.boxShadow=\'\'">'+
+                    (h.uid ? '<span style="position:absolute;top:2px;left:2px;width:5px;height:5px;border-radius:50%;background:#3b82f6"></span>' : '') +
+                    '<div style="font-size:9px;font-weight:700;line-height:1.2">' + escapeHtml(h.house_no) + '</div>' +
+                    '<div style="font-size:8px;opacity:0.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml((h.owner||'').substring(0,6)) + '</div>' +
+                    '</div>';
+            };
+
+            const makeSoi = soiName => {
+                const arr = soiMap[soiName] || [];
+                if (!arr.length) return '';
+                return '<div style="margin-bottom:5px">' +
+                    '<div style="font-size:10px;font-weight:700;color:#334155;margin-bottom:2px">' + escapeHtml(soiName) + ' <span style="color:#94a3b8;font-weight:400">' + arr.length + '</span></div>' +
+                    '<div style="display:flex;flex-wrap:wrap">' + arr.map(makeCell).join('') + '</div></div>';
+            };
+
+            container.innerHTML = '<div style="display:flex;gap:0;min-width:700px">' +
+                LAYOUT.map(col => {
+                    if (col.road) return '<div style="width:24px;flex-shrink:0;display:flex;align-items:center;justify-content:center">' +
+                        '<div style="writing-mode:vertical-rl;transform:rotate(180deg);font-size:9px;font-weight:700;color:#64748b;letter-spacing:2px">ถนน</div></div>';
+                    return '<div style="flex:1;min-width:130px;padding:0 6px;border-style:solid;border-color:transparent;border-width:0;' + col.border + '">' +
+                        '<div style="font-size:10px;font-weight:700;color:#64748b;text-align:center;margin-bottom:6px;padding:2px 4px;background:#f1f5f9;border-radius:5px">' + col.label + '</div>' +
+                        col.sois.map(makeSoi).join('') + '</div>';
+                }).join('') + '</div>';
 
             // สถิติ
-            const allHouses = sois.flatMap(s => soiMap[s]);
-            const paid    = allHouses.filter(h => h.status === 'จ่ายแล้ว' || h.status === 'ล่วงหน้า').length;
-            const unpaid  = allHouses.filter(h => h.status && h.status !== 'จ่ายแล้ว' && h.status !== 'ล่วงหน้า').length;
-            const noData  = allHouses.filter(h => !h.status).length;
-            const hasLine = allHouses.filter(h => h.uid).length;
-
-            container.innerHTML +=
-                '<div class="grid grid-cols-4 gap-2 mt-4">' +
-                [['✅','จ่ายแล้ว',paid,'emerald'],['⏰','ค้างชำระ',unpaid,'rose'],['—','ไม่มีข้อมูล',noData,'slate'],['💬','มี LINE',hasLine,'blue']].map(([icon,label,val,c]) =>
-                    '<div class="bg-' + c + '-50 border border-' + c + '-200 rounded-xl p-2.5 text-center">' +
-                    '<div class="text-xl">' + icon + '</div>' +
-                    '<div class="text-lg font-bold text-' + c + '-700">' + val + '</div>' +
-                    '<div class="text-[10px] text-' + c + '-600 font-bold">' + label + '</div>' +
-                    '</div>'
-                ).join('') +
-                '</div>';
+            const all = Object.values(window._mapData);
+            const st = document.getElementById('map-stats');
+            st.className = 'grid grid-cols-4 gap-2 mt-3';
+            const nPaid   = all.filter(h => PAID.includes(h.status)).length;
+            const nUnpaid = all.filter(h => h.status && !PAID.includes(h.status)).length;
+            const nNoData = all.filter(h => !h.status).length;
+            const nLine   = all.filter(h => h.uid).length;
+            st.innerHTML = [
+                ['#dcfce7','#16a34a','check',nPaid,'จ่ายแล้ว'],
+                ['#fee2e2','#dc2626','alert-triangle',nUnpaid,'ค้างชำระ'],
+                ['#f1f5f9','#64748b','minus',nNoData,'ไม่มีข้อมูล'],
+                ['#eff6ff','#2563eb','message-circle',nLine,'มี LINE'],
+            ].map(([bg,col,icon,val,lbl]) =>
+                '<div style="background:' + bg + ';border:1px solid ' + col + ';border-radius:12px;padding:10px;text-align:center">' +
+                '<i data-lucide="' + icon + '" style="width:20px;height:20px;color:' + col + ';margin:0 auto 4px"></i>' +
+                '<div style="font-size:22px;font-weight:700;color:' + col + '">' + val + '</div>' +
+                '<div style="font-size:11px;font-weight:600;color:' + col + '">' + lbl + '</div></div>'
+            ).join('');
+            st.classList.remove('hidden');
+            lucide.createIcons();
         }
 
-        function mapClickHouse(hJson) {
-            let h;
-            try { h = JSON.parse(hJson); } catch(e) { return; }
+        function mapClickHouse(key) {
+            const h = window._mapData[key];
+            if (!h) return;
             const info = document.getElementById('map-info');
             if (!info) return;
-            const statusColor = { 'จ่ายแล้ว':'text-emerald-600','ล่วงหน้า':'text-amber-600','':'text-slate-400' };
-            const sc = statusColor[h.status] || 'text-rose-600';
             const month = document.getElementById('map-month')?.value;
             const monthLabel = TH_MONTHS.find(m => m.col === month)?.label || month;
-
-            info.className = 'glass rounded-3xl p-5 mt-4 border-l-4 border-teal-400';
+            const PAID = ['จ่ายแล้ว','ล่วงหน้า'];
+            const col = h.status === 'จ่ายแล้ว' ? '#16a34a' : h.status === 'ล่วงหน้า' ? '#d97706' : !h.status ? '#94a3b8' : '#dc2626';
+            info.className = 'glass rounded-3xl p-4 mt-4 border-l-4';
+            info.style.borderLeftColor = col;
             info.innerHTML =
                 '<div class="flex items-start gap-3">' +
-                (h.profile ? '<img src="' + escapeHtml(h.profile) + '" class="w-12 h-12 rounded-full object-cover border-2 border-teal-200 flex-shrink-0">' :
-                             '<div class="w-12 h-12 rounded-full bg-teal-100 flex items-center justify-center text-teal-600 text-xl flex-shrink-0">🏠</div>') +
+                (h.profile ? '<img src="' + escapeHtml(h.profile) + '" class="w-12 h-12 rounded-full object-cover border-2 flex-shrink-0" style="border-color:' + col + '">' :
+                             '<div class="w-12 h-12 rounded-full flex items-center justify-center text-xl flex-shrink-0" style="background:' + col + '20;color:' + col + '">🏠</div>') +
                 '<div class="flex-1 min-w-0">' +
-                '<div class="font-bold text-slate-800 text-lg">' + escapeHtml(h.house_no) + '</div>' +
+                '<div class="font-bold text-slate-800 text-base">' + escapeHtml(h.house_no) + '</div>' +
                 '<div class="text-sm text-slate-600">' + escapeHtml(h.owner) + '</div>' +
                 (h.living_status ? '<div class="text-xs text-slate-400">' + escapeHtml(h.living_status) + '</div>' : '') +
                 '</div>' +
                 '<div class="text-right flex-shrink-0">' +
-                '<div class="text-xs text-slate-500">' + monthLabel + '</div>' +
-                '<div class="font-bold text-sm ' + sc + '">' + (h.status || 'ยังไม่จ่าย') + '</div>' +
-                (h.uid ? '<div class="text-[10px] text-emerald-600 font-bold mt-1">💬 มี LINE</div>' : '<div class="text-[10px] text-slate-400 mt-1">ไม่มี LINE</div>') +
+                '<div class="text-xs text-slate-400">' + monthLabel + '</div>' +
+                '<div class="font-bold text-sm" style="color:' + col + '">' + escapeHtml(h.status || 'ยังไม่จ่าย') + '</div>' +
+                (h.uid ? '<div class="text-[10px] text-blue-600 font-bold mt-1">💬 มี LINE</div>' : '<div class="text-[10px] text-slate-400 mt-1">ไม่มี LINE</div>') +
                 '</div></div>' +
                 '<div class="flex gap-2 mt-3">' +
-                (h.phone ? '<a href="tel:' + escapeHtml(h.phone) + '" class="flex-1 py-2 bg-blue-100 text-blue-700 rounded-xl text-xs font-bold text-center hover:bg-blue-200">📞 โทร</a>' : '') +
-                (h.uid ? '<button onclick="quickPushUser(\'' + escapeHtml(h.uid) + '\',\'' + escapeHtml(h.owner) + '\')" class="flex-1 py-2 bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold hover:bg-indigo-200">💬 ส่งข้อความ</button>' : '') +
-                '<button onclick="editUserhome(\'' + escapeHtml(h.uid||'') + '\')" class="flex-1 py-2 bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold hover:bg-emerald-200">✏️ แก้ไข</button>' +
+                (h.phone ? '<a href="tel:' + escapeHtml(h.phone) + '" class="flex-1 py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold text-center hover:bg-blue-100">📞 โทร</a>' : '') +
+                (h.uid ? '<button data-uid="' + escapeHtml(h.uid) + '" data-name="' + escapeHtml(h.owner) + '" onclick="quickPushUser(this.dataset.uid,this.dataset.name)" class="flex-1 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl text-xs font-bold hover:bg-indigo-100">💬 LINE</button>' : '') +
                 '</div>';
+            info.classList.remove('hidden');
+            info.scrollIntoView({ behavior:'smooth', block:'nearest' });
         }
+
 
         // ─── INVOICE PDF ─────────────────────────────────────────────
         async function renderInvoiceView() {
