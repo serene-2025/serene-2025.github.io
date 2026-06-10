@@ -667,7 +667,8 @@ let currentUser = null;
 let allData = [];          
 let pendingFees = [];       
 let allTransactions = [];   
-let adminNotes = {};            
+let adminNotes = {};
+let currentSlipCompare = null; // เพิ่มตัวแปรสำหรับเก็บข้อมูลสลิปตอนเปิด Modal
 
 const monthMap = { 'มกราคม':'jan', 'กุมภาพันธ์':'feb', 'มีนาคม':'mar', 'เมษายน':'apr', 'พฤษภาคม':'may', 'มิถุนายน':'jun', 'กรกฎาคม':'jul', 'สิงหาคม':'aug', 'กันยายน':'sep', 'ตุลาคม':'oct', 'พฤศจิกายน':'nov', 'ธันวาคม':'dec' };
 const months = [
@@ -1453,13 +1454,163 @@ function renderPending() {
                     <div class="flex justify-between text-xs"><span class="text-slate-500">วันที่แจ้ง:</span><span class="text-slate-600">${fee.reported_at && fee.reported_at !== '-' ? new Date(fee.reported_at).toLocaleDateString('th-TH') : '-'}</span></div>
                     <div class="pt-3 grid grid-cols-3 gap-1.5">
                         <button onclick="openSlipCompare('${fee.id}')" class="py-2 bg-indigo-50 text-indigo-600 font-bold rounded-lg hover:bg-indigo-600 hover:text-white text-xs flex items-center justify-center gap-1" title="ตรวจ"><i data-lucide="file-search" class="w-4 h-4"></i> ตรวจ</button>
-                        <button onclick="openRejectModal()" class="py-2 bg-red-50 text-red-600 font-bold rounded-lg hover:bg-red-600 hover:text-white text-xs flex items-center justify-center gap-1" title="ปฏิเสธ"><i data-lucide="x" class="w-4 h-4"></i> ปฏิเสธ</button>
+                        <button onclick="openRejectFromCard('${fee.id}')" class="py-2 bg-red-50 text-red-600 font-bold rounded-lg hover:bg-red-600 hover:text-white text-xs flex items-center justify-center gap-1" title="ปฏิเสธ"><i data-lucide="x" class="w-4 h-4"></i> ปฏิเสธ</button>
                         <button onclick="approvePending('${fee.id}')" class="py-2 bg-green-500 text-white font-bold rounded-lg hover:bg-green-600 text-xs flex items-center justify-center gap-1" title="อนุมัติ"><i data-lucide="check" class="w-4 h-4"></i> ผ่าน</button>
                     </div>
                 </div>
             </div>`;
     });
     html += '</div>'; list.innerHTML = html; lucide.createIcons();
+}
+
+async function approvePending(id) {
+    const result = await Swal.fire({
+        title: 'อนุมัติและออกใบเสร็จ?', text: 'ระบบจะเปลี่ยนสถานะเป็น "ตรวจสอบแล้ว" และสร้างใบเสร็จ PDF',
+        icon: 'question', showCancelButton: true, confirmButtonText: 'ใช่, อนุมัติ', cancelButtonText: 'ยกเลิก'
+    });
+    if (!result.isConfirmed) return;
+    Swal.fire({ title: 'กำลังประมวลผล...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    try {
+        await callGas('runPDF', { id, inspector: currentUser.name });
+        Swal.fire('สำเร็จ', 'อนุมัติและสร้างใบเสร็จเรียบร้อย', 'success');
+        await fetchAllData(); renderPending();
+    } catch (err) { Swal.fire('ผิดพลาด', err.message, 'error'); }
+}
+
+async function approveAllPending() {
+    if (pendingFees.length === 0) return;
+
+    const result = await Swal.fire({
+        title: `อนุมัติทั้งหมด ${pendingFees.length} รายการ?`,
+        html: `ระบบจะทยอยออกใบเสร็จ PDF และอัปเดตสถานะให้ทุกรายการ<br><span class="text-xs text-red-500">⚠️ กรุณาอย่าปิดหน้าต่างระหว่างทำงาน</span>`,
+        icon: 'warning', showCancelButton: true,
+        confirmButtonText: 'ใช่, อนุมัติทั้งหมด', cancelButtonText: 'ยกเลิก',
+        confirmButtonColor: '#16a34a'
+    });
+    if (!result.isConfirmed) return;
+
+    const ids = pendingFees.map(f => f.id);
+    let totalSuccess = 0;
+    
+    Swal.fire({
+        title: 'กำลังอนุมัติทั้งหมด',
+        html: `
+            <div class="mb-2">ความคืบหน้า: <span id="apTxt">0 / ${ids.length}</span></div>
+            <div class="bg-slate-200 rounded-full h-4 overflow-hidden">
+                <div id="apBar" class="bg-green-500 h-full transition-all" style="width:0%"></div>
+            </div>
+        `,
+        allowOutsideClick: false, showConfirmButton: false
+    });
+
+    for (let i = 0; i < ids.length; i++) {
+        try {
+            await callGas('runPDF', { id: ids[i], inspector: currentUser.name });
+            totalSuccess++;
+            const pct = Math.round((totalSuccess / ids.length) * 100);
+            const bar = document.getElementById('apBar');
+            const txt = document.getElementById('apTxt');
+            if (bar) bar.style.width = pct + '%';
+            if (txt) txt.textContent = `${totalSuccess} / ${ids.length}`;
+        } catch (e) {
+            console.error(`Error ID ${ids[i]}:`, e);
+        }
+    }
+    Swal.fire('สำเร็จ', `อนุมัติเรียบร้อย ${totalSuccess} รายการ`, 'success');
+    await fetchAllData();
+}
+
+function openSlipCompare(feeId) {
+    const fee = allTransactions.find(t => t.id == feeId);
+    if (!fee) return;
+    currentSlipCompare = fee;
+    const house = allData.find(h => h.house_numbe === fee.house_number && h.year == fee.year);
+    
+    // ตั้งค่ารูป
+    const img = document.getElementById('compareSlipImg');
+    if (fee.image_url) { img.src = fee.image_url; img.style.display = 'block'; } else { img.style.display = 'none'; }
+    
+    // ตั้งค่ารายละเอียด
+    document.getElementById('compareSlipInfo').innerHTML = `
+        <div><b>บ้าน:</b> ${fee.house_number}</div>
+        <div><b>เดือน:</b> ${fee.month} ${fee.year}</div>
+        <div><b>ยอดโอน:</b> <span class="text-green-600 font-bold">฿${(fee.amount||300).toLocaleString()}</span></div>
+        <div><b>เวลาแจ้ง:</b> ${fee.reported_at ? new Date(fee.reported_at).toLocaleString('th-TH') : '-'}</div>
+        ${fee.note ? `<div><b>หมายเหตุ:</b> ${fee.note}</div>` : ''}
+    `;
+    
+    document.getElementById('slipCompareModal').classList.remove('hidden');
+}
+
+function closeSlipCompare() { 
+    document.getElementById('slipCompareModal').classList.add('hidden'); 
+    currentSlipCompare = null;
+}
+
+async function approveFromCompare() { 
+    if(!currentSlipCompare) return;
+    const idToApprove = currentSlipCompare.id;
+    closeSlipCompare();
+    await approvePending(idToApprove);
+}
+
+function openRejectFromCard(feeId) {
+    currentSlipCompare = allTransactions.find(t => t.id == feeId);
+    if (!currentSlipCompare) return;
+    openRejectModal();
+}
+
+function openRejectModal() { 
+    document.getElementById('rejectReasonSelect').value = '';
+    document.getElementById('rejectReasonText').value = '';
+    document.getElementById('rejectModal').classList.remove('hidden'); 
+}
+
+function closeRejectModal() { 
+    document.getElementById('rejectModal').classList.add('hidden'); 
+}
+
+async function confirmRejectSlip() { 
+    if (!currentSlipCompare) return;
+    
+    const reasonSelect = document.getElementById('rejectReasonSelect').value;
+    const reasonText = document.getElementById('rejectReasonText').value.trim();
+    
+    if (!reasonSelect && !reasonText) {
+        Swal.fire('กรุณาระบุเหตุผล', 'โปรดเลือกหรือพิมพ์เหตุผลที่ปฏิเสธสลิป', 'warning');
+        return;
+    }
+    
+    const fullReason = reasonSelect ? (reasonText ? `${reasonSelect} - ${reasonText}` : reasonSelect) : reasonText;
+    const fee = currentSlipCompare;
+    
+    closeRejectModal();
+    if(document.getElementById('slipCompareModal')) closeSlipCompare();
+    
+    Swal.fire({ title: 'กำลังปฏิเสธสลิป...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    
+    try {
+        const obj = {
+            numid: fee.id,
+            oldfile: fee.image_url || '',
+            datastud1: fee.recorder || '',
+            datastud2: fee.house_number || '',
+            datastud3: fee.month || '',
+            datastud4: fee.year || '',
+            datastud5: fee.channel || '',
+            datastud6: (fee.note || '') + ' | [ถูกปฏิเสธ] ' + fullReason,
+            note: 'ยกเลิก',
+            datastud7: new Date().toISOString().split('T')[0],
+            datastud8: fee.amount_text || 'สามร้อยบาทถ้วน',
+            datastud9: fee.amount || '300',
+            fullname: currentUser.name
+        };
+        await callGas('updateRecord', { form: obj });
+        Swal.fire('ปฏิเสธเรียบร้อย', `สลิปบ้าน ${fee.house_number} ถูกปฏิเสธแล้ว`, 'success');
+        await fetchAllData();
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    }
 }
 
 async function approvePending(id) {
@@ -1636,11 +1787,16 @@ window.moveMapTooltip = moveMapTooltip;
 window.handleLogout = handleLogout;
 window.openCommandPalette = openCommandPalette;
 window.closeCommandPalette = closeCommandPalette;
+
+// ผูกฟังก์ชันปุ่มหน้ารอตรวจสอบ (Pending View) เข้ากับ window
+window.openSlipCompare = openSlipCompare;
 window.closeSlipCompare = closeSlipCompare;
 window.approveFromCompare = approveFromCompare;
+window.approvePending = approvePending;
+window.approveAllPending = approveAllPending;
+window.openRejectFromCard = openRejectFromCard;
 window.openRejectModal = openRejectModal;
 window.closeRejectModal = closeRejectModal;
-window.openRejectFromCard = openRejectFromCard;
 window.confirmRejectSlip = confirmRejectSlip;
 
 })(); 
