@@ -530,6 +530,12 @@
                             <button onclick="showHomeManualDropdown()"
                                 class="shrink-0 text-[10px] font-black text-orange-600 bg-white px-2.5 py-1.5 rounded-xl border border-orange-200 active:scale-90 transition">เปลี่ยน</button>
                         </div>
+
+                        <!-- สถานะ GPS / ระยะห่างจากจุดตรวจ -->
+                        <div id="homeQrGpsPill" class="text-center text-xs font-bold px-3 py-2.5 rounded-xl border bg-slate-100 text-slate-500 border-slate-200">
+                            📍 กำลังตรวจสอบพิกัด...
+                        </div>
+
                         <!-- ปุ่มถ่ายรูป — ใหญ่ชัดเจน -->
                         <button id="homeCaptureBtn" onclick="doHomeCapturePatrol()"
                             class="w-full bg-gradient-to-r from-orange-500 to-amber-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg shadow-orange-200 flex justify-center items-center gap-3 active:scale-95 transition">
@@ -5499,6 +5505,125 @@
         var _homeQrTargetCp = null;
 
         // เปิด modal (เรียกจาก dot ที่ยังไม่ตรวจ)
+        // ============================================================
+        //  ตรวจ GPS + ระยะทันทีตอนเลือกจุดตรวจ (เหมือนหน้าเดินตรวจ)
+        // ============================================================
+        function _checkGpsForCheckpoint(cpId, name, onResult) {
+            var lbl      = document.getElementById('homeQrTargetLabel');
+            var cpNameEl = document.getElementById('homeQrCpName');
+            if (lbl)      lbl.innerText      = 'จุดตรวจ: ' + name;
+            if (cpNameEl) cpNameEl.innerText = '📍 ' + name;
+
+            // ── สถานะ "กำลังตรวจพิกัด" ────────────────────────────
+            _setEl('homeQrSuccess',     true);
+            _setEl('homeQrChecking',    false);  // แสดง loading state
+            _setEl('homeQrOutOfRange',  true);
+            _setEl('homeQrHint',        true);
+            _setEl('homeQrScannerWrap', true);
+            _setEl('homeQrStartBtn',    true);
+
+            function finish(pos) {
+                currentLocation   = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                _lastGpsTimestamp = Date.now();
+                _gpsAccuracy      = pos.coords.accuracy;
+
+                var gpsIcon  = document.getElementById('gpsIcon');
+                var gpsBadge = document.getElementById('gpsStatus');
+                if (gpsIcon)  gpsIcon.innerText  = '🟢';
+                if (gpsBadge) gpsBadge.innerText = currentLocation.lat.toFixed(5) + ', ' + currentLocation.lng.toFixed(5);
+
+                var cps    = window.checkpointsData || {};
+                var cpInfo = cps[cpId];
+
+                _setEl('homeQrChecking', true);
+
+                if (cpInfo && cpInfo.lat && cpInfo.lat !== 0 && cpInfo.lng && cpInfo.lng !== 0) {
+                    var dist = calculateDistance(currentLocation.lat, currentLocation.lng, cpInfo.lat, cpInfo.lng);
+                    var maxR = cpInfo.radius || ALLOWED_RADIUS || 100;
+
+                    if (dist > maxR) {
+                        // ❌ อยู่นอกพื้นที่ — แสดงข้อความ ไม่แสดงปุ่มถ่ายรูป
+                        _homeQrTargetCp = null;
+                        _setEl('homeQrOutOfRange', false);
+                        var oorDist = document.getElementById('homeQrOorDist');
+                        var oorName = document.getElementById('homeQrOorName');
+                        if (oorDist) oorDist.innerText = 'ห่าง ' + Math.round(dist) + ' ม. (กำหนดไม่เกิน ' + maxR + ' ม.)';
+                        if (oorName) oorName.innerText = '📌 ' + name;
+                        if (gpsIcon)  gpsIcon.innerText  = '🔴';
+                        if (gpsBadge) gpsBadge.innerText = 'ห่างจุดตรวจ ' + Math.round(dist) + 'ม.';
+                        if (navigator.vibrate) navigator.vibrate([100,50,100]);
+                        if (onResult) onResult(false, dist, maxR);
+                        return;
+                    }
+
+                    // ✅ อยู่ในระยะ — แสดงระยะด้วย
+                    var distInfo = document.getElementById('homeQrDistInfo');
+                    if (distInfo) distInfo.innerText = '✅ อยู่ในระยะ ' + Math.round(dist) + ' ม. (กำหนดไม่เกิน ' + maxR + ' ม.)';
+                }
+
+                // ✅ ผ่านการตรวจระยะ — บันทึก target + แสดงปุ่มถ่ายรูป
+                _homeQrTargetCp = cpId;
+                _setEl('homeQrSuccess', false);
+                _syncPatrolSelect(cpId, name);
+                if (navigator.vibrate) navigator.vibrate(200);
+                if (onResult) onResult(true);
+            }
+
+            function fail(err) {
+                _setEl('homeQrChecking', true);
+                var msgs = {
+                    1: 'ถูกปฏิเสธสิทธิ์ GPS\nกรุณาเปิดสิทธิ์ Location ในการตั้งค่าเบราว์เซอร์',
+                    2: 'ไม่พบสัญญาณ GPS\nกรุณาออกไปในที่โล่งหรือเปิด WiFi',
+                    3: 'GPS หมดเวลา\nกรุณาลองใหม่อีกครั้ง'
+                };
+                showCustomAlert('ไม่สามารถรับพิกัด GPS',
+                    (msgs[err.code] || 'GPS ขัดข้อง') + '\n\nไม่สามารถตรวจสอบระยะจุดตรวจได้', 'error');
+                if (onResult) onResult(null);
+            }
+
+            // ── ใช้พิกัด cache ถ้าอายุ ≤15 วิ → เร็วทันที ───────────
+            var gpsAge = _lastGpsTimestamp ? (Date.now() - _lastGpsTimestamp) : Infinity;
+            if (currentLocation && gpsAge <= 15000) {
+                finish({ coords: { latitude: currentLocation.lat, longitude: currentLocation.lng, accuracy: _gpsAccuracy } });
+                return;
+            }
+
+            if (!navigator.geolocation) {
+                // ไม่มี GPS API — ข้ามการตรวจระยะ อนุญาตถ่ายได้
+                _homeQrTargetCp = cpId;
+                _setEl('homeQrSuccess', false);
+                _syncPatrolSelect(cpId, name);
+                if (onResult) onResult(true);
+                return;
+            }
+
+            var done = false;
+            var fallbackTimer = setTimeout(function() {
+                if (done) return;
+                navigator.geolocation.getCurrentPosition(
+                    function(pos) { if (!done) { done = true; finish(pos); } },
+                    function() {},
+                    { enableHighAccuracy: false, maximumAge: 10000, timeout: 5000 }
+                );
+            }, 4000);
+
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    if (done) return;
+                    done = true;
+                    clearTimeout(fallbackTimer);
+                    finish(pos);
+                },
+                function(err) {
+                    if (done) return;
+                    done = true;
+                    clearTimeout(fallbackTimer);
+                    fail(err);
+                },
+                { enableHighAccuracy: true, maximumAge: 10000, timeout: 8000 }
+            );
+        }
+
         window.openHomeQrModal = function(cpId) {
             _homeQrTargetCp = cpId || null;
 
@@ -5550,6 +5675,8 @@
 
                 // sync patrol tab
                 _syncPatrolSelect(cpId, name);
+                // ตรวจสอบ GPS/ระยะทันที
+                _checkHomeGpsDistance(cpId);
             } else {
                 // ไม่มี cpId → เริ่มต้นปกติ (hint + ปุ่มกล้อง)
                 _setEl('homeQrScannerWrap', true);
@@ -5598,6 +5725,8 @@
 
                     // sync patrol tab select
                     _syncPatrolSelect(val, name);
+                    // ตรวจสอบ GPS/ระยะทันที
+                    _checkHomeGpsDistance(val);
 
                     if (navigator.vibrate) navigator.vibrate(200);
                 },
@@ -5652,6 +5781,8 @@
 
             // sync patrol tab select
             _syncPatrolSelect(val, name);
+            // ตรวจสอบ GPS/ระยะทันที
+            _checkHomeGpsDistance(val);
         };
 
         window.doHomeCapturePatrol = function() {
@@ -5721,6 +5852,7 @@
             var cps    = window.checkpointsData || {};
             var cpInfo = cps[targetCp];
             var cpName = (cpInfo && cpInfo.name) ? cpInfo.name : targetCp;
+            var pill   = document.getElementById('homeQrGpsPill');
 
             if (cpInfo && cpInfo.lat && cpInfo.lat !== 0 && cpInfo.lng && cpInfo.lng !== 0) {
                 var dist = calculateDistance(
@@ -5730,12 +5862,20 @@
                 var maxR = cpInfo.radius || ALLOWED_RADIUS || 100;
 
                 if (dist > maxR) {
+                    if (pill) {
+                        pill.innerText = '❌ อยู่นอกระยะ ห่าง ' + Math.round(dist) + 'ม. (กำหนด ≤' + maxR + 'ม.)';
+                        pill.className = 'text-center text-xs font-bold px-3 py-2.5 rounded-xl border bg-red-50 text-red-600 border-red-200';
+                    }
                     return showCustomAlert(
                         '❌ อยู่นอกพื้นที่จุดตรวจ',
                         '📌 จุดตรวจ: ' + cpName + '\n'
                         + '📍 ระยะของคุณ: ' + Math.round(dist) + ' เมตร\n'
                         + '📏 กำหนดไว้: ไม่เกิน ' + maxR + ' เมตร\n\n'
                         + '🚶 กรุณาเดินเข้าใกล้จุดตรวจก่อนถ่ายรูป', 'error');
+                }
+                if (pill) {
+                    pill.innerText = '✅ อยู่ในระยะจุดตรวจ (' + Math.round(dist) + 'ม. / ' + maxR + 'ม.)';
+                    pill.className = 'text-center text-xs font-bold px-3 py-2.5 rounded-xl border bg-emerald-50 text-emerald-700 border-emerald-200';
                 }
             }
 
@@ -5766,6 +5906,68 @@
                 opt.value = val; opt.text = name || val; sel.appendChild(opt);
             }
             sel.value = val;
+        }
+
+        // ── ตรวจสอบ GPS/ระยะห่างทันทีหลังเลือกจุดตรวจในหน้าแรก ──────
+        // ใช้พิกัด cache ก่อน (เร็ว) ถ้าเก่าเกินไปค่อยขอใหม่แบบเร็ว
+        function _checkHomeGpsDistance(cpId) {
+            var pill = document.getElementById('homeQrGpsPill');
+            if (!pill) return;
+
+            function render() {
+                var cps    = window.checkpointsData || {};
+                var cpInfo = cps[cpId];
+
+                if (!currentLocation) {
+                    pill.innerText   = '⚠️ ยังไม่ได้รับพิกัด GPS';
+                    pill.className   = 'text-center text-xs font-bold px-3 py-2.5 rounded-xl border bg-amber-50 text-amber-600 border-amber-200';
+                    return;
+                }
+                if (!cpInfo || !cpInfo.lat || cpInfo.lat === 0 || !cpInfo.lng || cpInfo.lng === 0) {
+                    pill.innerText   = '🟢 พิกัดพร้อม — ไม่ได้กำหนดระยะของจุดนี้';
+                    pill.className   = 'text-center text-xs font-bold px-3 py-2.5 rounded-xl border bg-emerald-50 text-emerald-700 border-emerald-200';
+                    return;
+                }
+
+                var dist = calculateDistance(currentLocation.lat, currentLocation.lng, cpInfo.lat, cpInfo.lng);
+                var maxR = cpInfo.radius || ALLOWED_RADIUS || 100;
+
+                if (dist <= maxR) {
+                    pill.innerText   = '✅ อยู่ในระยะจุดตรวจ (' + Math.round(dist) + 'ม. / ' + maxR + 'ม.)';
+                    pill.className   = 'text-center text-xs font-bold px-3 py-2.5 rounded-xl border bg-emerald-50 text-emerald-700 border-emerald-200';
+                } else {
+                    pill.innerText   = '❌ อยู่นอกระยะ ห่าง ' + Math.round(dist) + 'ม. (กำหนด ≤' + maxR + 'ม.)';
+                    pill.className   = 'text-center text-xs font-bold px-3 py-2.5 rounded-xl border bg-red-50 text-red-600 border-red-200';
+                }
+            }
+
+            // ใช้พิกัด cache ถ้าอายุ ≤15 วิ → แสดงผลทันที
+            var gpsAge = _lastGpsTimestamp ? (Date.now() - _lastGpsTimestamp) : Infinity;
+            if (currentLocation && gpsAge <= 15000) {
+                render();
+                return;
+            }
+
+            // พิกัดเก่า/ไม่มี → แสดง loading แล้วขอใหม่แบบเร็ว
+            pill.innerText = '📍 กำลังตรวจสอบพิกัด...';
+            pill.className = 'text-center text-xs font-bold px-3 py-2.5 rounded-xl border bg-slate-100 text-slate-500 border-slate-200';
+
+            if (!navigator.geolocation) { render(); return; }
+
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    currentLocation   = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                    _lastGpsTimestamp = Date.now();
+                    _gpsAccuracy      = pos.coords.accuracy;
+                    var gpsIcon  = document.getElementById('gpsIcon');
+                    var gpsBadge = document.getElementById('gpsStatus');
+                    if (gpsIcon)  gpsIcon.innerText  = '🟢';
+                    if (gpsBadge) gpsBadge.innerText = currentLocation.lat.toFixed(5) + ', ' + currentLocation.lng.toFixed(5);
+                    render();
+                },
+                function() { render(); },
+                { enableHighAccuracy: false, maximumAge: 10000, timeout: 5000 }
+            );
         }
 
         function _setEl(id, hidden) {
