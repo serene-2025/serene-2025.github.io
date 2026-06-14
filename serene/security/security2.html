@@ -1168,7 +1168,7 @@
                             <img id="reportPhotoPreview" src="" class="w-full h-48 object-cover rounded-2xl border-2 border-slate-200">
                             <button onclick="removeReportPhoto()" class="absolute top-3 right-3 bg-red-500 text-white rounded-full p-2 text-xs">❌ ลบรูป</button>
                         </div>
-                        <button onclick="document.getElementById('reportCameraInput').click()" id="reportPhotoBtn" class="w-full bg-slate-50 hover:bg-slate-100 text-slate-600 py-4 rounded-2xl font-bold text-sm border-2 border-dashed border-slate-300 flex justify-center items-center gap-2 active:scale-95">
+                        <button onclick="checkGpsAndOpenReportCamera()" id="reportPhotoBtn" class="w-full bg-slate-50 hover:bg-slate-100 text-slate-600 py-4 rounded-2xl font-bold text-sm border-2 border-dashed border-slate-300 flex justify-center items-center gap-2 active:scale-95">
                             <span class="text-xl">📸</span> ถ่ายภาพสถานที่เกิดเหตุ
                         </button>
                     </div>
@@ -3227,83 +3227,43 @@
                 return showCustomAlert('ไม่รองรับ GPS', 'อุปกรณ์นี้ไม่รองรับ GPS กรุณาใช้เบราว์เซอร์อื่น', 'error');
             }
 
-            // ── แสดง GPS loading state ───────────────────────────
             var gpsIcon  = document.getElementById('gpsIcon');
             var gpsBadge = document.getElementById('gpsStatus');
+
+            // ── ใช้พิกัดสดจาก watchPosition ถ้ายังใหม่ (≤15 วิ) → เร็วทันที ──
+            var gpsAge = _lastGpsTimestamp ? (Date.now() - _lastGpsTimestamp) : Infinity;
+            if (currentLocation && gpsAge <= 15000) {
+                _proceedAfterGps(actionType, gpsIcon, gpsBadge);
+                return;
+            }
+
+            // ── พิกัดเก่า/ไม่มี → ขอใหม่ ──────────────────────────
             if (gpsIcon)  gpsIcon.innerText  = '🔄';
             if (gpsBadge) gpsBadge.innerText = 'กำลังหาพิกัดใหม่...';
 
-            // ── บังคับขอพิกัดสด (maximumAge: 0) ─────────────────
+            var done = false;
+
+            // fallback หลัง 4 วิ: ลอง low-accuracy แข่งกัน (เร็วกว่ามาก)
+            var fallbackTimer = setTimeout(function() {
+                if (done) return;
+                navigator.geolocation.getCurrentPosition(
+                    function(pos) { if (!done) { done = true; _onCLACSuccess(pos, actionType, gpsIcon, gpsBadge); } },
+                    function() { /* รอตัวหลัก */ },
+                    { enableHighAccuracy: false, maximumAge: 10000, timeout: 5000 }
+                );
+            }, 4000);
+
             navigator.geolocation.getCurrentPosition(
                 function(pos) {
-                    // ✅ ได้พิกัดใหม่
-                    currentLocation   = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-                    _lastGpsTimestamp = Date.now();
-                    _gpsAccuracy      = pos.coords.accuracy;
-
-                    if (gpsIcon)  gpsIcon.innerText  = '🟢';
-                    if (gpsBadge) gpsBadge.innerText = currentLocation.lat.toFixed(5) + ', ' + currentLocation.lng.toFixed(5);
-                    refreshMapUserMarker();
-
-                    // ── ตรวจระยะ ────────────────────────────────
-                    if (actionType === 'patrol') {
-                        var selectedCpId = document.getElementById('checkpointSelect').value;
-                        if (!selectedCpId) return showCustomAlert('แจ้งเตือน', 'กรุณาสแกน QR Code หรือเลือกจุดตรวจก่อน', 'warning');
-
-                        var cpInfo = checkpointsData[selectedCpId];
-                        if (cpInfo && cpInfo.lat !== 0 && cpInfo.lng !== 0) {
-                            var dist = calculateDistance(currentLocation.lat, currentLocation.lng, cpInfo.lat, cpInfo.lng);
-                            var maxR = cpInfo.radius || ALLOWED_RADIUS;
-                            if (dist > maxR) {
-                                if (gpsIcon)  gpsIcon.innerText  = '🔴';
-                                if (gpsBadge) gpsBadge.innerText = 'ห่างจุดตรวจ ' + Math.round(dist) + 'ม.';
-                                return showCustomAlert('อยู่นอกพื้นที่จุดตรวจ',
-                                    '📍 คุณอยู่ห่างจุดตรวจ "' + (cpInfo.name||selectedCpId) + '" ' + Math.round(dist) + ' เมตร\n'
-                                    + '📏 กำหนดไว้: ไม่เกิน ' + maxR + ' เมตร\n\n'
-                                    + '🚶 กรุณาเดินเข้าใกล้จุดตรวจก่อนบันทึก', 'error');
-                            }
-                        }
-
-                        // Duplicate check
-                        var dupP = isDuplicate('patrol', selectedCpId);
-                        if (dupP.dup) {
-                            var cpName = cpInfo ? cpInfo.name : selectedCpId;
-                            return showDuplicateWarning(
-                                'คุณบันทึกจุดตรวจ "' + cpName + '" ไปแล้วเมื่อ ' + dupP.diffMin + ' นาทีที่แล้ว\n\n'
-                                + 'บันทึกเวลา: ' + dupP.last.time + '\n'
-                                + 'ต้องการบันทึกซ้ำหรือไม่?',
-                                function() { doCapture(actionType); }
-                            );
-                        }
-
-                    } else if (actionType === 'checkin' || actionType === 'checkout') {
-                        var distG = calculateDistance(currentLocation.lat, currentLocation.lng, guardHouseLocation.lat, guardHouseLocation.lng);
-                        if (guardHouseLocation.lat !== 0 && guardHouseLocation.lng !== 0 && distG > ALLOWED_RADIUS) {
-                            if (gpsIcon)  gpsIcon.innerText  = '🔴';
-                            if (gpsBadge) gpsBadge.innerText = 'ห่างป้อม ' + Math.round(distG) + 'ม.';
-                            return showCustomAlert('อยู่นอกพื้นที่ป้อมยาม',
-                                '📍 คุณอยู่ห่างจากป้อมยาม ' + Math.round(distG) + ' เมตร\n'
-                                + '📏 กำหนดไว้: ไม่เกิน ' + ALLOWED_RADIUS + ' เมตร\n\n'
-                                + '🚶 กรุณาเดินเข้ามาในบริเวณป้อมก่อนลงเวลา', 'error');
-                        }
-
-                        // Duplicate check
-                        var dupC = isDuplicate(actionType, null);
-                        if (dupC.dup) {
-                            var actionLabel = actionType === 'checkin' ? 'เข้างาน' : 'ออกงาน';
-                            return showDuplicateWarning(
-                                'คุณลงเวลา' + actionLabel + 'ไปแล้วเมื่อ ' + dupC.diffMin + ' นาทีที่แล้ว\n\n'
-                                + 'บันทึกเวลา: ' + dupC.last.time + '\n'
-                                + 'ต้องการบันทึกซ้ำหรือไม่?',
-                                function() { doCapture(actionType); }
-                            );
-                        }
-                    }
-
-                    doCapture(actionType);
+                    if (done) return;
+                    done = true;
+                    clearTimeout(fallbackTimer);
+                    _onCLACSuccess(pos, actionType, gpsIcon, gpsBadge);
                 },
                 function(err) {
-                    // ❌ GPS ล้มเหลว
+                    if (done) return;
+                    done = true;
+                    clearTimeout(fallbackTimer);
                     if (gpsIcon)  gpsIcon.innerText  = '🔴';
                     var errMsg = {
                         1: 'ถูกปฏิเสธสิทธิ์ GPS\n\nกรุณาเปิดสิทธิ์ Location ในการตั้งค่าเบราว์เซอร์แล้วกดปุ่ม 🔑 เพื่อขอสิทธิ์ใหม่',
@@ -3313,9 +3273,78 @@
                     if (gpsBadge) gpsBadge.innerText = 'GPS ล้มเหลว';
                     showCustomAlert('ไม่สามารถรับพิกัด GPS', errMsg, 'error');
                 },
-                { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+                { enableHighAccuracy: true, maximumAge: 10000, timeout: 8000 }
             );
         };
+
+        function _onCLACSuccess(pos, actionType, gpsIcon, gpsBadge) {
+            currentLocation   = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+            _lastGpsTimestamp = Date.now();
+            _gpsAccuracy      = pos.coords.accuracy;
+            if (gpsIcon)  gpsIcon.innerText  = '🟢';
+            if (gpsBadge) gpsBadge.innerText = currentLocation.lat.toFixed(5) + ', ' + currentLocation.lng.toFixed(5);
+            refreshMapUserMarker();
+            _proceedAfterGps(actionType, gpsIcon, gpsBadge);
+        }
+
+        // ตรวจระยะ + duplicate แล้วเปิดกล้อง (ใช้ currentLocation ปัจจุบัน)
+        function _proceedAfterGps(actionType, gpsIcon, gpsBadge) {
+            if (actionType === 'patrol') {
+                var selectedCpId = document.getElementById('checkpointSelect').value;
+                if (!selectedCpId) return showCustomAlert('แจ้งเตือน', 'กรุณาสแกน QR Code หรือเลือกจุดตรวจก่อน', 'warning');
+
+                var cpInfo = checkpointsData[selectedCpId];
+                if (cpInfo && cpInfo.lat !== 0 && cpInfo.lng !== 0) {
+                    var dist = calculateDistance(currentLocation.lat, currentLocation.lng, cpInfo.lat, cpInfo.lng);
+                    var maxR = cpInfo.radius || ALLOWED_RADIUS;
+                    if (dist > maxR) {
+                        if (gpsIcon)  gpsIcon.innerText  = '🔴';
+                        if (gpsBadge) gpsBadge.innerText = 'ห่างจุดตรวจ ' + Math.round(dist) + 'ม.';
+                        return showCustomAlert('อยู่นอกพื้นที่จุดตรวจ',
+                            '📍 คุณอยู่ห่างจุดตรวจ "' + (cpInfo.name||selectedCpId) + '" ' + Math.round(dist) + ' เมตร\n'
+                            + '📏 กำหนดไว้: ไม่เกิน ' + maxR + ' เมตร\n\n'
+                            + '🚶 กรุณาเดินเข้าใกล้จุดตรวจก่อนบันทึก', 'error');
+                    }
+                }
+
+                // Duplicate check
+                var dupP = isDuplicate('patrol', selectedCpId);
+                if (dupP.dup) {
+                    var cpName = cpInfo ? cpInfo.name : selectedCpId;
+                    return showDuplicateWarning(
+                        'คุณบันทึกจุดตรวจ "' + cpName + '" ไปแล้วเมื่อ ' + dupP.diffMin + ' นาทีที่แล้ว\n\n'
+                        + 'บันทึกเวลา: ' + dupP.last.time + '\n'
+                        + 'ต้องการบันทึกซ้ำหรือไม่?',
+                        function() { doCapture(actionType); }
+                    );
+                }
+
+            } else if (actionType === 'checkin' || actionType === 'checkout') {
+                var distG = calculateDistance(currentLocation.lat, currentLocation.lng, guardHouseLocation.lat, guardHouseLocation.lng);
+                if (guardHouseLocation.lat !== 0 && guardHouseLocation.lng !== 0 && distG > ALLOWED_RADIUS) {
+                    if (gpsIcon)  gpsIcon.innerText  = '🔴';
+                    if (gpsBadge) gpsBadge.innerText = 'ห่างป้อม ' + Math.round(distG) + 'ม.';
+                    return showCustomAlert('อยู่นอกพื้นที่ป้อมยาม',
+                        '📍 คุณอยู่ห่างจากป้อมยาม ' + Math.round(distG) + ' เมตร\n'
+                        + '📏 กำหนดไว้: ไม่เกิน ' + ALLOWED_RADIUS + ' เมตร\n\n'
+                        + '🚶 กรุณาเดินเข้ามาในบริเวณป้อมก่อนลงเวลา', 'error');
+                }
+
+                // Duplicate check
+                var dupC = isDuplicate(actionType, null);
+                if (dupC.dup) {
+                    var actionLabel = actionType === 'checkin' ? 'เข้างาน' : 'ออกงาน';
+                    return showDuplicateWarning(
+                        'คุณลงเวลา' + actionLabel + 'ไปแล้วเมื่อ ' + dupC.diffMin + ' นาทีที่แล้ว\n\n'
+                        + 'บันทึกเวลา: ' + dupC.last.time + '\n'
+                        + 'ต้องการบันทึกซ้ำหรือไม่?',
+                        function() { doCapture(actionType); }
+                    );
+                }
+            }
+
+            doCapture(actionType);
+        }
 
         function doCapture(actionType) {
             pendingActionType = actionType;
@@ -3847,7 +3876,77 @@
             _flashTimer = setTimeout(function() { updateRealtimePill(true); }, 2000);
         }
 
-        window.stopRealtimeSubscription = function() {
+        // ── ตรวจ GPS สดก่อนถ่ายรูปรายงาน (ใช้ cache ถ้ายังใหม่) ──────
+        window.checkGpsAndOpenReportCamera = function() {
+            if (!navigator.geolocation) {
+                document.getElementById('reportCameraInput').click();
+                return;
+            }
+            // ใช้พิกัด cache ถ้าอายุ ≤15 วิ
+            var gpsAge = _lastGpsTimestamp ? (Date.now() - _lastGpsTimestamp) : Infinity;
+            if (currentLocation && gpsAge <= 15000) {
+                document.getElementById('reportCameraInput').click();
+                return;
+            }
+            var btn = document.getElementById('reportPhotoBtn');
+            if (btn) { btn.innerHTML = '<span class="text-xl">⏳</span> กำลังระบุตำแหน่ง...'; btn.disabled = true; }
+
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    currentLocation   = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                    _lastGpsTimestamp = Date.now();
+                    _gpsAccuracy      = pos.coords.accuracy;
+                    if (btn) { btn.innerHTML = '<span class="text-xl">📸</span> ถ่ายภาพสถานที่เกิดเหตุ'; btn.disabled = false; }
+                    document.getElementById('reportCameraInput').click();
+                },
+                function() {
+                    // GPS ล้มเหลว — ยังอนุญาตถ่ายได้เพราะเป็น emergency report
+                    if (btn) { btn.innerHTML = '<span class="text-xl">📸</span> ถ่ายภาพสถานที่เกิดเหตุ'; btn.disabled = false; }
+                    document.getElementById('reportCameraInput').click();
+                },
+                { enableHighAccuracy: false, maximumAge: 10000, timeout: 4000 }
+            );
+        };
+
+        // แก้ submitReport ให้ refresh พิกัดสดก่อน submit (ใช้ cache ถ้ายังใหม่) ──
+        var _origSubmitReport = window.submitReport;
+        window.submitReport = function() {
+            var type    = document.getElementById('reportType').value;
+            var details = document.getElementById('reportDetail').value;
+            if (!type || !details.trim()) return showCustomAlert('ข้อมูลไม่ครบ', 'กรุณาระบุรายละเอียดให้ครบถ้วน', 'warning');
+
+            var btn = document.getElementById('btnSubmitReport');
+
+            // ใช้พิกัด cache ถ้าอายุ ≤15 วิ — ส่งทันที
+            var gpsAge = _lastGpsTimestamp ? (Date.now() - _lastGpsTimestamp) : Infinity;
+            if (currentLocation && gpsAge <= 15000) {
+                return _origSubmitReport.apply(this, arguments);
+            }
+
+            if (btn) { btn.disabled = true; btn.innerHTML = '⏳ กำลังระบุตำแหน่ง...'; }
+            function restoreBtn() { if (btn) { btn.disabled = false; btn.innerHTML = 'ส่งรายงานเข้าระบบ 🚀'; } }
+
+            if (!navigator.geolocation) {
+                restoreBtn();
+                return _origSubmitReport.apply(this, arguments);
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    currentLocation   = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                    _lastGpsTimestamp = Date.now();
+                    _gpsAccuracy      = pos.coords.accuracy;
+                    restoreBtn();
+                    _origSubmitReport.apply(window, arguments);
+                },
+                function() {
+                    // GPS ล้มเหลว — ส่งรายงานต่อไปได้ (emergency ไม่ block)
+                    restoreBtn();
+                    _origSubmitReport.apply(window, arguments);
+                },
+                { enableHighAccuracy: false, maximumAge: 10000, timeout: 4000 }
+            );
+        };
             _realtimeEnabled = false;
             clearInterval(_realtimeHeartbeat);
             clearTimeout(_realtimeReconnectTimer);
@@ -5556,59 +5655,35 @@
                 return showCustomAlert('ไม่รองรับ GPS', 'อุปกรณ์ไม่รองรับ GPS', 'error');
             }
 
-            // ── แสดง loading state บนปุ่ม ────────────────────────
             var btn = document.getElementById('homeCaptureBtn');
             var btnOrig = btn ? btn.innerHTML : null;
+
+            // ── ใช้พิกัดสดจาก watchPosition ถ้ายังใหม่ (≤15 วิ) → เร็วทันที ──
+            var gpsAge = _lastGpsTimestamp ? (Date.now() - _lastGpsTimestamp) : Infinity;
+            if (currentLocation && gpsAge <= 15000) {
+                _proceedHomePatrol(_homeQrTargetCp, btn, btnOrig);
+                return;
+            }
+
+            // ── ไม่มีพิกัดสด → ขอใหม่แบบเร็ว (low accuracy ก่อน) ──
             if (btn) { btn.innerHTML = '<span class="text-xl">⏳</span> กำลังตรวจพิกัด...'; btn.disabled = true; }
 
-            // ── บังคับขอพิกัดสดก่อนเสมอ (maximumAge: 0) ─────────
+            var fallbackTimer = setTimeout(function() {
+                // ถ้า high-accuracy ช้าเกิน 4 วิ ลอง low-accuracy แทนทันที (ไม่ยกเลิก high-acc แต่แข่งกัน)
+                navigator.geolocation.getCurrentPosition(
+                    function(pos) { _onHomeGpsSuccess(pos, btn, btnOrig); },
+                    function() {}, // ปล่อยให้ตัวหลักจัดการ error
+                    { enableHighAccuracy: false, maximumAge: 10000, timeout: 5000 }
+                );
+            }, 4000);
+
             navigator.geolocation.getCurrentPosition(
                 function(pos) {
-                    // ✅ ได้พิกัดใหม่
-                    currentLocation   = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-                    _lastGpsTimestamp = Date.now();
-                    _gpsAccuracy      = pos.coords.accuracy;
-                    var gpsIcon  = document.getElementById('gpsIcon');
-                    var gpsBadge = document.getElementById('gpsStatus');
-                    if (gpsIcon)  gpsIcon.innerText  = '🟢';
-                    if (gpsBadge) gpsBadge.innerText = currentLocation.lat.toFixed(5) + ', ' + currentLocation.lng.toFixed(5);
-                    if (btn) { btn.innerHTML = btnOrig; btn.disabled = false; }
-
-                    // ── ตรวจระยะจากจุดตรวจ ──────────────────────
-                    var cps    = window.checkpointsData || {};
-                    var cpInfo = cps[_homeQrTargetCp];
-                    var cpName = (cpInfo && cpInfo.name) ? cpInfo.name : _homeQrTargetCp;
-
-                    if (cpInfo && cpInfo.lat && cpInfo.lat !== 0 && cpInfo.lng && cpInfo.lng !== 0) {
-                        var dist = calculateDistance(
-                            currentLocation.lat, currentLocation.lng,
-                            cpInfo.lat, cpInfo.lng
-                        );
-                        var maxR = cpInfo.radius || ALLOWED_RADIUS || 100;
-
-                        if (dist > maxR) {
-                            return showCustomAlert(
-                                '❌ อยู่นอกพื้นที่จุดตรวจ',
-                                '📌 จุดตรวจ: ' + cpName + '\n'
-                                + '📍 ระยะของคุณ: ' + Math.round(dist) + ' เมตร\n'
-                                + '📏 กำหนดไว้: ไม่เกิน ' + maxR + ' เมตร\n\n'
-                                + '🚶 กรุณาเดินเข้าใกล้จุดตรวจก่อนถ่ายรูป', 'error');
-                        }
-                    }
-
-                    // ── Duplicate check ──────────────────────────
-                    var dup = isDuplicate('patrol', _homeQrTargetCp);
-                    if (dup.dup) {
-                        return showDuplicateWarning(
-                            'คุณบันทึกจุดตรวจ "' + cpName + '" ไปแล้วเมื่อ ' + dup.diffMin + ' นาทีที่แล้ว\nต้องการบันทึกซ้ำหรือไม่?',
-                            function() { _doHomeShoot(); }
-                        );
-                    }
-
-                    _doHomeShoot();
+                    clearTimeout(fallbackTimer);
+                    _onHomeGpsSuccess(pos, btn, btnOrig);
                 },
                 function(err) {
-                    // ❌ GPS ล้มเหลว
+                    clearTimeout(fallbackTimer);
                     if (btn) { btn.innerHTML = btnOrig; btn.disabled = false; }
                     var msgs = {
                         1: 'ถูกปฏิเสธสิทธิ์ GPS\nกรุณาเปิดสิทธิ์ Location ในการตั้งค่าเบราว์เซอร์',
@@ -5618,9 +5693,56 @@
                     showCustomAlert('ไม่สามารถรับพิกัด GPS',
                         (msgs[err.code] || 'GPS ขัดข้อง') + '\n\nไม่สามารถบันทึกจุดตรวจได้จนกว่าจะได้รับพิกัด', 'error');
                 },
-                { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+                { enableHighAccuracy: true, maximumAge: 10000, timeout: 8000 }
             );
         };
+
+        function _onHomeGpsSuccess(pos, btn, btnOrig) {
+            currentLocation   = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+            _lastGpsTimestamp = Date.now();
+            _gpsAccuracy      = pos.coords.accuracy;
+            var gpsIcon  = document.getElementById('gpsIcon');
+            var gpsBadge = document.getElementById('gpsStatus');
+            if (gpsIcon)  gpsIcon.innerText  = '🟢';
+            if (gpsBadge) gpsBadge.innerText = currentLocation.lat.toFixed(5) + ', ' + currentLocation.lng.toFixed(5);
+            if (btn) { btn.innerHTML = btnOrig; btn.disabled = false; }
+            _proceedHomePatrol(_homeQrTargetCp, btn, btnOrig);
+        }
+
+        // ตรวจระยะ + duplicate แล้วเปิดกล้อง
+        function _proceedHomePatrol(targetCp, btn, btnOrig) {
+            var cps    = window.checkpointsData || {};
+            var cpInfo = cps[targetCp];
+            var cpName = (cpInfo && cpInfo.name) ? cpInfo.name : targetCp;
+
+            if (cpInfo && cpInfo.lat && cpInfo.lat !== 0 && cpInfo.lng && cpInfo.lng !== 0) {
+                var dist = calculateDistance(
+                    currentLocation.lat, currentLocation.lng,
+                    cpInfo.lat, cpInfo.lng
+                );
+                var maxR = cpInfo.radius || ALLOWED_RADIUS || 100;
+
+                if (dist > maxR) {
+                    return showCustomAlert(
+                        '❌ อยู่นอกพื้นที่จุดตรวจ',
+                        '📌 จุดตรวจ: ' + cpName + '\n'
+                        + '📍 ระยะของคุณ: ' + Math.round(dist) + ' เมตร\n'
+                        + '📏 กำหนดไว้: ไม่เกิน ' + maxR + ' เมตร\n\n'
+                        + '🚶 กรุณาเดินเข้าใกล้จุดตรวจก่อนถ่ายรูป', 'error');
+                }
+            }
+
+            // ── Duplicate check ──────────────────────────
+            var dup = isDuplicate('patrol', targetCp);
+            if (dup.dup) {
+                return showDuplicateWarning(
+                    'คุณบันทึกจุดตรวจ "' + cpName + '" ไปแล้วเมื่อ ' + dup.diffMin + ' นาทีที่แล้ว\nต้องการบันทึกซ้ำหรือไม่?',
+                    function() { _doHomeShoot(); }
+                );
+            }
+
+            _doHomeShoot();
+        }
 
         function _doHomeShoot() {
             // sync checkpointSelect ให้ handlePhotoCapture อ่านค่าถูก
