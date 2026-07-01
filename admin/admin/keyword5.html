@@ -2541,6 +2541,7 @@ async function updateAllUserProfiles() {
                             </td>
                             <td class="px-8 py-5 text-right">
                                 <div class="flex justify-end gap-3 transition-opacity">
+                                    <button data-rm-id="${item.rich_menu_id}" data-rm-name="${escapeHtml(item.name).replace(/"/g,'&quot;')}" onclick="openRichMenuInsights(this.dataset.rmId, this.dataset.rmName)" class="p-2 text-amber-600 bg-amber-50/50 rounded-xl hover:bg-amber-100 transition-all" title="ดูสถิติ Insights"><i data-lucide="bar-chart-2" class="w-4 h-4"></i></button>
                                     <button onclick="openCreateAliasFromRichMenu('${item.rich_menu_id}', '${escapeHtml(item.name).replace(/'/g, '&apos;')}')" class="p-2 text-purple-600 bg-purple-50/50 rounded-xl hover:bg-purple-100 transition-all" title="สร้าง Alias สำหรับเมนูนี้"><i data-lucide="git-fork" class="w-4 h-4"></i></button>
                                     <button onclick="openRichMenuModal(${item.id})" class="p-2 text-indigo-600 bg-indigo-50/50 rounded-xl hover:bg-indigo-100 transition-all"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
                                     <button onclick="deleteRichMenu(${item.id})" class="p-2 text-rose-500 bg-rose-50/50 rounded-xl hover:bg-rose-100 transition-all"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
@@ -8564,6 +8565,123 @@ async function updateAllUserProfiles() {
                 const d = await r.json();
                 r.ok ? showToast('✅ ส่ง Telegram สำเร็จ!','success') : showToast('❌ '+d.description,'error');
             } catch(e) { showToast('❌ '+e.message,'error'); }
+        }
+
+        // ─── RICH MENU INSIGHTS ──────────────────────────────────────
+        async function openRichMenuInsights(richMenuId, richMenuName) {
+            showModal('📊 Rich Menu Insights — ' + escapeHtml(richMenuName),
+                '<div id="rm-insights-body" class="text-left"><div class="text-center py-8 text-slate-400">⏳ กำลังโหลด...</div></div>'
+            );
+            await loadRichMenuInsights(richMenuId, richMenuName);
+        }
+
+        async function loadRichMenuInsights(richMenuId, richMenuName) {
+            const el = document.getElementById('rm-insights-body');
+            if (!el) return;
+            const now = new Date();
+            const toDate   = new Date().toISOString().slice(0,10);
+            const fromDate = new Date(now.setDate(now.getDate()-30)).toISOString().slice(0,10);
+            el.innerHTML =
+                '<div class="space-y-4">' +
+                '<div class="flex gap-2 items-center flex-wrap">' +
+                '<input type="date" id="rm-ins-from" value="' + fromDate + '" class="border border-slate-200 rounded-xl px-3 py-2 text-sm">' +
+                '<span class="text-slate-400 text-sm">ถึง</span>' +
+                '<input type="date" id="rm-ins-to" value="' + toDate + '" class="border border-slate-200 rounded-xl px-3 py-2 text-sm">' +
+                '<button data-rmid="' + escapeHtml(richMenuId) + '" data-rmname="' + escapeHtml(richMenuName) + '"' +
+                ' onclick="fetchInsightsData(this.dataset.rmid,this.dataset.rmname)" class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold">โหลด</button>' +
+                '</div>' +
+                '<div class="flex gap-2 flex-wrap">' +
+                [['7 วัน',7],['30 วัน',30],['90 วัน',90]].map(([label, days]) =>
+                    '<button data-rmid="' + escapeHtml(richMenuId) + '" data-rmname="' + escapeHtml(richMenuName) + '" data-days="' + days + '"' +
+                    ' onclick="setInsightPreset(this)" class="px-3 py-1.5 bg-slate-100 hover:bg-amber-100 text-slate-600 hover:text-amber-700 rounded-xl text-xs font-bold">' + label + '</button>'
+                ).join('') +
+                '</div>' +
+                '<div id="rm-insights-data"><div class="text-center py-6 text-slate-400 text-sm">เลือกช่วงวันที่แล้วกด โหลด</div></div>' +
+                '</div>';
+            await fetchInsightsData(richMenuId, richMenuName);
+        }
+
+        function setInsightPreset(btn) {
+            const days = parseInt(btn.dataset.days);
+            const now = new Date();
+            const to   = new Date();
+            const from = new Date(now.setDate(now.getDate() - days));
+            const fmt  = d => d.toISOString().slice(0,10);
+            document.getElementById('rm-ins-from').value = fmt(from);
+            document.getElementById('rm-ins-to').value   = fmt(to);
+            fetchInsightsData(btn.dataset.rmid, btn.dataset.rmname);
+        }
+
+        async function fetchInsightsData(richMenuId, richMenuName) {
+            const dataEl = document.getElementById('rm-insights-data');
+            if (!dataEl) return;
+            const from = document.getElementById('rm-ins-from')?.value;
+            const to   = document.getElementById('rm-ins-to')?.value;
+            if (!from || !to) return;
+            dataEl.innerHTML = '<div class="text-center py-6 text-slate-400">⏳ กำลังดึงข้อมูลจาก LINE...</div>';
+            try {
+                const res = await fetch(API_BASE_URL + '/api/admin/richmenus', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'get_insights', richMenuId, from, to })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ดึงข้อมูลไม่สำเร็จ');
+                const totals = d.totals || {};
+                const daily  = d.daily  || [];
+                const cards = [
+                    { icon:'👁', label:'Impressions', value:(totals.impressions||0).toLocaleString(), color:'blue' },
+                    { icon:'👆', label:'Clicks',       value:(totals.clicks||0).toLocaleString(),       color:'amber' },
+                    { icon:'👤', label:'Unique Users', value:(totals.uniqueUsers||0).toLocaleString(), color:'emerald' },
+                    { icon:'📊', label:'CTR',          value:totals.impressions?((totals.clicks/totals.impressions)*100).toFixed(1)+'%':'—', color:'purple' },
+                ];
+                let html = '<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">' +
+                    cards.map(c =>
+                        '<div class="rounded-2xl p-3 text-center border" style="background:var(--c-' + c.color + '-50,#fefce8);border-color:var(--c-' + c.color + '-200,#fde68a)">' +
+                        '<div class="text-xl mb-1">' + c.icon + '</div>' +
+                        '<div class="text-xl font-extrabold" style="color:var(--c-' + c.color + '-700,#b45309)">' + c.value + '</div>' +
+                        '<div class="text-xs font-bold" style="color:var(--c-' + c.color + '-600,#d97706)">' + c.label + '</div></div>'
+                    ).join('') + '</div>';
+                // summary stats bar
+                html += '<div class="flex gap-3 mb-4 flex-wrap">' +
+                    '<div class="text-xs text-slate-500">ช่วง: <b>' + from + '</b> ถึง <b>' + to + '</b></div>' +
+                    '<div class="text-xs text-slate-500">ทั้งหมด: <b>' + daily.length + '</b> วัน</div>' +
+                    '</div>';
+                if (daily.length) {
+                    const maxClick = Math.max(...daily.map(r => r.clicks||0), 1);
+                    html += '<div class="glass rounded-2xl overflow-hidden">' +
+                        '<div class="p-4 border-b border-slate-100 font-bold text-slate-800 text-sm">📅 รายวัน</div>' +
+                        '<div class="overflow-y-auto" style="max-height:300px">' +
+                        '<table class="w-full text-sm"><thead class="bg-slate-50 sticky top-0"><tr>' +
+                        '<th class="text-left px-4 py-2 text-xs font-bold text-slate-500">วันที่</th>' +
+                        '<th class="text-right px-4 py-2 text-xs font-bold text-slate-500">Impr.</th>' +
+                        '<th class="px-4 py-2 text-xs font-bold text-slate-500 w-36">Clicks</th>' +
+                        '<th class="text-right px-4 py-2 text-xs font-bold text-slate-500">Unique</th>' +
+                        '</tr></thead><tbody>' +
+                        daily.slice().reverse().map(row => {
+                            const pct = Math.round(((row.clicks||0)/maxClick)*100);
+                            const dateStr = (row.date||'').replace(/(\d{4})(\d{2})(\d{2})/,'$1-$2-$3');
+                            return '<tr class="border-t border-slate-100 hover:bg-slate-50">' +
+                                '<td class="px-4 py-2 font-mono text-xs text-slate-600">' + dateStr + '</td>' +
+                                '<td class="px-4 py-2 text-right text-xs font-bold text-slate-700">' + (row.impressions||0).toLocaleString() + '</td>' +
+                                '<td class="px-4 py-2"><div class="flex items-center gap-2">' +
+                                '<div class="flex-1 bg-slate-100 rounded-full h-2"><div class="bg-amber-400 h-2 rounded-full" style="width:' + pct + '%"></div></div>' +
+                                '<span class="text-xs font-bold text-amber-700 w-8 text-right">' + (row.clicks||0) + '</span></div></td>' +
+                                '<td class="px-4 py-2 text-right text-xs text-slate-500">' + (row.uniqueUsers||0).toLocaleString() + '</td></tr>';
+                        }).join('') +
+                        '</tbody></table></div></div>';
+                } else {
+                    html += '<div class="glass rounded-2xl p-8 text-center text-slate-400">' +
+                        '<div class="text-3xl mb-2">📭</div>' +
+                        '<div class="text-sm">ไม่มีข้อมูลในช่วงวันที่นี้</div>' +
+                        '<div class="text-xs mt-1 text-slate-300">Rich Menu Insights ใช้ได้เฉพาะเมนูที่สร้างด้วย Messaging API</div></div>';
+                }
+                dataEl.innerHTML = html;
+            } catch(e) {
+                dataEl.innerHTML = '<div class="bg-rose-50 border border-rose-200 rounded-2xl p-5 text-rose-600">' +
+                    '<div class="font-bold mb-1">❌ ' + escapeHtml(e.message) + '</div>' +
+                    '<div class="text-xs text-rose-400">Rich Menu Insights ใช้ได้เฉพาะเมนูที่สร้างด้วย Messaging API และต้องมีข้อมูลในช่วงเวลานั้น</div></div>';
+            }
         }
 
         // ─── Tier Management ────────────────────────────────
