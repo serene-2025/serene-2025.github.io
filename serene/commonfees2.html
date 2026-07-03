@@ -3937,12 +3937,21 @@ async function sendEscalationToHouse(houseData) {
     try {
         // เรียก GAS endpoint ใหม่ที่ต้องเพิ่มฝั่ง backend: action 'send_line_escalation'
         // คาดหวัง payload: { house_no, level, message, target_uids } และคืนค่า { sent: <จำนวนที่ส่งสำเร็จ> }
-        const res = await callGas('send_line_escalation', {
-            house_no: houseData.houseNo,
-            level: houseData.rule.level,
-            message,
-            target_uids
-        });
+        let res;
+        try {
+            res = await callGas('send_line_escalation', {
+                house_no: houseData.houseNo,
+                level: houseData.rule.level,
+                message,
+                target_uids
+            });
+        } catch (gasErr) {
+            const msg = gasErr.message || '';
+            if (msg.includes('Action not found') || msg.includes('not found') || msg.includes('undefined')) {
+                return { houseNo: houseData.houseNo, ok: false, error: 'GAS ยังไม่มี action "send_line_escalation" — กรุณาเพิ่ม endpoint นี้ใน Google Apps Script ก่อน' };
+            }
+            throw gasErr;
+        }
 
         if (res && res.sent > 0) {
             // บันทึกประวัติลง escalation_logs (ต้องสร้างตารางนี้ใน Supabase ก่อนใช้งานจริง)
@@ -4503,20 +4512,25 @@ async function purgeRecycleItem(id) {
 // ==========================================
 async function writeAuditLog(action, target, detail) {
     try {
+        // ส่งเฉพาะ column พื้นฐานที่ควรมี — เพิ่ม admin_name/username ได้ถ้าตาราง audit_logs รองรับ
+        const payload = {
+            action,
+            target: target || null,
+            detail: detail || null,
+            created_at: new Date().toISOString()
+        };
+        // ถ้า currentUser มีข้อมูลให้แนบไปด้วย (Supabase จะ ignore ถ้า column ไม่มี ถ้าเปิด RLS แบบ relaxed)
+        if (currentUser?.name)  payload.admin_name = currentUser.name;
+        if (currentUser?.user)  payload.username   = currentUser.user;
+
         await callSupabaseRest('audit_logs', {
             method: 'POST',
             headers: { 'Prefer': 'return=minimal' },
-            body: JSON.stringify({
-                action,
-                target: target || null,
-                detail: detail || null,
-                admin_name: currentUser ? currentUser.name : null,
-                username: currentUser ? currentUser.user : null,
-                created_at: new Date().toISOString()
-            })
+            body: JSON.stringify(payload)
         });
     } catch (e) {
-        console.warn('writeAuditLog failed (ตาราง audit_logs อาจยังไม่มี):', e.message);
+        // ไม่แสดง popup ให้ user เพราะ audit log เป็น side-effect — แค่ log ไว้
+        console.warn('writeAuditLog skipped:', e.message);
     }
 }
 
@@ -4561,6 +4575,9 @@ function handleChangePassword() {
 }
 
 // (handleDeleteAdmin, restoreRecycleItem, purgeRecycleItem — implemented above)
+function handleResetPassword(adminId) {
+    Swal.fire('รีเซ็ตรหัสผ่าน', 'ฟีเจอร์นี้จะพร้อมใช้งานเมื่อย้ายมาใช้ Supabase Auth เต็มตัว กรุณาแก้ไขรหัสผ่านจาก GAS โดยตรง', 'info');
+}
 
 // ==========================================
 // GLOBAL SYNC
