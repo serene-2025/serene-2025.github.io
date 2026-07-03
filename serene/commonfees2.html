@@ -588,22 +588,26 @@
                         </div>
 
                         <!-- Filters -->
-                        <div class="p-4 bg-slate-50 border-b border-slate-200 grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <select id="txFilterStatus" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white">
+                        <div class="p-4 bg-slate-50 border-b border-slate-200 grid grid-cols-2 md:grid-cols-5 gap-3">
+                            <div class="relative">
+                                <i data-lucide="search" class="w-4 h-4 absolute left-3 top-2.5 text-slate-400 pointer-events-none"></i>
+                                <input type="text" id="txSearchHouse" placeholder="ค้นหาบ้านเลขที่..." class="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300 text-sm bg-white" oninput="applyTxFilters()">
+                            </div>
+                            <select id="txFilterStatus" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white" onchange="applyTxFilters()">
                                 <option value="">สถานะทั้งหมด</option>
                                 <option value="ตรวจสอบแล้ว">ตรวจสอบแล้ว</option>
                                 <option value="รอตรวจสอบ">รอตรวจสอบ</option>
                                 <option value="ยกเลิก">ยกเลิก</option>
                                 <option value="โอนคืน">โอนคืน</option>
                             </select>
-                            <select id="txFilterMonth" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white">
+                            <select id="txFilterMonth" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white" onchange="applyTxFilters()">
                                 <option value="">ทุกเดือน</option>
                                 <option>มกราคม</option><option>กุมภาพันธ์</option><option>มีนาคม</option>
                                 <option>เมษายน</option><option>พฤษภาคม</option><option>มิถุนายน</option>
                                 <option>กรกฎาคม</option><option>สิงหาคม</option><option>กันยายน</option>
                                 <option>ตุลาคม</option><option>พฤศจิกายน</option><option>ธันวาคม</option>
                             </select>
-                            <select id="txFilterYear" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white">
+                            <select id="txFilterYear" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white" onchange="applyTxFilters()">
                                 <option value="">ทุกปี</option>
                                 <option>2567</option><option>2568</option><option>2569</option><option>2570</option>
                             </select>
@@ -3166,11 +3170,16 @@ function renderTransactions() {
 
 function applyTxFilters() {
     if (!dataTable) return;
-    dataTable.column(2).search(document.getElementById('txFilterMonth').value).draw();
-    dataTable.column(3).search(document.getElementById('txFilterYear').value).draw();
-    dataTable.column(4).search(document.getElementById('txFilterStatus').value).draw();
+    const houseSearch = document.getElementById('txSearchHouse')?.value.trim() || '';
+    dataTable.column(1).search(houseSearch, false, true)
+             .column(2).search(document.getElementById('txFilterMonth').value)
+             .column(3).search(document.getElementById('txFilterYear').value)
+             .column(4).search(document.getElementById('txFilterStatus').value)
+             .draw();
 }
 function clearTxFilters() {
+    const houseEl = document.getElementById('txSearchHouse');
+    if (houseEl) houseEl.value = '';
     document.getElementById('txFilterMonth').value = '';
     document.getElementById('txFilterYear').value = '';
     document.getElementById('txFilterStatus').value = '';
@@ -3277,6 +3286,7 @@ async function deleteTx(id) {
     try {
         const row = allTransactions.find(t => t.id == id);
         await callGas('delRecord', { record: id, oldfile: row ? row.image_url : '', actor_id: currentUser.id });
+        await writeAuditLog('delete_record', `house_payments#${id}`, `ลบรายการชำระ บ้าน ${row?.house_number || id}`);
         Swal.fire('ลบเรียบร้อย', '', 'success');
         await fetchAllData();
         renderTransactions();
@@ -4309,15 +4319,220 @@ function registerAdminFormListener() {
     }
 }
 
+// ==========================================
+// AUDIT LOG
+// ==========================================
 async function loadAuditLogs() {
     const tbody = document.getElementById('auditLogTableBody');
-    tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">ฟีเจอร์ Audit Logs กำลังจะมาในอัปเดตครั้งหน้า (เตรียมตาราง audit_logs ไว้แล้ว)</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">
+        <div class="spinner mx-auto mb-2" style="width:28px;height:28px"></div>กำลังโหลด...
+    </td></tr>`;
+
+    try {
+        const action = document.getElementById('auditFilterAction')?.value || '';
+        const date   = document.getElementById('auditFilterDate')?.value || '';
+
+        let query = 'audit_logs?select=*&order=created_at.desc&limit=200';
+        if (action) query += `&action=eq.${encodeURIComponent(action)}`;
+        if (date)   query += `&created_at=gte.${date}T00:00:00&created_at=lte.${date}T23:59:59`;
+
+        const rows = await callSupabaseRest(query);
+
+        if (!rows || rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-10 text-center text-slate-400">ไม่พบข้อมูล Audit Log ในช่วงที่กรอง</td></tr>';
+            return;
+        }
+
+        const actionMap = {
+            'login': { label:'เข้าสู่ระบบ', cls:'bg-green-100 text-green-700' },
+            'login_failed': { label:'เข้าระบบล้มเหลว', cls:'bg-red-100 text-red-700' },
+            'approve_payment': { label:'อนุมัติชำระ', cls:'bg-indigo-100 text-indigo-700' },
+            'reject_payment': { label:'ปฏิเสธชำระ', cls:'bg-orange-100 text-orange-700' },
+            'delete_record': { label:'ลบข้อมูล', cls:'bg-red-100 text-red-700' },
+            'restore_item': { label:'กู้คืน', cls:'bg-emerald-100 text-emerald-700' },
+            'purge_item': { label:'ลบถาวร', cls:'bg-red-200 text-red-800' },
+            'create_admin': { label:'สร้าง Admin', cls:'bg-purple-100 text-purple-700' },
+            'update_admin': { label:'แก้ไข Admin', cls:'bg-yellow-100 text-yellow-700' },
+            'change_password': { label:'เปลี่ยนรหัส', cls:'bg-slate-100 text-slate-700' },
+            'send_escalation': { label:'ส่ง Escalation', cls:'bg-rose-100 text-rose-700' },
+        };
+
+        tbody.innerHTML = rows.map(r => {
+            const act = actionMap[r.action] || { label: r.action || '-', cls: 'bg-slate-100 text-slate-600' };
+            const dt = r.created_at ? new Date(r.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' }) : '-';
+            return `<tr class="border-b border-slate-100 hover:bg-slate-50">
+                <td class="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">${dt}</td>
+                <td class="px-4 py-2.5 font-medium">${r.admin_name || r.username || '-'}</td>
+                <td class="px-4 py-2.5"><span class="px-2 py-0.5 rounded-full text-xs font-bold ${act.cls}">${act.label}</span></td>
+                <td class="px-4 py-2.5 text-sm">${r.target || '-'}</td>
+                <td class="px-4 py-2.5 text-xs text-slate-500 max-w-xs truncate" title="${r.detail || ''}">${r.detail || '-'}</td>
+            </tr>`;
+        }).join('');
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" class="px-4 py-8 text-center">
+            <div class="text-red-500 font-bold mb-1">โหลดไม่สำเร็จ</div>
+            <div class="text-xs text-slate-500">${err.message}</div>
+            <div class="text-xs text-slate-400 mt-2">ตรวจสอบว่าตาราง <code class="bg-slate-100 px-1 rounded">audit_logs</code> มีอยู่ใน Supabase และ anon key มีสิทธิ์ SELECT</div>
+        </td></tr>`;
+    }
 }
 
+// ==========================================
+// RECYCLE BIN
+// ==========================================
 async function loadRecycleBin() {
     const tbody = document.getElementById('recycleBinTableBody');
-    tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">ถังขยะว่างเปล่า หรือยังไม่ได้เชื่อมต่อตาราง recycle_bin</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">
+        <div class="spinner mx-auto mb-2" style="width:28px;height:28px"></div>กำลังโหลด...
+    </td></tr>`;
+
+    try {
+        const rows = await callSupabaseRest('recycle_bin?select=*&order=deleted_at.desc&limit=100');
+
+        if (!rows || rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-10 text-center text-slate-400">🗑️ ถังขยะว่างเปล่า ไม่มีรายการที่ถูกลบ</td></tr>';
+            return;
+        }
+
+        const RETENTION_DAYS = 7;
+        tbody.innerHTML = rows.map(r => {
+            const deletedAt = r.deleted_at ? new Date(r.deleted_at) : null;
+            const expireAt  = deletedAt ? new Date(deletedAt.getTime() + RETENTION_DAYS * 86400000) : null;
+            const now = new Date();
+            const daysLeft = expireAt ? Math.ceil((expireAt - now) / 86400000) : null;
+            const expireStr = expireAt ? expireAt.toLocaleDateString('th-TH', { dateStyle:'short' }) : '-';
+            const deletedStr = deletedAt ? deletedAt.toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' }) : '-';
+            const expireCls = daysLeft !== null && daysLeft <= 1 ? 'text-red-600 font-bold' : 'text-slate-500';
+            const detail = r.data ? (typeof r.data === 'object' ? JSON.stringify(r.data).substring(0, 80) : String(r.data).substring(0, 80)) : '-';
+
+            return `<tr class="border-b border-slate-100 hover:bg-slate-50">
+                <td class="px-4 py-2.5 text-xs font-bold text-indigo-700">${r.table_name || '-'}</td>
+                <td class="px-4 py-2.5 text-xs text-slate-600 max-w-xs truncate" title="${detail}">${detail}</td>
+                <td class="px-4 py-2.5 text-sm">${r.deleted_by || '-'}</td>
+                <td class="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">${deletedStr}</td>
+                <td class="px-4 py-2.5 text-xs ${expireCls} whitespace-nowrap">${expireStr}${daysLeft !== null ? ` (${daysLeft}วัน)` : ''}</td>
+                <td class="px-4 py-2.5 text-center whitespace-nowrap">
+                    <button onclick="restoreRecycleItem('${r.id}')" class="px-2 py-1 bg-emerald-100 hover:bg-emerald-600 hover:text-white text-emerald-700 rounded text-xs font-bold mr-1 transition-colors" title="กู้คืน">
+                        <i data-lucide="undo-2" class="w-3.5 h-3.5 inline"></i> กู้คืน
+                    </button>
+                    <button onclick="purgeRecycleItem('${r.id}')" class="px-2 py-1 bg-red-100 hover:bg-red-600 hover:text-white text-red-700 rounded text-xs font-bold transition-colors" title="ลบถาวร">
+                        <i data-lucide="trash-2" class="w-3.5 h-3.5 inline"></i> ลบถาวร
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+        lucide.createIcons();
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="6" class="px-4 py-8 text-center">
+            <div class="text-red-500 font-bold mb-1">โหลดไม่สำเร็จ</div>
+            <div class="text-xs text-slate-500">${err.message}</div>
+            <div class="text-xs text-slate-400 mt-2">ตรวจสอบว่าตาราง <code class="bg-slate-100 px-1 rounded">recycle_bin</code> มีอยู่ใน Supabase</div>
+        </td></tr>`;
+    }
 }
+
+async function restoreRecycleItem(id) {
+    const r = await Swal.fire({
+        title: 'กู้คืนรายการ?', text: 'รายการนี้จะถูกนำกลับมาในระบบ',
+        icon: 'question', showCancelButton: true,
+        confirmButtonText: 'กู้คืน', cancelButtonText: 'ยกเลิก'
+    });
+    if (!r.isConfirmed) return;
+
+    try {
+        // ดึงข้อมูลรายการจาก recycle_bin
+        const rows = await callSupabaseRest(`recycle_bin?id=eq.${id}&select=*`);
+        if (!rows || rows.length === 0) throw new Error('ไม่พบรายการในถังขยะ');
+        const item = rows[0];
+
+        // คืนข้อมูลกลับไปยังตารางต้นทาง (ลบ field พิเศษของ recycle_bin ออกก่อน)
+        const data = { ...(typeof item.data === 'object' ? item.data : {}) };
+        delete data.id; // ให้ DB generate ใหม่ป้องกัน conflict
+
+        await callSupabaseRest(item.table_name, {
+            method: 'POST',
+            headers: { 'Prefer': 'return=minimal' },
+            body: JSON.stringify(data)
+        });
+
+        // ลบออกจาก recycle_bin
+        await callSupabaseRest(`recycle_bin?id=eq.${id}`, { method: 'DELETE' });
+
+        await writeAuditLog('restore_item', `recycle_bin#${id}`, `กู้คืนจาก ${item.table_name}`);
+        showToast('success', 'กู้คืนสำเร็จ');
+        loadRecycleBin();
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    }
+}
+
+async function purgeRecycleItem(id) {
+    const r = await Swal.fire({
+        title: 'ลบถาวร?', text: 'ข้อมูลจะหายไปตลอดกาล ไม่สามารถกู้คืนได้อีก',
+        icon: 'warning', showCancelButton: true,
+        confirmButtonColor: '#dc2626',
+        confirmButtonText: 'ลบถาวร', cancelButtonText: 'ยกเลิก'
+    });
+    if (!r.isConfirmed) return;
+
+    try {
+        await callSupabaseRest(`recycle_bin?id=eq.${id}`, { method: 'DELETE' });
+        await writeAuditLog('purge_item', `recycle_bin#${id}`, 'ลบถาวรออกจากถังขยะ');
+        showToast('success', 'ลบถาวรเรียบร้อย');
+        loadRecycleBin();
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    }
+}
+
+// ==========================================
+// AUDIT LOG WRITER (ใช้ทั่วระบบ)
+// ==========================================
+async function writeAuditLog(action, target, detail) {
+    try {
+        await callSupabaseRest('audit_logs', {
+            method: 'POST',
+            headers: { 'Prefer': 'return=minimal' },
+            body: JSON.stringify({
+                action,
+                target: target || null,
+                detail: detail || null,
+                admin_name: currentUser ? currentUser.name : null,
+                username: currentUser ? currentUser.user : null,
+                created_at: new Date().toISOString()
+            })
+        });
+    } catch (e) {
+        console.warn('writeAuditLog failed (ตาราง audit_logs อาจยังไม่มี):', e.message);
+    }
+}
+
+// ==========================================
+// MANAGE ADMINS — handleDeleteAdmin
+// ==========================================
+async function handleDeleteAdmin(adminId) {
+    if (!hasPermission(currentUser?.role, 'manage_admins')) {
+        Swal.fire('ไม่มีสิทธิ์', 'คุณไม่มีสิทธิ์ลบ Admin', 'warning'); return;
+    }
+    const r = await Swal.fire({
+        title: 'ลบ Admin?', text: 'บัญชีนี้จะถูกลบออกจากระบบ',
+        icon: 'warning', showCancelButton: true,
+        confirmButtonColor: '#dc2626',
+        confirmButtonText: 'ลบ', cancelButtonText: 'ยกเลิก'
+    });
+    if (!r.isConfirmed) return;
+    try {
+        await callSupabaseRest(`gls_users?id=eq.${adminId}`, { method: 'DELETE' });
+        await writeAuditLog('delete_record', `gls_users#${adminId}`, 'ลบบัญชี Admin');
+        showToast('success', 'ลบ Admin เรียบร้อย');
+        loadAdminList();
+    } catch (err) {
+        Swal.fire('ผิดพลาด', err.message, 'error');
+    }
+}
+
+function handleDeleteAdminLegacy() {} // keep name for safety
+
 
 function renderProfile() {
     if(currentUser) {
@@ -4332,10 +4547,7 @@ function handleChangePassword() {
     Swal.fire('ระบบรหัสผ่าน', 'เนื่องจากตอนนี้อิงระบบ Login ด้วย Google Apps Script รหัสผ่านจึงผูกกับ GAS เป็นหลัก จะเปิดให้เปลี่ยนรหัสผ่านเองได้หลังจากย้ายไปใช้ Supabase Auth เต็มตัวครับ', 'info');
 }
 
-function handleDeleteAdmin() {}
-function handleResetPassword() {}
-function restoreRecycleItem() {}
-function purgeRecycleItem() {}
+// (handleDeleteAdmin, restoreRecycleItem, purgeRecycleItem — implemented above)
 
 // ==========================================
 // GLOBAL SYNC
@@ -4463,6 +4675,11 @@ window.handleResetPassword = handleResetPassword;
 window.loadAuditLogs = loadAuditLogs;
 window.loadRecycleBin = loadRecycleBin;
 window.restoreRecycleItem = restoreRecycleItem;
+window.purgeRecycleItem = purgeRecycleItem;
+window.handleDeleteAdmin = handleDeleteAdmin;
+window.writeAuditLog = writeAuditLog;
+window.applyTxFilters = applyTxFilters;
+window.clearTxFilters = clearTxFilters;
 window.purgeRecycleItem = purgeRecycleItem;
 
 window.handleChangePassword = handleChangePassword;
