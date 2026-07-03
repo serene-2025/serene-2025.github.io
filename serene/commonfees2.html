@@ -317,6 +317,22 @@
                     <span class="hidden md:inline">ค้นหา</span>
                     <span class="kbd hidden lg:inline">Ctrl+K</span>
                 </button>
+                <!-- 🔔 Notification Bell -->
+                <button onclick="toggleNotificationPanel()" id="notifBtn"
+                    class="relative p-2 rounded-lg hover:bg-slate-100 transition-colors" title="การแจ้งเตือน">
+                    <i data-lucide="bell" class="w-5 h-5 text-slate-600"></i>
+                    <span id="notifBadge" class="hidden absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center">0</span>
+                </button>
+                <!-- Notification Panel -->
+                <div id="notifPanel" class="hidden absolute right-4 top-14 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 z-[999] max-h-[70vh] flex flex-col overflow-hidden">
+                    <div class="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50">
+                        <span class="font-bold text-slate-800 text-sm">การแจ้งเตือน</span>
+                        <button onclick="clearAllNotifications()" class="text-xs text-slate-400 hover:text-red-500">ล้างทั้งหมด</button>
+                    </div>
+                    <div id="notifList" class="overflow-y-auto flex-1 divide-y divide-slate-100">
+                        <div class="px-4 py-8 text-center text-slate-400 text-sm">ไม่มีการแจ้งเตือน</div>
+                    </div>
+                </div>
                 <button onclick="toggleDarkMode()" id="darkModeBtn"
                     class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" title="สลับโหมดมืด/สว่าง">
                     <i data-lucide="moon" class="w-5 h-5 dark:hidden"></i>
@@ -426,6 +442,11 @@
                                 <i data-lucide="refresh-cw" class="w-4 h-4"></i>
                                 รีเฟรช
                             </button>
+                        </div>
+                        <!-- Real-time indicator -->
+                        <div class="flex items-center gap-2 mt-3 text-white/70 text-xs">
+                            <span class="w-2 h-2 rounded-full bg-green-300 animate-pulse inline-block"></span>
+                            อัปเดตอัตโนมัติทุก 5 นาที — ล่าสุด: <span id="lastRefreshTime">-</span>
                         </div>
                     </div>
 
@@ -721,6 +742,29 @@
                             <div id="soiRanking" class="space-y-2"></div>
                         </div>
 
+                        <!-- Heatmap การจ่ายรายซอย -->
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                            <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2 mb-2">
+                                <i data-lucide="grid-3x3" class="w-5 h-5 text-teal-600"></i>
+                                Heatmap การชำระรายซอย × รายเดือน
+                            </h2>
+                            <p class="text-xs text-slate-400 mb-3">% บ้านที่จ่ายตรงเวลาในแต่ละซอย × เดือน — เขียวเข้ม = ดี, แดง = มีปัญหา</p>
+                            <div id="paymentHeatmap" class="overflow-x-auto"></div>
+                        </div>
+
+                        <!-- House Profile Search -->
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                            <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2 mb-3">
+                                <i data-lucide="home" class="w-5 h-5 text-indigo-600"></i>
+                                บัตรรายงานรายบ้าน (House Profile)
+                            </h2>
+                            <div class="flex gap-2 mb-4">
+                                <input type="text" id="houseProfileInput" placeholder="พิมพ์เลขที่บ้าน เช่น 998/101..." class="flex-1 px-3 py-2 rounded-lg border border-slate-300 text-sm" oninput="searchHouseProfile()">
+                                <button onclick="searchHouseProfile()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">ค้นหา</button>
+                            </div>
+                            <div id="houseProfileResult"></div>
+                        </div>
+
                         <!-- กราฟแนวโน้มยอดค้างชำระสะสม -->
                         <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                             <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
@@ -938,6 +982,10 @@
                                 <button onclick="generateMeetingReport()" class="w-full px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-lg text-sm flex items-center justify-center gap-2">
                                     <i data-lucide="refresh-cw" class="w-4 h-4"></i>
                                     รีเฟรชข้อมูลรายงาน
+                                </button>
+                                <button onclick="exportReportPDF()" class="w-full px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg text-sm flex items-center justify-center gap-2 mt-2">
+                                    <i data-lucide="file-down" class="w-4 h-4"></i>
+                                    บันทึก PDF
                                 </button>
                             </div>
                         </div>
@@ -1852,7 +1900,12 @@ async function initApp() {
     initKeyboardShortcuts();
     initCommandPalette();
     initIdleTimer();      
-    registerAdminFormListener();  
+    registerAdminFormListener();
+
+    // Init Notifications + Auto Refresh
+    renderNotifBadge();
+    renderNotifList();
+    startAutoRefresh();
 
     // Apply permissions
     applyPermissionsToUI();
@@ -2003,6 +2056,8 @@ async function fetchAllData() {
         yearFilter.innerHTML = '<option value="all">ทุกปี</option>' + years.map(y => `<option value="${y}">${y}</option>`).join('');
 
         renderDashboard();
+        checkAndPushAutoNotifications();
+        updateLastRefreshTime();
         renderHome();
         updatePendingBadge();
         Swal.close();
@@ -3419,6 +3474,7 @@ function renderAnalytics() {
     renderOnTimePaymentRate();
     renderAgingReport();
     renderRevenueForecast();
+    renderPaymentHeatmap();
 }
 
 function renderYearComparison() {
@@ -4658,9 +4714,347 @@ window.closeCommandPalette = closeCommandPalette;
 window.handleGlobalSync = handleGlobalSync;
 window.handleLogout = handleLogout;
 
-window.fetchAllData = fetchAllData;
+// ================================================================
+// 🔔 NOTIFICATION BELL
+// ================================================================
+let notifications = JSON.parse(localStorage.getItem('gls_notifications') || '[]');
+
+function pushNotification(type, title, body, action) {
+    // type: 'warning' | 'info' | 'error' | 'success'
+    const n = { id: Date.now(), type, title, body, action, read: false, ts: new Date().toISOString() };
+    notifications.unshift(n);
+    if (notifications.length > 50) notifications = notifications.slice(0, 50);
+    localStorage.setItem('gls_notifications', JSON.stringify(notifications));
+    renderNotifBadge();
+    renderNotifList();
+}
+
+function renderNotifBadge() {
+    const unread = notifications.filter(n => !n.read).length;
+    const badge = document.getElementById('notifBadge');
+    if (!badge) return;
+    if (unread > 0) {
+        badge.textContent = unread > 9 ? '9+' : unread;
+        badge.classList.remove('hidden');
+    } else {
+        badge.classList.add('hidden');
+    }
+}
+
+function renderNotifList() {
+    const el = document.getElementById('notifList');
+    if (!el) return;
+    if (notifications.length === 0) {
+        el.innerHTML = '<div class="px-4 py-8 text-center text-slate-400 text-sm">ไม่มีการแจ้งเตือน</div>';
+        return;
+    }
+    const iconMap = { warning: '⚠️', info: 'ℹ️', error: '🔴', success: '✅' };
+    const bgMap = { warning: 'bg-amber-50', info: 'bg-blue-50', error: 'bg-red-50', success: 'bg-green-50' };
+    el.innerHTML = notifications.map(n => `
+        <div class="px-4 py-3 hover:bg-slate-50 cursor-pointer ${!n.read ? bgMap[n.type] || '' : ''}" onclick="readNotification(${n.id})">
+            <div class="flex items-start gap-2">
+                <span class="text-base mt-0.5">${iconMap[n.type] || 'ℹ️'}</span>
+                <div class="flex-1 min-w-0">
+                    <div class="font-bold text-slate-800 text-xs flex items-center gap-1">
+                        ${n.title}
+                        ${!n.read ? '<span class="w-1.5 h-1.5 bg-blue-500 rounded-full inline-block"></span>' : ''}
+                    </div>
+                    <div class="text-xs text-slate-500 mt-0.5 leading-relaxed">${n.body}</div>
+                    ${n.action ? `<button onclick="event.stopPropagation();${n.action}" class="text-xs text-indigo-600 font-bold mt-1 hover:underline">ดูรายละเอียด →</button>` : ''}
+                    <div class="text-[10px] text-slate-400 mt-1">${new Date(n.ts).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' })}</div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function readNotification(id) {
+    const n = notifications.find(n => n.id === id);
+    if (n) { n.read = true; localStorage.setItem('gls_notifications', JSON.stringify(notifications)); }
+    renderNotifBadge();
+    renderNotifList();
+}
+
+function clearAllNotifications() {
+    notifications = [];
+    localStorage.setItem('gls_notifications', JSON.stringify(notifications));
+    renderNotifBadge();
+    renderNotifList();
+}
+
+function toggleNotificationPanel() {
+    const panel = document.getElementById('notifPanel');
+    if (!panel) return;
+    panel.classList.toggle('hidden');
+    // mark all as read เมื่อเปิด
+    notifications.forEach(n => n.read = true);
+    localStorage.setItem('gls_notifications', JSON.stringify(notifications));
+    renderNotifBadge();
+    renderNotifList();
+}
+
+// ปิด panel เมื่อคลิกข้างนอก
+document.addEventListener('click', (e) => {
+    const panel = document.getElementById('notifPanel');
+    const btn = document.getElementById('notifBtn');
+    if (panel && !panel.classList.contains('hidden') && !panel.contains(e.target) && !btn?.contains(e.target)) {
+        panel.classList.add('hidden');
+    }
+});
+
+function checkAndPushAutoNotifications() {
+    // สลิปรอตรวจสอบ
+    const pendingCount = pendingFees.length;
+    if (pendingCount > 0) {
+        const last = notifications.find(n => n.title === 'สลิปรอตรวจสอบ');
+        const lastCount = last ? parseInt(last.body) : -1;
+        if (lastCount !== pendingCount) {
+            pushNotification('warning', 'สลิปรอตรวจสอบ',
+                `มีสลิปรอตรวจสอบ ${pendingCount} รายการ กรุณาตรวจสอบเพื่ออนุมัติ`,
+                "switchView('pending')");
+        }
+    }
+
+    // บ้านขั้น 3
+    const level3 = getEscalationData().filter(d => d.rule.level === 3);
+    if (level3.length > 0) {
+        const last = notifications.find(n => n.title === 'บ้านขั้น 3 รุนแรง');
+        if (!last) {
+            pushNotification('error', 'บ้านขั้น 3 รุนแรง',
+                `มี ${level3.length} หลังค้างชำระ 6+ เดือน เข้าข่ายดำเนินการทางกฎหมาย`,
+                "switchView('escalation')");
+        }
+    }
+}
+
+// ================================================================
+// ⏱️ REAL-TIME AUTO REFRESH (ทุก 5 นาที)
+// ================================================================
+let autoRefreshInterval = null;
+
+function startAutoRefresh() {
+    if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+    autoRefreshInterval = setInterval(async () => {
+        await fetchAllData();
+        updateLastRefreshTime();
+        checkAndPushAutoNotifications();
+    }, 5 * 60 * 1000); // 5 นาที
+    updateLastRefreshTime();
+}
+
+function updateLastRefreshTime() {
+    const el = document.getElementById('lastRefreshTime');
+    if (el) el.textContent = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+}
+
+// ================================================================
+// 📄 EXPORT REPORT PDF
+// ================================================================
+function exportReportPDF() {
+    // โหลด html2pdf.js จาก CDN ถ้ายังไม่มี
+    if (typeof html2pdf === 'undefined') {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+        script.onload = () => _doExportPDF();
+        document.head.appendChild(script);
+    } else {
+        _doExportPDF();
+    }
+}
+
+function _doExportPDF() {
+    const el = document.querySelector('.report-a4-container');
+    if (!el) { Swal.fire('ไม่พบรายงาน', 'กรุณาสร้างรายงานก่อน แล้วลองใหม่', 'warning'); return; }
+
+    // ซ่อน pending section ก่อน export
+    const pendingSection = document.getElementById('repPendingSection');
+    if (pendingSection) pendingSection.style.display = 'none';
+
+    const monthName = document.getElementById('repMonthName')?.textContent || 'รายงาน';
+    const yearName  = document.getElementById('repYearName')?.textContent || '';
+
+    const opt = {
+        margin:      [10, 10, 10, 10],
+        filename:    `รายงานค่าส่วนกลาง_${monthName}_${yearName}.pdf`,
+        image:       { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+        jsPDF:       { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak:   { mode: ['avoid-all', 'css'] }
+    };
+
+    html2pdf().set(opt).from(el).save().then(() => {
+        if (pendingSection) pendingSection.style.display = '';
+        pushNotification('success', 'บันทึก PDF สำเร็จ', `${opt.filename} ถูกบันทึกแล้ว`);
+    }).catch(err => {
+        if (pendingSection) pendingSection.style.display = '';
+        Swal.fire('ผิดพลาด', 'บันทึก PDF ไม่สำเร็จ: ' + err.message, 'error');
+    });
+}
+
+// ================================================================
+// 🔥 HEATMAP การชำระรายซอย × รายเดือน
+// ================================================================
+function renderPaymentHeatmap() {
+    const el = document.getElementById('paymentHeatmap');
+    if (!el) return;
+
+    const years = [...new Set(allData.map(d => d.year))].sort((a,b) => b-a);
+    if (years.length === 0) { el.innerHTML = '<p class="text-slate-400 text-sm py-4">ไม่มีข้อมูล</p>'; return; }
+    const targetYear = years[0];
+    const yearHouses = allData.filter(d => d.year.toString() === targetYear.toString());
+
+    // รวมซอยทั้งหมด
+    const soiSet = [...new Set(yearHouses.map(h => h.soi || 'ไม่ระบุ').map(s => s.trim()))].sort((a,b) => {
+        const na = parseInt(a), nb = parseInt(b);
+        return isNaN(na) || isNaN(nb) ? a.localeCompare(b) : na - nb;
+    });
+
+    if (soiSet.length === 0) { el.innerHTML = '<p class="text-slate-400 text-sm py-4">ไม่มีข้อมูลซอย</p>'; return; }
+
+    // คำนวณ % จ่ายตรงเวลา ต่อ (soi × month)
+    const heatData = {};
+    soiSet.forEach(soi => {
+        heatData[soi] = {};
+        months.forEach(m => {
+            const soiHouses = yearHouses.filter(h => (h.soi || 'ไม่ระบุ').trim() === soi);
+            if (soiHouses.length === 0) { heatData[soi][m.key] = null; return; }
+            const paid = soiHouses.filter(h => {
+                const s = h[m.key] || '';
+                return s.includes('จ่ายแล้ว') || s.includes('ชำระแล้ว') || s.includes('ล่วงหน้า');
+            }).length;
+            heatData[soi][m.key] = Math.round((paid / soiHouses.length) * 100);
+        });
+    });
+
+    function heatColor(pct) {
+        if (pct === null) return '#f1f5f9';
+        if (pct >= 90) return '#16a34a';
+        if (pct >= 75) return '#4ade80';
+        if (pct >= 50) return '#fbbf24';
+        if (pct >= 25) return '#f97316';
+        return '#dc2626';
+    }
+    function textColor(pct) {
+        if (pct === null) return '#94a3b8';
+        if (pct >= 50) return '#fff';
+        return '#fff';
+    }
+
+    const cellW = 'min-width:46px;width:46px;';
+    let html = `<table class="text-[11px] border-collapse" style="min-width:600px">
+        <thead><tr>
+            <th class="text-left pr-3 pb-2 text-slate-500 font-semibold sticky left-0 bg-white" style="min-width:60px">ซอย</th>
+            ${months.map(m => `<th class="pb-2 text-slate-500 font-semibold text-center" style="${cellW}">${m.label}</th>`).join('')}
+            <th class="pb-2 text-slate-500 font-semibold text-center pl-2">เฉลี่ย</th>
+        </tr></thead>
+        <tbody>`;
+
+    soiSet.forEach(soi => {
+        const vals = months.map(m => heatData[soi][m.key]);
+        const nonNull = vals.filter(v => v !== null);
+        const avg = nonNull.length > 0 ? Math.round(nonNull.reduce((a,b) => a+b,0) / nonNull.length) : null;
+        html += `<tr>
+            <td class="pr-3 py-0.5 font-bold text-slate-700 sticky left-0 bg-white whitespace-nowrap">${soi}</td>
+            ${vals.map(pct => `
+                <td class="py-0.5 text-center" style="${cellW}">
+                    <div class="rounded text-[10px] font-bold py-1" style="background:${heatColor(pct)};color:${textColor(pct)}">
+                        ${pct !== null ? pct+'%' : '-'}
+                    </div>
+                </td>`).join('')}
+            <td class="py-0.5 text-center pl-2">
+                <div class="rounded text-[10px] font-bold py-1 px-1" style="background:${heatColor(avg)};color:${textColor(avg)}">
+                    ${avg !== null ? avg+'%' : '-'}
+                </div>
+            </td>
+        </tr>`;
+    });
+
+    html += `</tbody></table>
+        <div class="flex items-center gap-3 mt-3 text-[10px] text-slate-500 flex-wrap">
+            <span>ระดับ:</span>
+            ${[['#16a34a','≥90%'],['#4ade80','75-89%'],['#fbbf24','50-74%'],['#f97316','25-49%'],['#dc2626','<25%']].map(([c,l]) =>
+                `<span class="flex items-center gap-1"><span style="background:${c}" class="w-4 h-3 rounded inline-block"></span>${l}</span>`
+            ).join('')}
+        </div>`;
+    el.innerHTML = html;
+}
+
+// ================================================================
+// 🏠 HOUSE PROFILE
+// ================================================================
+function searchHouseProfile() {
+    const query = (document.getElementById('houseProfileInput')?.value || '').trim();
+    const el = document.getElementById('houseProfileResult');
+    if (!el) return;
+
+    if (!query) { el.innerHTML = ''; return; }
+
+    const house = allData.find(d => d.house_numbe?.toLowerCase().includes(query.toLowerCase()));
+    if (!house) {
+        el.innerHTML = `<div class="text-center text-slate-400 py-6 text-sm">ไม่พบบ้านเลขที่ "${query}"</div>`;
+        return;
+    }
+
+    // คำนวณสถิติ
+    let totalPaid = 0, totalUnpaid = 0, totalPending = 0, streak = 0, maxStreak = 0, currentStreak = 0;
+    const monthStatus = months.map(m => {
+        const s = house[m.key] || '';
+        const isPaid = s.includes('จ่ายแล้ว') || s.includes('ชำระแล้ว') || s.includes('ล่วงหน้า');
+        const isUnpaid = s.includes('ยังไม่จ่าย') || s.includes('ค้าง');
+        const isPending = s.includes('รอตรวจสอบ');
+        if (isPaid) { totalPaid++; currentStreak++; maxStreak = Math.max(maxStreak, currentStreak); }
+        else { currentStreak = 0; if (isUnpaid) totalUnpaid++; if (isPending) totalPending++; }
+        return { label: m.label, s, isPaid, isUnpaid, isPending };
+    });
+
+    const paidPct = Math.round((totalPaid / months.length) * 100);
+    const escalation = getEscalationLevel(totalUnpaid);
+
+    el.innerHTML = `
+        <div class="border border-slate-200 rounded-xl overflow-hidden">
+            <!-- Header -->
+            <div class="bg-gradient-to-r from-indigo-500 to-purple-600 px-4 py-3 text-white">
+                <div class="font-black text-lg">🏠 บ้านเลขที่ ${house.house_numbe}</div>
+                <div class="text-white/80 text-xs mt-0.5">ซอย ${house.soi || '-'} • ${house.owner_name || 'ไม่ระบุเจ้าของ'} • ปี ${house.year}</div>
+            </div>
+            <!-- Stats row -->
+            <div class="grid grid-cols-4 divide-x divide-slate-100 bg-white text-center text-xs">
+                <div class="py-3"><div class="text-lg font-black text-green-600">${totalPaid}</div><div class="text-slate-500">เดือนจ่ายแล้ว</div></div>
+                <div class="py-3"><div class="text-lg font-black text-red-600">${totalUnpaid}</div><div class="text-slate-500">เดือนค้าง</div></div>
+                <div class="py-3"><div class="text-lg font-black text-indigo-600">${paidPct}%</div><div class="text-slate-500">อัตราชำระ</div></div>
+                <div class="py-3"><div class="text-lg font-black text-amber-600">${maxStreak}</div><div class="text-slate-500">Streak สูงสุด</div></div>
+            </div>
+            <!-- Escalation badge -->
+            ${escalation ? `<div class="px-4 py-2 ${escalation.cls} text-xs font-bold flex items-center gap-1">
+                🚨 สถานะ: ${escalation.label} — ค้างชำระ ฿${totalUnpaid * 300}
+            </div>` : '<div class="px-4 py-2 bg-green-50 text-green-700 text-xs font-bold">✅ ไม่มียอดค้างชำระ</div>'}
+            <!-- Month grid -->
+            <div class="px-4 py-3 bg-slate-50">
+                <div class="text-xs font-bold text-slate-600 mb-2">ประวัติการชำระรายเดือน</div>
+                <div class="grid grid-cols-6 gap-1">
+                    ${monthStatus.map(m => `
+                        <div class="rounded px-1 py-1.5 text-center text-[10px] font-bold cursor-default
+                            ${m.isPaid ? 'bg-green-500 text-white' : m.isUnpaid ? 'bg-red-100 text-red-700' : m.isPending ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400'}"
+                            title="${m.label}: ${m.s || 'ไม่มีข้อมูล'}">
+                            ${m.label}
+                        </div>`).join('')}
+                </div>
+                <div class="flex gap-3 mt-2 text-[10px] text-slate-500">
+                    <span><span class="inline-block w-2 h-2 bg-green-500 rounded"></span> จ่ายแล้ว</span>
+                    <span><span class="inline-block w-2 h-2 bg-red-200 rounded"></span> ค้าง</span>
+                    <span><span class="inline-block w-2 h-2 bg-amber-200 rounded"></span> รอตรวจสอบ</span>
+                </div>
+            </div>
+        </div>`;
+}
+
+
 window.renderDashboard = renderDashboard;
 window.exportCSV = exportCSV;
+window.exportReportPDF = exportReportPDF;
+window.toggleNotificationPanel = toggleNotificationPanel;
+window.clearAllNotifications = clearAllNotifications;
+window.searchHouseProfile = searchHouseProfile;
 
 window.openImageModal = openImageModal;
 window.closeImageModal = closeImageModal;
