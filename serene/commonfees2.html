@@ -181,6 +181,41 @@
             border-color: #334155 !important;
         }
 
+
+        /* ===== หนังสือทางการ — print styles ===== */
+        .formal-letter-page {
+            width: 210mm;
+            min-height: 297mm;
+            padding: 25mm 20mm 20mm 25mm;
+            font-family: 'Kanit', sans-serif;
+            font-size: 14pt;
+            line-height: 1.9;
+            color: #000;
+            background: #fff;
+        }
+        .formal-letter-page .letter-header { text-align: center; margin-bottom: 24pt; }
+        .formal-letter-page .letter-logo { font-size: 16pt; font-weight: 900; }
+        .formal-letter-page .letter-address-block { text-align: right; margin-bottom: 16pt; }
+        .formal-letter-page .letter-subject { font-weight: 700; margin: 16pt 0 8pt; }
+        .formal-letter-page .letter-body p { text-indent: 2em; margin-bottom: 8pt; }
+        .formal-letter-page .letter-footer { margin-top: 40pt; text-align: center; }
+        .formal-letter-page .letter-sign-line { display: inline-block; border-bottom: 1px solid #000; min-width: 200pt; }
+        .formal-letter-page .letter-stamp { border: 2px solid #dc2626; color: #dc2626; font-weight: 900;
+            font-size: 13pt; padding: 6pt 12pt; display: inline-block; border-radius: 4pt;
+            transform: rotate(-8deg); margin-top: 8pt; }
+
+        /* batch print: ซ่อน toolbar, แสดงเฉพาะหน้าหนังสือ */
+        @media print {
+            .no-batch-print { display: none !important; }
+            #batchLetterPages .formal-letter-page { page-break-after: always; }
+            #batchLetterPages .formal-letter-page:last-child { page-break-after: auto; }
+        }
+
+        /* single letter modal print */
+        @media print {
+            .no-letter-print { display: none !important; }
+        }
+
         /* ตั้งค่าการพิมพ์ A4 PDF */
         @media print {
             /* ===== บังคับพิมพ์สี ===== */
@@ -921,6 +956,10 @@
                                     <option value="2">เฉพาะขั้น 2</option>
                                     <option value="3">เฉพาะขั้น 3</option>
                                 </select>
+                                <button onclick="printFormalLetterBatch()" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-900 text-white rounded-lg text-sm font-bold flex items-center gap-2">
+                                    <i data-lucide="file-text" class="w-4 h-4"></i>
+                                    พิมพ์หนังสือที่เลือก (<span id="escSelectedCount2">0</span>)
+                                </button>
                                 <button onclick="sendEscalationBatch()" class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-bold flex items-center gap-2">
                                     <i data-lucide="send" class="w-4 h-4"></i>
                                     ส่ง Push ที่เลือก (<span id="escSelectedCount">0</span>)
@@ -939,7 +978,8 @@
                                         <th class="px-3 py-3 text-right">ยอดค้าง</th>
                                         <th class="px-3 py-3 text-center">ขั้น</th>
                                         <th class="px-3 py-3 text-left">ส่งล่าสุด</th>
-                                        <th class="px-3 py-3 text-center">ดำเนินการ</th>
+                                        <th class="px-3 py-3 text-center">หนังสือ</th>
+                                        <th class="px-3 py-3 text-center">Push</th>
                                     </tr>
                                 </thead>
                                 <tbody id="escalationTableBody"></tbody>
@@ -4093,6 +4133,11 @@ function renderEscalationTable() {
                 <td class="px-3 py-2 text-center"><span class="status-cell ${d.rule.cls}">ขั้น ${d.rule.level}</span></td>
                 <td class="px-3 py-2 text-xs">${lastSentTxt}</td>
                 <td class="px-3 py-2 text-center">
+                    <button onclick="openFormalLetter('${d.houseNo}')" class="px-2 py-1 bg-slate-100 hover:bg-slate-700 hover:text-white text-slate-700 rounded font-bold text-xs flex items-center gap-1 mx-auto transition-colors" title="พิมพ์หนังสือแจ้งเตือนทางการ">
+                        <i data-lucide="file-text" class="w-3 h-3"></i>หนังสือ
+                    </button>
+                </td>
+                <td class="px-3 py-2 text-center">
                     <button onclick="sendEscalationSingle('${d.houseNo}')" class="px-2 py-1 ${sentToday ? 'bg-slate-100 text-slate-400' : 'bg-red-100 hover:bg-red-500 hover:text-white text-red-700'} rounded font-bold text-xs flex items-center gap-1 mx-auto" title="${sentToday ? 'ส่งขั้นนี้ไปแล้ววันนี้' : 'ส่ง Push'}">
                         <i data-lucide="send" class="w-3 h-3"></i>
                         ${sentToday ? 'ส่งแล้ว' : 'ส่ง'}
@@ -4112,8 +4157,10 @@ function toggleEscSelectAll(checkbox) {
 
 function updateEscSelectedCount() {
     const count = document.querySelectorAll('.esc-check:checked').length;
-    const el = document.getElementById('escSelectedCount');
-    if (el) el.textContent = count;
+    const el  = document.getElementById('escSelectedCount');
+    const el2 = document.getElementById('escSelectedCount2');
+    if (el)  el.textContent  = count;
+    if (el2) el2.textContent = count;
 }
 
 // ดึง uid ของลูกบ้านตาม house_no จากตาราง userhome (Supabase)
@@ -5426,7 +5473,179 @@ function closeOwnerHistoryModal() {
 }
 
 
-window.exportCSV = exportCSV;
+// ================================================================
+// 📄 หนังสือแจ้งเตือนค้างชำระทางการ (Formal Letter)
+// ================================================================
+
+function buildFormalLetterHTML(houseData) {
+    const today = new Date();
+    const thaiDate = today.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
+    // ปีพุทธศักราช (Gregorian + 543)
+    const thaiYear = today.getFullYear() + 543;
+    const docNo = `นค.${thaiYear}-${String(today.getMonth()+1).padStart(2,'0')}-${houseData.houseNo.replace('/','_')}`;
+
+    const level = houseData.rule?.level || 3;
+    const levelLabel = level === 1 ? 'ครั้งที่ 1' : level === 2 ? 'ครั้งที่ 2 (แจ้งเตือนเข้ม)' : 'ครั้งที่ 3 (ขั้นรุนแรง)';
+
+    const warningBox = level === 3
+        ? `<div style="border:2px solid #dc2626;padding:10pt 14pt;margin:16pt 0;background:#fff5f5;border-radius:4pt;">
+            <strong style="color:#dc2626;">⚠️ คำเตือนสำคัญ:</strong> กรณีท่านยังคงไม่ดำเนินการชำระหนี้ภายในระยะเวลาที่กำหนด นิติบุคคลจำเป็นต้องดำเนินการตามสิทธิ์ที่มีตามกฎหมาย ซึ่งอาจรวมถึงการยื่นฟ้องร้องต่อศาล และการแจ้งหน่วยงานที่เกี่ยวข้อง
+           </div>`
+        : level === 2
+        ? `<div style="border:1px solid #ea580c;padding:10pt 14pt;margin:16pt 0;background:#fff7ed;border-radius:4pt;">
+            <strong style="color:#ea580c;">⚠️ หมายเหตุ:</strong> นิติบุคคลจะดำเนินการระงับสิทธิ์การใช้บัตรผ่านเข้า-ออกหมู่บ้านและสิทธิ์ในการใช้สิ่งอำนวยความสะดวกส่วนกลาง หากไม่ชำระภายในระยะเวลาที่กำหนด
+           </div>`
+        : '';
+
+    const deadlineDays = level === 1 ? 15 : level === 2 ? 7 : 3;
+    const deadline = new Date(today.getTime() + deadlineDays * 86400000)
+        .toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
+
+    const stampColor = level === 3 ? '#dc2626' : level === 2 ? '#ea580c' : '#d97706';
+    const stampText = level === 3 ? 'เร่งด่วนมาก' : level === 2 ? 'เร่งด่วน' : 'โปรดดำเนินการ';
+
+    return `
+    <div class="formal-letter-page" id="letter_${houseData.houseNo.replace('/','_')}">
+        <!-- หัวหนังสือ -->
+        <div class="letter-header">
+            <div class="letter-logo">นิติบุคคลหมู่บ้านโกลเด้นแลนด์ ซีรีน</div>
+            <div style="font-size:11pt;color:#475569;margin-top:4pt;">
+                Golden Land Serene Juristic Person<br>
+                โทร. _______________ | อีเมล: _______________
+            </div>
+            <div style="margin-top:12pt;font-size:13pt;font-weight:700;border-top:2px solid #1e293b;border-bottom:2px solid #1e293b;padding:4pt 0;">
+                หนังสือแจ้งเตือนค้างชำระค่าส่วนกลาง (${levelLabel})
+            </div>
+        </div>
+
+        <!-- เลขที่และวันที่ -->
+        <div class="letter-address-block" style="font-size:12pt;">
+            <div>เลขที่: <strong>${docNo}</strong></div>
+            <div>วันที่: <strong>${thaiDate}</strong></div>
+        </div>
+
+        <!-- stamp -->
+        <div style="text-align:right;margin-bottom:8pt;">
+            <span class="letter-stamp" style="border-color:${stampColor};color:${stampColor};">${stampText}</span>
+        </div>
+
+        <!-- เรียน -->
+        <div style="margin-bottom:12pt;font-size:13pt;">
+            <strong>เรียน</strong>&nbsp;&nbsp; เจ้าของ/ผู้อยู่อาศัย บ้านเลขที่ <strong>${houseData.houseNo}</strong>
+            ซอย <strong>${houseData.soi || '-'}</strong>
+            ${houseData.ownerName ? `(${houseData.ownerName})` : ''}
+        </div>
+
+        <!-- เนื้อหา -->
+        <div class="letter-body">
+            <p>ด้วยนิติบุคคลหมู่บ้านโกลเด้นแลนด์ ซีรีน ตรวจสอบพบว่า ท่านมียอดค้างชำระค่าส่วนกลางประจำหมู่บ้านฯ
+            เป็นจำนวน <strong>${houseData.totalMonths} เดือน</strong> คิดเป็นเงินรวมทั้งสิ้น
+            <strong style="color:#dc2626;">฿${houseData.totalAmount.toLocaleString()}</strong> (${amountInWords(houseData.totalAmount)})</p>
+
+            <p>นิติบุคคลฯ ใคร่ขอให้ท่านดำเนินการชำระยอดค้างดังกล่าวให้ครบถ้วน
+            <strong>ภายในวันที่ ${deadline}</strong>
+            โดยสามารถโอนเงินผ่านช่องทาง PromptPay หรือโอนเข้าบัญชีธนาคารของนิติบุคคลฯ
+            และแจ้งหลักฐานการโอนกลับมาที่สำนักงานนิติบุคคลฯ</p>
+
+            ${warningBox}
+
+            <p>หากท่านมีข้อสงสัยหรือต้องการติดต่อเจรจา กรุณาติดต่อสำนักงานนิติบุคคลฯ
+            ในวันและเวลาทำการ เพื่อดำเนินการต่อไป</p>
+
+            <p>จึงเรียนมาเพื่อโปรดทราบและดำเนินการโดยเร็ว</p>
+        </div>
+
+        <!-- ลงนาม -->
+        <div class="letter-footer">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:40pt;text-align:center;margin-top:32pt;">
+                <div>
+                    <div style="border-bottom:1px solid #000;margin-bottom:6pt;height:40pt;"></div>
+                    <div>( .................................................. )</div>
+                    <div style="font-size:11pt;color:#475569;">เลขานุการ / ผู้จัดทำรายงานการเงิน</div>
+                </div>
+                <div>
+                    <div style="border-bottom:1px solid #000;margin-bottom:6pt;height:40pt;"></div>
+                    <div>( .................................................. )</div>
+                    <div style="font-size:11pt;color:#475569;">ประธานกรรมการนิติบุคคลหมู่บ้านจัดสรร</div>
+                </div>
+            </div>
+            <div style="margin-top:20pt;font-size:10pt;color:#94a3b8;text-align:center;">
+                เอกสารนี้ออก ณ วันที่ ${thaiDate} | ระบบ Admin Panel v4.5 โกลเด้นแลนด์ ซีรีน
+            </div>
+        </div>
+    </div>`;
+}
+
+function amountInWords(amount) {
+    // แปลงตัวเลขเป็นข้อความภาษาไทยอย่างง่าย
+    const ones = ['','หนึ่ง','สอง','สาม','สี่','ห้า','หก','เจ็ด','แปด','เก้า'];
+    const tens = ['','สิบ','ยี่สิบ','สามสิบ','สี่สิบ','ห้าสิบ','หกสิบ','เจ็ดสิบ','แปดสิบ','เก้าสิบ'];
+    if (amount === 0) return 'ศูนย์บาทถ้วน';
+    let text = '';
+    const thousands = Math.floor(amount / 1000);
+    const hundreds  = Math.floor((amount % 1000) / 100);
+    const ten       = Math.floor((amount % 100) / 10);
+    const one       = amount % 10;
+    if (thousands > 0) text += (thousands > 1 ? ones[thousands] : '') + (thousands === 1 ? 'หนึ่ง' : '') + 'พัน';
+    if (hundreds  > 0) text += ones[hundreds] + 'ร้อย';
+    if (ten > 0)       text += tens[ten];
+    if (one > 0)       text += ones[one];
+    return text + 'บาทถ้วน';
+}
+
+function openFormalLetter(houseNo) {
+    const data = getEscalationData().find(d => d.houseNo === houseNo);
+    if (!data) { Swal.fire('ไม่พบข้อมูล', `ไม่พบบ้าน ${houseNo} ในรายการค้างชำระ`, 'warning'); return; }
+
+    const modal = document.getElementById('formalLetterModal');
+    const content = document.getElementById('formalLetterContent');
+    content.innerHTML = buildFormalLetterHTML(data);
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    lucide.createIcons();
+}
+
+function closeFormalLetterModal() {
+    const modal = document.getElementById('formalLetterModal');
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+}
+
+function printFormalLetter() {
+    // เปิด print dialog โดยซ่อน elements อื่น
+    const modal = document.getElementById('formalLetterModal');
+    modal.style.position = 'fixed';
+    modal.style.inset = '0';
+    modal.style.zIndex = '9999';
+    window.print();
+}
+
+function printFormalLetterBatch() {
+    const checked = Array.from(document.querySelectorAll('.esc-check:checked')).map(c => c.value);
+    if (checked.length === 0) {
+        Swal.fire('เลือกบ้านก่อน', 'กรุณาติ๊กเลือกบ้านที่ต้องการพิมพ์หนังสืออย่างน้อย 1 หลัง', 'warning');
+        return;
+    }
+    const allEscData = getEscalationData();
+    const pages = checked.map(houseNo => {
+        const data = allEscData.find(d => d.houseNo === houseNo);
+        return data ? buildFormalLetterHTML(data) : '';
+    }).filter(Boolean).join('<div style="page-break-after:always;"></div>');
+
+    document.getElementById('batchLetterTitle').textContent =
+        `หนังสือแจ้งเตือนค้างชำระ — ${checked.length} ฉบับ`;
+    document.getElementById('batchLetterPages').innerHTML = pages;
+
+    const container = document.getElementById('batchLetterContainer');
+    container.classList.remove('hidden');
+    lucide.createIcons();
+}
+
+function closeBatchLetterContainer() {
+    document.getElementById('batchLetterContainer').classList.add('hidden');
+}
+
+
 window.exportReportPDF = exportReportPDF;
 window.toggleNotificationPanel = toggleNotificationPanel;
 window.clearAllNotifications = clearAllNotifications;
@@ -5438,6 +5657,11 @@ window.closeEditHouseModal = closeEditHouseModal;
 window.saveHouseEdit = saveHouseEdit;
 window.openOwnerHistory = openOwnerHistory;
 window.closeOwnerHistoryModal = closeOwnerHistoryModal;
+window.openFormalLetter = openFormalLetter;
+window.closeFormalLetterModal = closeFormalLetterModal;
+window.printFormalLetter = printFormalLetter;
+window.printFormalLetterBatch = printFormalLetterBatch;
+window.closeBatchLetterContainer = closeBatchLetterContainer;
 
 window.openImageModal = openImageModal;
 window.closeImageModal = closeImageModal;
@@ -5514,5 +5738,47 @@ window.dismissIdleWarning = dismissIdleWarning;
 
 })(); // ปิด IIFE
 </script>
+<!-- ================================================================ -->
+<!-- MODAL: หนังสือแจ้งเตือนค้างชำระทางการ                            -->
+<!-- ================================================================ -->
+<div id="formalLetterModal" class="fixed inset-0 bg-black/60 z-[1000] hidden items-start justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-6">
+        <!-- toolbar -->
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 no-letter-print">
+            <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                <i data-lucide="file-text" class="w-5 h-5 text-red-700"></i>
+                หนังสือแจ้งเตือนค้างชำระ
+            </h3>
+            <div class="flex items-center gap-2">
+                <button onclick="printFormalLetter()" class="px-4 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg text-sm font-bold flex items-center gap-2">
+                    <i data-lucide="printer" class="w-4 h-4"></i>พิมพ์ / บันทึก PDF
+                </button>
+                <button onclick="closeFormalLetterModal()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-bold">ปิด</button>
+            </div>
+        </div>
+        <!-- หนังสือ -->
+        <div id="formalLetterContent" class="px-10 py-8 font-[Kanit,sans-serif] text-slate-900 text-sm leading-relaxed">
+            <!-- render by JS -->
+        </div>
+    </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- MODAL: พิมพ์หนังสือหลายฉบับ (batch)                               -->
+<!-- ================================================================ -->
+<div id="batchLetterContainer" class="hidden fixed inset-0 z-[1001] bg-white overflow-y-auto p-0">
+    <div class="no-batch-print flex items-center gap-3 px-6 py-3 bg-slate-800 text-white sticky top-0">
+        <i data-lucide="file-text" class="w-5 h-5"></i>
+        <span class="font-bold" id="batchLetterTitle">หนังสือแจ้งเตือนค้างชำระ</span>
+        <div class="ml-auto flex gap-2">
+            <button onclick="window.print()" class="px-4 py-1.5 bg-red-600 hover:bg-red-700 rounded text-sm font-bold flex items-center gap-2">
+                <i data-lucide="printer" class="w-4 h-4"></i>พิมพ์ทั้งหมด
+            </button>
+            <button onclick="closeBatchLetterContainer()" class="px-4 py-1.5 bg-slate-600 hover:bg-slate-500 rounded text-sm font-bold">ปิด</button>
+        </div>
+    </div>
+    <div id="batchLetterPages" class="p-0"></div>
+</div>
+
 </body>
 </html>
