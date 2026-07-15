@@ -99,6 +99,7 @@
                     <div class="mb-2 text-center">
                         <p class="text-gray-500 text-sm mb-2">ยอดที่ต้องชำระ</p>
                         <h2 class="text-5xl font-bold text-gray-800 tracking-tight" id="ui-amount">฿0.00</h2>
+                        <p id="ui-due-date" class="hidden text-xs mt-2"></p>
                     </div>
                 </div>
 
@@ -155,6 +156,11 @@
                     </div>
                 </div>
 
+                <!-- Contact Admin -->
+                <a id="ui-contact-link" href="#" target="_blank" rel="noopener" class="hidden items-center justify-center gap-2 text-sm text-gray-400 hover:text-brand-600 transition-colors py-2">
+                    <i class="fa-regular fa-message"></i> ติดต่อแอดมินหากมีข้อสงสัย
+                </a>
+
             </div>
         </main>
     </div>
@@ -167,7 +173,7 @@
 
         let currentBill = null;
         let storeSettings = null;
-        let base64Slip = null;
+        let slipBlob = null;
 
         function showView(viewId) {
             ['view-loading', 'view-error', 'view-dashboard'].forEach(id => {
@@ -237,8 +243,32 @@
             document.getElementById('ui-acc-no').innerText = storeSettings.promptpay_no;
             
             // สร้าง QR Code พร้อมเพย์ตามยอดเงิน (ดึงเบอร์จาก Store Settings)
+            const qrImg = document.getElementById('ui-qrcode');
             const qrUrl = `https://promptpay.io/${storeSettings.promptpay_no}/${currentBill.amount}.png`;
-            document.getElementById('ui-qrcode').src = qrUrl;
+            qrImg.src = qrUrl;
+            qrImg.onerror = () => {
+                qrImg.closest('.bg-gray-50').innerHTML = `<div class="w-56 h-56 flex flex-col items-center justify-center text-gray-400 text-xs gap-2"><i class="fa-solid fa-qrcode text-3xl"></i>ไม่สามารถสร้าง QR Code ได้<br>กรุณาโอนผ่านเลขพร้อมเพย์ด้านล่าง</div>`;
+            };
+
+            // แสดงวันครบกำหนดชำระ (ถ้ามี)
+            const dueDateEl = document.getElementById('ui-due-date');
+            if (currentBill.due_date) {
+                const dueDate = new Date(currentBill.due_date);
+                const isOverdue = currentBill.status !== 'paid' && dueDate < new Date(new Date().setHours(0,0,0,0));
+                const dueText = dueDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
+                dueDateEl.innerText = isOverdue ? `เกินกำหนดชำระตั้งแต่วันที่ ${dueText}` : `กรุณาชำระภายในวันที่ ${dueText}`;
+                dueDateEl.className = `text-xs mt-2 ${isOverdue ? 'text-red-500 font-semibold' : 'text-gray-400'}`;
+            } else {
+                dueDateEl.classList.add('hidden');
+            }
+
+            // ลิงก์ติดต่อแอดมิน (ถ้ามีการตั้งค่าไว้)
+            const contactLink = document.getElementById('ui-contact-link');
+            if (storeSettings.store_url) {
+                contactLink.href = storeSettings.store_url;
+                contactLink.classList.remove('hidden');
+                contactLink.classList.add('flex');
+            }
 
             // จัดการแสดงผลตามสถานะบิล
             const banner = document.getElementById('status-banner');
@@ -300,40 +330,84 @@
             });
         }
 
-        // ระบบแปลงไฟล์สลิปเป็นรูปภาพ Base64
-        function previewSlip(event) {
-            const file = event.target.files[0];
-            if (file) {
+        // บีบอัดรูปภาพให้เล็กลงก่อนอัปโหลด (ลดขนาดไฟล์ ประหยัดพื้นที่และเวลาโหลด)
+        function compressImage(file, maxWidth = 1000, quality = 0.75) {
+            return new Promise((resolve, reject) => {
                 const reader = new FileReader();
-                reader.onload = function(e) {
-                    base64Slip = e.target.result; // เก็บข้อมูลรูปไว้เตรียมส่ง
-                    document.getElementById('slip-preview').src = base64Slip;
-                    document.getElementById('dropzone').classList.add('hidden');
-                    document.getElementById('preview-area').classList.remove('hidden');
-                }
-                reader.readAsDataURL(file); // แปลงไฟล์เป็น Base64
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const scale = Math.min(1, maxWidth / img.width);
+                        const canvas = document.createElement('canvas');
+                        canvas.width = img.width * scale;
+                        canvas.height = img.height * scale;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                        canvas.toBlob((blob) => resolve(blob), 'image/jpeg', quality);
+                    };
+                    img.onerror = reject;
+                    img.src = e.target.result;
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // เลือกไฟล์สลิป: บีบอัดแล้วแสดงตัวอย่าง (ยังไม่อัปโหลดจนกว่าจะกดยืนยัน)
+        async function previewSlip(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            if (!file.type.startsWith('image/')) {
+                Swal.fire('ไฟล์ไม่ถูกต้อง', 'กรุณาเลือกไฟล์รูปภาพเท่านั้น', 'warning');
+                return;
+            }
+
+            try {
+                slipBlob = await compressImage(file);
+                document.getElementById('slip-preview').src = URL.createObjectURL(slipBlob);
+                document.getElementById('dropzone').classList.add('hidden');
+                document.getElementById('preview-area').classList.remove('hidden');
+            } catch (err) {
+                Swal.fire('ข้อผิดพลาด', 'ไม่สามารถประมวลผลรูปภาพได้ กรุณาลองใหม่', 'error');
             }
         }
 
         function removeSlip() {
             document.getElementById('slip-input').value = "";
-            base64Slip = null;
+            slipBlob = null;
             document.getElementById('dropzone').classList.remove('hidden');
             document.getElementById('preview-area').classList.add('hidden');
         }
 
-        // ส่งสลิปขึ้น Supabase
+        // อัปโหลดสลิปขึ้น Supabase Storage แล้วบันทึกเฉพาะ URL ลงฐานข้อมูล (แทนการเก็บ Base64 ตรงๆ)
         async function submitSlip() {
-            if (!base64Slip) return;
+            if (!slipBlob) return;
 
             Swal.fire({ title: 'กำลังส่งข้อมูล...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+
+            const fileName = `${currentBill.invoice_no}-${Date.now()}.jpg`;
+
+            const { error: uploadError } = await supabaseClient
+                .storage
+                .from('slips')
+                .upload(fileName, slipBlob, { contentType: 'image/jpeg', upsert: false });
+
+            if (uploadError) {
+                console.error(uploadError);
+                Swal.fire('ข้อผิดพลาด', 'ไม่สามารถอัปโหลดรูปสลิปได้ (ตรวจสอบว่าสร้าง Storage bucket ชื่อ "slips" และตั้งค่าเป็น Public แล้ว) โปรดลองอีกครั้ง', 'error');
+                return;
+            }
+
+            const { data: publicUrlData } = supabaseClient.storage.from('slips').getPublicUrl(fileName);
+            const slipUrl = publicUrlData.publicUrl;
 
             // อัปเดตข้อมูลใน Supabase 
             const { error } = await supabaseClient
                 .from('bills')
                 .update({ 
                     status: 'pending_slip',
-                    slip_url: base64Slip
+                    slip_url: slipUrl
                 })
                 .eq('invoice_no', currentBill.invoice_no);
 
@@ -344,6 +418,7 @@
 
             // ถ้าส่งผ่าน อัปเดตสถานะที่หน้าจอ
             currentBill.status = 'pending_slip';
+            slipBlob = null;
 
             Swal.fire({
                 icon: 'success',
