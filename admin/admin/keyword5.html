@@ -10641,10 +10641,11 @@ async function renderUserhomeView() {
                                 <th class="text-left p-3 font-bold">ติดต่อ</th>
                                 <th class="text-center p-3 font-bold">เข้าใช้</th>
                                 <th class="text-center p-3 font-bold">ลงทะเบียน</th>
+                                <th class="text-center p-3 font-bold">Rich Menu</th>
                                 <th class="text-center p-3 font-bold">จัดการ</th>
                             </tr>
                         </thead>
-                        <tbody id="uh-tbody"><tr><td colspan="9" class="p-12 text-center text-slate-400">กำลังโหลด...</td></tr></tbody>
+                        <tbody id="uh-tbody"><tr><td colspan="10" class="p-12 text-center text-slate-400">กำลังโหลด...</td></tr></tbody>
                     </table>
                 </div>
             </div>
@@ -10657,7 +10658,7 @@ async function renderUserhomeView() {
 }
 
 async function loadUserhomeData() {
-    document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="9" class="p-12 text-center text-slate-400">กำลังโหลด...</td></tr>`;
+    document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="10" class="p-12 text-center text-slate-400">กำลังโหลด...</td></tr>`;
     try {
         const { data, error } = await supabaseClient
             .from('userhome')
@@ -10676,7 +10677,7 @@ async function loadUserhomeData() {
 
         applyUserhomeFilters();
     } catch (e) {
-        document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="9" class="p-12 text-center text-rose-500 font-bold">${escapeHtml(e.message)}</td></tr>`;
+        document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="10" class="p-12 text-center text-rose-500 font-bold">${escapeHtml(e.message)}</td></tr>`;
     }
 }
 
@@ -10718,7 +10719,7 @@ function renderUserhomeTable() {
     document.getElementById('uh-result-count').innerText = `แสดง ${userhomeFiltered.length.toLocaleString()} รายการ จาก ${userhomeData.length.toLocaleString()} ทั้งหมด`;
 
     if (userhomeFiltered.length === 0) {
-        document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="9" class="p-12 text-center text-slate-400"><div class="text-5xl mb-2">🔍</div>ไม่พบข้อมูล</td></tr>`;
+        document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="10" class="p-12 text-center text-slate-400"><div class="text-5xl mb-2">🔍</div>ไม่พบข้อมูล</td></tr>`;
         document.getElementById('uh-pagination').innerHTML = '';
         return;
     }
@@ -10768,6 +10769,11 @@ function renderUserhomeTable() {
             </td>
             <td class="p-3 text-center text-[11px] text-slate-500">${r.created_at ? new Date(r.created_at).toLocaleDateString('th-TH', {year:'2-digit', month:'short', day:'numeric'}) : '—'}</td>
             <td class="p-3 text-center">
+                <div id="uh-rm-${escapeHtml(r.uid)}" class="w-14 h-9 mx-auto rounded-lg bg-slate-100 flex items-center justify-center text-slate-300 overflow-hidden" title="กำลังโหลด Rich Menu...">
+                    <i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i>
+                </div>
+            </td>
+            <td class="p-3 text-center">
                 <div class="flex gap-1 justify-center">
                     <button onclick="viewUserhomeDetail('${escapeHtml(r.uid)}')" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg" title="ดูข้อมูล"><i data-lucide="eye" class="w-4 h-4"></i></button>
                     <button onclick="syncOneUser('${escapeHtml(r.uid)}', '${escapeHtml(r.fullname || '').replace(/'/g, '&apos;')}')" class="p-1.5 text-purple-600 hover:bg-purple-50 rounded-lg" title="Sync ข้อมูล"><i data-lucide="git-merge" class="w-4 h-4"></i></button>
@@ -10783,12 +10789,72 @@ function renderUserhomeTable() {
 
     // Pagination
     const pagWrap = document.getElementById('uh-pagination');
-    if (totalPages <= 1) { pagWrap.innerHTML = ''; lucide.createIcons(); return; }
+    if (totalPages <= 1) { pagWrap.innerHTML = ''; lucide.createIcons(); loadUserhomeRichMenus(pageData); return; }
     let pagHtml = `<button ${userhomePage === 1 ? 'disabled' : ''} onclick="userhomeGoPage(${userhomePage - 1})" class="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-bold ${userhomePage === 1 ? 'opacity-40' : 'hover:bg-slate-50'}">‹</button>`;
     pagHtml += `<span class="text-sm text-slate-600 px-2">หน้า <b>${userhomePage}</b> / ${totalPages}</span>`;
     pagHtml += `<button ${userhomePage === totalPages ? 'disabled' : ''} onclick="userhomeGoPage(${userhomePage + 1})" class="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-bold ${userhomePage === totalPages ? 'opacity-40' : 'hover:bg-slate-50'}">›</button>`;
     pagWrap.innerHTML = pagHtml;
     lucide.createIcons();
+    loadUserhomeRichMenus(pageData);
+}
+
+// ─── Lazy-load current Rich Menu thumbnail สำหรับแต่ละ user ในหน้าปัจจุบัน ───
+let _userhomeRmCache = {};   // richMenuId → { name, image_url }
+let _userhomeRmLoadToken = 0; // ยกเลิก request เก่าเมื่อเปลี่ยนหน้า/กรองใหม่
+
+async function loadUserhomeRichMenus(pageData) {
+    const myToken = ++_userhomeRmLoadToken;
+
+    // โหลด rich_menus ทั้งหมดมา cache ครั้งเดียว (ถ้ายังไม่มี)
+    if (!Object.keys(_userhomeRmCache).length) {
+        const { data: menus } = await supabaseClient.from('rich_menus').select('rich_menu_id, name, image_url');
+        (menus || []).forEach(m => { _userhomeRmCache[m.rich_menu_id] = { name: m.name, image_url: m.image_url }; });
+    }
+
+    // ยิงทีละ user แบบ stagger เล็กน้อยกันโดน rate limit (LINE จำกัด ~2000 req/s แต่กันไว้)
+    const rows = (pageData || []).filter(r => r.uid);
+    for (let i = 0; i < rows.length; i++) {
+        if (myToken !== _userhomeRmLoadToken) return; // ยกเลิกถ้าเปลี่ยนหน้าไปแล้ว
+        fetchOneUserRichMenu(rows[i].uid);
+        if (i % 5 === 4) await new Promise(r => setTimeout(r, 150)); // หน่วงทุก 5 คำขอ
+    }
+}
+
+async function fetchOneUserRichMenu(uid) {
+    const cell = document.getElementById('uh-rm-' + uid);
+    if (!cell) return;
+    try {
+        const res = await fetch(API_BASE_URL + '/api/admin/richmenus', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'get_user_richmenu', userId: uid })
+        });
+        const d = await res.json();
+        // เช็คว่า cell ยังอยู่ใน DOM (อาจถูกเปลี่ยนหน้าไปแล้ว)
+        const cellNow = document.getElementById('uh-rm-' + uid);
+        if (!cellNow) return;
+
+        if (!res.ok || !d.richMenuId) {
+            cellNow.innerHTML = '<span class="text-slate-300" title="ไม่มี Rich Menu"><i data-lucide="minus" class="w-3.5 h-3.5"></i></span>';
+            cellNow.title = 'ไม่มี Rich Menu ผูกอยู่';
+            lucide.createIcons();
+            return;
+        }
+        const info = _userhomeRmCache[d.richMenuId];
+        if (info?.image_url) {
+            cellNow.innerHTML = '<img src="' + escapeHtml(info.image_url) + '" class="w-14 h-9 object-cover rounded-lg border border-slate-200" alt="' + escapeHtml(info.name||'') + '">';
+            cellNow.title = info.name || d.richMenuId;
+        } else {
+            cellNow.innerHTML = '<span class="text-[9px] text-slate-400 font-mono px-1" title="' + escapeHtml(d.richMenuId) + '">#' + escapeHtml(d.richMenuId.slice(-6)) + '</span>';
+            cellNow.title = d.richMenuId;
+        }
+    } catch(e) {
+        const cellNow = document.getElementById('uh-rm-' + uid);
+        if (cellNow) {
+            cellNow.innerHTML = '<span class="text-rose-300" title="โหลดไม่สำเร็จ"><i data-lucide="x" class="w-3.5 h-3.5"></i></span>';
+            lucide.createIcons();
+        }
+    }
 }
 
 // ─── User Rich Menu Assignment ─────────────────────────────
@@ -10861,6 +10927,8 @@ async function assignUserRichMenu(uid, richMenuId, richMenuName, userName) {
 
         closeModal();
         showToast('✅ เปลี่ยน Rich Menu ให้ ' + (userName || uid.slice(-8)) + ' เป็น "' + richMenuName + '" แล้ว', 'success');
+        // อัปเดตรูปในตารางทันทีโดยไม่ต้อง reload
+        fetchOneUserRichMenu(uid);
     } catch(e) {
         if (cont) cont.innerHTML =
             '<div class="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-rose-600">' +
@@ -10886,6 +10954,7 @@ async function unlinkUserRichMenu(uid, userName) {
 
         closeModal();
         showToast('✅ ปลด Rich Menu ของ ' + (userName || uid.slice(-8)) + ' แล้ว', 'success');
+        fetchOneUserRichMenu(uid);
     } catch(e) {
         if (cont) cont.innerHTML =
             '<div class="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-rose-600 text-sm">❌ ' + escapeHtml(e.message) + '</div>';
