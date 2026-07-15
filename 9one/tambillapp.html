@@ -75,7 +75,7 @@
                     <i class="fa-solid fa-link-slash text-3xl"></i>
                 </div>
                 <h2 class="text-xl font-bold text-gray-800 mb-2">ไม่พบข้อมูลบิล</h2>
-                <p class="text-gray-500 text-sm">ลิงก์อาจหมดอายุ หรือไม่ถูกต้อง<br>กรุณาติดต่อแอดมินเพื่อขอลิงก์ใหม่</p>
+                <p class="text-gray-500 text-sm">ลิงก์อาจหมดอายุ ไม่ถูกต้อง หรือไม่ได้ระบุร้านค้า<br>กรุณาติดต่อแอดมินเพื่อขอลิงก์ใหม่</p>
             </div>
 
             <!-- My Bills List View (สำหรับลูกค้าที่ Login และผูกบัญชีแล้ว) -->
@@ -181,9 +181,30 @@
 
     <!-- Script -->
     <script>
-        const SUPABASE_URL = 'https://gitakkqrobkwrucdyjjh.supabase.co';
-        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdpdGFra3Fyb2Jrd3J1Y2R5ampoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxMjc0MjQsImV4cCI6MjA5OTcwMzQyNH0.l2Wvjdh5wYvcrTtLWNVMz8ZbhIXUR36_PF2hwY2l-Gk';
-        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        // ฐานข้อมูลหลัก (Central) — ทะเบียนร้าน, ระบบล็อกอิน Facebook, การผูกบัญชี
+        const CENTRAL_SUPABASE_URL = 'https://gitakkqrobkwrucdyjjh.supabase.co';
+        const CENTRAL_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdpdGFra3Fyb2Jrd3J1Y2R5ampoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxMjc0MjQsImV4cCI6MjA5OTcwMzQyNH0.l2Wvjdh5wYvcrTtLWNVMz8ZbhIXUR36_PF2hwY2l-Gk';
+        const centralClient = window.supabase.createClient(CENTRAL_SUPABASE_URL, CENTRAL_SUPABASE_KEY);
+
+        // ฐานข้อมูลของร้าน (Shop) — bills, store_settings, สลิป — โหลดแบบ dynamic ตาม ?shop= ใน URL
+        let shopClient = null;
+        let currentShop = null;
+
+        function initShopClient(url, anonKey) {
+            shopClient = window.supabase.createClient(url, anonKey);
+        }
+
+        async function resolveShop(slug) {
+            const { data, error } = await centralClient
+                .from('shops')
+                .select('*')
+                .eq('slug', slug)
+                .eq('status', 'active')
+                .maybeSingle();
+
+            if (error || !data || !data.supabase_url || !data.supabase_anon_key) return null;
+            return data;
+        }
 
         let currentBill = null;
         let storeSettings = null;
@@ -201,22 +222,37 @@
         }
 
         async function initApp() {
-            // เฝ้าดูสถานะการล็อกอิน (ครอบคลุมตอน redirect กลับจาก Facebook ด้วย)
-            supabaseClient.auth.onAuthStateChange((_event, session) => {
+            // เฝ้าดูสถานะการล็อกอิน (ครอบคลุมตอน redirect กลับจาก Facebook ด้วย) — ใช้ฐานหลักเสมอ
+            centralClient.auth.onAuthStateChange((_event, session) => {
                 renderAuthArea(session);
             });
 
-            const { data: { session } } = await supabaseClient.auth.getSession();
+            const { data: { session } } = await centralClient.auth.getSession();
             renderAuthArea(session);
 
-            // ดึง Parameter จาก URL (ตัวอย่าง: ?inv=INV-xxx&token=yyy)
+            // ดึง Parameter จาก URL (ตัวอย่าง: ?shop=my-shop&inv=INV-xxx&token=yyy)
             const urlParams = new URLSearchParams(window.location.search);
+            const shopSlug = urlParams.get('shop');
             const inv = urlParams.get('inv');
             const token = urlParams.get('token');
 
+            if (!shopSlug) {
+                // ไม่ทราบว่าเป็นบิลของร้านไหน จึงไม่รู้จะไปอ่านฐานข้อมูลใด
+                showView('view-error');
+                return;
+            }
+
+            const shop = await resolveShop(shopSlug);
+            if (!shop) {
+                showView('view-error');
+                return;
+            }
+            currentShop = shop;
+            initShopClient(shop.supabase_url, shop.supabase_anon_key);
+
             if (inv && token) {
-                // ค้นหาบิลจาก Supabase ด้วย Invoice No และ Token
-                const { data, error } = await supabaseClient
+                // ค้นหาบิลจากฐานข้อมูลของร้านนี้ ด้วย Invoice No และ Token
+                const { data, error } = await shopClient
                     .from('bills')
                     .select('*')
                     .eq('invoice_no', inv)
@@ -239,7 +275,7 @@
                 return;
             }
 
-            // ไม่มี inv/token ใน URL: ถ้าล็อกอินและผูกบัญชีไว้แล้ว ให้ดึงบิลทั้งหมดของลูกค้าคนนี้มาแสดง
+            // ไม่มี inv/token ใน URL: ถ้าล็อกอินและผูกบัญชีไว้กับร้านนี้แล้ว ให้ดึงบิลทั้งหมดของลูกค้าคนนี้มาแสดง
             if (session?.user) {
                 const code = await getLinkedCustomerCode(session.user.id);
                 if (code) {
@@ -249,9 +285,9 @@
                 }
             }
 
-            // สำหรับการทดสอบ (ถ้าเปิดเว็บตรงๆ ไม่มี URL params และไม่ได้ล็อกอิน) จะดึงบิลล่าสุดมาโชว์
-            console.log("No URL params and no linked account, fetching latest bill for demo...");
-            const { data } = await supabaseClient.from('bills').select('*').limit(1).order('created_at', {ascending: false});
+            // สำหรับการทดสอบ (มี ?shop= แต่ไม่มี inv/token และไม่ได้ล็อกอิน) จะดึงบิลล่าสุดของร้านนี้มาโชว์
+            console.log("No inv/token and no linked account, fetching latest bill for this shop as demo...");
+            const { data } = await shopClient.from('bills').select('*').limit(1).order('created_at', {ascending: false});
             if (data && data.length > 0) {
                 currentBill = data[0];
                 await loadStoreSettings();
@@ -283,24 +319,25 @@
         }
 
         async function loginWithFacebook() {
-            await supabaseClient.auth.signInWithOAuth({
+            await centralClient.auth.signInWithOAuth({
                 provider: 'facebook',
                 options: { redirectTo: window.location.href }
             });
         }
 
         async function handleUserLogout() {
-            await supabaseClient.auth.signOut();
+            await centralClient.auth.signOut();
             linkedCustomerCode = null;
-            window.location.href = window.location.origin + window.location.pathname;
+            window.location.href = window.location.origin + window.location.pathname + window.location.search;
         }
 
-        // ผูกบัญชี Facebook เข้ากับรหัสลูกค้า โดยใช้ token ของบิลที่เปิดอยู่เป็นหลักฐานว่าเป็นเจ้าของจริง (ทำครั้งแรกเท่านั้น)
+        // ผูกบัญชี Facebook เข้ากับรหัสลูกค้าของ "ร้านนี้" โดยใช้ token ของบิลที่เปิดอยู่เป็นหลักฐานว่าเป็นเจ้าของจริง (ทำครั้งแรกเท่านั้น)
         async function ensureAccountLinked(user, customerCode) {
-            const { data: existing } = await supabaseClient
+            const { data: existing } = await centralClient
                 .from('customer_accounts')
                 .select('customer_code')
                 .eq('auth_user_id', user.id)
+                .eq('shop_id', currentShop.id)
                 .maybeSingle();
 
             if (existing) {
@@ -308,7 +345,8 @@
                 return;
             }
 
-            const { error } = await supabaseClient.from('customer_accounts').insert({
+            const { error } = await centralClient.from('customer_accounts').insert({
+                shop_id: currentShop.id,
                 auth_user_id: user.id,
                 customer_code: customerCode,
                 fb_name: user.user_metadata?.full_name || user.user_metadata?.name || null
@@ -318,17 +356,18 @@
         }
 
         async function getLinkedCustomerCode(userId) {
-            const { data } = await supabaseClient
+            const { data } = await centralClient
                 .from('customer_accounts')
                 .select('customer_code')
                 .eq('auth_user_id', userId)
+                .eq('shop_id', currentShop.id)
                 .maybeSingle();
             return data?.customer_code || null;
         }
 
-        // ==================== รายการบิลทั้งหมดของลูกค้าที่ล็อกอิน ====================
+        // ==================== รายการบิลทั้งหมดของลูกค้าที่ล็อกอิน (เฉพาะร้านนี้) ====================
         async function loadMyBills(customerCode) {
-            const { data, error } = await supabaseClient
+            const { data, error } = await shopClient
                 .from('bills')
                 .select('*')
                 .eq('customer_code', customerCode)
@@ -353,7 +392,7 @@
 
         async function goToMyBills() {
             if (!linkedCustomerCode) {
-                const { data: { session } } = await supabaseClient.auth.getSession();
+                const { data: { session } } = await centralClient.auth.getSession();
                 if (session?.user) linkedCustomerCode = await getLinkedCustomerCode(session.user.id);
             }
             if (!linkedCustomerCode) {
@@ -410,7 +449,7 @@
 
         // ดึงข้อมูลพร้อมเพย์จากหน้าแอดมินมาใช้
         async function loadStoreSettings() {
-            const { data, error } = await supabaseClient.from('store_settings').select('*').eq('id', 1).single();
+            const { data, error } = await shopClient.from('store_settings').select('*').eq('id', 1).single();
             if (!error && data) {
                 storeSettings = data;
             } else {
@@ -587,7 +626,7 @@
 
             const fileName = `${currentBill.invoice_no}-${Date.now()}.jpg`;
 
-            const { error: uploadError } = await supabaseClient
+            const { error: uploadError } = await shopClient
                 .storage
                 .from('slips')
                 .upload(fileName, slipBlob, { contentType: 'image/jpeg', upsert: false });
@@ -598,11 +637,11 @@
                 return;
             }
 
-            const { data: publicUrlData } = supabaseClient.storage.from('slips').getPublicUrl(fileName);
+            const { data: publicUrlData } = shopClient.storage.from('slips').getPublicUrl(fileName);
             const slipUrl = publicUrlData.publicUrl;
 
             // อัปเดตข้อมูลใน Supabase 
-            const { error } = await supabaseClient
+            const { error } = await shopClient
                 .from('bills')
                 .update({ 
                     status: 'pending_slip',
