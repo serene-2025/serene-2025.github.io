@@ -58,6 +58,7 @@
                         <p class="text-xs text-brand-100">บริการแจ้งยอดอัตโนมัติ</p>
                     </div>
                 </div>
+                <div id="auth-area" class="flex items-center gap-2"></div>
             </div>
         </header>
 
@@ -77,9 +78,22 @@
                 <p class="text-gray-500 text-sm">ลิงก์อาจหมดอายุ หรือไม่ถูกต้อง<br>กรุณาติดต่อแอดมินเพื่อขอลิงก์ใหม่</p>
             </div>
 
+            <!-- My Bills List View (สำหรับลูกค้าที่ Login และผูกบัญชีแล้ว) -->
+            <div id="view-mybills" class="hidden flex-col gap-4 animate-fade-in">
+                <div class="text-center mb-1">
+                    <h2 class="font-bold text-xl text-gray-800">บิลทั้งหมดของฉัน</h2>
+                    <p class="text-gray-400 text-sm mt-1">แตะที่รายการเพื่อดูรายละเอียดและชำระเงิน</p>
+                </div>
+                <div id="mybills-list" class="flex flex-col gap-3"></div>
+            </div>
+
             <!-- Dashboard View -->
             <div id="view-dashboard" class="hidden flex-col gap-5 animate-fade-in">
-                
+
+                <button id="ui-back-to-list" onclick="goToMyBills()" class="hidden items-center gap-1.5 text-sm text-gray-400 hover:text-brand-600 transition-colors -mb-1 self-start">
+                    <i class="fa-solid fa-arrow-left"></i> กลับไปดูบิลทั้งหมด
+                </button>
+
                 <!-- Status Banner -->
                 <div id="status-banner"></div>
 
@@ -174,9 +188,11 @@
         let currentBill = null;
         let storeSettings = null;
         let slipBlob = null;
+        let myBillsData = [];
+        let linkedCustomerCode = null; // รหัสลูกค้าที่ผูกกับบัญชี Facebook ที่ล็อกอินอยู่ (ถ้ามี)
 
         function showView(viewId) {
-            ['view-loading', 'view-error', 'view-dashboard'].forEach(id => {
+            ['view-loading', 'view-error', 'view-dashboard', 'view-mybills'].forEach(id => {
                 document.getElementById(id).classList.add('hidden');
                 document.getElementById(id).classList.remove('flex');
             });
@@ -185,37 +201,210 @@
         }
 
         async function initApp() {
+            // เฝ้าดูสถานะการล็อกอิน (ครอบคลุมตอน redirect กลับจาก Facebook ด้วย)
+            supabaseClient.auth.onAuthStateChange((_event, session) => {
+                renderAuthArea(session);
+            });
+
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            renderAuthArea(session);
+
             // ดึง Parameter จาก URL (ตัวอย่าง: ?inv=INV-xxx&token=yyy)
             const urlParams = new URLSearchParams(window.location.search);
             const inv = urlParams.get('inv');
             const token = urlParams.get('token');
 
-            if (!inv || !token) {
-                // สำหรับการทดสอบ (ถ้าเปิดเว็บตรงๆ ไม่มี URL params) จะดึงบิลล่าสุดมาโชว์
-                console.log("No URL params, fetching latest bill for demo...");
-                const { data } = await supabaseClient.from('bills').select('*').limit(1).order('created_at', {ascending: false});
-                if(data && data.length > 0) {
-                    currentBill = data[0];
-                    await loadStoreSettings();
-                } else {
+            if (inv && token) {
+                // ค้นหาบิลจาก Supabase ด้วย Invoice No และ Token
+                const { data, error } = await supabaseClient
+                    .from('bills')
+                    .select('*')
+                    .eq('invoice_no', inv)
+                    .eq('token', token)
+                    .single();
+
+                if (error || !data) {
                     showView('view-error');
+                    return;
                 }
+
+                currentBill = data;
+
+                // ถ้าล็อกอินด้วย Facebook อยู่ ให้ผูกบัญชีกับรหัสลูกค้านี้อัตโนมัติ (เฉพาะครั้งแรก)
+                if (session?.user) {
+                    await ensureAccountLinked(session.user, data.customer_code);
+                }
+
+                await loadStoreSettings(); // โหลดข้อมูลตั้งค่าร้านค้าต่อ (จะเรียก renderDashboard ให้เอง)
                 return;
             }
 
-            // ค้นหาบิลจาก Supabase ด้วย Invoice No และ Token
+            // ไม่มี inv/token ใน URL: ถ้าล็อกอินและผูกบัญชีไว้แล้ว ให้ดึงบิลทั้งหมดของลูกค้าคนนี้มาแสดง
+            if (session?.user) {
+                const code = await getLinkedCustomerCode(session.user.id);
+                if (code) {
+                    linkedCustomerCode = code;
+                    await loadMyBills(code);
+                    return;
+                }
+            }
+
+            // สำหรับการทดสอบ (ถ้าเปิดเว็บตรงๆ ไม่มี URL params และไม่ได้ล็อกอิน) จะดึงบิลล่าสุดมาโชว์
+            console.log("No URL params and no linked account, fetching latest bill for demo...");
+            const { data } = await supabaseClient.from('bills').select('*').limit(1).order('created_at', {ascending: false});
+            if (data && data.length > 0) {
+                currentBill = data[0];
+                await loadStoreSettings();
+            } else {
+                showView('view-error');
+            }
+        }
+
+        // ==================== Facebook Login ====================
+        function renderAuthArea(session) {
+            const area = document.getElementById('auth-area');
+            if (session?.user) {
+                const name = session.user.user_metadata?.full_name || session.user.user_metadata?.name || 'บัญชีของฉัน';
+                area.innerHTML = `
+                    <button onclick="goToMyBills()" title="บิลทั้งหมดของฉัน" class="text-xs bg-white/15 hover:bg-white/25 transition-colors px-2.5 py-1.5 rounded-full flex items-center gap-1.5">
+                        <i class="fa-solid fa-list-ul"></i> <span class="hidden sm:inline">บิลของฉัน</span>
+                    </button>
+                    <button onclick="handleUserLogout()" title="ออกจากระบบ (${name})" class="text-xs bg-white/15 hover:bg-white/25 transition-colors w-8 h-8 rounded-full flex items-center justify-center">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                    </button>
+                `;
+            } else {
+                area.innerHTML = `
+                    <button onclick="loginWithFacebook()" class="flex items-center gap-1.5 bg-white/15 hover:bg-white/25 transition-colors px-3 py-1.5 rounded-full text-xs font-medium">
+                        <i class="fa-brands fa-facebook"></i> เข้าสู่ระบบ
+                    </button>
+                `;
+            }
+        }
+
+        async function loginWithFacebook() {
+            await supabaseClient.auth.signInWithOAuth({
+                provider: 'facebook',
+                options: { redirectTo: window.location.href }
+            });
+        }
+
+        async function handleUserLogout() {
+            await supabaseClient.auth.signOut();
+            linkedCustomerCode = null;
+            window.location.href = window.location.origin + window.location.pathname;
+        }
+
+        // ผูกบัญชี Facebook เข้ากับรหัสลูกค้า โดยใช้ token ของบิลที่เปิดอยู่เป็นหลักฐานว่าเป็นเจ้าของจริง (ทำครั้งแรกเท่านั้น)
+        async function ensureAccountLinked(user, customerCode) {
+            const { data: existing } = await supabaseClient
+                .from('customer_accounts')
+                .select('customer_code')
+                .eq('auth_user_id', user.id)
+                .maybeSingle();
+
+            if (existing) {
+                linkedCustomerCode = existing.customer_code;
+                return;
+            }
+
+            const { error } = await supabaseClient.from('customer_accounts').insert({
+                auth_user_id: user.id,
+                customer_code: customerCode,
+                fb_name: user.user_metadata?.full_name || user.user_metadata?.name || null
+            });
+
+            if (!error) linkedCustomerCode = customerCode;
+        }
+
+        async function getLinkedCustomerCode(userId) {
+            const { data } = await supabaseClient
+                .from('customer_accounts')
+                .select('customer_code')
+                .eq('auth_user_id', userId)
+                .maybeSingle();
+            return data?.customer_code || null;
+        }
+
+        // ==================== รายการบิลทั้งหมดของลูกค้าที่ล็อกอิน ====================
+        async function loadMyBills(customerCode) {
             const { data, error } = await supabaseClient
                 .from('bills')
                 .select('*')
-                .eq('invoice_no', inv)
-                .eq('token', token)
-                .single();
+                .eq('customer_code', customerCode)
+                .order('created_at', { ascending: false });
 
-            if (error || !data) {
+            if (error || !data || data.length === 0) {
                 showView('view-error');
+                return;
+            }
+
+            if (data.length === 1) {
+                // มีบิลเดียว เปิดดูรายละเอียดไปเลยไม่ต้องผ่านหน้ารายการ
+                currentBill = data[0];
+                await loadStoreSettings();
+                return;
+            }
+
+            myBillsData = data;
+            renderMyBillsList();
+            showView('view-mybills');
+        }
+
+        async function goToMyBills() {
+            if (!linkedCustomerCode) {
+                const { data: { session } } = await supabaseClient.auth.getSession();
+                if (session?.user) linkedCustomerCode = await getLinkedCustomerCode(session.user.id);
+            }
+            if (!linkedCustomerCode) {
+                Swal.fire({
+                    icon: 'info',
+                    title: 'ยังไม่ได้ผูกบัญชี',
+                    text: 'กรุณาเปิดลิงก์บิลที่แอดมินส่งให้อย่างน้อย 1 ครั้งเพื่อผูกบัญชี Facebook ของคุณเข้ากับรหัสลูกค้าก่อน',
+                    confirmButtonColor: '#10b981'
+                });
+                return;
+            }
+            showView('view-loading');
+            await loadMyBills(linkedCustomerCode);
+        }
+
+        function renderMyBillsList() {
+            const list = document.getElementById('mybills-list');
+            list.innerHTML = '';
+
+            myBillsData.forEach(bill => {
+                let badge = '';
+                if (bill.status === 'paid') {
+                    badge = `<span class="text-xs px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-600 font-medium"><i class="fa-solid fa-check-circle"></i> จ่ายแล้ว</span>`;
+                } else if (bill.status === 'pending_slip') {
+                    badge = `<span class="text-xs px-2.5 py-1 rounded-full bg-amber-50 text-amber-600 font-medium"><i class="fa-solid fa-clock"></i> รอตรวจสอบ</span>`;
+                } else {
+                    badge = `<span class="text-xs px-2.5 py-1 rounded-full bg-red-50 text-red-500 font-medium"><i class="fa-solid fa-circle-exclamation"></i> ค้างชำระ</span>`;
+                }
+
+                const item = `
+                    <button onclick="openBillFromList('${bill.invoice_no}')" class="w-full text-left bg-white rounded-2xl shadow-sm border border-gray-100 p-4 flex items-center justify-between hover:border-brand-400 transition-all">
+                        <div>
+                            <span class="font-bold text-gray-800 block">฿${Number(bill.amount).toLocaleString()}</span>
+                            <span class="text-xs text-gray-400">${bill.invoice_no}</span>
+                        </div>
+                        ${badge}
+                    </button>
+                `;
+                list.insertAdjacentHTML('beforeend', item);
+            });
+        }
+
+        async function openBillFromList(invoiceNo) {
+            const bill = myBillsData.find(b => b.invoice_no === invoiceNo);
+            if (!bill) return;
+            currentBill = bill;
+
+            if (!storeSettings) {
+                await loadStoreSettings();
             } else {
-                currentBill = data;
-                await loadStoreSettings(); // โหลดข้อมูลตั้งค่าร้านค้าต่อ
+                renderDashboard();
             }
         }
 
@@ -233,6 +422,16 @@
 
         function renderDashboard() {
             showView('view-dashboard');
+
+            // แสดงปุ่ม "กลับไปดูบิลทั้งหมด" เฉพาะกรณีที่มีบิลมากกว่า 1 ใบสำหรับลูกค้าคนนี้
+            const backBtn = document.getElementById('ui-back-to-list');
+            if (myBillsData.length > 1) {
+                backBtn.classList.remove('hidden');
+                backBtn.classList.add('flex');
+            } else {
+                backBtn.classList.add('hidden');
+                backBtn.classList.remove('flex');
+            }
             
             // นำข้อมูลลง UI
             document.getElementById('ui-invoice-no').innerText = currentBill.invoice_no;
