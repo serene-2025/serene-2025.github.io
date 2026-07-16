@@ -298,10 +298,19 @@
         </div>
 
         <div class="col-md-12 mb-3">
-          <label class="form-label fw-bold">
-            <i class='bx bxs-user-detail text-primary icon-modern'></i> 
-            ชื่อ-สกุล (ชื่อเต็ม) เพื่อใช้ออกใบเสร็จ <span style="color: red;">*</span>
-          </label>
+          <div class="d-flex justify-content-between align-items-end mb-1">
+            <label class="form-label fw-bold mb-0">
+              <i class='bx bxs-user-detail text-primary icon-modern'></i> 
+              ชื่อ-สกุล (ชื่อเต็ม) เพื่อใช้ออกใบเสร็จ <span style="color: red;">*</span>
+            </label>
+            <!-- 🌟 เพิ่มปุ่มจดจำชื่อ 🌟 -->
+            <div class="form-check form-switch mb-0" title="จำชื่อไว้ใช้ครั้งถัดไป โดยไม่ต้องดึงจากระบบ">
+              <input class="form-check-input" type="checkbox" id="rememberNameToggle" style="cursor: pointer;">
+              <label class="form-check-label text-muted fw-bold" for="rememberNameToggle" style="font-size: 0.8rem; cursor: pointer;">
+                <i class='bx bx-save'></i> จำชื่อ
+              </label>
+            </div>
+          </div>
           <input type="text" class="form-control" id="name" name="name" placeholder="ระบุ ชื่อ-นามสกุล" required>
           <div class="invalid-feedback">กรุณาระบุชื่อ-สกุลให้ถูกต้อง</div>
         </div>
@@ -526,7 +535,7 @@
       </div>
       
       <div class="text-center mt-3 text-muted small">
-          9one © 2024 V.24.4 (Super Compression & WebView Fixed)
+          9one © 2024 V.24.5 (Name Autocomplete & Memory Toggle)
       </div>
     </div>
   </div>
@@ -815,7 +824,6 @@
       }
 
       try {
-        // 🌟 1. ดึงข้อมูลทั้งหมดจาก house_payments ในรอบเดียว (ทั้งสถานะจ่ายและชื่อ) 🌟
         const { data, error } = await supabaseClient
           .from('house_payments')
           .select('*')
@@ -824,17 +832,27 @@
 
         if (error) { console.error("Supabase Error:", error); container.style.display = 'none'; return; }
 
-        // 🌟 2. ดึงชื่อเจ้าของบ้านจากตาราง house_payments (คอลัมน์ owner_name) มาเติมอัตโนมัติ 🌟
-        if (data && data.length > 0 && data[0].owner_name) {
-            const nameInput = document.getElementById('name');
-            const currentName = nameInput.value.trim();
-            const lastAutoFill = nameInput.getAttribute('data-autofill') || "";
-            
-            // เติมชื่อเฉพาะกรณีที่ช่องชื่อยังว่างอยู่ หรือ เป็นชื่อเดิมที่ระบบเคยดึงมาใส่ให้
-            if (currentName === "" || currentName === lastAutoFill) {
-                nameInput.value = data[0].owner_name;
-                nameInput.setAttribute('data-autofill', data[0].owner_name);
-                checkFormValidity();
+        // 🌟 ดึงชื่อเจ้าของบ้านมาเติมอัตโนมัติ โดยอิงจากสถานะของปุ่มจำชื่อ 🌟
+        const nameInput = document.getElementById('name');
+        const currentName = nameInput.value.trim();
+        const lastAutoFill = nameInput.getAttribute('data-autofill') || "";
+        const isRememberName = document.getElementById('rememberNameToggle').checked;
+
+        if (data && data.length > 0 && data[0].owner_name && data[0].owner_name !== '-' && data[0].owner_name !== 'ไม่มีข้อมูล') {
+            if (!isRememberName) { // เติมชื่อเฉพาะกรณีที่ "ไม่ได้กดจำชื่อ"
+                if (currentName === "" || currentName === lastAutoFill) {
+                    nameInput.value = data[0].owner_name;
+                    nameInput.setAttribute('data-autofill', data[0].owner_name);
+                    checkFormValidity();
+                }
+            }
+        } else {
+            if (!isRememberName) {
+                if (currentName !== "" && currentName === lastAutoFill) {
+                    nameInput.value = "";
+                    nameInput.setAttribute('data-autofill', "");
+                    checkFormValidity();
+                }
             }
         }
 
@@ -1543,6 +1561,17 @@
             document.getElementById('unpaidStatusContainer').style.display = 'none';
             globalHousePaymentData = [];
             updateMonthStatus();
+            
+            // ล้างช่องชื่อออกหากลูกบ้านลบเลขที่บ้าน (เฉพาะกรณีที่ไม่ได้กดจำชื่อ และ ระบบเคยดึงมาใส่ให้)
+            const isRememberName = document.getElementById('rememberNameToggle').checked;
+            if (!isRememberName) {
+                const nameInput = document.getElementById('name');
+                if (nameInput.value.trim() === (nameInput.getAttribute('data-autofill') || "")) {
+                    nameInput.value = "";
+                    nameInput.setAttribute('data-autofill', "");
+                }
+            }
+            checkFormValidity();
         }
     });
 
@@ -1568,10 +1597,44 @@
           }
       });
 
+      // ดึงสถานะจำชื่อมาจากเครื่อง
+      const isRememberName = localStorage.getItem('isRememberName') === 'true';
+      const rememberToggle = document.getElementById('rememberNameToggle');
+      if (rememberToggle) {
+          rememberToggle.checked = isRememberName;
+          
+          rememberToggle.addEventListener('change', function() {
+              localStorage.setItem('isRememberName', this.checked);
+              if (!this.checked) {
+                  // หากกดยกเลิกการจำชื่อ ให้ดึงข้อมูลบ้านเลขที่ปัจจุบันมาเติมใหม่ทันที (ถ้ามี)
+                  const fullHouseNo = document.getElementById('name1').value;
+                  if (fullHouseNo.length > 4) {
+                      checkUnpaidStatus(fullHouseNo);
+                  } else {
+                      document.getElementById('name').value = "";
+                      document.getElementById('name').setAttribute('data-autofill', "");
+                      checkFormValidity();
+                  }
+              }
+          });
+      }
+
       const savedName = localStorage.getItem('name');
       const savedHouseNumber = localStorage.getItem('name1');
       
-      if (savedName) document.getElementById('name').value = savedName;
+      if (savedName) {
+          const nameInput = document.getElementById('name');
+          nameInput.value = savedName;
+          
+          if (!isRememberName) {
+              // แจ้งระบบว่าชื่อที่ติดมาตอนเปิดเว็บ คือชื่อที่ถูกดึงมาอัตโนมัติ (ยอมให้เขียนทับได้ถ้าเปลี่ยนบ้านเลขที่)
+              nameInput.setAttribute('data-autofill', savedName);
+          } else {
+              // ถ้าเปิดจำชื่อไว้ จะไม่เซ็ต data-autofill เพื่อป้องกันการถูกเขียนทับเวลาเปลี่ยนบ้านเลขที่
+              nameInput.setAttribute('data-autofill', "");
+          }
+      }
+      
       if (savedHouseNumber) {
           let cleanHouseNo = savedHouseNumber.replace(/\s/g, '');
           if (!cleanHouseNo.startsWith('998/')) cleanHouseNo = '998/' + cleanHouseNo.replace(/^998/, '');
@@ -1628,6 +1691,7 @@
             return; 
         }
 
+        // เซฟชื่อลง LocalStorage เสมอเมื่อกดบันทึก
         localStorage.setItem('name', document.getElementById('name').value.trim());
         localStorage.setItem('name1', document.getElementById('name1').value.trim());
         confirmSubmit();
