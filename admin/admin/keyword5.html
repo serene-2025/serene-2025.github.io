@@ -798,8 +798,8 @@ if (viewName === 'dashboard') await renderDashboardView();
 
                     const timeInfo = (kw.startdatetime || kw.enddatetime)
                         ? `<div class="text-xs text-gray-500 flex flex-col gap-1">
-                             ${kw.startdatetime ? `<div><span class="text-emerald-600 font-bold">Start:</span> ${kw.startdatetime}</div>` : ''}
-                             ${kw.enddatetime ? `<div><span class="text-rose-500 font-bold">End:</span> ${kw.enddatetime}</div>` : ''}
+                             ${kw.startdatetime ? `<div><span class="text-emerald-600 font-bold">Start:</span> ${fmtKwDate(kw.startdatetime)}</div>` : ''}
+                             ${kw.enddatetime ? `<div><span class="text-rose-500 font-bold">End:</span> ${fmtKwDate(kw.enddatetime)}</div>` : ''}
                            </div>`
                         : '<span class="text-xs text-gray-400 font-mono opacity-50">Empty</span>';
 
@@ -845,8 +845,8 @@ if (viewName === 'dashboard') await renderDashboardView();
 
                     const timeInfo = (kw.startdatetime || kw.enddatetime)
                         ? `<div class="text-[11px] text-gray-500 mt-2 p-2 bg-gray-50 rounded-lg">
-                             ${kw.startdatetime ? `<div class="flex justify-between"><span>Start:</span> <span class="font-medium">${kw.startdatetime}</span></div>` : ''}
-                             ${kw.enddatetime ? `<div class="flex justify-between"><span>End:</span> <span class="font-medium">${kw.enddatetime}</span></div>` : ''}
+                             ${kw.startdatetime ? `<div class="flex justify-between"><span>Start:</span> <span class="font-medium">${fmtKwDate(kw.startdatetime)}</span></div>` : ''}
+                             ${kw.enddatetime ? `<div class="flex justify-between"><span>End:</span> <span class="font-medium">${fmtKwDate(kw.enddatetime)}</span></div>` : ''}
                            </div>`
                         : '';
 
@@ -1372,6 +1372,55 @@ async function updateAllUserProfiles() {
         }
 
 
+        // ─── Datetime helpers สำหรับ Keyword Schedule ─────────────────
+        // แสดงวันที่ keyword schedule ให้อ่านง่าย รองรับทั้ง ISO string (ใหม่) และ DD/MM/YYYY HH:mm (ข้อมูลเก่า)
+        function fmtKwDate(v) {
+            if (!v) return '—';
+            let d;
+            if (/^\d{4}-\d{2}-\d{2}T/.test(v)) {
+                d = new Date(v);
+            } else {
+                // legacy DD/MM/YYYY HH:mm
+                const [datePart, timePart] = v.split(' ');
+                if (datePart && timePart) {
+                    const [day, month, year] = datePart.split('/').map(Number);
+                    d = new Date(`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}T${timePart}:00+07:00`);
+                }
+            }
+            if (!d || isNaN(d.getTime())) return escapeHtml(v); // แสดงค่าดิบถ้า parse ไม่ได้
+            return d.toLocaleString('th-TH', { day:'2-digit', month:'short', year:'2-digit', hour:'2-digit', minute:'2-digit' });
+        }
+
+        function dtLocalValue(v) {
+            // แปลงค่าจาก DB (string ใดๆ ที่ parse ได้) เป็น format ที่ <input type=datetime-local> ต้องการ: YYYY-MM-DDTHH:mm
+            if (!v) return '';
+            const d = new Date(v);
+            if (isNaN(d.getTime())) return '';
+            const pad = n => String(n).padStart(2, '0');
+            return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        }
+
+        function kwSetSchedulePreset(type) {
+            const startEl = document.getElementById('kw-startdatetime');
+            const endEl   = document.getElementById('kw-enddatetime');
+            if (!startEl || !endEl) return;
+            const pad = n => String(n).padStart(2, '0');
+            const toLocal = d => d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+
+            if (type === 'clear') { startEl.value = ''; endEl.value = ''; return; }
+
+            const now = new Date();
+            const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0);
+            let end;
+            if (type === 'today') end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59);
+            else if (type === 'week')  end = new Date(now.getFullYear(), now.getMonth(), now.getDate()+7, 23, 59);
+            else if (type === 'month') end = new Date(now.getFullYear(), now.getMonth(), now.getDate()+30, 23, 59);
+            else return;
+
+            startEl.value = toLocal(start);
+            endEl.value   = toLocal(end);
+        }
+
         async function openKeywordModal(id = null) {
             editingKeywordId = null;
             let data = { keyword: '', reply_postback: '', replyType: 'text', content: '', startdatetime: '', enddatetime: '', require_vip: false, reply_richmenu: '' };
@@ -1475,15 +1524,28 @@ async function updateAllUserProfiles() {
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-5 p-6 bg-white/60 rounded-2xl border border-white shadow-sm ring-1 ring-slate-100">
-                        <div>
-                            <label class="block text-sm font-semibold text-slate-700 mb-1.5">วันเริ่ม (Start Date)</label>
-                            <input type="text" name="startdatetime" value="${escapeHtml(data.startdatetime || '')}" class="w-full rounded-xl border-slate-200 border p-3 focus:ring-2 focus:ring-indigo-500 shadow-sm bg-white text-sm" placeholder="DD/MM/YYYY HH:mm" />
+                    <div class="p-6 bg-white/60 rounded-2xl border border-white shadow-sm ring-1 ring-slate-100">
+                        <h3 class="text-xs font-bold text-slate-400 mb-4 uppercase tracking-widest flex items-center gap-2">
+                             <span class="bg-blue-100 text-blue-500 p-1 rounded-md"><i data-lucide="calendar-clock" class="w-3 h-3"></i></span> 3. ช่วงเวลาที่ใช้งาน (Schedule)
+                        </h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                            <div>
+                                <label class="block text-sm font-semibold text-slate-700 mb-1.5">วันเริ่ม (Start Date)</label>
+                                <input type="datetime-local" id="kw-startdatetime" name="startdatetime" value="${dtLocalValue(data.startdatetime)}" class="w-full rounded-xl border-slate-200 border p-3 focus:ring-2 focus:ring-indigo-500 shadow-sm bg-white text-sm" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-slate-700 mb-1.5">วันสิ้นสุด (End Date)</label>
+                                <input type="datetime-local" id="kw-enddatetime" name="enddatetime" value="${dtLocalValue(data.enddatetime)}" class="w-full rounded-xl border-slate-200 border p-3 focus:ring-2 focus:ring-indigo-500 shadow-sm bg-white text-sm" />
+                            </div>
                         </div>
-                        <div>
-                            <label class="block text-sm font-semibold text-slate-700 mb-1.5">วันสิ้นสุด (End Date)</label>
-                            <input type="text" name="enddatetime" value="${escapeHtml(data.enddatetime || '')}" class="w-full rounded-xl border-slate-200 border p-3 focus:ring-2 focus:ring-indigo-500 shadow-sm bg-white text-sm" placeholder="DD/MM/YYYY HH:mm" />
+                        <div class="flex flex-wrap gap-2 mt-3">
+                            <span class="text-[11px] text-slate-400 self-center mr-1">ตั้งด่วน:</span>
+                            <button type="button" onclick="kwSetSchedulePreset('today')" class="text-[11px] px-2.5 py-1 bg-slate-100 hover:bg-indigo-100 hover:text-indigo-600 text-slate-600 rounded-lg font-bold">วันนี้ทั้งวัน</button>
+                            <button type="button" onclick="kwSetSchedulePreset('week')" class="text-[11px] px-2.5 py-1 bg-slate-100 hover:bg-indigo-100 hover:text-indigo-600 text-slate-600 rounded-lg font-bold">7 วันจากนี้</button>
+                            <button type="button" onclick="kwSetSchedulePreset('month')" class="text-[11px] px-2.5 py-1 bg-slate-100 hover:bg-indigo-100 hover:text-indigo-600 text-slate-600 rounded-lg font-bold">30 วันจากนี้</button>
+                            <button type="button" onclick="kwSetSchedulePreset('clear')" class="text-[11px] px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-500 rounded-lg font-bold">ล้างวันที่ (ใช้งานตลอด)</button>
                         </div>
+                        <p class="text-[11px] text-slate-400 mt-2.5 flex items-center gap-1"><i data-lucide="info" class="w-3 h-3"></i> เว้นว่างไว้ได้ทั้งคู่ = ใช้งานได้ตลอดเวลาไม่มีกำหนด</p>
                     </div>
                     
                     <div class="p-6 bg-white/60 rounded-2xl border border-white shadow-sm ring-1 ring-slate-100">
@@ -1843,8 +1905,8 @@ async function updateAllUserProfiles() {
             const payload = {
                 keyword: f.keyword.value.trim() || null,
                 reply_postback: f.reply_postback.value.trim() || null,
-                startdatetime: f.startdatetime.value || null,
-                enddatetime: f.enddatetime.value || null,
+                startdatetime: f.startdatetime.value ? new Date(f.startdatetime.value).toISOString() : null,
+                enddatetime: f.enddatetime.value ? new Date(f.enddatetime.value).toISOString() : null,
                 require_vip: f.require_vip.checked,
                 reply_richmenu: richMenuId || null,
                 reply_text: null, reply_image: null, reply_flex: null, reply_prompt: null, reply_template: null
@@ -5232,12 +5294,40 @@ async function updateAllUserProfiles() {
         // ==============================================
         // 🧠 2. คลังความรู้ AI (DataAI)
         // ==============================================
+        function daiToggleShowExpired() {
+            window._daiShowExpired = !window._daiShowExpired;
+            currentPage = 1;
+            renderDataAIView();
+        }
+
+        // แสดง badge สถานะวันหมดอายุของความรู้ AI
+        function daiExpiryBadge(expiresAt) {
+            if (!expiresAt) return { html: '', expired: false };
+            const d = new Date(expiresAt);
+            if (isNaN(d.getTime())) return { html: '', expired: false };
+            const now = new Date();
+            const diffDays = Math.ceil((d - now) / (1000*60*60*24));
+            const dateStr = d.toLocaleString('th-TH', { day:'2-digit', month:'short', year:'2-digit', hour:'2-digit', minute:'2-digit' });
+
+            if (diffDays < 0) {
+                return { html: `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-500 inline-flex items-center gap-1"><i data-lucide="calendar-x-2" class="w-3 h-3"></i> หมดอายุแล้ว (${dateStr})</span>`, expired: true };
+            } else if (diffDays <= 3) {
+                return { html: `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-600 inline-flex items-center gap-1"><i data-lucide="alarm-clock" class="w-3 h-3"></i> ใกล้หมดอายุ (${diffDays} วัน)</span>`, expired: false };
+            } else {
+                return { html: `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 inline-flex items-center gap-1"><i data-lucide="calendar-clock" class="w-3 h-3"></i> หมดอายุ ${dateStr}</span>`, expired: false };
+            }
+        }
+
         async function renderDataAIView() {
             const from = (currentPage - 1) * ITEMS_PER_PAGE;
             const to = from + ITEMS_PER_PAGE - 1;
 
             let query = supabaseClient.from('dataai').select('*', { count: 'exact' }).order('created_at', { ascending: false });
             if (searchQuery) query = query.ilike('content', `%${searchQuery}%`);
+            if (!window._daiShowExpired) {
+                // แสดงเฉพาะที่ยังไม่หมดอายุ หรือไม่มีวันหมดอายุ
+                query = query.or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+            }
             query = query.range(from, to);
 
             const { data, error, count } = await query;
@@ -5268,6 +5358,9 @@ async function updateAllUserProfiles() {
                         <button onclick="openDataAIModal()" class="bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 font-bold shadow-lg transition-all active:scale-95 whitespace-nowrap">
                             <i data-lucide="plus" class="w-5 h-5"></i> เพิ่มความรู้
                         </button>
+                        <button onclick="daiToggleShowExpired()" class="px-4 py-3 ${window._daiShowExpired ? 'bg-slate-700 text-white' : 'bg-white/70 text-slate-500 ring-1 ring-slate-200'} rounded-2xl font-semibold text-xs whitespace-nowrap flex items-center gap-1.5">
+                            <i data-lucide="${window._daiShowExpired ? 'eye' : 'eye-off'}" class="w-4 h-4"></i> ${window._daiShowExpired ? 'กำลังแสดงที่หมดอายุ' : 'ซ่อนที่หมดอายุ'}
+                        </button>
                     </div>
                 </div>
 
@@ -5289,11 +5382,15 @@ async function updateAllUserProfiles() {
                 data.forEach(item => {
                     const shortText = item.content.length > 150 ? escapeHtml(item.content.substring(0, 150)) + '...' : escapeHtml(item.content);
                     const fullTextStr = encodeURIComponent(JSON.stringify(item));
+                    const expiryBadge = daiExpiryBadge(item.expires_at);
                     html += `
-                        <tr class="table-row-hover transition-all hover:bg-fuchsia-50/30 cursor-pointer" onclick="openDataAIModal('${fullTextStr}')">
+                        <tr class="table-row-hover transition-all hover:bg-fuchsia-50/30 cursor-pointer ${expiryBadge.expired ? 'opacity-50' : ''}" onclick="openDataAIModal('${fullTextStr}')">
                             <td class="px-8 py-5">
                                 <div class="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">${shortText}</div>
-                                <div class="text-[10px] text-slate-400 mt-2 font-mono flex items-center gap-1"><i data-lucide="clock" class="w-3 h-3"></i> อัปเดตเมื่อ: ${formatThaiDateTime(item.created_at)}</div>
+                                <div class="flex items-center gap-3 mt-2 flex-wrap">
+                                    <div class="text-[10px] text-slate-400 font-mono flex items-center gap-1"><i data-lucide="clock" class="w-3 h-3"></i> อัปเดตเมื่อ: ${formatThaiDateTime(item.created_at)}</div>
+                                    ${expiryBadge.html}
+                                </div>
                             </td>
                             <td class="px-6 py-5 text-right align-top">
                                 <button onclick="event.stopPropagation(); deleteDataAI(${item.id})" class="p-2 text-rose-500 bg-rose-50/50 rounded-xl hover:bg-rose-100 transition-all"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
@@ -5309,9 +5406,11 @@ async function updateAllUserProfiles() {
                 data.forEach(item => {
                     const shortText = item.content.length > 100 ? escapeHtml(item.content.substring(0, 100)) + '...' : escapeHtml(item.content);
                     const fullTextStr = encodeURIComponent(JSON.stringify(item));
+                    const expiryBadge = daiExpiryBadge(item.expires_at);
                     html += `
-                        <div class="p-5 bg-white hover:bg-gray-50 transition-colors" onclick="openDataAIModal('${fullTextStr}')">
-                            <div class="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed mb-3">${shortText}</div>
+                        <div class="p-5 bg-white hover:bg-gray-50 transition-colors ${expiryBadge.expired ? 'opacity-50' : ''}" onclick="openDataAIModal('${fullTextStr}')">
+                            <div class="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed mb-2">${shortText}</div>
+                            ${expiryBadge.html ? `<div class="mb-2">${expiryBadge.html}</div>` : ''}
                             <div class="flex justify-between items-center border-t border-gray-50 pt-3">
                                 <span class="text-[10px] text-slate-400">${formatThaiDateTime(item.created_at)}</span>
                                 <button onclick="event.stopPropagation(); deleteDataAI(${item.id})" class="text-xs font-bold text-rose-600 px-3 py-1.5 bg-rose-50 rounded-lg"><i data-lucide="trash-2" class="w-3 h-3 inline"></i> ลบ</button>
@@ -5338,12 +5437,14 @@ async function updateAllUserProfiles() {
         function openDataAIModal(encodedData = null) {
             editingDataAiId = null;
             let content = '';
+            let expiresAt = '';
             let title = 'เพิ่มคลังความรู้ใหม่';
 
             if (encodedData) {
                 const data = JSON.parse(decodeURIComponent(encodedData));
                 editingDataAiId = data.id;
                 content = data.content;
+                expiresAt = dtLocalValue(data.expires_at);
                 title = 'แก้ไขคลังความรู้';
             }
 
@@ -5358,6 +5459,18 @@ async function updateAllUserProfiles() {
                         <label class="block text-sm font-bold text-slate-700 mb-2">เนื้อหาความรู้</label>
                         <textarea name="content" required rows="10" class="w-full rounded-xl border border-slate-200 p-4 focus:ring-2 focus:ring-fuchsia-500 bg-white shadow-sm text-sm outline-none" placeholder="ใส่ข้อมูลที่นี่...">${escapeHtml(content)}</textarea>
                     </div>
+                    <div class="p-4 bg-white/60 rounded-2xl border border-slate-100 shadow-sm">
+                        <label class="block text-sm font-bold text-slate-700 mb-1.5 flex items-center gap-1.5"><i data-lucide="calendar-x-2" class="w-4 h-4 text-rose-400"></i> วันหมดอายุความรู้นี้ (ไม่บังคับ)</label>
+                        <input type="datetime-local" name="expires_at" id="dai-expires" value="${expiresAt}" class="w-full rounded-xl border-slate-200 border p-3 focus:ring-2 focus:ring-fuchsia-500 shadow-sm bg-white text-sm" />
+                        <div class="flex flex-wrap gap-2 mt-2.5">
+                            <span class="text-[11px] text-slate-400 self-center mr-1">ตั้งด่วน:</span>
+                            <button type="button" onclick="daiSetExpiresPreset(7)" class="text-[11px] px-2.5 py-1 bg-slate-100 hover:bg-fuchsia-100 hover:text-fuchsia-600 text-slate-600 rounded-lg font-bold">7 วัน</button>
+                            <button type="button" onclick="daiSetExpiresPreset(30)" class="text-[11px] px-2.5 py-1 bg-slate-100 hover:bg-fuchsia-100 hover:text-fuchsia-600 text-slate-600 rounded-lg font-bold">30 วัน</button>
+                            <button type="button" onclick="daiSetExpiresPreset(90)" class="text-[11px] px-2.5 py-1 bg-slate-100 hover:bg-fuchsia-100 hover:text-fuchsia-600 text-slate-600 rounded-lg font-bold">90 วัน</button>
+                            <button type="button" onclick="daiSetExpiresPreset(null)" class="text-[11px] px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-500 rounded-lg font-bold">ล้าง (ไม่หมดอายุ)</button>
+                        </div>
+                        <p class="text-[11px] text-slate-400 mt-2 flex items-center gap-1"><i data-lucide="info" class="w-3 h-3"></i> เว้นว่าง = ความรู้นี้ใช้ได้ตลอดไป ไม่หมดอายุ</p>
+                    </div>
                     <div class="flex justify-end gap-3 pt-4 border-t border-gray-100/50 mt-6">
                         <button type="button" onclick="closeModal()" class="px-6 py-3 bg-white text-slate-600 rounded-xl hover:bg-slate-50 font-bold border border-slate-200 shadow-sm">ยกเลิก</button>
                         <button type="submit" class="px-6 py-3 bg-fuchsia-600 hover:bg-fuchsia-700 text-white rounded-xl shadow-lg flex items-center gap-2 font-bold transition-all">
@@ -5371,18 +5484,31 @@ async function updateAllUserProfiles() {
             lucide.createIcons();
         }
 
+        function daiSetExpiresPreset(days) {
+            const el = document.getElementById('dai-expires');
+            if (!el) return;
+            if (days === null) { el.value = ''; return; }
+            const d = new Date();
+            d.setDate(d.getDate() + days);
+            const pad = n => String(n).padStart(2, '0');
+            el.value = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        }
+
         async function handleDataAISubmit(e) {
             e.preventDefault();
             const btn = e.target.querySelector('button[type="submit"]');
             setBtnLoading(btn, true);
 
             const content = e.target.content.value.trim();
+            const expiresRaw = e.target.expires_at.value;
+            const expires_at = expiresRaw ? new Date(expiresRaw).toISOString() : null;
+
             let error;
             if (editingDataAiId) {
-                const { error: err } = await supabaseClient.from('dataai').update({ content }).eq('id', editingDataAiId);
+                const { error: err } = await supabaseClient.from('dataai').update({ content, expires_at }).eq('id', editingDataAiId);
                 error = err;
             } else {
-                const { error: err } = await supabaseClient.from('dataai').insert([{ content }]);
+                const { error: err } = await supabaseClient.from('dataai').insert([{ content, expires_at }]);
                 error = err;
             }
 
