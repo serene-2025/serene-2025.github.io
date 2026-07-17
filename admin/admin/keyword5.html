@@ -10824,6 +10824,8 @@ function renderSlips(slips) {
         const statusColor = { pending: 'amber', confirmed: 'emerald', rejected: 'rose' }[s.status] || 'slate';
         const statusLabel = { pending: '⏳ รอยืนยัน', confirmed: '✅ ยืนยันแล้ว', rejected: '❌ ปฏิเสธ' }[s.status] || s.status;
         const date = new Date(s.created_at).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        const timingBadge = { early:'⏰ ก่อนกำหนด', ontime:'✅ ตรงเวลา', late:'⚠️ ล่าช้า' }[s.timing_status];
+        const timingColor = { early:'blue', ontime:'emerald', late:'rose' }[s.timing_status] || 'slate';
         return `<div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
             <div class="flex items-center justify-between px-4 py-2 bg-${statusColor}-50 border-b border-${statusColor}-100">
                 <span class="text-xs font-bold text-${statusColor}-700">${statusLabel}</span>
@@ -10839,17 +10841,64 @@ function renderSlips(slips) {
                     </div>
                     <div class="text-sm text-slate-600">👤 ${escapeHtml(s.display_name || s.user_id || '—')}</div>
                     <div class="text-sm font-bold text-emerald-700">💰 ${s.amount ? s.amount.toLocaleString() + ' บาท' : '—'}</div>
-                    <div class="text-xs text-slate-500">📅 ${escapeHtml(s.month || '—')}</div>
+                    <div class="text-xs text-slate-500">📅 ${escapeHtml(s.month || '—')} ${s.year || ''}</div>
                     ${s.note ? `<div class="text-xs text-slate-500 italic">📝 ${escapeHtml(s.note)}</div>` : ''}
+                    ${timingBadge ? `<div class="flex items-center gap-2">
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-${timingColor}-100 text-${timingColor}-700">${timingBadge}</span>
+                        ${s.points_awarded > 0 ? `<span class="text-[10px] font-bold text-amber-600">🎁 +${s.points_awarded} แต้ม</span>` : (s.timing_status === 'late' ? '<span class="text-[10px] text-slate-400">ไม่ได้แต้ม</span>' : '')}
+                    </div>` : ''}
                     ${s.status === 'pending' ? `
                     <div class="flex gap-2 pt-2">
-                        <button onclick="confirmSlip('${s.id}', 'confirmed')" class="flex-1 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold">✅ ยืนยัน</button>
+                        <button onclick="openConfirmSlipModal('${s.id}', '${escapeHtml(s.month||'').replace(/'/g,"&apos;")}')" class="flex-1 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold">✅ ยืนยัน</button>
                         <button onclick="confirmSlipWithNote('${s.id}', 'rejected')" class="flex-1 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-bold border border-rose-200">❌ ปฏิเสธ</button>
                     </div>` : ''}
                 </div>
             </div>
         </div>`;
     }).join('')}</div>`;
+}
+
+function openConfirmSlipModal(slipId, month) {
+    const now = new Date();
+    const curYearTH = now.getFullYear() + 543;
+    showModal('✅ ยืนยันสลิป — เชื่อมระบบให้แต้มอัตโนมัติ',
+        '<div class="space-y-4 text-left">' +
+        '<div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-700">' +
+        '📅 งวด: <b>' + escapeHtml(month || '—') + '</b><br>' +
+        'ระบบจะตรวจว่าจ่าย <b>ก่อนกำหนด / ตรงเวลา / ล่าช้า</b> จากเวลาที่ส่งสลิปจริง แล้วให้แต้มอัตโนมัติ' +
+        '</div>' +
+        '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">ปี (พ.ศ.) ของงวดนี้</label>' +
+        '<select id="confirm-slip-year" class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white">' +
+        [curYearTH, curYearTH-1, curYearTH+1].map(y => '<option value="' + y + '"' + (y===curYearTH?' selected':'') + '>' + y + '</option>').join('') +
+        '</select></div>' +
+        '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">หมายเหตุ (ถ้ามี)</label>' +
+        '<textarea id="confirm-slip-note" rows="2" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none"></textarea></div>' +
+        '<div class="flex gap-2 pt-2">' +
+        '<button data-id="' + slipId + '" onclick="doConfirmSlipProcess(this.dataset.id)" class="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold text-sm">✅ ยืนยัน + คำนวณแต้ม</button>' +
+        '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+        '</div></div>'
+    );
+}
+
+async function doConfirmSlipProcess(slipId) {
+    const year = document.getElementById('confirm-slip-year')?.value;
+    const note = document.getElementById('confirm-slip-note')?.value?.trim();
+    if (!year) return showToast('เลือกปีก่อน', 'warning');
+
+    closeModal();
+    showToast('⏳ กำลังยืนยันและคำนวณแต้ม...', 'info');
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/slip_confirm_process`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slipId, year: parseInt(year), note: note || null })
+        });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || 'ยืนยันไม่สำเร็จ');
+        showToast('✅ ' + d.message, d.points > 0 ? 'success' : 'warning');
+        loadSlips();
+    } catch (e) {
+        showToast('❌ ' + e.message, 'error');
+    }
 }
 
 async function confirmSlip(slipId, status) {
