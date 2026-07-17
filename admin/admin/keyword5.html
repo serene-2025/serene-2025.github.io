@@ -12550,6 +12550,17 @@ async function renderCrmAwardFeeView() {
                         </label>
                     </div>
                 </div>
+
+                <!-- วันที่ชำระจริง (สำหรับตรวจ ก่อนกำหนด/ตรงเวลา/ล่าช้า) -->
+                <div class="mt-4 pt-4 border-t border-slate-100">
+                    <label class="block text-xs font-bold text-slate-600 mb-2 flex items-center gap-1.5">
+                        <i data-lucide="calendar-check" class="w-3.5 h-3.5 text-blue-500"></i> วันที่ชำระจริง (ของบ้านที่เลือกทั้งหมด)
+                    </label>
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <input id="aw-paid-date" type="date" value="${new Date().toISOString().slice(0,10)}" class="rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700">
+                        <span class="text-[11px] text-slate-400">ระบุวันที่จ่ายจริง → ระบบจะคำนวณว่าก่อนกำหนด/ตรงเวลา/ล่าช้า ให้อัตโนมัติ (แทนการเชื่อข้อความสถานะเฉยๆ)</span>
+                    </div>
+                </div>
             </div>
 
             <div id="aw-result"></div>
@@ -12571,6 +12582,15 @@ async function checkPaidMembers() {
         const res = await fetch(`${API_BASE_URL}/api/admin/audience/maintenance_paid?month=${month}&year=${year}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'ตรวจสอบล้มเหลว');
+
+        // ดึง timing status ที่เคยประมวลผลแล้ว (จากทั้งสลิปและ manual ครั้งก่อน) มาแสดง badge
+        let timingMap = {};
+        try {
+            const tRes = await fetch(`${API_BASE_URL}/api/admin/audience/maintenance_timing_lookup?monthLabel=${encodeURIComponent(monthLabel)}&year=${year}`);
+            const tData = await tRes.json();
+            timingMap = tData.timings || {};
+        } catch(_) {}
+        window._awTimingMap = timingMap;
 
         window._awItems = data.items || [];
         if (data.total === 0) {
@@ -12635,6 +12655,12 @@ function renderPaidList(data, monthLabel, year) {
         const ef = awFilterByMode(item.registered_users || [], mode);
         const allDone = item.has_user && item.all_awarded;
         const sc = item.status === 'ล่วงหน้า' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700';
+        const timingInfo = (window._awTimingMap || {})[item.house_no];
+        const timingBadge = timingInfo
+            ? { early:'<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">⏰ ก่อนกำหนด</span>',
+                ontime:'<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✅ ตรงเวลา</span>',
+                late:'<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">⚠️ ล่าช้า</span>' }[timingInfo.timing] || ''
+            : '<span class="text-[10px] text-slate-300">ยังไม่ประมวลผล</span>';
         const chk = ef.length > 0
             ? '<input type="checkbox" class="aw-row-check w-4 h-4 accent-emerald-500" data-idx="' + idx + '" checked>'
             : '<span class="text-slate-300">\u2014</span>';
@@ -12661,6 +12687,7 @@ function renderPaidList(data, monthLabel, year) {
             + '<td class="p-3 text-slate-600">' + escapeHtml(item.soi || '\u2014') + '</td>'
             + '<td class="p-3 text-slate-600 max-w-xs truncate">' + escapeHtml(item.owner_name || '\u2014') + '</td>'
             + '<td class="p-3 text-center"><span class="text-[10px] font-bold ' + sc + ' px-2 py-0.5 rounded-md">' + escapeHtml(item.status) + '</span></td>'
+            + '<td class="p-3 text-center">' + timingBadge + '</td>'
             + '<td class="p-3 text-xs">' + usersHtml + '</td>'
             + '</tr>';
     }).join('');
@@ -12699,6 +12726,7 @@ function renderPaidList(data, monthLabel, year) {
                     <th class="text-left p-3 font-bold">ซอย</th>
                     <th class="text-left p-3 font-bold">เจ้าของ</th>
                     <th class="text-center p-3 font-bold">สถานะ</th>
+                    <th class="text-center p-3 font-bold">Timing</th>
                     <th class="text-left p-3 font-bold">สมาชิก LINE</th>
                 </tr></thead>
                 <tbody>${rowsHtml}</tbody>
@@ -12715,6 +12743,8 @@ async function sendAwardPoints(monthLabel, year) {
 
     const mode = awGetMode();
     const modeLabel = { all:'ทุกคนในบ้าน', per_house:'1 บ้าน 1 แต้ม', owner_only:'เฉพาะเจ้าของบ้าน' }[mode];
+    const paidDate = document.getElementById('aw-paid-date')?.value;
+    const monthCol = document.getElementById('aw-month')?.value;
 
     // กรอง items ตามนโยบายก่อนส่ง
     const rawItems = checkedIdx.map(i => window._awItems[i]);
@@ -12727,21 +12757,30 @@ async function sendAwardPoints(monthLabel, year) {
     const pointsEarly  = parseInt(document.getElementById('aw-pts-early').value) || 150;
     const eligibleCount = items.reduce((s, i) => s + i.registered_users.length, 0);
 
+    const dateConfirmText = paidDate
+        ? `<br>📅 วันที่ชำระจริง: <b class="text-blue-600">${new Date(paidDate).toLocaleDateString('th-TH',{day:'numeric',month:'long',year:'numeric'})}</b> · ระบบจะคำนวณ ก่อนกำหนด/ตรงเวลา/ล่าช้า ให้อัตโนมัติ`
+        : '';
+
     showConfirmModal(
         `ยืนยันให้แต้ม?`,
         `จะให้แต้ม <b>${eligibleCount}</b> สมาชิก จาก ${items.length} บ้าน · ${monthLabel} ${year}<br>
          นโยบาย: <b class="text-indigo-600">${modeLabel}</b><br><br>
-         จ่ายตรงเวลา = <b class="text-emerald-600">+${pointsOnTime}</b> · ล่วงหน้า = <b class="text-amber-600">+${pointsEarly}</b>`,
+         จ่ายตรงเวลา = <b class="text-emerald-600">+${pointsOnTime}</b> · ล่วงหน้า = <b class="text-amber-600">+${pointsEarly}</b> · ล่าช้า = <b class="text-rose-600">ไม่ได้แต้ม</b>${dateConfirmText}`,
         async () => {
             setBtnLoading(btn, true);
             try {
                 const res = await fetch(`${API_BASE_URL}/api/admin/audience/maintenance_award`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ items, monthLabel, year, pointsOnTime, pointsEarly, award_mode: mode })
+                    body: JSON.stringify({ items, monthLabel, year, pointsOnTime, pointsEarly, award_mode: mode, paidDate, monthCol })
                 });
                 const d = await res.json();
                 if (!res.ok) throw new Error(d.error || 'ล้มเหลว');
-                showToast(d.message, 'success');
+
+                const timingBadgeMap = { early: '⏰ ก่อนกำหนด', ontime: '✅ ตรงเวลา', late: '⚠️ ล่าช้า (ไม่ได้แต้ม)' };
+                const resultMsg = d.timing
+                    ? `${d.message} · ผลตรวจสอบ: ${timingBadgeMap[d.timing] || d.timing}`
+                    : d.message;
+                showToast(resultMsg, d.timing === 'late' ? 'warning' : 'success');
                 checkPaidMembers();
             } catch (e) { showToast(e.message, 'error'); }
             finally { setBtnLoading(btn, false); }
