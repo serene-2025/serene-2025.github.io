@@ -11272,8 +11272,17 @@ async function renderUserhomeView() {
                 </div>
             </div>
 
-            <!-- Result count -->
-            <div id="uh-result-count" class="text-xs text-slate-500 mb-2"></div>
+            <!-- Result count + Bulk action bar -->
+            <div class="flex flex-wrap items-center gap-3 mb-2">
+                <div id="uh-result-count" class="text-xs text-slate-500"></div>
+                <div id="uh-bulk-bar" class="hidden ml-auto flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-2xl px-4 py-2">
+                    <span class="text-xs font-bold text-indigo-700"><span id="uh-selected-count">0</span> คนถูกเลือก</span>
+                    <button onclick="openBulkTagModal()" class="px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5">
+                        <i data-lucide="tag" class="w-3.5 h-3.5"></i> เพิ่ม Tag
+                    </button>
+                    <button onclick="clearUhSelection()" class="px-3 py-1.5 bg-white text-slate-500 border border-slate-200 rounded-xl text-xs font-bold">ยกเลิกเลือก</button>
+                </div>
+            </div>
 
             <!-- Table -->
             <div class="glass rounded-3xl overflow-hidden shadow-sm">
@@ -11281,6 +11290,7 @@ async function renderUserhomeView() {
                     <table class="w-full text-sm">
                         <thead class="bg-slate-50 text-slate-600">
                             <tr>
+                                <th class="text-center p-3 w-10"><input type="checkbox" id="uh-select-all" onchange="uhToggleSelectAll(this)" class="w-4 h-4 accent-indigo-500"></th>
                                 <th class="text-left p-3 font-bold w-12"></th>
                                 <th class="text-left p-3 font-bold">สมาชิก</th>
                                 <th class="text-left p-3 font-bold">บ้าน / ซอย</th>
@@ -11293,7 +11303,7 @@ async function renderUserhomeView() {
                                 <th class="text-center p-3 font-bold">จัดการ</th>
                             </tr>
                         </thead>
-                        <tbody id="uh-tbody"><tr><td colspan="10" class="p-12 text-center text-slate-400">กำลังโหลด...</td></tr></tbody>
+                        <tbody id="uh-tbody"><tr><td colspan="11" class="p-12 text-center text-slate-400">กำลังโหลด...</td></tr></tbody>
                     </table>
                 </div>
             </div>
@@ -11306,7 +11316,7 @@ async function renderUserhomeView() {
 }
 
 async function loadUserhomeData() {
-    document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="10" class="p-12 text-center text-slate-400">กำลังโหลด...</td></tr>`;
+    document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="11" class="p-12 text-center text-slate-400">กำลังโหลด...</td></tr>`;
     try {
         const { data, error } = await supabaseClient
             .from('userhome')
@@ -11340,7 +11350,7 @@ async function loadUserhomeData() {
 
         applyUserhomeFilters();
     } catch (e) {
-        document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="10" class="p-12 text-center text-rose-500 font-bold">${escapeHtml(e.message)}</td></tr>`;
+        document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="11" class="p-12 text-center text-rose-500 font-bold">${escapeHtml(e.message)}</td></tr>`;
     }
 }
 
@@ -11388,7 +11398,7 @@ function renderUserhomeTable() {
     document.getElementById('uh-result-count').innerText = `แสดง ${userhomeFiltered.length.toLocaleString()} รายการ จาก ${userhomeData.length.toLocaleString()} ทั้งหมด`;
 
     if (userhomeFiltered.length === 0) {
-        document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="10" class="p-12 text-center text-slate-400"><div class="text-5xl mb-2">🔍</div>ไม่พบข้อมูล</td></tr>`;
+        document.getElementById('uh-tbody').innerHTML = `<tr><td colspan="11" class="p-12 text-center text-slate-400"><div class="text-5xl mb-2">🔍</div>ไม่พบข้อมูล</td></tr>`;
         document.getElementById('uh-pagination').innerHTML = '';
         return;
     }
@@ -11414,6 +11424,9 @@ function renderUserhomeTable() {
             ? '<span class="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 border-2 border-white flex items-center justify-center" title="ติดตามอยู่"><i data-lucide="check" class="w-2.5 h-2.5 text-white"></i></span>'
             : '';
         return `<tr class="border-t border-slate-100 hover:bg-white/60 ${r.follow_status === 'unfollow' ? 'opacity-60' : ''}">
+            <td class="p-3 text-center">
+                <input type="checkbox" class="uh-row-check w-4 h-4 accent-indigo-500" data-uid="${escapeHtml(r.uid||'')}" data-name="${escapeHtml(r.fullname || r.line_name || '').replace(/"/g,'&quot;')}" onchange="uhUpdateSelection()" ${r.uid ? '' : 'disabled title="ไม่มี LINE UID"'} ${r.uid && uhSelectedUsers.has(r.uid) ? 'checked' : ''}>
+            </td>
             <td class="p-3">
                 <div class="relative inline-block">
                     <img src="${r.profile || 'https://cdn-icons-png.flaticon.com/512/9368/9368192.png'}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/9368/9368192.png'" class="w-10 h-10 rounded-full border border-slate-200 object-cover uh-avatar">
@@ -11467,18 +11480,132 @@ function renderUserhomeTable() {
 
     // Pagination
     const pagWrap = document.getElementById('uh-pagination');
-    if (totalPages <= 1) { pagWrap.innerHTML = ''; lucide.createIcons(); loadUserhomeRichMenus(pageData); return; }
+    if (totalPages <= 1) { pagWrap.innerHTML = ''; lucide.createIcons(); loadUserhomeRichMenus(pageData); uhUpdateSelection(); return; }
     let pagHtml = `<button ${userhomePage === 1 ? 'disabled' : ''} onclick="userhomeGoPage(${userhomePage - 1})" class="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-bold ${userhomePage === 1 ? 'opacity-40' : 'hover:bg-slate-50'}">‹</button>`;
     pagHtml += `<span class="text-sm text-slate-600 px-2">หน้า <b>${userhomePage}</b> / ${totalPages}</span>`;
     pagHtml += `<button ${userhomePage === totalPages ? 'disabled' : ''} onclick="userhomeGoPage(${userhomePage + 1})" class="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-bold ${userhomePage === totalPages ? 'opacity-40' : 'hover:bg-slate-50'}">›</button>`;
     pagWrap.innerHTML = pagHtml;
     lucide.createIcons();
     loadUserhomeRichMenus(pageData);
+    uhUpdateSelection();
 }
 
 // ─── Lazy-load current Rich Menu thumbnail สำหรับแต่ละ user ในหน้าปัจจุบัน ───
 let _userhomeRmCache = {};   // richMenuId → { name, image_url }
 let _userhomeRmLoadToken = 0; // ยกเลิก request เก่าเมื่อเปลี่ยนหน้า/กรองใหม่
+
+// ─── Bulk Tag Assignment จากทะเบียนบ้าน & สมาชิก ───────────────
+let uhSelectedUsers = new Map(); // uid → name (คงค้างข้ามหน้าได้)
+
+function uhToggleSelectAll(masterCb) {
+    document.querySelectorAll('.uh-row-check:not(:disabled)').forEach(cb => {
+        cb.checked = masterCb.checked;
+        if (masterCb.checked) uhSelectedUsers.set(cb.dataset.uid, cb.dataset.name);
+        else uhSelectedUsers.delete(cb.dataset.uid);
+    });
+    uhUpdateSelection();
+}
+
+function uhUpdateSelection() {
+    document.querySelectorAll('.uh-row-check').forEach(cb => {
+        if (cb.checked) uhSelectedUsers.set(cb.dataset.uid, cb.dataset.name);
+        else uhSelectedUsers.delete(cb.dataset.uid);
+    });
+    const count = uhSelectedUsers.size;
+    const bar = document.getElementById('uh-bulk-bar');
+    const countEl = document.getElementById('uh-selected-count');
+    if (countEl) countEl.textContent = count;
+    if (bar) bar.classList.toggle('hidden', count === 0);
+
+    // sync select-all checkbox state (เฉพาะ visible rows)
+    const visible = document.querySelectorAll('.uh-row-check:not(:disabled)');
+    const checkedVisible = document.querySelectorAll('.uh-row-check:not(:disabled):checked');
+    const master = document.getElementById('uh-select-all');
+    if (master) master.checked = visible.length > 0 && visible.length === checkedVisible.length;
+}
+
+function clearUhSelection() {
+    uhSelectedUsers.clear();
+    document.querySelectorAll('.uh-row-check').forEach(cb => cb.checked = false);
+    const master = document.getElementById('uh-select-all');
+    if (master) master.checked = false;
+    uhUpdateSelection();
+}
+
+async function openBulkTagModal() {
+    const count = uhSelectedUsers.size;
+    if (!count) return showToast('เลือกสมาชิกก่อน', 'warning');
+
+    // โหลด tag ที่มีอยู่แล้วในระบบมาเป็นตัวเลือกด่วน
+    const existingTags = await getPersistentTags().catch(() => []);
+
+    showModal(`🏷️ เพิ่ม Tag ให้ ${count} คน`,
+        '<div class="space-y-4 text-left">' +
+        '<div class="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-700 max-h-24 overflow-y-auto">' +
+        Array.from(uhSelectedUsers.values()).map(n => escapeHtml(n || '—')).join(', ') +
+        '</div>' +
+        '<div>' +
+        '<label class="block text-xs font-bold text-slate-600 mb-1.5">ชื่อ Tag</label>' +
+        '<input id="bulk-tag-input" list="bulk-tag-suggestions" class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-300" placeholder="พิมพ์ชื่อ tag ใหม่ หรือเลือกจากรายการ">' +
+        '<datalist id="bulk-tag-suggestions">' +
+        (existingTags||[]).map(t => '<option value="' + escapeHtml(t.name||t) + '">').join('') +
+        '</datalist>' +
+        '</div>' +
+        (existingTags?.length ? '<div class="flex flex-wrap gap-1.5">' +
+            existingTags.slice(0,12).map(t =>
+                '<button data-tag="' + escapeHtml(t.name||t) + '" onclick="document.getElementById(\'bulk-tag-input\').value=this.dataset.tag" class="px-2.5 py-1 bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 text-slate-600 rounded-lg text-[11px] font-bold">#' + escapeHtml(t.name||t) + '</button>'
+            ).join('') + '</div>' : '') +
+        '<div class="flex gap-2 pt-2">' +
+        '<button onclick="applyBulkTag()" class="flex-1 py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-2xl font-bold text-sm">🏷️ เพิ่ม Tag ให้ทุกคน</button>' +
+        '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+        '</div></div>'
+    );
+    setTimeout(() => document.getElementById('bulk-tag-input')?.focus(), 150);
+}
+
+async function applyBulkTag() {
+    const tagName = document.getElementById('bulk-tag-input')?.value?.trim();
+    if (!tagName) return showToast('พิมพ์ชื่อ tag ก่อน', 'warning');
+
+    const uids = Array.from(uhSelectedUsers.keys()).filter(Boolean);
+    if (!uids.length) return showToast('ไม่มีสมาชิกที่เลือก', 'warning');
+
+    closeModal();
+    showToast('⏳ กำลังเพิ่ม tag...', 'info');
+
+    try {
+        // insert แบบ upsert กันซ้ำ (unique constraint บน user_id+tag_name ถ้ามี ก็จะไม่ error)
+        const rows = uids.map(uid => ({ user_id: uid, tag_name: tagName }));
+        const { error } = await supabaseClient.from('user_tags').upsert(rows, { onConflict: 'user_id,tag_name', ignoreDuplicates: true });
+
+        if (error) {
+            // ถ้าไม่มี unique constraint ให้ fallback เป็น insert ทีละคนแบบเช็คก่อน
+            let ok = 0, fail = 0;
+            for (const uid of uids) {
+                const { data: existing } = await supabaseClient.from('user_tags').select('user_id').match({ user_id: uid, tag_name: tagName }).maybeSingle();
+                if (existing) { ok++; continue; }
+                const { error: insErr } = await supabaseClient.from('user_tags').insert({ user_id: uid, tag_name: tagName });
+                if (insErr) fail++; else ok++;
+            }
+            showToast(`✅ เพิ่ม tag "${tagName}" ให้ ${ok} คน` + (fail ? ` · ล้มเหลว ${fail}` : ''), fail ? 'warning' : 'success');
+        } else {
+            showToast(`✅ เพิ่ม tag "${tagName}" ให้ ${uids.length} คนแล้ว`, 'success');
+        }
+
+        // บันทึกชื่อ tag ใหม่เข้า master list ด้วย (เผื่อเป็น tag ใหม่)
+        try {
+            const master = await getPersistentTags();
+            if (!master.some(t => (t.name||t) === tagName)) {
+                master.push({ name: tagName, audienceId: null });
+                await supabaseClient.from('system_settings').upsert({ key: 'master_tags', value: master });
+            }
+        } catch(_) {}
+
+        clearUhSelection();
+    } catch(e) {
+        showToast('❌ ' + e.message, 'error');
+    }
+}
 
 async function loadUserhomeRichMenus(pageData) {
     const myToken = ++_userhomeRmLoadToken;
