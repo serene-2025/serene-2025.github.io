@@ -189,12 +189,12 @@
         const SUPABASE_URL = 'https://etrwfjzqaypfcncmtjps.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV0cndmanpxYXlwZmNuY210anBzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxNjkxOTYsImV4cCI6MjA5OTc0NTE5Nn0.tMhd1qXGftn83XpqseSdqGpKf95BpF-u5Qhbgg-hJNY';
 
+
         const isConfigured = SUPABASE_URL.startsWith('http') && SUPABASE_KEY.length > 20;
         const supabaseClient = isConfigured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
         let currentBill = null;
         let storeInfo = null;
-        let base64Slip = null;
 
         function showView(viewId) {
             ['view-loading', 'view-config-missing', 'view-error', 'view-dashboard'].forEach(id => {
@@ -355,6 +355,9 @@
         }
 
         // ระบบแปลงไฟล์สลิปเป็นรูปภาพ Base64 พร้อมตรวจสอบและบีบอัดขนาดไฟล์
+        let slipBlob = null; // ไฟล์สลิปหลังบีบอัด (Blob) รออัปโหลดขึ้น Storage ตอนกดส่ง
+        let slipPreviewUrl = null;
+
         function previewSlip(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -374,18 +377,20 @@
 
             const reader = new FileReader();
             reader.onload = function(e) {
-                compressImage(e.target.result, (compressedDataUrl) => {
-                    base64Slip = compressedDataUrl;
-                    document.getElementById('slip-preview').src = base64Slip;
+                compressImageToBlob(e.target.result, (blob) => {
+                    slipBlob = blob;
+                    if (slipPreviewUrl) URL.revokeObjectURL(slipPreviewUrl);
+                    slipPreviewUrl = URL.createObjectURL(blob);
+                    document.getElementById('slip-preview').src = slipPreviewUrl;
                     document.getElementById('dropzone').classList.add('hidden');
                     document.getElementById('preview-area').classList.remove('hidden');
                 });
             }
-            reader.readAsDataURL(file); // แปลงไฟล์เป็น Base64
+            reader.readAsDataURL(file);
         }
 
-        // ย่อขนาดรูปสลิปลงก่อนอัปโหลด (ลดภาระฐานข้อมูล/เน็ตช้า) โดยไม่ลดความคมชัดจนอ่านยอดเงินไม่ออก
-        function compressImage(dataUrl, callback) {
+        // ย่อขนาดรูปสลิปลงก่อนอัปโหลด (เก็บเป็น Blob ไม่ใช่ base64 - อัปโหลดขึ้น Supabase Storage แทนการฝังในฐานข้อมูลโดยตรง)
+        function compressImageToBlob(dataUrl, callback) {
             const img = new Image();
             img.onload = function() {
                 const maxDimension = 1600;
@@ -407,34 +412,51 @@
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
 
-                callback(canvas.toDataURL('image/jpeg', 0.82));
+                canvas.toBlob((blob) => callback(blob), 'image/jpeg', 0.82);
             };
             img.onerror = function() {
-                // ถ้าย่อไม่สำเร็จ ใช้ไฟล์ต้นฉบับแทน
-                callback(dataUrl);
+                // ถ้าย่อไม่สำเร็จ แปลง dataUrl ต้นฉบับเป็น Blob ตรงๆ แทน
+                fetch(dataUrl).then(r => r.blob()).then(callback);
             };
             img.src = dataUrl;
         }
 
         function removeSlip() {
             document.getElementById('slip-input').value = "";
-            base64Slip = null;
+            if (slipPreviewUrl) URL.revokeObjectURL(slipPreviewUrl);
+            slipBlob = null;
+            slipPreviewUrl = null;
             document.getElementById('dropzone').classList.remove('hidden');
             document.getElementById('preview-area').classList.add('hidden');
         }
 
-        // ส่งสลิปขึ้น Supabase
+        // ส่งสลิปขึ้น Supabase: อัปโหลดรูปเข้า Storage bucket 'slips' ก่อน แล้วเก็บแค่ลิงก์ (URL) ไว้ในตาราง bills
+        // (ประหยัดพื้นที่ฐานข้อมูลกว่าการฝัง base64 ตรงๆ มาก)
         async function submitSlip() {
-            if (!base64Slip) return;
+            if (!slipBlob) return;
 
             Swal.fire({ title: 'กำลังส่งข้อมูล...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+
+            const filePath = `${currentBill.tenant_id}/${currentBill.invoice_no}-${Date.now()}.jpg`;
+            const { error: uploadError } = await supabaseClient.storage.from('slips').upload(filePath, slipBlob, {
+                contentType: 'image/jpeg',
+                upsert: false
+            });
+
+            if (uploadError) {
+                Swal.fire('ข้อผิดพลาด', 'อัปโหลดรูปสลิปไม่สำเร็จ: ' + uploadError.message, 'error');
+                return;
+            }
+
+            const { data: publicUrlData } = supabaseClient.storage.from('slips').getPublicUrl(filePath);
+            const slipUrl = publicUrlData.publicUrl;
 
             // อัปเดตข้อมูลใน Supabase (ยืนยัน token ซ้ำอีกชั้นเพื่อความปลอดภัย)
             const { error } = await supabaseClient
                 .from('bills')
                 .update({ 
                     status: 'pending_slip',
-                    slip_url: base64Slip
+                    slip_url: slipUrl
                 })
                 .eq('invoice_no', currentBill.invoice_no)
                 .eq('token', currentBill.token);
