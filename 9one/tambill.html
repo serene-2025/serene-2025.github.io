@@ -592,6 +592,10 @@ create table if not exists bills (
     created_at timestamptz not null default now()
 );
 
+-- 1b. คอลัมน์เสริม: บันทึกว่าใครเป็นคนสร้างร้านนี้ (ใช้ให้ผู้สมัครใหม่อ่านร้านของตัวเองได้ทันที
+--     ก่อนที่จะมีแถวใน profiles ผูกกับ tenant_id ในนาทีแรกของการสมัคร)
+alter table stores add column if not exists created_by uuid default auth.uid();
+
 -- 4. Helper functions (ใช้ตรวจสิทธิ์ใน RLS โดยไม่ทำให้ recursive)
 create or replace function my_role() returns varchar
 language sql security definer stable as $$
@@ -619,8 +623,12 @@ create policy "profiles_update" on profiles for update
 -- ---- stores: ผู้สมัครใหม่ insert ร้านตัวเองได้ 1 ครั้งตอนสมัคร, อ่าน/แก้ได้เฉพาะร้านตัวเอง, Super Admin ทำได้ทุกอย่าง ----
 create policy "stores_insert_authenticated" on stores for insert
   with check (auth.uid() is not null);
+-- หมายเหตุ: ต้องรวม created_by = auth.uid() ไว้ด้วย เพราะตอน insert().select()
+-- Supabase จะอ่านแถวที่เพิ่ง insert กลับทันที แต่ตอนนั้นยังไม่มีแถวใน profiles
+-- (my_tenant() จึงเป็น null) ถ้าไม่มีเงื่อนไขนี้ read-back จะถูก RLS บล็อกและ
+-- ทำให้ insert ทั้งก้อนดูเหมือน "fail" ทั้งที่จริงๆ insert สำเร็จแล้ว
 create policy "stores_select" on stores for select
-  using (tenant_id = my_tenant() or my_role() = 'SUPER_ADMIN');
+  using (tenant_id = my_tenant() or my_role() = 'SUPER_ADMIN' or created_by = auth.uid());
 create policy "stores_update" on stores for update
   using (tenant_id = my_tenant() or my_role() = 'SUPER_ADMIN');
 create policy "stores_delete_admin_only" on stores for delete
