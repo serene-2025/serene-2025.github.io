@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>ข่าวสาร · Golden Land Serene</title>
+    <link rel="icon" href="https://cdn-icons-png.flaticon.com/128/15267/15267807.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://cdn.jsdelivr.net/gh/lazywasabi/thai-web-fonts@7/fonts/LINESeedSansTH/LINESeedSansTH.css" rel="stylesheet" />
+
+    <script>
+        tailwind.config = {
+            theme: { extend: { colors: { line: '#06C755' }, fontFamily: { prompt: ['LINE Seed Sans TH', 'Prompt', 'sans-serif'] } } }
+        }
+    </script>
+    <style>
+        [v-cloak] { display: none !important; }
+        body {
+            background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+            font-family: 'LINE Seed Sans TH', 'Prompt', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            min-height: 100vh;
+        }
+        body::before {
+            content: ''; position: fixed; inset: 0;
+            background-image:
+                radial-gradient(at 20% 10%, rgba(6, 199, 85, 0.08) 0, transparent 40%),
+                radial-gradient(at 80% 90%, rgba(147, 51, 234, 0.06) 0, transparent 40%);
+            pointer-events: none; z-index: 0;
+        }
+        .glass-card {
+            background: rgba(255,255,255,0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.9); border-radius: 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.05);
+        }
+        .slide-up { animation: slideUp 0.5s cubic-bezier(0.2, 0.8, 0.2, 1); }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+        .line-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+        ::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+
+<body class="font-prompt">
+    <div id="app" v-cloak class="relative z-10 max-w-md mx-auto min-h-screen pb-8">
+
+        <!-- Loading Screen -->
+        <div v-if="loading" class="fixed inset-0 flex flex-col items-center justify-center bg-white z-50">
+            <div class="w-12 h-12 border-4 border-line border-t-transparent rounded-full animate-spin mb-4"></div>
+            <p class="text-slate-500 text-sm">กำลังโหลด...</p>
+        </div>
+
+        <div v-else class="px-4 pt-5">
+            <!-- Header -->
+            <div class="mb-5 flex items-center gap-3">
+                <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-fuchsia-500 to-purple-600 flex items-center justify-center text-white text-xl shadow-lg shadow-fuchsia-200">
+                    📢
+                </div>
+                <div>
+                    <h1 class="text-xl font-extrabold text-slate-800">บอร์ดประกาศ</h1>
+                    <p class="text-xs text-slate-500">Golden Land Serene</p>
+                </div>
+                <button @click="loadAnnouncements(true)" class="ml-auto w-9 h-9 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-400 active:scale-90 transition-transform">
+                    <i class="fa-solid fa-rotate-right text-sm" :class="{ 'animate-spin': refreshing }"></i>
+                </button>
+            </div>
+
+            <!-- Filter Tabs -->
+            <div class="flex gap-2 mb-5 overflow-x-auto pb-1">
+                <button v-for="t in ['ทั้งหมด','ประกาศด่วน','กิจกรรม','แจ้งซ่อม','ทั่วไป']" :key="t"
+                        @click="filterTag = t === 'ทั้งหมด' ? '' : t"
+                        class="flex-shrink-0 px-4 py-2 rounded-full text-xs font-bold transition-all"
+                        :class="(filterTag === '' && t === 'ทั้งหมด') || filterTag === t
+                                ? 'bg-slate-800 text-white shadow-md'
+                                : 'bg-white text-slate-500 border border-slate-200'">
+                    {{ t }}
+                </button>
+            </div>
+
+            <!-- Feed -->
+            <div class="space-y-4">
+                <div v-for="ann in filteredAnnouncements" :key="ann.id" class="glass-card overflow-hidden slide-up">
+                    <div v-if="ann.image_urls && ann.image_urls.length" class="relative">
+                        <img :src="ann.image_urls[0]" class="w-full h-52 object-cover cursor-pointer" @click="viewImages(ann.image_urls)" loading="lazy">
+                        <span v-if="ann.image_urls.length > 1" class="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] font-bold px-2 py-1 rounded-full">
+                            <i class="fa-solid fa-images mr-1"></i>{{ ann.image_urls.length }}
+                        </span>
+                    </div>
+                    <div class="p-4">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i v-if="ann.is_pinned" class="fa-solid fa-thumbtack text-fuchsia-500 text-xs"></i>
+                            <span class="text-[10px] font-bold px-2.5 py-1 rounded-full"
+                                  :class="{'bg-rose-100 text-rose-600': ann.tag==='ประกาศด่วน', 'bg-emerald-100 text-emerald-600': ann.tag==='กิจกรรม', 'bg-amber-100 text-amber-600': ann.tag==='แจ้งซ่อม', 'bg-slate-100 text-slate-600': ann.tag==='ทั่วไป'}">
+                                {{ ann.tag }}
+                            </span>
+                            <span class="text-[11px] text-slate-400 ml-auto">{{ formatTime(ann.created_at) }}</span>
+                        </div>
+                        <h3 class="font-bold text-slate-800 leading-snug">{{ ann.title }}</h3>
+                        <p v-if="ann.content" class="text-sm text-slate-600 mt-1.5 whitespace-pre-wrap" :class="{'line-clamp-3': !ann._expanded}">{{ ann.content }}</p>
+                        <button v-if="ann.content && ann.content.length > 100" @click="ann._expanded = !ann._expanded" class="text-xs text-indigo-500 font-bold mt-1">
+                            {{ ann._expanded ? 'ย่อ' : 'อ่านเพิ่มเติม' }}
+                        </button>
+
+                        <div class="flex items-center gap-5 mt-3.5 pt-3.5 border-t border-slate-100">
+                            <button @click="toggleLike(ann)" class="flex items-center gap-1.5 text-sm font-bold active:scale-90 transition-transform" :class="ann._liked ? 'text-rose-500' : 'text-slate-400'">
+                                <i class="fa-solid fa-heart" :class="ann._liked ? '' : 'fa-regular'"></i> {{ ann.like_count || 0 }}
+                            </button>
+                            <button @click="openComments(ann)" class="flex items-center gap-1.5 text-sm font-bold text-slate-400 active:scale-90 transition-transform">
+                                <i class="fa-regular fa-comment"></i> {{ ann.comment_count || 0 }} คอมเมนต์
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="filteredAnnouncements.length === 0" class="glass-card p-10 text-center text-slate-400">
+                    <div class="text-5xl mb-3">📭</div>
+                    <p class="font-bold">ยังไม่มีประกาศ{{ filterTag ? 'ในหมวดนี้' : '' }}</p>
+                </div>
+            </div>
+
+            <div class="text-center mt-8 mb-2">
+                <p class="text-[11px] text-slate-300">Golden Land Serene · นิติบุคคลหมู่บ้านจัดสรร</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+        const { createClient } = supabase;
+        const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdW1lbG9sc2lsZHVxbnZyZWtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwODUyNzYsImV4cCI6MjA3MjY2MTI3Nn0.3hCFJiDrkgNJQEggS8MkRnxlhvqIMAax_a73NJq14gU';
+        let LIFF_ID = '2009022424-9o19KWRH'; // จะถูกแทนที่จาก system_settings ด้านล่าง
+        const EDGE_FUNCTION_URL = 'https://kiumelolsilduqnvrekf.supabase.co/functions/v1/line-webhook';
+
+        createApp({
+            data() {
+                return {
+                    loading: true,
+                    refreshing: false,
+                    supabase: null,
+                    userProfile: null,
+                    announcements: [],
+                    filterTag: '',
+                };
+            },
+            computed: {
+                filteredAnnouncements() {
+                    if (!this.filterTag) return this.announcements;
+                    return this.announcements.filter(a => a.tag === this.filterTag);
+                }
+            },
+            async mounted() {
+                this.supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+                // ─── โหลด LIFF_ID จาก system_settings (ใช้ liff_crm_id เดียวกับ crm.html) ───
+                try {
+                    const { data: settingRows } = await this.supabase
+                        .from('system_settings').select('key,value').in('key', ['liff_crm_id', 'liff_id']);
+                    const sc = {};
+                    (settingRows || []).forEach(r => { sc[r.key] = r.value; });
+                    if (sc.liff_crm_id) LIFF_ID = sc.liff_crm_id;
+                    else if (sc.liff_id) LIFF_ID = sc.liff_id;
+                } catch (_) {}
+
+                // ─── เริ่ม LIFF (ต้อง login เพื่อกดไลก์/คอมเมนต์ได้) ───
+                try {
+                    if (typeof liff === 'undefined') throw new Error('LIFF SDK ไม่ได้โหลด');
+                    await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
+
+                    if (!liff.isLoggedIn()) {
+                        liff.login({ redirectUri: window.location.href });
+                        return; // จะ redirect
+                    }
+                    const profile = await liff.getProfile();
+                    this.userProfile = profile;
+                } catch (e) {
+                    console.warn('LIFF init failed (อ่านข่าวได้ แต่ไลก์/คอมเมนต์ไม่ได้):', e.message);
+                    // ยังให้ดูข่าวสารได้แม้ LIFF ไม่สำเร็จ — แค่ไลก์/คอมเมนต์ไม่ได้
+                }
+
+                await this.loadAnnouncements();
+                this.loading = false;
+            },
+            methods: {
+                async loadAnnouncements(isRefresh = false) {
+                    if (isRefresh) this.refreshing = true;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/announcement_list`);
+                        const d = await res.json();
+                        this.announcements = (d.announcements || []).map(a => ({ ...a, _expanded: false, _liked: false }));
+
+                        if (this.announcements.length && this.userProfile) {
+                            const ids = this.announcements.map(a => a.id);
+                            const { data: myLikes } = await this.supabase
+                                .from('announcement_likes').select('announcement_id')
+                                .eq('user_id', this.userProfile.userId).in('announcement_id', ids);
+                            const likedSet = new Set((myLikes || []).map(l => l.announcement_id));
+                            this.announcements.forEach(a => { a._liked = likedSet.has(a.id); });
+                        }
+                    } catch (e) {
+                        console.warn('loadAnnouncements', e);
+                        Swal.fire({ icon: 'error', title: 'โหลดไม่สำเร็จ', text: e.message, confirmButtonColor: '#6366f1' });
+                    } finally {
+                        this.refreshing = false;
+                    }
+                },
+
+                formatTime(dt) {
+                    const diff = Date.now() - new Date(dt).getTime();
+                    const mins = Math.floor(diff / 60000);
+                    if (mins < 1) return 'เมื่อสักครู่';
+                    if (mins < 60) return mins + ' นาทีที่แล้ว';
+                    const hrs = Math.floor(mins / 60);
+                    if (hrs < 24) return hrs + ' ชม.ที่แล้ว';
+                    const days = Math.floor(hrs / 24);
+                    if (days < 7) return days + ' วันที่แล้ว';
+                    return new Date(dt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+                },
+
+                async toggleLike(ann) {
+                    if (!this.userProfile) {
+                        Swal.fire({ icon: 'info', title: 'เข้าสู่ระบบก่อน', text: 'กรุณาเปิดหน้านี้ผ่าน LINE เพื่อกดไลก์', confirmButtonColor: '#6366f1' });
+                        return;
+                    }
+                    const wasLiked = ann._liked;
+                    ann._liked = !wasLiked;
+                    ann.like_count = (ann.like_count || 0) + (wasLiked ? -1 : 1);
+                    try {
+                        if (wasLiked) {
+                            await this.supabase.from('announcement_likes').delete()
+                                .match({ announcement_id: ann.id, user_id: this.userProfile.userId });
+                        } else {
+                            await this.supabase.from('announcement_likes')
+                                .insert({ announcement_id: ann.id, user_id: this.userProfile.userId });
+                        }
+                    } catch (e) {
+                        ann._liked = wasLiked;
+                        ann.like_count = (ann.like_count || 0) + (wasLiked ? 1 : -1);
+                    }
+                },
+
+                viewImages(urls) {
+                    Swal.fire({
+                        html: '<div style="display:flex;flex-direction:column;gap:8px">' +
+                            urls.map(u => '<img src="' + u + '" style="width:100%;border-radius:12px">').join('') + '</div>',
+                        showConfirmButton: true, confirmButtonText: 'ปิด', confirmButtonColor: '#6366f1',
+                        width: '92vw', padding: '12px',
+                    });
+                },
+
+                async openComments(ann) {
+                    const { data: comments } = await this.supabase
+                        .from('announcement_comments').select('*').eq('announcement_id', ann.id)
+                        .order('created_at', { ascending: true });
+
+                    const commentsHtml = (comments || []).length
+                        ? (comments || []).map(c =>
+                            '<div style="display:flex;gap:8px;margin-bottom:12px;text-align:left">' +
+                            (c.user_avatar ? '<img src="' + c.user_avatar + '" style="width:28px;height:28px;border-radius:50%;flex-shrink:0">' : '<div style="width:28px;height:28px;border-radius:50%;background:#e2e8f0;flex-shrink:0"></div>') +
+                            '<div style="background:#f8fafc;border-radius:12px;padding:8px 12px;flex:1">' +
+                            '<div style="font-size:12px;font-weight:700;color:#334155">' + (c.user_name || 'สมาชิก') + '</div>' +
+                            '<div style="font-size:13px;color:#475569">' + c.comment + '</div></div></div>'
+                        ).join('')
+                        : '<div style="text-align:center;color:#94a3b8;padding:20px 0;font-size:13px">ยังไม่มีคอมเมนต์ เป็นคนแรกเลย!</div>';
+
+                    if (!this.userProfile) {
+                        Swal.fire({
+                            title: '💬 คอมเมนต์', html: '<div style="max-height:320px;overflow-y:auto">' + commentsHtml + '</div>',
+                            confirmButtonText: 'ปิด', confirmButtonColor: '#6366f1', width: '92vw', padding: '12px',
+                        });
+                        return;
+                    }
+
+                    const { value: newComment } = await Swal.fire({
+                        title: '💬 คอมเมนต์',
+                        html: '<div style="max-height:280px;overflow-y:auto;margin-bottom:12px">' + commentsHtml + '</div>' +
+                            '<textarea id="swal-comment-input" class="swal2-textarea" placeholder="พิมพ์คอมเมนต์..." style="margin:0;min-height:60px"></textarea>',
+                        showCancelButton: true, confirmButtonText: 'ส่งคอมเมนต์', cancelButtonText: 'ปิด',
+                        confirmButtonColor: '#6366f1', width: '92vw', padding: '12px',
+                        preConfirm: () => {
+                            const val = document.getElementById('swal-comment-input').value.trim();
+                            if (!val) { Swal.showValidationMessage('พิมพ์คอมเมนต์ก่อนส่ง'); return false; }
+                            return val;
+                        }
+                    });
+
+                    if (newComment) {
+                        try {
+                            await this.supabase.from('announcement_comments').insert({
+                                announcement_id: ann.id, user_id: this.userProfile.userId,
+                                user_name: this.userProfile.displayName || 'สมาชิก',
+                                user_avatar: this.userProfile.pictureUrl || null,
+                                comment: newComment,
+                            });
+                            ann.comment_count = (ann.comment_count || 0) + 1;
+                            Swal.fire({ icon: 'success', title: 'ส่งคอมเมนต์แล้ว', timer: 1200, showConfirmButton: false });
+                        } catch (e) {
+                            Swal.fire('ส่งไม่สำเร็จ', e.message, 'error');
+                        }
+                    }
+                },
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
