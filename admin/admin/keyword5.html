@@ -579,10 +579,34 @@
 
                     <!-- Main Content -->
                     <main class="flex-1 min-w-0 flex flex-col transition-all relative">
-                        <button onclick="openDbUsageModal()" title="ดูว่าหน้านี้ใช้ตารางฐานข้อมูลอะไรบ้าง"
-                            class="absolute top-3 right-3 z-30 w-8 h-8 rounded-full bg-white/90 backdrop-blur border border-slate-200 shadow-sm flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:shadow-md transition-all">
-                            <i data-lucide="eye" class="w-4 h-4"></i>
-                        </button>
+                        <!-- Global Search + Notification Bell -->
+                        <div class="absolute top-3 left-1/2 -translate-x-1/2 z-30 w-full max-w-md px-4">
+                            <div class="relative">
+                                <div class="relative">
+                                    <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                                    <input id="gs-input" type="text" placeholder="ค้นหาบ้าน / keyword / ทะเบียนรถ..."
+                                        oninput="onGlobalSearchInput(this.value)" onfocus="onGlobalSearchInput(this.value)"
+                                        class="w-full bg-white/95 backdrop-blur border border-slate-200 rounded-2xl pl-10 pr-4 py-2.5 text-sm shadow-sm focus:ring-2 focus:ring-indigo-300 outline-none">
+                                </div>
+                                <div id="gs-dropdown" class="hidden absolute top-full mt-2 w-full bg-white rounded-2xl shadow-xl border border-slate-100 max-h-80 overflow-y-auto z-40"></div>
+                            </div>
+                        </div>
+
+                        <div class="absolute top-3 right-3 z-30 flex items-center gap-2">
+                            <button onclick="toggleBrowserNotifications()" id="gs-notif-btn" title="เปิด/ปิดแจ้งเตือนเบราว์เซอร์"
+                                class="relative w-8 h-8 rounded-full bg-white/90 backdrop-blur border border-slate-200 shadow-sm flex items-center justify-center text-slate-400 hover:text-amber-500 hover:border-amber-300 hover:shadow-md transition-all">
+                                <i data-lucide="bell" class="w-4 h-4"></i>
+                                <span id="gs-notif-badge" class="hidden absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white text-[9px] font-bold rounded-full items-center justify-center"></span>
+                            </button>
+                            <button onclick="loadView('trashBin')" title="ถังขยะ"
+                                class="w-8 h-8 rounded-full bg-white/90 backdrop-blur border border-slate-200 shadow-sm flex items-center justify-center text-slate-400 hover:text-rose-500 hover:border-rose-300 hover:shadow-md transition-all">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>
+                            <button onclick="openDbUsageModal()" title="ดูว่าหน้านี้ใช้ตารางฐานข้อมูลอะไรบ้าง"
+                                class="w-8 h-8 rounded-full bg-white/90 backdrop-blur border border-slate-200 shadow-sm flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:shadow-md transition-all">
+                                <i data-lucide="eye" class="w-4 h-4"></i>
+                            </button>
+                        </div>
                         <div class="flex-1 w-full" id="content-area">
                             <!-- Dynamic Content -->
                         </div>
@@ -650,6 +674,224 @@
             }, 10);
         }
 
+        // ─── 🔍 GLOBAL SEARCH ────────────────────────────────────────
+        let gsDebounceTimer = null;
+        function onGlobalSearchInput(q) {
+            clearTimeout(gsDebounceTimer);
+            const dropdown = document.getElementById('gs-dropdown');
+            if (!q || q.trim().length < 2) { dropdown.classList.add('hidden'); return; }
+            gsDebounceTimer = setTimeout(() => runGlobalSearch(q.trim()), 300);
+        }
+
+        async function runGlobalSearch(q) {
+            const dropdown = document.getElementById('gs-dropdown');
+            dropdown.classList.remove('hidden');
+            dropdown.innerHTML = '<div class="p-4 text-center text-slate-400 text-xs">⏳ กำลังค้นหา...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/global_search?q=${encodeURIComponent(q)}`);
+                const d = await res.json();
+                if (!d.results?.length) {
+                    dropdown.innerHTML = '<div class="p-4 text-center text-slate-400 text-xs">ไม่พบผลลัพธ์</div>';
+                    return;
+                }
+                const typeIcon = { userhome:'🏠', keyword:'💬', car:'🚗', payment:'💰' };
+                dropdown.innerHTML = d.results.map(r =>
+                    '<div data-view="' + r.view + '" onclick="onGlobalSearchResultClick(this.dataset.view)" class="flex items-center gap-3 px-4 py-2.5 hover:bg-indigo-50 cursor-pointer border-b border-slate-50 last:border-0">' +
+                    '<span class="text-lg flex-shrink-0">' + (typeIcon[r.type]||'📄') + '</span>' +
+                    '<div class="min-w-0 flex-1"><div class="text-sm font-bold text-slate-800 truncate">' + escapeHtml(r.label) + '</div>' +
+                    (r.sub ? '<div class="text-[11px] text-slate-400 truncate">' + escapeHtml(r.sub) + '</div>' : '') + '</div>' +
+                    '<i data-lucide="arrow-right" class="w-3.5 h-3.5 text-slate-300 flex-shrink-0"></i></div>'
+                ).join('');
+                lucide.createIcons();
+            } catch(e) {
+                dropdown.innerHTML = '<div class="p-4 text-center text-rose-400 text-xs">❌ ค้นหาไม่สำเร็จ</div>';
+            }
+        }
+
+        function onGlobalSearchResultClick(view) {
+            document.getElementById('gs-dropdown').classList.add('hidden');
+            document.getElementById('gs-input').value = '';
+            loadView(view);
+        }
+
+        document.addEventListener('click', (e) => {
+            const dropdown = document.getElementById('gs-dropdown');
+            const input = document.getElementById('gs-input');
+            if (dropdown && input && !input.contains(e.target) && !dropdown.contains(e.target)) {
+                dropdown.classList.add('hidden');
+            }
+        });
+
+        // ─── 🔔 BROWSER NOTIFICATIONS (Polling-based) ─────────────────
+        let gsNotifPollInterval = null;
+        let gsLastAlertTotal = null;
+
+        function toggleBrowserNotifications() {
+            const isOn = localStorage.getItem('gs_notif_enabled') === 'true';
+            if (isOn) {
+                localStorage.setItem('gs_notif_enabled', 'false');
+                stopBrowserNotificationPolling();
+                showToast('🔕 ปิดแจ้งเตือนเบราว์เซอร์แล้ว', 'info');
+                updateNotifBellUI(false);
+            } else {
+                if (!('Notification' in window)) return showToast('เบราว์เซอร์นี้ไม่รองรับ Notification', 'warning');
+                Notification.requestPermission().then(perm => {
+                    if (perm === 'granted') {
+                        localStorage.setItem('gs_notif_enabled', 'true');
+                        startBrowserNotificationPolling();
+                        showToast('🔔 เปิดแจ้งเตือนแล้ว — จะเด้งเตือนเมื่อมีสลิป/แจ้งซ่อมใหม่', 'success');
+                        updateNotifBellUI(true);
+                    } else {
+                        showToast('กรุณาอนุญาต Notification ในเบราว์เซอร์ก่อน', 'warning');
+                    }
+                });
+            }
+        }
+
+        function updateNotifBellUI(on) {
+            const btn = document.getElementById('gs-notif-btn');
+            if (btn) btn.classList.toggle('text-amber-500', on);
+        }
+
+        function startBrowserNotificationPolling() {
+            stopBrowserNotificationPolling();
+            checkAdminAlerts(); // เช็คทันทีครั้งแรก
+            gsNotifPollInterval = setInterval(checkAdminAlerts, 30000); // ทุก 30 วินาที
+        }
+
+        function stopBrowserNotificationPolling() {
+            if (gsNotifPollInterval) { clearInterval(gsNotifPollInterval); gsNotifPollInterval = null; }
+        }
+
+        async function checkAdminAlerts() {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/admin_alerts_count`);
+                const d = await res.json();
+                const badge = document.getElementById('gs-notif-badge');
+                if (badge) {
+                    if (d.total > 0) { badge.textContent = d.total > 99 ? '99+' : d.total; badge.classList.remove('hidden'); badge.classList.add('flex'); }
+                    else { badge.classList.add('hidden'); badge.classList.remove('flex'); }
+                }
+                if (gsLastAlertTotal !== null && d.total > gsLastAlertTotal) {
+                    const diff = d.total - gsLastAlertTotal;
+                    const parts = [];
+                    if (d.pendingSlips > 0) parts.push(d.pendingSlips + ' สลิปรอตรวจ');
+                    if (d.pendingRepairs > 0) parts.push(d.pendingRepairs + ' แจ้งซ่อมรอ');
+                    if (d.pendingCars > 0) parts.push(d.pendingCars + ' รถรออนุมัติ');
+                    new Notification('🔔 มีรายการใหม่ในระบบ', {
+                        body: parts.join(' · ') || (diff + ' รายการใหม่'),
+                        icon: 'https://cdn-icons-png.flaticon.com/128/15267/15267807.png',
+                    });
+                }
+                gsLastAlertTotal = d.total;
+            } catch(e) { console.warn('checkAdminAlerts', e); }
+        }
+
+        // เปิด polling อัตโนมัติถ้าเคยเปิดไว้
+        if (localStorage.getItem('gs_notif_enabled') === 'true' && Notification?.permission === 'granted') {
+            startBrowserNotificationPolling();
+            updateNotifBellUI(true);
+        }
+
+        // ─── 🗑️ TRASH BIN (Recycle Bin) ─────────────────────────────
+        async function renderTrashBinView() {
+            document.getElementById('content-area').innerHTML =
+                '<div class="slide-in p-2">' +
+                '<div class="mb-6 flex justify-between items-end flex-wrap gap-3">' +
+                '<div><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
+                '<span class="bg-rose-100 text-rose-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="trash-2" class="w-8 h-8"></i></span>' +
+                'ถังขยะ</h1>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">กู้คืนรายการที่ลบไปได้ · เก็บไว้จนกว่าจะลบถาวร</p></div>' +
+                '<button onclick="purgeOldTrash()" class="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="flame" class="w-4 h-4"></i> ล้างของเก่ากว่า 30 วัน</button>' +
+                '</div>' +
+                '<div id="trash-list"></div></div>';
+            lucide.createIcons();
+            await loadTrashList();
+        }
+
+        async function loadTrashList() {
+            const el = document.getElementById('trash-list');
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/trash_list`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+                if (!d.items?.length) {
+                    el.innerHTML = '<div class="glass rounded-3xl p-10 text-center"><div class="text-4xl mb-2">✨</div><div class="text-slate-400">ถังขยะว่างเปล่า</div></div>';
+                    return;
+                }
+                const tableLabel = { keywords:'Keyword', announcements:'ประกาศ', sender_profiles:'Sender Profile' };
+                el.innerHTML = '<div class="glass rounded-3xl overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
+                    '<thead class="bg-slate-50"><tr><th class="text-left p-3">ประเภท</th><th class="text-left p-3">รายการ</th>' +
+                    '<th class="text-left p-3">ลบเมื่อ</th><th class="text-center p-3">การดำเนินการ</th></tr></thead><tbody>' +
+                    d.items.map(item => {
+                        const dt = new Date(item.deleted_at).toLocaleString('th-TH', {day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+                        return '<tr class="border-t border-slate-100 hover:bg-slate-50">' +
+                            '<td class="p-3"><span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">' + (tableLabel[item.source_table]||item.source_table) + '</span></td>' +
+                            '<td class="p-3 font-bold text-slate-800">' + escapeHtml(item.label || item.original_id) + '</td>' +
+                            '<td class="p-3 text-xs text-slate-400">' + dt + '</td>' +
+                            '<td class="p-3 text-center"><div class="flex gap-1.5 justify-center">' +
+                            '<button data-id="' + item.id + '" onclick="restoreFromTrash(this.dataset.id)" class="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-200"><i data-lucide="rotate-ccw" class="w-3 h-3 inline"></i> กู้คืน</button>' +
+                            '<button data-id="' + item.id + '" onclick="permanentDeleteTrash(this.dataset.id)" class="px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg text-xs font-bold hover:bg-rose-100">ลบถาวร</button>' +
+                            '</div></td></tr>';
+                    }).join('') + '</tbody></table></div></div>';
+                lucide.createIcons();
+            } catch(e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        async function restoreFromTrash(trashId) {
+            showToast('⏳ กำลังกู้คืน...', 'info');
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/trash_restore`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashId })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'กู้คืนไม่สำเร็จ');
+                showToast('✅ กู้คืนสำเร็จ', 'success');
+                loadTrashList();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+        }
+
+        function permanentDeleteTrash(trashId) {
+            showConfirmModal('⚠️ ลบถาวร?', 'ข้อมูลนี้จะหายไปจริงๆ กู้คืนไม่ได้อีก', async () => {
+                try {
+                    const res = await fetch(`${API_BASE_URL}/api/admin/audience/trash_purge`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashId })
+                    });
+                    if (!res.ok) throw new Error('ลบไม่สำเร็จ');
+                    showToast('✅ ลบถาวรแล้ว', 'success');
+                    loadTrashList();
+                } catch(e) { showToast('❌ ' + e.message, 'error'); }
+            });
+        }
+
+        function purgeOldTrash() {
+            showConfirmModal('⚠️ ล้างของเก่ากว่า 30 วัน?', 'รายการในถังขยะที่เก่ากว่า 30 วันจะถูกลบถาวรทั้งหมด', async () => {
+                try {
+                    const res = await fetch(`${API_BASE_URL}/api/admin/audience/trash_purge`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ purgeAll30Days: true })
+                    });
+                    const d = await res.json();
+                    if (!res.ok) throw new Error(d.error || 'ล้างไม่สำเร็จ');
+                    showToast('✅ ล้างแล้ว ' + (d.purged||0) + ' รายการ', 'success');
+                    loadTrashList();
+                } catch(e) { showToast('❌ ' + e.message, 'error'); }
+            });
+        }
+
+        // Helper กลาง — ใช้แทนการ .delete() ตรงๆ สำหรับ table ที่รองรับถังขยะ
+        async function softDeleteViaTrash(table, id, label, idColumn) {
+            const res = await fetch(`${API_BASE_URL}/api/admin/audience/trash_delete`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table, id, idColumn: idColumn || 'id', label })
+            });
+            const d = await res.json();
+            if (!res.ok) throw new Error(d.error || 'ลบไม่สำเร็จ');
+            return d;
+        }
+
         async function loadView(viewName) {
             currentView = viewName;
             searchQuery = "";
@@ -698,6 +940,7 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'aiReport') await renderAiReportView();
             else if (viewName === 'reportBuilder') await renderReportBuilderView();
             else if (viewName === 'announcements') await renderAnnouncementsView();
+            else if (viewName === 'trashBin') await renderTrashBinView();
             else if (viewName === 'healthMonitor')      await renderHealthMonitorView();
             else if (viewName === 'dailyReport')        await renderDailyReportView();
             else if (viewName === 'sysSettings')        await renderSysSettingsView();
@@ -1016,14 +1259,14 @@ async function updateAllUserProfiles() {
     showToast(`✅ สำเร็จ: ${succeeded}, ❌ ล้มเหลว: ${failed}`, 'success');
 }
         async function deleteKeyword(id) {
-            showConfirmModal('ยืนยันหน้าต่างลบ', 'ยืนยันการลบข้อมูลนี้หรือไม่?', async () => {
+            showConfirmModal('ยืนยันการลบ', 'ย้ายเข้าถังขยะ กู้คืนได้ภายหลัง (เมนู 🗑️ มุมขวาบน)', async () => {
                 showToast('กำลังลบข้อมูล...', 'loading');
-                const { error } = await supabaseClient.from('keywords').delete().eq('id', id);
-                if (error) {
-                    showModal('ลบไม่สำเร็จ', error.message, 'error');
-                } else {
-                    showToast('ลบข้อมูลเรียบร้อย');
+                try {
+                    await softDeleteViaTrash('keywords', id, 'Keyword #' + id);
+                    showToast('✅ ลบแล้ว (กู้คืนได้จากถังขยะ)', 'success');
                     renderKeywordsTable();
+                } catch(e) {
+                    showModal('ลบไม่สำเร็จ', e.message, 'error');
                 }
             });
         }
@@ -8774,14 +9017,10 @@ async function updateAllUserProfiles() {
         }
 
         async function deleteAnnouncement(id, title) {
-            showConfirmModal('⚠️ ลบประกาศ "' + escapeHtml(title) + '"?', 'การลบไม่สามารถย้อนกลับได้ ไลก์และคอมเมนต์ทั้งหมดจะหายไปด้วย', async () => {
+            showConfirmModal('⚠️ ลบประกาศ "' + escapeHtml(title) + '"?', 'ย้ายเข้าถังขยะ กู้คืนได้ภายหลัง (ไลก์/คอมเมนต์เดิมจะไม่กลับมาแม้กู้คืน)', async () => {
                 try {
-                    const res = await fetch(`${API_BASE_URL}/api/admin/audience/announcement_delete`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ id })
-                    });
-                    if (!res.ok) throw new Error('ลบไม่สำเร็จ');
-                    showToast('✅ ลบแล้ว', 'success');
+                    await softDeleteViaTrash('announcements', id, title);
+                    showToast('✅ ลบแล้ว (กู้คืนได้จากถังขยะ)', 'success');
                     loadAnnouncementsList();
                 } catch(e) { showToast('❌ ' + e.message, 'error'); }
             });
