@@ -886,6 +886,8 @@
                             '<td class="p-3 text-xs text-slate-400 font-mono">' + escapeHtml(r.title_deed_number||'—') + '</td>' +
                             '<td class="p-3 text-center">' + (r.has_line ? '<span class="text-emerald-600" title="มี LINE ลงทะเบียนแล้ว">✅</span>' : '<span class="text-slate-300" title="ยังไม่มี LINE">—</span>') + '</td>' +
                             '<td class="p-3 text-center"><div class="flex gap-1.5 justify-center">' +
+                            '<button data-idx="' + idx + '" onclick="openChangeOwnerModal(this.dataset.idx)" class="px-2.5 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-200" title="เปลี่ยนเจ้าของ">🔄</button>' +
+                            '<button data-id="' + r.id + '" data-house="' + escapeHtml(r.house_no||'') + '" onclick="viewOwnerHistory(this.dataset.id,this.dataset.house)" class="px-2.5 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-200" title="ประวัติเจ้าของเก่า">📜</button>' +
                             '<button data-idx="' + idx + '" onclick="openLandRegistryModal(this.dataset.idx)" class="px-2.5 py-1.5 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold hover:bg-indigo-200">✏️</button>' +
                             '<button data-id="' + r.id + '" data-house="' + escapeHtml(r.house_no||'') + '" onclick="deleteLandRegistry(this.dataset.id,this.dataset.house)" class="px-2.5 py-1.5 bg-rose-50 text-rose-600 rounded-lg text-xs font-bold hover:bg-rose-100">🗑️</button>' +
                             '</div></td></tr>';
@@ -1078,6 +1080,94 @@
                 showToast('✅ ' + d.message, d.failed > 0 ? 'warning' : 'success');
                 loadLandRegistryList();
             } catch(e) { showToast('❌ ' + e.message, 'error'); }
+        }
+
+        // ─── 🔄 เปลี่ยนเจ้าของกรรมสิทธิ์ (เก็บเจ้าของเก่าไว้) ─────────
+        function openChangeOwnerModal(idx) {
+            const r = window._lrItems[parseInt(idx)];
+            if (!r) return;
+            const today = new Date().toISOString().slice(0, 10);
+
+            showModal('🔄 เปลี่ยนเจ้าของกรรมสิทธิ์',
+                '<div class="space-y-4 text-left">' +
+                '<div class="bg-slate-50 border border-slate-200 rounded-xl p-3">' +
+                '<div class="text-[11px] font-bold text-slate-400 mb-1">🏠 บ้านเลขที่ ' + escapeHtml(r.house_no||'') + ' ' + escapeHtml(r.soi||'') + '</div>' +
+                '<div class="text-sm text-slate-700"><b>เจ้าของปัจจุบัน:</b> ' + escapeHtml(r.full_name || '(ไม่มีชื่อ)') + '</div>' +
+                (r.transfer_date ? '<div class="text-xs text-slate-500">โอนเมื่อ: ' + escapeHtml(r.transfer_date) + '</div>' : '') +
+                '</div>' +
+                '<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">' +
+                '⚠️ เจ้าของปัจจุบันด้านบนจะถูกเก็บเป็น <b>"เจ้าของเก่า"</b> อัตโนมัติ ดูย้อนหลังได้ที่ปุ่ม 📜' +
+                '</div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">👤 ชื่อเจ้าของใหม่ *</label>' +
+                '<input id="co-new-name" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="ชื่อเจ้าของกรรมสิทธิ์ใหม่"></div>' +
+                '<div class="grid grid-cols-2 gap-3">' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">วันที่โอนใหม่</label>' +
+                '<input id="co-new-date" type="date" value="' + today + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">เลขที่โฉนดใหม่ (ถ้าเปลี่ยน)</label>' +
+                '<input id="co-new-deed" value="' + escapeHtml(r.title_deed_number||'') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '</div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">หมายเหตุ (ถ้ามี)</label>' +
+                '<input id="co-note" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="เช่น ซื้อขาย, มรดก, โอนให้บุตร"></div>' +
+                '<div class="flex gap-2 pt-2">' +
+                '<button data-id="' + r.id + '" onclick="confirmChangeOwner(this.dataset.id)" class="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold text-sm">🔄 ยืนยันเปลี่ยนเจ้าของ</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+                '</div></div>'
+            );
+        }
+
+        async function confirmChangeOwner(id) {
+            const newFullName = document.getElementById('co-new-name')?.value?.trim();
+            if (!newFullName) return showToast('กรอกชื่อเจ้าของใหม่ก่อน', 'warning');
+            const newTransferDate = document.getElementById('co-new-date')?.value;
+            const newTitleDeedNumber = document.getElementById('co-new-deed')?.value?.trim();
+            const note = document.getElementById('co-note')?.value?.trim();
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/land_registry_change_owner`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, newFullName, newTransferDate, newTitleDeedNumber, note })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'เปลี่ยนเจ้าของไม่สำเร็จ');
+                closeModal();
+                showToast('✅ ' + d.message, 'success');
+                loadLandRegistryList();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+        }
+
+        // ─── 📜 ดูประวัติเจ้าของเก่า ────────────────────────────────
+        async function viewOwnerHistory(landId, houseNo) {
+            showModal('📜 ประวัติเจ้าของเก่า — บ้าน ' + escapeHtml(houseNo),
+                '<div id="oh-body" class="text-left"><div class="text-center py-8 text-slate-400">⏳ กำลังโหลด...</div></div>'
+            );
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/land_registry_owner_history?id=${landId}`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+
+                const el = document.getElementById('oh-body');
+                if (!d.history?.length) {
+                    el.innerHTML = '<div class="text-center py-8 text-slate-400 text-sm">ยังไม่มีประวัติการเปลี่ยนเจ้าของ<br><span class="text-xs text-slate-300">(บ้านนี้ยังไม่เคยเปลี่ยนมือ)</span></div>';
+                    return;
+                }
+
+                el.innerHTML = '<div class="space-y-3 max-h-96 overflow-y-auto">' +
+                    d.history.map(hh =>
+                        '<div class="flex gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">' +
+                        '<div class="w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-xs font-bold flex-shrink-0">' + hh.order_no + '</div>' +
+                        '<div class="flex-1 min-w-0">' +
+                        '<div class="font-bold text-slate-800 text-sm">เจ้าของเก่าลำดับที่ ' + hh.order_no + '</div>' +
+                        '<div class="text-sm text-slate-700">' + escapeHtml(hh.full_name || '(ไม่มีชื่อ)') + '</div>' +
+                        '<div class="text-xs text-slate-500 mt-0.5">' +
+                        (hh.owned_from ? '📅 ตั้งแต่ ' + hh.owned_from : '') +
+                        (hh.owned_until ? ' ถึง ' + hh.owned_until : '') + '</div>' +
+                        (hh.title_deed_number ? '<div class="text-[11px] text-slate-400 font-mono">โฉนด: ' + escapeHtml(hh.title_deed_number) + '</div>' : '') +
+                        (hh.note ? '<div class="text-xs text-amber-600 mt-1">📝 ' + escapeHtml(hh.note) + '</div>' : '') +
+                        '</div></div>'
+                    ).join('') + '</div>';
+            } catch(e) {
+                document.getElementById('oh-body').innerHTML = '<div class="text-rose-500 text-center py-6 text-sm">❌ ' + escapeHtml(e.message) + '</div>';
+            }
         }
 
         async function renderTrashBinView() {
