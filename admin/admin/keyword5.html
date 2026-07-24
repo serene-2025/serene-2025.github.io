@@ -544,6 +544,7 @@
                             <button onclick="loadView('sysSettings');" id="nav-sysSettings" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="settings-2" class="w-5 h-5 text-slate-500"></i> <span>ตั้งค่าระบบ</span></button>
                             <button onclick="loadView('crmMembers');" id="nav-crmMembers" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="users-round" class="w-5 h-5 text-emerald-500"></i> <span>สมาชิก &amp; แต้ม</span></button>
                             <button onclick="loadView('userhome');" id="nav-userhome" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="house-plus" class="w-5 h-5 text-teal-500"></i> <span>ทะเบียนบ้าน &amp; สมาชิก</span></button>
+                            <button onclick="loadView('landRegistry');" id="nav-landRegistry" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="landmark" class="w-5 h-5 text-orange-500"></i> <span>ฐานข้อมูลกลาง (ที่ดิน)</span></button>
                             <button onclick="loadView('carManagement');" id="nav-carManagement" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="car" class="w-5 h-5 text-indigo-500"></i> <span>จัดการทะเบียนรถ</span></button>
                             <button onclick="loadView('slipManagement');" id="nav-slipManagement" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="receipt" class="w-5 h-5 text-emerald-500"></i> <span>สลิปค่าส่วนกลาง</span></button>
 
@@ -822,6 +823,263 @@
         }
 
         // ─── 🗑️ TRASH BIN (Recycle Bin) ─────────────────────────────
+        // ─── 🏘️ LAND REGISTRY (ฐานข้อมูลกลาง) ───────────────────────
+        let lrCurrentPage = 1, lrSearchQ = '';
+        async function renderLandRegistryView() {
+            document.getElementById('content-area').innerHTML =
+                '<div class="slide-in p-2">' +
+                '<div class="mb-6 flex justify-between items-end flex-wrap gap-3">' +
+                '<div><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
+                '<span class="bg-orange-100 text-orange-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="landmark" class="w-8 h-8"></i></span>' +
+                'ฐานข้อมูลกลาง (ที่ดิน)</h1>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">ทะเบียนที่ดิน/บ้านทางการจากโฉนด · แหล่งอ้างอิงหลัก เชื่อมกับข้อมูลลงทะเบียน LINE</p></div>' +
+                '<div class="flex gap-2">' +
+                '<button onclick="openLandRegistryImport()" class="px-4 py-2.5 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="upload" class="w-4 h-4"></i> นำเข้าข้อมูล</button>' +
+                '<button onclick="openLandRegistryModal()" class="px-5 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i> เพิ่มรายการ</button>' +
+                '</div></div>' +
+                '<div class="glass rounded-3xl p-4 shadow-sm mb-4">' +
+                '<div class="relative"><i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2"></i>' +
+                '<input id="lr-search" type="text" placeholder="🔍 ค้นหา บ้านเลขที่ / ชื่อ / ซอย / รหัสบ้าน..." oninput="onLrSearch(this.value)" class="w-full rounded-2xl border border-slate-200 pl-10 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-orange-300 outline-none"></div>' +
+                '</div>' +
+                '<div id="lr-list"></div>' +
+                '<div id="lr-pagination" class="flex justify-center items-center gap-2 mt-5"></div>' +
+                '</div>';
+            lucide.createIcons();
+            lrCurrentPage = 1;
+            await loadLandRegistryList();
+        }
+
+        let lrSearchDebounce = null;
+        function onLrSearch(v) {
+            clearTimeout(lrSearchDebounce);
+            lrSearchDebounce = setTimeout(() => { lrSearchQ = v.trim(); lrCurrentPage = 1; loadLandRegistryList(); }, 350);
+        }
+
+        async function loadLandRegistryList() {
+            const el = document.getElementById('lr-list');
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/land_registry_list?q=${encodeURIComponent(lrSearchQ)}&page=${lrCurrentPage}`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+                window._lrItems = d.items || [];
+
+                if (!d.items?.length) {
+                    el.innerHTML = '<div class="glass rounded-3xl p-10 text-center"><div class="text-4xl mb-2">📭</div><div class="text-slate-400">' + (lrSearchQ ? 'ไม่พบข้อมูลที่ค้นหา' : 'ยังไม่มีข้อมูล — กด "นำเข้าข้อมูล" เพื่อเริ่มต้น') + '</div></div>';
+                    document.getElementById('lr-pagination').innerHTML = '';
+                    return;
+                }
+
+                el.innerHTML = '<div class="glass rounded-3xl overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
+                    '<thead class="bg-slate-50"><tr>' +
+                    '<th class="text-left p-3">รหัส</th><th class="text-left p-3">บ้านเลขที่</th><th class="text-left p-3">ซอย</th>' +
+                    '<th class="text-left p-3">เจ้าของกรรมสิทธิ์</th><th class="text-left p-3">เลขที่โฉนด</th>' +
+                    '<th class="text-center p-3">LINE</th><th class="text-center p-3">จัดการ</th>' +
+                    '</tr></thead><tbody>' +
+                    d.items.map((r, idx) => {
+                        const names = (r.full_name||'').split('/').map(n => n.trim()).filter(Boolean);
+                        return '<tr class="border-t border-slate-100 hover:bg-slate-50">' +
+                            '<td class="p-3 font-mono text-xs text-slate-500">' + escapeHtml(r.convert_no||'—') + '</td>' +
+                            '<td class="p-3 font-bold text-slate-800">' + escapeHtml(r.house_no||'—') + '</td>' +
+                            '<td class="p-3 text-slate-500">' + escapeHtml(r.soi||'—') + '</td>' +
+                            '<td class="p-3 text-slate-700">' + names.map(n => '<div>' + escapeHtml(n) + '</div>').join('') + '</td>' +
+                            '<td class="p-3 text-xs text-slate-400 font-mono">' + escapeHtml(r.title_deed_number||'—') + '</td>' +
+                            '<td class="p-3 text-center">' + (r.has_line ? '<span class="text-emerald-600" title="มี LINE ลงทะเบียนแล้ว">✅</span>' : '<span class="text-slate-300" title="ยังไม่มี LINE">—</span>') + '</td>' +
+                            '<td class="p-3 text-center"><div class="flex gap-1.5 justify-center">' +
+                            '<button data-idx="' + idx + '" onclick="openLandRegistryModal(this.dataset.idx)" class="px-2.5 py-1.5 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold hover:bg-indigo-200">✏️</button>' +
+                            '<button data-id="' + r.id + '" data-house="' + escapeHtml(r.house_no||'') + '" onclick="deleteLandRegistry(this.dataset.id,this.dataset.house)" class="px-2.5 py-1.5 bg-rose-50 text-rose-600 rounded-lg text-xs font-bold hover:bg-rose-100">🗑️</button>' +
+                            '</div></td></tr>';
+                    }).join('') + '</tbody></table></div></div>';
+
+                // pagination
+                const totalPages = Math.ceil(d.total / d.perPage);
+                const pag = document.getElementById('lr-pagination');
+                if (totalPages > 1) {
+                    pag.innerHTML = `<button ${lrCurrentPage===1?'disabled':''} onclick="lrGoPage(${lrCurrentPage-1})" class="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-bold ${lrCurrentPage===1?'opacity-40':'hover:bg-slate-50'}">‹</button>` +
+                        `<span class="text-sm text-slate-600 px-2">หน้า <b>${lrCurrentPage}</b> / ${totalPages} · ทั้งหมด ${d.total} รายการ</span>` +
+                        `<button ${lrCurrentPage===totalPages?'disabled':''} onclick="lrGoPage(${lrCurrentPage+1})" class="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-bold ${lrCurrentPage===totalPages?'opacity-40':'hover:bg-slate-50'}">›</button>`;
+                } else { pag.innerHTML = '<span class="text-xs text-slate-400">ทั้งหมด ' + d.total + ' รายการ</span>'; }
+
+                lucide.createIcons();
+            } catch(e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function lrGoPage(p) { lrCurrentPage = p; loadLandRegistryList(); }
+
+        function openLandRegistryModal(idx) {
+            const isEdit = idx !== undefined && idx !== null;
+            const r = isEdit ? window._lrItems[parseInt(idx)] : null;
+            const f = (k) => escapeHtml(r?.[k] || '');
+
+            showModal(isEdit ? '✏️ แก้ไขรายการ' : '➕ เพิ่มรายการใหม่',
+                '<div class="space-y-3 text-left max-h-[60vh] overflow-y-auto pr-1">' +
+                '<div class="grid grid-cols-2 gap-3">' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">รหัสบ้าน (Convert)</label><input id="lr-convert_no" value="' + f('convert_no') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="3A-1"></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">บ้านเลขที่ *</label><input id="lr-house_no" value="' + f('house_no') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="998/1"></div>' +
+                '</div>' +
+                '<div class="grid grid-cols-2 gap-3">' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">ซอย</label><input id="lr-soi" value="' + f('soi') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">ประเภทบ้าน</label><input id="lr-house_type" value="' + f('house_type') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="TH 5 m. 2 Fl."></div>' +
+                '</div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">ชื่อเจ้าของกรรมสิทธิ์ (คั่นหลายคนด้วย /)</label><input id="lr-full_name" value="' + f('full_name') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '<div class="grid grid-cols-3 gap-3">' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">ระวาง</label><input id="lr-map_sheet" value="' + f('map_sheet') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">เลขที่ดิน</label><input id="lr-land_parcel_number" value="' + f('land_parcel_number') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">หน้าสำรวจ</label><input id="lr-explore_page" value="' + f('explore_page') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '</div>' +
+                '<div class="grid grid-cols-2 gap-3">' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">เลขที่โฉนด</label><input id="lr-title_deed_number" value="' + f('title_deed_number') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">วันที่โอนกรรมสิทธิ์</label><input id="lr-transfer_date" type="date" value="' + f('transfer_date') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '</div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">สถานะ</label><input id="lr-status" value="' + f('status') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="เช่น ขายแล้ว, ว่าง"></div>' +
+                '<div class="flex gap-2 pt-2">' +
+                '<button data-id="' + (r?.id||'') + '" onclick="saveLandRegistry(this.dataset.id)" class="flex-1 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl font-bold text-sm">💾 บันทึก</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+                '</div></div>'
+            );
+        }
+
+        async function saveLandRegistry(id) {
+            const houseNo = document.getElementById('lr-house_no')?.value?.trim();
+            if (!houseNo) return showToast('กรอกบ้านเลขที่ก่อน', 'warning');
+
+            const payload = {
+                convert_no: document.getElementById('lr-convert_no')?.value?.trim() || null,
+                house_no: houseNo,
+                soi: document.getElementById('lr-soi')?.value?.trim() || null,
+                house_type: document.getElementById('lr-house_type')?.value?.trim() || null,
+                full_name: document.getElementById('lr-full_name')?.value?.trim() || null,
+                map_sheet: document.getElementById('lr-map_sheet')?.value?.trim() || null,
+                land_parcel_number: document.getElementById('lr-land_parcel_number')?.value?.trim() || null,
+                explore_page: document.getElementById('lr-explore_page')?.value?.trim() || null,
+                title_deed_number: document.getElementById('lr-title_deed_number')?.value?.trim() || null,
+                transfer_date: document.getElementById('lr-transfer_date')?.value || null,
+                status: document.getElementById('lr-status')?.value?.trim() || null,
+            };
+            if (id) payload.id = id;
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/land_registry_save`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+                closeModal();
+                showToast('✅ บันทึกสำเร็จ', 'success');
+                loadLandRegistryList();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+        }
+
+        function deleteLandRegistry(id, houseNo) {
+            showConfirmModal('⚠️ ลบรายการ "' + escapeHtml(houseNo) + '"?', 'ย้ายเข้าถังขยะ กู้คืนได้ภายหลัง', async () => {
+                try {
+                    await softDeleteViaTrash('land_registry', id, houseNo);
+                    showToast('✅ ลบแล้ว (กู้คืนได้จากถังขยะ)', 'success');
+                    loadLandRegistryList();
+                } catch(e) { showToast('❌ ' + e.message, 'error'); }
+            });
+        }
+
+        // ─── นำเข้าข้อมูล — วางจาก Excel (tab-separated) ────────────
+        function openLandRegistryImport() {
+            showModal('📥 นำเข้าข้อมูล — วางจาก Excel',
+                '<div class="space-y-3 text-left">' +
+                '<div class="bg-orange-50 border border-orange-200 rounded-xl p-3 text-xs text-orange-700">' +
+                '<b>วิธีใช้:</b> เปิดไฟล์ Excel → เลือกทั้งตาราง (รวมหัวคอลัมน์) → Copy (Ctrl+C) → วางในช่องด้านล่าง<br>' +
+                'ต้องมีคอลัมน์: no, convert, housetype, mapsheet, landparcelnumber, explorepage, titledeednumber, housenumber, alley, fullname, transferdate, status' +
+                '</div>' +
+                '<textarea id="lr-import-text" rows="8" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono" placeholder="วางข้อมูลจาก Excel ที่นี่ (คั่นด้วย Tab)..."></textarea>' +
+                '<div id="lr-import-preview" class="hidden"></div>' +
+                '<label class="flex items-center gap-2 text-sm"><input type="checkbox" id="lr-import-upsert" checked class="w-4 h-4 accent-orange-500"> ถ้าบ้านเลขที่ซ้ำ ให้อัปเดตข้อมูลเดิม (ไม่ติ๊ก = เพิ่มใหม่เท่านั้น)</label>' +
+                '<div class="flex gap-2 pt-2">' +
+                '<button onclick="previewLandRegistryImport()" class="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-bold text-sm">👁 ดูตัวอย่างก่อนนำเข้า</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+                '</div></div>'
+            );
+        }
+
+        // แปลง header ภาษาอังกฤษหลากหลายรูปแบบ → field name มาตรฐาน
+        const LR_HEADER_MAP = {
+            'no':'no', 'convert':'convert_no', 'housetype':'house_type', 'mapsheet':'map_sheet',
+            'landparcelnumber':'land_parcel_number', 'explorepage':'explore_page', 'titledeednumber':'title_deed_number',
+            'housenumber':'house_no', 'alley':'soi', 'fullname':'full_name', 'transferdate':'transfer_date', 'status':'status',
+        };
+
+        function parseLrPastedData(text) {
+            const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
+            if (lines.length < 2) return { rows: [], error: 'ต้องมีอย่างน้อยหัวตาราง + ข้อมูล 1 แถว' };
+
+            const headerCells = lines[0].split('\t').map(h => h.trim().toLowerCase().replace(/\s+/g,''));
+            const fieldKeys = headerCells.map(h => LR_HEADER_MAP[h] || null);
+
+            if (!fieldKeys.includes('house_no')) return { rows: [], error: 'ไม่พบคอลัมน์ "housenumber" ในหัวตาราง' };
+
+            const rows = [];
+            for (let i = 1; i < lines.length; i++) {
+                const cells = lines[i].split('\t');
+                const row = {};
+                fieldKeys.forEach((key, idx) => {
+                    if (!key || key === 'no') return;
+                    let val = (cells[idx] || '').trim();
+                    if (!val) { row[key] = null; return; }
+                    if (key === 'transfer_date') {
+                        // รองรับ YYYY-MM-DD ตรงๆ หรือ DD/MM/YYYY
+                        if (/^\d{4}-\d{2}-\d{2}$/.test(val)) row[key] = val;
+                        else {
+                            const m = val.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+                            row[key] = m ? `${m[3]}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}` : null;
+                        }
+                    } else {
+                        row[key] = val;
+                    }
+                });
+                if (row.house_no) rows.push(row);
+            }
+            return { rows, error: null };
+        }
+
+        function previewLandRegistryImport() {
+            const text = document.getElementById('lr-import-text')?.value || '';
+            const { rows, error } = parseLrPastedData(text);
+            const previewEl = document.getElementById('lr-import-preview');
+
+            if (error) { showToast('❌ ' + error, 'error'); return; }
+            if (!rows.length) { showToast('ไม่พบข้อมูลที่นำเข้าได้', 'warning'); return; }
+
+            window._lrImportRows = rows;
+            previewEl.classList.remove('hidden');
+            previewEl.innerHTML =
+                '<div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-700 mb-2">✅ พบ ' + rows.length + ' แถว พร้อมนำเข้า</div>' +
+                '<div class="max-h-40 overflow-y-auto border border-slate-200 rounded-xl">' +
+                '<table class="w-full text-[11px]"><thead class="bg-slate-50 sticky top-0"><tr>' +
+                '<th class="p-1.5 text-left">บ้านเลขที่</th><th class="p-1.5 text-left">ซอย</th><th class="p-1.5 text-left">ชื่อ</th></tr></thead><tbody>' +
+                rows.slice(0, 10).map(r => '<tr class="border-t border-slate-100"><td class="p-1.5">' + escapeHtml(r.house_no||'') + '</td><td class="p-1.5">' + escapeHtml(r.soi||'') + '</td><td class="p-1.5">' + escapeHtml((r.full_name||'').slice(0,30)) + '</td></tr>').join('') +
+                (rows.length > 10 ? '<tr><td colspan="3" class="p-1.5 text-center text-slate-400">... และอีก ' + (rows.length-10) + ' แถว</td></tr>' : '') +
+                '</tbody></table></div>' +
+                '<button onclick="confirmLandRegistryImport()" class="w-full mt-2 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold text-sm">✅ ยืนยันนำเข้า ' + rows.length + ' รายการ</button>';
+        }
+
+        async function confirmLandRegistryImport() {
+            const rows = window._lrImportRows;
+            if (!rows?.length) return;
+            const upsertMode = document.getElementById('lr-import-upsert')?.checked;
+
+            showToast('⏳ กำลังนำเข้า ' + rows.length + ' รายการ...', 'info');
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/land_registry_bulk_import`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rows, mode: upsertMode ? 'upsert' : 'insert_only' })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'นำเข้าไม่สำเร็จ');
+                closeModal();
+                showToast('✅ ' + d.message, d.failed > 0 ? 'warning' : 'success');
+                loadLandRegistryList();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+        }
+
         async function renderTrashBinView() {
             document.getElementById('content-area').innerHTML =
                 '<div class="slide-in p-2">' +
@@ -974,6 +1232,7 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'sysSettings')        await renderSysSettingsView();
             else if (viewName === 'crmMembers') await renderCrmMembersView();
             else if (viewName === 'userhome') await renderUserhomeView();
+            else if (viewName === 'landRegistry') await renderLandRegistryView();
             else if (viewName === 'carManagement') await renderCarManagementView();
             else if (viewName === 'slipManagement') await renderSlipManagementView();
             else if (viewName === 'crmRewards') await renderCrmRewardsView();
