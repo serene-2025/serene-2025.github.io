@@ -273,6 +273,10 @@
                         <span class="text-xs font-bold text-slate-700">รถของฉัน</span>
                         <span v-if="myCars.filter(c => c.status === 'pending').length > 0" class="absolute top-2 right-2 min-w-[20px] h-5 px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">{{ myCars.filter(c => c.status === 'pending').length }}</span>
                     </button>
+                    <button @click="openVillageFinance" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 relative">
+                        <div class="w-12 h-12 rounded-full bg-teal-100 text-teal-600 flex items-center justify-center text-lg"><i class="fa-solid fa-chart-pie"></i></div>
+                        <span class="text-xs font-bold text-slate-700">รายรับ-รายจ่าย</span>
+                    </button>
                 </div>
 
                 <div v-if="currentTierBenefits.length > 0" class="glass-card p-5 mb-6">
@@ -2431,6 +2435,85 @@
                 // ════════════════════════════════════════════════════════════
                 // 💰 PAYMENT HISTORY
                 // ════════════════════════════════════════════════════════════
+                // ─── 💰 รายรับ-รายจ่ายส่วนกลาง (ดูง่ายๆ สำหรับลูกบ้าน) ──
+                async openVillageFinance() {
+                    Swal.fire({
+                        title: '⏳ กำลังโหลดข้อมูล...', showConfirmButton: false, allowOutsideClick: false,
+                        didOpen: () => Swal.showLoading(),
+                    });
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/village_finance_summary`);
+                        const d = await res.json();
+                        if (!res.ok) throw new Error(d.error || 'โหลดไม่สำเร็จ');
+
+                        const fmt = n => (n||0).toLocaleString(undefined, {maximumFractionDigits:0});
+                        const maxTrend = Math.max(...d.monthlyTrend.map(m => Math.max(m.income, m.expense)), 1);
+
+                        const trendBars = d.monthlyTrend.map(m => {
+                            const incH = Math.max((m.income/maxTrend)*60, 2);
+                            const expH = Math.max((m.expense/maxTrend)*60, 2);
+                            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
+                                <div style="display:flex;align-items:end;gap:2px;height:64px">
+                                    <div style="width:6px;background:#10b981;border-radius:3px 3px 0 0;height:${incH}px"></div>
+                                    <div style="width:6px;background:#f43f5e;border-radius:3px 3px 0 0;height:${expH}px"></div>
+                                </div>
+                                <div style="font-size:9px;color:#94a3b8">${m.label}</div>
+                            </div>`;
+                        }).join('');
+
+                        const categoryBars = d.expenseCategoryBreakdown.slice(0,6).map(c => {
+                            const pct = d.totalExpense ? Math.round((c.amount/d.totalExpense)*100) : 0;
+                            return `<div style="margin-bottom:10px;text-align:left">
+                                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+                                    <span style="font-weight:700;color:#334155">${c.category}</span>
+                                    <span style="color:#64748b">${fmt(c.amount)} ฿</span>
+                                </div>
+                                <div style="width:100%;background:#f1f5f9;border-radius:99px;height:8px">
+                                    <div style="width:${pct}%;background:#f43f5e;border-radius:99px;height:8px"></div>
+                                </div>
+                            </div>`;
+                        }).join('') || '<div style="text-align:center;color:#94a3b8;font-size:13px;padding:16px 0">ยังไม่มีข้อมูลรายจ่าย</div>';
+
+                        Swal.close();
+                        Swal.fire({
+                            title: '💰 รายรับ-รายจ่ายส่วนกลาง',
+                            html: `<div style="text-align:left;font-family:'LINE Seed Sans TH','Prompt',sans-serif">
+                                <div style="font-size:11px;color:#94a3b8;text-align:center;margin-bottom:14px">ปี ${d.year} (โปร่งใส เปิดเผยแก่ลูกบ้านทุกคน)</div>
+
+                                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">
+                                    <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:14px;padding:10px 6px;text-align:center">
+                                        <div style="font-size:10px;color:#059669;font-weight:700">รายรับ</div>
+                                        <div style="font-size:15px;font-weight:800;color:#047857">${fmt(d.totalIncome)}</div>
+                                    </div>
+                                    <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:14px;padding:10px 6px;text-align:center">
+                                        <div style="font-size:10px;color:#e11d48;font-weight:700">รายจ่าย</div>
+                                        <div style="font-size:15px;font-weight:800;color:#be123c">${fmt(d.totalExpense)}</div>
+                                    </div>
+                                    <div style="background:${d.balance>=0?'#eff6ff':'#fff1f2'};border:1px solid ${d.balance>=0?'#bfdbfe':'#fecdd3'};border-radius:14px;padding:10px 6px;text-align:center">
+                                        <div style="font-size:10px;color:${d.balance>=0?'#2563eb':'#e11d48'};font-weight:700">คงเหลือ</div>
+                                        <div style="font-size:15px;font-weight:800;color:${d.balance>=0?'#1d4ed8':'#be123c'}">${fmt(d.balance)}</div>
+                                    </div>
+                                </div>
+
+                                <div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:8px">📈 แนวโน้มรายเดือน</div>
+                                <div style="display:flex;gap:3px;margin-bottom:6px">${trendBars}</div>
+                                <div style="display:flex;justify-content:center;gap:14px;font-size:10px;color:#64748b;margin-bottom:18px">
+                                    <span><span style="display:inline-block;width:8px;height:8px;background:#10b981;border-radius:2px;margin-right:3px"></span>รายรับ</span>
+                                    <span><span style="display:inline-block;width:8px;height:8px;background:#f43f5e;border-radius:2px;margin-right:3px"></span>รายจ่าย</span>
+                                </div>
+
+                                <div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:10px">🗂️ รายจ่ายแยกตามหมวดหมู่</div>
+                                ${categoryBars}
+                            </div>`,
+                            width: '92vw', padding: '16px',
+                            confirmButtonText: 'ปิด', confirmButtonColor: '#0d9488',
+                        });
+                    } catch(e) {
+                        Swal.close();
+                        Swal.fire('โหลดไม่สำเร็จ', e.message, 'error');
+                    }
+                },
+
                 async openPayments() {
                     this.currentTab = 'payments';
                     this.invoiceLoading = true;
