@@ -1272,6 +1272,14 @@
                 const el = document.getElementById('dc-check-body');
                 window._dcCurrentRow = r;
 
+                // ช่องกำหนดวันหมดอายุการรับรอง (default = 30 วันจากวันนี้)
+                const defaultValidUntil = new Date();
+                defaultValidUntil.setDate(defaultValidUntil.getDate() + 30);
+                const validUntilInput =
+                    '<div class="mb-4"><label class="block text-xs font-bold text-slate-600 mb-1.5">📅 หนังสือมีผลรับรองถึงวันที่</label>' +
+                    '<input id="dc-valid-until" type="date" value="' + defaultValidUntil.toISOString().slice(0,10) + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm">' +
+                    '<p class="text-[11px] text-slate-400 mt-1">โดยปกติกำหนด 30 วันจากวันออกหนังสือ — แก้ไขได้ตามต้องการ</p></div>';
+
                 if (d.isClear) {
                     el.innerHTML =
                         '<div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center mb-4">' +
@@ -1279,6 +1287,7 @@
                         '<div class="font-bold text-emerald-700">ไม่มียอดค้างชำระ</div>' +
                         '<div class="text-xs text-emerald-600 mt-1">ตรวจสอบจากประวัติค่าส่วนกลางทั้งหมด — พร้อมออกใบปลอดหนี้</div>' +
                         '</div>' +
+                        validUntilInput +
                         '<button onclick="previewDebtClearanceCert()" class="w-full py-2.5 bg-cyan-500 hover:bg-cyan-600 text-white rounded-2xl font-bold text-sm">🧾 ออกใบปลอดหนี้</button>';
                 } else {
                     const listHtml = d.unpaidList.slice(0, 12).map(u => '<li>' + u.month + ' ' + u.year + '</li>').join('');
@@ -1292,6 +1301,7 @@
                         '<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700 mb-3">' +
                         'โดยปกติไม่ควรออกใบปลอดหนี้เมื่อยังมียอดค้าง แต่ถ้าตรวจสอบแล้วว่าจ่ายจริง (ระบบยังไม่อัปเดต) สามารถออกแบบยืนยันเองได้' +
                         '</div>' +
+                        validUntilInput +
                         '<label class="flex items-center gap-2 text-xs mb-3"><input type="checkbox" id="dc-override" class="w-4 h-4 accent-rose-500"> ยืนยันออกเอกสารแม้มียอดค้าง (รับผิดชอบเอง)</label>' +
                         '<button id="dc-override-btn" onclick="previewDebtClearanceCert()" disabled class="w-full py-2.5 bg-slate-200 text-slate-400 rounded-2xl font-bold text-sm cursor-not-allowed">🧾 ออกใบปลอดหนี้ (มียอดค้าง)</button>';
 
@@ -1313,6 +1323,7 @@
         async function previewDebtClearanceCert() {
             const r = window._dcCurrentRow;
             if (!r) return;
+            const validUntil = document.getElementById('dc-valid-until')?.value;
 
             const { data } = await supabaseClient.from('payment_settings').select('key,value')
                 .in('key', ['village_name','juristic_name','chairman_name','land_office_name']);
@@ -1320,56 +1331,82 @@
             (data||[]).forEach(x => { cfg[x.key] = x.value; });
 
             const w = window.open('', '_blank', 'width=700,height=900');
-            if (w) { w.document.write(buildDebtClearanceHtml(r, cfg)); w.document.close(); }
+            if (w) { w.document.write(buildDebtClearanceHtml(r, cfg, validUntil)); w.document.close(); }
             else showToast('เบราว์เซอร์บล็อก popup กรุณาอนุญาต', 'warning');
         }
 
-        function buildDebtClearanceHtml(r, cfg) {
+        function buildDebtClearanceHtml(r, cfg, validUntil) {
             const now = new Date();
             const issued = now.toLocaleDateString('th-TH', { day:'numeric', month:'long', year:'numeric' });
-            const docNo = 'นด.' + (now.getFullYear()+543) + '/' + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0') + Math.random().toString(36).slice(2,4).toUpperCase();
-            const names = (r.full_name||'').split('/').map(n => n.trim()).filter(Boolean);
-            const villageName = cfg.village_name || 'Golden Land Serene';
             const juristicName = cfg.juristic_name || 'นิติบุคคลหมู่บ้านจัดสรร โกลเด้นแลนด์ ซีรีน';
             const chairmanName = cfg.chairman_name || '.....................................';
-            const landOffice = cfg.land_office_name || 'เจ้าพนักงานที่ดินจังหวัดระยอง สาขาปลวกแดง';
+
+            // ชื่อเจ้าของ — ถ้ามีหลายคนคั่นด้วย /
+            const names = (r.full_name||'').split('/').map(n => n.trim()).filter(Boolean);
+            const ownerNameText = names.length ? names.join(', ') : '.....................................';
+
+            // แปลงวันหมดอายุการรับรองเป็นวัน/เดือน/ปี พ.ศ. แยกช่อง
+            const thMonths = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน',
+                              'กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+            let validDay = '....', validMonth = '....................', validYear = '............';
+            if (validUntil) {
+                const vd = new Date(validUntil);
+                if (!isNaN(vd.getTime())) {
+                    validDay = String(vd.getDate());
+                    validMonth = thMonths[vd.getMonth()];
+                    validYear = String(vd.getFullYear() + 543);
+                }
+            }
 
             return `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8">
                 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
                 <style>
                     *{box-sizing:border-box;margin:0;padding:0}
-                    body{font-family:'Sarabun',sans-serif;font-size:15px;color:#1e293b;padding:50px 60px;max-width:700px;margin:0 auto;line-height:1.9}
-                    .doc-header{display:flex;justify-content:space-between;font-size:13px;margin-bottom:24px}
-                    .title-block{text-align:center;margin-bottom:28px}
-                    .title-block h1{font-size:18px;font-weight:700}
-                    .title-block .sub{font-size:14px;margin-top:4px}
-                    .to-line{margin-bottom:16px}
-                    .subject-line{margin-bottom:20px}
-                    .body-text{text-align:justify;text-indent:48px;margin-bottom:16px}
-                    .sign-section{margin-top:70px;text-align:center;float:right;width:280px}
+                    body{font-family:'Sarabun',sans-serif;font-size:15px;color:#1e293b;padding:55px 65px;max-width:720px;margin:0 auto;line-height:2.1}
+                    .doc-header{text-align:center;margin-bottom:30px}
+                    .doc-header .juristic-name{font-weight:700;font-size:16px}
+                    .body-text{text-align:justify;text-indent:52px;margin-bottom:4px}
+                    u{text-underline-offset:3px}
+                    .sign-section{margin-top:80px;text-align:center;float:right;width:300px}
                     .sign-line{margin-bottom:6px;font-size:15px}
-                    .sign-name{font-weight:700;margin-top:6px}
-                    .btn{display:block;width:100%;padding:14px;background:#0891b2;color:white;border:none;border-radius:12px;font-family:'Sarabun',sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-top:120px;clear:both}
+                    .sign-name{font-weight:700;margin-top:8px}
+                    .btn{display:block;width:100%;padding:14px;background:#0891b2;color:white;border:none;border-radius:12px;font-family:'Sarabun',sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-top:140px;clear:both}
                     @media print{.btn{display:none} body{padding:20px}}
                 </style></head><body>
+
                 <div class="doc-header">
-                    <div>เลขที่ ${docNo}</div>
-                    <div>${juristicName}</div>
+                    <div class="juristic-name">${juristicName}</div>
+                    <div style="font-size:13px;margin-top:4px">วันที่ ${issued}</div>
                 </div>
-                <div style="text-align:right;font-size:13px;margin-bottom:20px">วันที่ ${issued}</div>
-
-                <div class="to-line">เรื่อง &nbsp; ขอรับรองการชำระค่าใช้จ่ายส่วนกลาง (ปลอดหนี้)</div>
-                <div class="to-line">เรียน &nbsp; ${landOffice}</div>
 
                 <div class="body-text">
-                    ด้วย ${juristicName} ขอรับรองว่า บ้านเลขที่ <b>${r.house_no||'—'}</b> ${r.soi?('ตั้งอยู่ที่ '+r.soi):''}
-                    ${names.length ? ('ซึ่งมีชื่อเจ้าของกรรมสิทธิ์คือ <b>'+names.join(', ')+'</b>') : ''}
-                    ${r.title_deed_number ? ('ตามโฉนดเลขที่ '+r.title_deed_number) : ''}
-                    ได้ชำระค่าใช้จ่ายส่วนกลางของหมู่บ้านจัดสรร ${villageName} ครบถ้วนแล้ว
-                    ไม่มียอดค้างชำระค่าใช้จ่ายส่วนกลางแต่อย่างใด นับถึงวันที่ออกหนังสือฉบับนี้
+                    ด้วยพระราชบัญญัติการจัดสรรที่ดิน พ.ศ. 2543 มาตรา 50 วรรคสอง กำหนดไว้ว่า
+                    การจดทะเบียนสิทธิและนิติกรรมโอนกรรมสิทธิ์ที่ดินจัดสรร พนักงานเจ้าหน้าที่จะดำเนินการให้ได้ต่อเมื่อที่ดินจัดสรรนั้นปลอดจากหนี้อันเกิดจากค่าบำรุงรักษาและการจัดการสาธารณูปโภค
+                    โดยต้องมีหนังสือรับรองจากนิติบุคคลหมู่บ้านจัดสรรมาแสดง นั้น
                 </div>
+
                 <div class="body-text">
-                    จึงเรียนมาเพื่อโปรดทราบ และใช้ประกอบการดำเนินการทางทะเบียนที่ดินต่อไป
+                    ${juristicName} โดย <u>&nbsp;${chairmanName}&nbsp;</u>
+                    ซึ่งได้รับการแต่งตั้งให้เป็นประธานคณะกรรมการนิติบุคคลฯ จึงขอรับรองว่า <u>&nbsp;${ownerNameText}&nbsp;</u>
+                    ผู้ถือกรรมสิทธิ์ในที่ดินโฉนดเลขที่ <u>&nbsp;${r.title_deed_number||'....................'}&nbsp;</u>
+                    เลขที่ดิน <u>&nbsp;${r.land_parcel_number||'..........'}&nbsp;</u>
+                    หน้าสำรวจ <u>&nbsp;${r.explore_page||'..........'}&nbsp;</u>
+                    พร้อมสิ่งปลูกสร้าง บ้านเลขที่ <u>&nbsp;${r.house_no||'..........'}&nbsp;</u>
+                    ภายในโครงการหมู่บ้านจัดสรร ${(cfg.village_name||'โกลเด้นแลนด์ ซีรีน')}
+                </div>
+
+                <div class="body-text">
+                    ได้ชำระค่าบำรุงรักษาและการจัดการสาธารณูปโภคครบถ้วนแล้ว และไม่มีหนี้ค้างชำระต่อ
+                    ${juristicName} แต่อย่างใด
+                </div>
+
+                <div class="body-text">
+                    หนังสือรับรองฉบับนี้มีผลใช้รับรองการปลอดหนี้จนถึงวันที่ <u>&nbsp;${validDay}&nbsp;</u>
+                    เดือน <u>&nbsp;${validMonth}&nbsp;</u> ปี <u>&nbsp;${validYear}&nbsp;</u>
+                </div>
+
+                <div class="body-text">
+                    จึงเรียนมาเพื่อโปรดพิจารณาดำเนินการต่อไป
                 </div>
 
                 <div class="sign-section">
@@ -1382,6 +1419,7 @@
                 <button class="btn" onclick="window.print()">🖨️ พิมพ์ / บันทึก PDF</button>
                 </body></html>`;
         }
+
 
         async function renderDataReconciliationView() {
             document.getElementById('content-area').innerHTML =
