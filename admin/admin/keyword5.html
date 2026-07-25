@@ -888,6 +888,7 @@
                             '<td class="p-3 text-xs text-slate-400 font-mono">' + escapeHtml(r.title_deed_number||'—') + '</td>' +
                             '<td class="p-3 text-center">' + (r.has_line ? '<span class="text-emerald-600" title="มี LINE ลงทะเบียนแล้ว">✅</span>' : '<span class="text-slate-300" title="ยังไม่มี LINE">—</span>') + '</td>' +
                             '<td class="p-3 text-center"><div class="flex gap-1.5 justify-center">' +
+                            '<button data-idx="' + idx + '" onclick="openDebtClearanceModal(this.dataset.idx)" class="px-2.5 py-1.5 bg-cyan-100 text-cyan-700 rounded-lg text-xs font-bold hover:bg-cyan-200" title="ใบปลอดหนี้ค่าส่วนกลาง">🧾</button>' +
                             '<button data-idx="' + idx + '" onclick="previewOwnershipCert(this.dataset.idx)" class="px-2.5 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-200" title="ออกหนังสือรับรอง">📄</button>' +
                             '<button data-idx="' + idx + '" onclick="openChangeOwnerModal(this.dataset.idx)" class="px-2.5 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-200" title="เปลี่ยนเจ้าของ">🔄</button>' +
                             '<button data-id="' + r.id + '" data-house="' + escapeHtml(r.house_no||'') + '" onclick="viewOwnerHistory(this.dataset.id,this.dataset.house)" class="px-2.5 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-200" title="ประวัติเจ้าของเก่า">📜</button>' +
@@ -1252,6 +1253,134 @@
             const w = window.open('', '_blank', 'width=700,height=900');
             if (w) { w.document.write(buildOwnershipCertHtml(r)); w.document.close(); }
             else showToast('เบราว์เซอร์บล็อก popup กรุณาอนุญาต', 'warning');
+        }
+
+        // ─── 🧾 ใบปลอดหนี้ค่าส่วนกลาง (Debt Clearance Certificate) ────
+        async function openDebtClearanceModal(idx) {
+            const r = window._lrItems[parseInt(idx)];
+            if (!r) return;
+
+            showModal('🧾 ใบปลอดหนี้ค่าส่วนกลาง — บ้าน ' + escapeHtml(r.house_no||''),
+                '<div id="dc-check-body" class="text-left"><div class="text-center py-8 text-slate-400">⏳ กำลังตรวจสอบยอดค้างชำระ...</div></div>'
+            );
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/debt_clearance_check?house_no=${encodeURIComponent(r.house_no)}`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ตรวจสอบล้มเหลว');
+
+                const el = document.getElementById('dc-check-body');
+                window._dcCurrentRow = r;
+
+                if (d.isClear) {
+                    el.innerHTML =
+                        '<div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center mb-4">' +
+                        '<div class="text-3xl mb-1">✅</div>' +
+                        '<div class="font-bold text-emerald-700">ไม่มียอดค้างชำระ</div>' +
+                        '<div class="text-xs text-emerald-600 mt-1">ตรวจสอบจากประวัติค่าส่วนกลางทั้งหมด — พร้อมออกใบปลอดหนี้</div>' +
+                        '</div>' +
+                        '<button onclick="previewDebtClearanceCert()" class="w-full py-2.5 bg-cyan-500 hover:bg-cyan-600 text-white rounded-2xl font-bold text-sm">🧾 ออกใบปลอดหนี้</button>';
+                } else {
+                    const listHtml = d.unpaidList.slice(0, 12).map(u => '<li>' + u.month + ' ' + u.year + '</li>').join('');
+                    el.innerHTML =
+                        '<div class="bg-rose-50 border border-rose-200 rounded-2xl p-4 mb-4">' +
+                        '<div class="flex items-center gap-2 mb-2"><span class="text-2xl">⚠️</span>' +
+                        '<div class="font-bold text-rose-700">พบยอดค้างชำระ ' + d.unpaidCount + ' เดือน</div></div>' +
+                        '<ul class="text-xs text-rose-600 pl-5 list-disc space-y-0.5 max-h-32 overflow-y-auto">' + listHtml + '</ul>' +
+                        (d.unpaidCount > 12 ? '<div class="text-[11px] text-rose-400 mt-1">... และอีก ' + (d.unpaidCount-12) + ' เดือน</div>' : '') +
+                        '</div>' +
+                        '<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700 mb-3">' +
+                        'โดยปกติไม่ควรออกใบปลอดหนี้เมื่อยังมียอดค้าง แต่ถ้าตรวจสอบแล้วว่าจ่ายจริง (ระบบยังไม่อัปเดต) สามารถออกแบบยืนยันเองได้' +
+                        '</div>' +
+                        '<label class="flex items-center gap-2 text-xs mb-3"><input type="checkbox" id="dc-override" class="w-4 h-4 accent-rose-500"> ยืนยันออกเอกสารแม้มียอดค้าง (รับผิดชอบเอง)</label>' +
+                        '<button id="dc-override-btn" onclick="previewDebtClearanceCert()" disabled class="w-full py-2.5 bg-slate-200 text-slate-400 rounded-2xl font-bold text-sm cursor-not-allowed">🧾 ออกใบปลอดหนี้ (มียอดค้าง)</button>';
+
+                    setTimeout(() => {
+                        document.getElementById('dc-override')?.addEventListener('change', function() {
+                            const btn = document.getElementById('dc-override-btn');
+                            btn.disabled = !this.checked;
+                            btn.className = this.checked
+                                ? 'w-full py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold text-sm'
+                                : 'w-full py-2.5 bg-slate-200 text-slate-400 rounded-2xl font-bold text-sm cursor-not-allowed';
+                        });
+                    }, 100);
+                }
+            } catch(e) {
+                document.getElementById('dc-check-body').innerHTML = '<div class="text-rose-500 text-center py-6 text-sm">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        async function previewDebtClearanceCert() {
+            const r = window._dcCurrentRow;
+            if (!r) return;
+
+            const { data } = await supabaseClient.from('payment_settings').select('key,value')
+                .in('key', ['village_name','juristic_name','chairman_name','land_office_name']);
+            const cfg = {};
+            (data||[]).forEach(x => { cfg[x.key] = x.value; });
+
+            const w = window.open('', '_blank', 'width=700,height=900');
+            if (w) { w.document.write(buildDebtClearanceHtml(r, cfg)); w.document.close(); }
+            else showToast('เบราว์เซอร์บล็อก popup กรุณาอนุญาต', 'warning');
+        }
+
+        function buildDebtClearanceHtml(r, cfg) {
+            const now = new Date();
+            const issued = now.toLocaleDateString('th-TH', { day:'numeric', month:'long', year:'numeric' });
+            const docNo = 'นด.' + (now.getFullYear()+543) + '/' + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0') + Math.random().toString(36).slice(2,4).toUpperCase();
+            const names = (r.full_name||'').split('/').map(n => n.trim()).filter(Boolean);
+            const villageName = cfg.village_name || 'Golden Land Serene';
+            const juristicName = cfg.juristic_name || 'นิติบุคคลหมู่บ้านจัดสรร โกลเด้นแลนด์ ซีรีน';
+            const chairmanName = cfg.chairman_name || '.....................................';
+            const landOffice = cfg.land_office_name || 'เจ้าพนักงานที่ดินจังหวัดระยอง สาขาปลวกแดง';
+
+            return `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8">
+                <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+                <style>
+                    *{box-sizing:border-box;margin:0;padding:0}
+                    body{font-family:'Sarabun',sans-serif;font-size:15px;color:#1e293b;padding:50px 60px;max-width:700px;margin:0 auto;line-height:1.9}
+                    .doc-header{display:flex;justify-content:space-between;font-size:13px;margin-bottom:24px}
+                    .title-block{text-align:center;margin-bottom:28px}
+                    .title-block h1{font-size:18px;font-weight:700}
+                    .title-block .sub{font-size:14px;margin-top:4px}
+                    .to-line{margin-bottom:16px}
+                    .subject-line{margin-bottom:20px}
+                    .body-text{text-align:justify;text-indent:48px;margin-bottom:16px}
+                    .sign-section{margin-top:70px;text-align:center;float:right;width:280px}
+                    .sign-line{margin-bottom:6px;font-size:15px}
+                    .sign-name{font-weight:700;margin-top:6px}
+                    .btn{display:block;width:100%;padding:14px;background:#0891b2;color:white;border:none;border-radius:12px;font-family:'Sarabun',sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-top:120px;clear:both}
+                    @media print{.btn{display:none} body{padding:20px}}
+                </style></head><body>
+                <div class="doc-header">
+                    <div>เลขที่ ${docNo}</div>
+                    <div>${juristicName}</div>
+                </div>
+                <div style="text-align:right;font-size:13px;margin-bottom:20px">วันที่ ${issued}</div>
+
+                <div class="to-line">เรื่อง &nbsp; ขอรับรองการชำระค่าใช้จ่ายส่วนกลาง (ปลอดหนี้)</div>
+                <div class="to-line">เรียน &nbsp; ${landOffice}</div>
+
+                <div class="body-text">
+                    ด้วย ${juristicName} ขอรับรองว่า บ้านเลขที่ <b>${r.house_no||'—'}</b> ${r.soi?('ตั้งอยู่ที่ '+r.soi):''}
+                    ${names.length ? ('ซึ่งมีชื่อเจ้าของกรรมสิทธิ์คือ <b>'+names.join(', ')+'</b>') : ''}
+                    ${r.title_deed_number ? ('ตามโฉนดเลขที่ '+r.title_deed_number) : ''}
+                    ได้ชำระค่าใช้จ่ายส่วนกลางของหมู่บ้านจัดสรร ${villageName} ครบถ้วนแล้ว
+                    ไม่มียอดค้างชำระค่าใช้จ่ายส่วนกลางแต่อย่างใด นับถึงวันที่ออกหนังสือฉบับนี้
+                </div>
+                <div class="body-text">
+                    จึงเรียนมาเพื่อโปรดทราบ และใช้ประกอบการดำเนินการทางทะเบียนที่ดินต่อไป
+                </div>
+
+                <div class="sign-section">
+                    <div class="sign-line">ขอแสดงความนับถือ</div>
+                    <div style="height:60px"></div>
+                    <div class="sign-name">( &nbsp; ${chairmanName} &nbsp; )</div>
+                    <div style="font-size:13px">ประธานกรรมการ${juristicName}</div>
+                </div>
+
+                <button class="btn" onclick="window.print()">🖨️ พิมพ์ / บันทึก PDF</button>
+                </body></html>`;
         }
 
         async function renderDataReconciliationView() {
@@ -8873,6 +9002,14 @@ async function updateAllUserProfiles() {
                 '<textarea id="invs-footer_note" rows="3" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-200 resize-none">' +
                 escapeHtml(s.footer_note||'กรุณาส่งสลิปการโอนเงินผ่าน LINE OA หลังชำระเงิน') + '</textarea>' +
                 '</div>' +
+                '<div class="glass rounded-3xl p-5 mb-5">' +
+                '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">✍️</span>' +
+                '<div><div class="font-bold text-slate-800">ผู้ลงนามเอกสารทางการ</div>' +
+                '<div class="text-xs text-slate-500">ใช้ในใบปลอดหนี้ / หนังสือรับรองกรรมสิทธิ์</div></div></div>' +
+                '<div class="space-y-3">' +
+                inp('chairman_name','ชื่อประธานกรรมการนิติบุคคล',s.chairman_name,'นายสุริยา  เหล่าโนนเขวา') +
+                inp('land_office_name','หน่วยงานที่ดินที่รับรอง',s.land_office_name,'เจ้าพนักงานที่ดินจังหวัดระยอง สาขาปลวกแดง') +
+                '</div></div>' +
                 '<div class="flex gap-3 pb-4">' +
                 '<button onclick="saveInvoiceSettings(this)" class="flex-1 py-3.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-2xl font-bold text-base shadow-lg flex items-center justify-center gap-2">' +
                 '<i data-lucide="save" class="w-5 h-5"></i> บันทึกการตั้งค่า</button>' +
@@ -8885,7 +9022,8 @@ async function updateAllUserProfiles() {
             setBtnLoading(btn,true);
             const fields = ['village_name','juristic_name','address','contact_phone',
                             'bank_name','account_name','account_no',
-                            'amount','due_day','fee_unit','late_fee','footer_note'];
+                            'amount','due_day','fee_unit','late_fee','footer_note',
+                            'chairman_name','land_office_name'];
             const upserts = fields.map(k=>{const el=document.getElementById('invs-'+k);return el?{key:k,value:el.value?.trim()}:null;}).filter(Boolean);
             const { error } = await supabaseClient.from('payment_settings').upsert(upserts,{onConflict:'key'});
             setBtnLoading(btn,false);
