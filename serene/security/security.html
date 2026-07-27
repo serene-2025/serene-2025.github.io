@@ -76,10 +76,10 @@
 
     <script>
         // ---------------------------------------------------------
-        // 1. ตั้งค่าการเชื่อมต่อ (แก้ไขตรงนี้)
+        // 1. ตั้งค่าการเชื่อมต่อ (อัปเดตด้วยข้อมูลล่าสุดของคุณแล้ว)
         // ---------------------------------------------------------
-        const LIFF_ID = "2009449342-CkyoZ0f9"; // ตัวอย่าง: "1234567890-Abcdefgh"
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbxJr1J3g1ePgJOtsP8OA7MCqDC8i6-fWhv6jIzWKIoEe2_o9wFhAip01bMbs24r_7Se0w/exec"; // URL จาก Google Apps Script
+        const LIFF_ID = "2009449342-CkyoZ0f9";
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbxJr1J3g1ePgJOtsP8OA7MCqDC8i6-fWhv6jIzWKIoEe2_o9wFhAip01bMbs24r_7Se0w/exec";
 
         let userProfilePic = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"; // รูป Default
 
@@ -101,27 +101,85 @@
         // ---------------------------------------------------------
         async function initializeLiff() {
             try {
-                // 4.1 ส่งข้อมูลไปบันทึกที่ Google Sheets และแจ้ง Telegram
-                // หมายเหตุ: หากยังไม่มี GAS_URL ฟังก์ชันนี้จะข้ามไปไม่แจ้ง Error ร้ายแรงในหน้าแอป
-                if (GAS_URL !== "YOUR_GOOGLE_APPS_SCRIPT_URL") {
-                    await fetch(GAS_URL, {
-                        method: 'POST',
-                        mode: 'no-cors', // เพื่อแก้ปัญหาเรื่อง CORS ชั่วคราวเมื่อยิงไปที่ GAS
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        // *** เพิ่ม profilePicUrl: userProfilePic ตรงนี้ ***
-                        body: JSON.stringify({ 
-                            name: nameInput, 
-                            phone: phoneInput, 
-                            shift: shiftInput, 
-                            datetime: datetimeStr,
-                            profilePicUrl: userProfilePic 
-                        })
-                    });
+                await liff.init({ liffId: LIFF_ID });
+                if (liff.isLoggedIn()) {
+                    const profile = await liff.getProfile();
+                    if(profile.pictureUrl) {
+                        userProfilePic = profile.pictureUrl;
+                        document.getElementById('profileImage').src = userProfilePic; // อัปเดตรูปบนหน้าเว็บ
+                    }
+                } else {
+                    // ถ้ายังไม่ล็อกอิน ให้ล็อกอินก่อน (ป้องกัน Error ระบบขัดข้อง)
+                    liff.login();
                 }
+            } catch (err) {
+                console.error('LIFF Init Error:', err);
+                Swal.fire({
+                    icon: 'error',
+                    title: 'การเชื่อมต่อ LINE มีปัญหา',
+                    text: 'กรุณาตรวจสอบ Endpoint URL ใน LINE Developers ให้ตรงกับเว็บไซต์นี้'
+                });
+            }
+        }
+        // เรียกใช้งานทันทีเมื่อเปิดหน้าเว็บ
+        initializeLiff(); 
 
-                // 4.2 สร้าง Flex Message Template สำหรับแชร์
+        // ---------------------------------------------------------
+        // 4. ฟังก์ชันเมื่อกดปุ่ม "ส่งข้อมูลลงกลุ่ม LINE"
+        // ---------------------------------------------------------
+        async function submitAndShare() {
+            const nameInput = document.getElementById('name').value.trim();
+            const phoneInput = document.getElementById('phone').value.trim();
+            const shiftInput = document.getElementById('shift').value;
+            
+            // ตรวจสอบความถูกต้อง
+            if (!nameInput || !phoneInput) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'ข้อมูลไม่ครบ',
+                    text: 'กรุณากรอกชื่อและเบอร์โทรศัพท์ให้เรียบร้อยครับ',
+                    confirmButtonColor: '#2563eb'
+                });
+                return;
+            }
+
+            // บันทึกค่าลง Local Storage เพื่อจำไว้ใช้ครั้งหน้า
+            localStorage.setItem('guardName', nameInput);
+            localStorage.setItem('guardPhone', phoneInput);
+            localStorage.setItem('guardShift', shiftInput);
+
+            // ดึงเวลาปัจจุบัน
+            const now = new Date();
+            const datetimeStr = now.toLocaleString('th-TH', { 
+                year: 'numeric', month: 'short', day: 'numeric', 
+                hour: '2-digit', minute: '2-digit' 
+            });
+
+            // เปลี่ยนสถานะปุ่มเพื่อป้องกันการกดซ้ำ
+            const btn = document.getElementById('submitBtn');
+            const originalBtnContent = btn.innerHTML;
+            btn.innerHTML = `<span class="animate-pulse">กำลังประมวลผล...</span>`;
+            btn.disabled = true;
+            btn.classList.add('opacity-75');
+
+            try {
+                // 4.1 ส่งข้อมูลไปบันทึกที่ Google Sheets (GAS)
+                await fetch(GAS_URL, {
+                    method: 'POST',
+                    mode: 'no-cors', // แก้ปัญหาเรื่อง CORS 
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        name: nameInput, 
+                        phone: phoneInput, 
+                        shift: shiftInput, 
+                        datetime: datetimeStr,
+                        profilePicUrl: userProfilePic // ส่งรูปภาพไป GAS เพื่อส่งต่อเข้า Telegram ด้วย
+                    })
+                });
+
+                // 4.2 สร้าง Flex Message Template สำหรับแชร์ลงกลุ่ม LINE
                 const flexMessage = {
                     "type": "flex",
                     "altText": `ลงเวลาทำงาน: ${nameInput}`,
@@ -190,7 +248,7 @@
                     }
                 };
 
-                // 4.3 เรียก Share Target Picker
+                // 4.3 เรียกใช้งาน Share Target Picker (เลือกห้องที่จะส่ง)
                 if (liff.isApiAvailable('shareTargetPicker')) {
                     await liff.shareTargetPicker([flexMessage]);
                     
@@ -206,14 +264,14 @@
                 } else {
                     Swal.fire({
                         icon: 'error',
-                        title: 'แชร์ไม่ได้',
-                        text: 'คุณต้องเปิดเว็บนี้ผ่าน LINE เท่านั้น เพื่อใช้ฟีเจอร์ส่งเข้ากลุ่ม'
+                        title: 'ไม่รองรับการแชร์',
+                        text: 'กรุณาเปิดแอปพลิเคชันนี้ผ่าน LINE เพื่อใช้งานฟีเจอร์ส่งข้อความเข้ากลุ่ม'
                     });
                 }
 
             } catch (error) {
                 console.error("Error:", error);
-                Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถทำรายการได้ กรุณาลองใหม่', 'error');
+                Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถทำรายการได้ กรุณาลองใหม่ (Error: ' + error.message + ')', 'error');
             } finally {
                 // คืนค่าปุ่มกลับมาเหมือนเดิม
                 btn.innerHTML = originalBtnContent;
