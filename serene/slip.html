@@ -301,7 +301,7 @@
           <div class="d-flex justify-content-between align-items-end mb-1">
             <label class="form-label fw-bold mb-0">
               <i class='bx bxs-user-detail text-primary icon-modern'></i> 
-              ชื่อ-สกุล เพื่อใช้ออกใบเสร็จ <span style="color: red;">*</span>
+              ชื่อ-สกุล (ชื่อเต็ม) เพื่อใช้ออกใบเสร็จ <span style="color: red;">*</span>
             </label>
             <!-- 🌟 เพิ่มปุ่มจดจำชื่อ 🌟 -->
             <div class="form-check form-switch mb-0" title="จำชื่อไว้ใช้ครั้งถัดไป โดยไม่ต้องดึงจากระบบ">
@@ -857,7 +857,12 @@
         }
 
         let totalUnpaidCount = 0;
+        let totalPaidCount = 0;
+        
         tableBody.innerHTML = ''; 
+        const paidHistoryBody = document.getElementById('paidHistoryBody');
+        paidHistoryBody.innerHTML = ''; // ล้างข้อมูลตารางประวัติ
+        
         let fullyPaidYears = []; 
         globalHousePaymentData = data || []; 
 
@@ -880,10 +885,14 @@
                     default: yearBadgeClass = 'bg-dark';                     
                 }
 
+                // 🌟 ลูปเพื่อแยกข้อมูลค้างจ่าย กับ ประวัติที่จ่ายแล้ว 🌟
                 months.forEach((monthKey, index) => {
                     const status = row[monthKey] ? String(row[monthKey]).trim() : '';
+                    
+                    // 1. แยกกลุ่ม "ค้างจ่าย / รอตรวจสอบ"
                     if (status && (status === 'ยังไม่จ่าย' || status === 'ค้างจ่าย' || status === 'รอข้อมูล' || status === 'รอตรวจสอบ')) {
-                        hasUnpaid = true;  totalUnpaidCount++;
+                        hasUnpaid = true;  
+                        totalUnpaidCount++;
                         
                         let statusBadge = '';
                         if (status === 'รอตรวจสอบ') {
@@ -896,16 +905,35 @@
 
                         const rowHtml = `
                           <tr>
-                            <td class="align-middle">${thaiMonths[index]}</td>
+                            <td class="align-middle fw-bold text-muted">${thaiMonths[index]}</td>
                             <td class="align-middle"><span class="badge ${yearBadgeClass} rounded-pill shadow-sm fs-6" style="min-width: 80px;">${row.year || '-'}</span></td>
                             <td class="align-middle"><span class="badge ${statusBadge} rounded-pill">${status}</span></td>
                           </tr>`;
                         tableBody.innerHTML += rowHtml;
                     }
+                    // 2. แยกกลุ่ม "จ่ายแล้ว" ไปไว้ตารางประวัติ (ไม่เอาเดือนที่ 'ไม่เก็บ')
+                    else if (status && (status === 'จ่ายแล้ว' || status === 'ล่วงหน้า' || status === 'ชำระล่วงหน้า')) {
+                        totalPaidCount++;
+                        
+                        const rowHtml = `
+                          <tr>
+                            <td class="align-middle fw-bold text-success">${thaiMonths[index]}</td>
+                            <td class="align-middle"><span class="badge ${yearBadgeClass} rounded-pill shadow-sm fs-6" style="min-width: 80px;">${row.year || '-'}</span></td>
+                            <td class="align-middle"><span class="badge bg-success rounded-pill"><i class='bx bx-check'></i> ${status}</span></td>
+                          </tr>`;
+                        
+                        // เอาข้อมูลใหม่(ล่าสุด) แทรกไว้ด้านบนสุด (prepend)
+                        paidHistoryBody.insertAdjacentHTML('afterbegin', rowHtml);
+                    }
                 });
 
                 if (!hasUnpaid && yearStr !== '') fullyPaidYears.push(yearStr);
             });
+            
+            // กรณีไม่มีประวัติการจ่ายเลย
+            if(totalPaidCount === 0) {
+                 paidHistoryBody.innerHTML = `<tr><td colspan="3" class="text-muted py-3">ยังไม่มีประวัติการชำระเงิน</td></tr>`;
+            }
         }
 
         updateMonthStatus();
@@ -924,18 +952,22 @@
             checkFormValidity();
         }
 
-        if (totalUnpaidCount > 0) {
+        // 🌟 แสดงหน้าต่างหากมีข้อมูลอย่างใดอย่างหนึ่ง 🌟
+        if (totalUnpaidCount > 0 || totalPaidCount > 0) {
             document.getElementById('statusHouseNo').innerText = houseNumber;
             document.getElementById('totalCountBadge').innerText = totalUnpaidCount;
             container.style.display = 'block';
 
-            document.getElementById('modalHouseNo').innerText = houseNumber;
-            document.getElementById('modalTotalCount').innerText = totalUnpaidCount + " รายการ";
-            document.getElementById('modalUnpaidBody').innerHTML = tableBody.innerHTML;
+            // ถ้ามีค้างจ่าย ให้แจ้งเตือน Modal ขึ้นมาเหมือนเดิม
+            if (totalUnpaidCount > 0) {
+                document.getElementById('modalHouseNo').innerText = houseNumber;
+                document.getElementById('modalTotalCount').innerText = totalUnpaidCount + " รายการ";
+                document.getElementById('modalUnpaidBody').innerHTML = tableBody.innerHTML;
 
-            const unpaidModalElement = document.getElementById('unpaidAlertModal');
-            const modalInstance = bootstrap.Modal.getInstance(unpaidModalElement) || new bootstrap.Modal(unpaidModalElement);
-            modalInstance.show();
+                const unpaidModalElement = document.getElementById('unpaidAlertModal');
+                const modalInstance = bootstrap.Modal.getInstance(unpaidModalElement) || new bootstrap.Modal(unpaidModalElement);
+                modalInstance.show();
+            }
         } else {
             container.style.display = 'none';
         }
