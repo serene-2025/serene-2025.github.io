@@ -1447,6 +1447,7 @@
                 'รายรับ-รายจ่ายส่วนกลาง</h1>' +
                 '<p class="text-sm text-slate-500 mt-2 ml-1">แยกรายจ่ายประจำ/ไม่ประจำ · เลือกดูรายเดือนหรือรายปี · เทียบปีก่อนหน้าได้</p></div>' +
                 '<div class="flex gap-2">' +
+                '<button onclick="openVfImportModal()" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="upload" class="w-4 h-4"></i> นำเข้าจากไฟล์</button>' +
                 '<button onclick="openVfEntryModal(\'income\')" class="px-4 py-2.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i> รายรับอื่น</button>' +
                 '<button onclick="openVfEntryModal(\'expense\')" class="px-4 py-2.5 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i> รายจ่าย</button>' +
                 '</div></div>' +
@@ -1578,18 +1579,20 @@
                         '<td class="p-3 text-xs text-slate-500">' + t._date + '</td>' +
                         '<td class="p-3"><span class="text-[10px] font-bold px-2 py-0.5 rounded-full ' + (t._type==='income'?'bg-emerald-100 text-emerald-700':(t.expense_type==='recurring'?'bg-indigo-100 text-indigo-700':'bg-orange-100 text-orange-700')) + '">' + (t._type==='income'?'รายรับ':(t.expense_type==='recurring'?'จ่ายประจำ':'จ่ายไม่ประจำ')) + '</span></td>' +
                         '<td class="p-3 text-slate-700">' + escapeHtml(t.category) + '</td>' +
-                        '<td class="p-3 text-xs text-slate-500">' + escapeHtml(t.description||'—') + '</td>' +
+                        '<td class="p-3 text-xs text-slate-500">' + escapeHtml(t.description||'—') + (t.receipt_url ? ' <a href="' + escapeHtml(t.receipt_url) + '" target="_blank" class="text-blue-500" title="ดูใบเสร็จแนบ">📎</a>' : '') + '</td>' +
                         '<td class="p-3 text-right font-bold ' + (t._type==='income'?'text-emerald-600':'text-rose-600') + '">' + (t._type==='income'?'+':'-') + fmt(t.amount) + '</td>' +
                         '<td class="p-3 text-center"><button data-type="' + t._type + '" data-id="' + t.id + '" onclick="deleteVfEntry(this.dataset.type,this.dataset.id)" class="px-2 py-1 bg-slate-100 text-slate-500 rounded-lg text-xs hover:bg-slate-200">🗑️</button></td>' +
                         '</tr>').join('') +
                 '</tbody></table></div></div>';
         }
 
+        let vfCurrentReceiptUrl = null;
         function openVfEntryModal(type) {
             const categories = type === 'income' ? VF_INCOME_CATEGORIES : VF_EXPENSE_CATEGORIES;
             const label = type === 'income' ? 'รายรับอื่น' : 'รายจ่าย';
             const color = type === 'income' ? 'emerald' : 'rose';
             const today = new Date().toISOString().slice(0,10);
+            vfCurrentReceiptUrl = null;
 
             showModal((type==='income'?'💰':'💸') + ' เพิ่ม' + label,
                 '<div class="space-y-3 text-left">' +
@@ -1611,11 +1614,40 @@
                 '<input id="vf-date" type="date" value="' + today + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
                 '<div><label class="block text-xs font-bold text-slate-600 mb-1">รายละเอียด (ถ้ามี)</label>' +
                 '<textarea id="vf-description" rows="2" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none"></textarea></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">📎 แนบใบเสร็จ/เอกสาร (ถ้ามี)</label>' +
+                '<div id="vf-receipt-preview"></div>' +
+                '<input type="file" id="vf-receipt-input" accept="image/*,.pdf" class="hidden" onchange="handleVfReceiptSelect(this.files[0])">' +
+                '<button type="button" onclick="document.getElementById(\'vf-receipt-input\').click()" class="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"><i data-lucide="paperclip" class="w-4 h-4"></i> แนบไฟล์ (รูปภาพ/PDF)</button></div>' +
                 '<div class="flex gap-2 pt-2">' +
                 '<button data-type="' + type + '" onclick="saveVfEntry(this.dataset.type)" class="flex-1 py-2.5 bg-' + color + '-500 hover:bg-' + color + '-600 text-white rounded-2xl font-bold text-sm">💾 บันทึก</button>' +
                 '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
                 '</div></div>'
             );
+            lucide.createIcons();
+        }
+
+        async function handleVfReceiptSelect(file) {
+            if (!file) return;
+            const preview = document.getElementById('vf-receipt-preview');
+            preview.innerHTML = '<div class="flex items-center gap-2 p-2 bg-slate-50 rounded-xl mb-2"><i data-lucide="loader-2" class="w-4 h-4 animate-spin text-slate-400"></i><span class="text-xs text-slate-500">กำลังอัปโหลด...</span></div>';
+            lucide.createIcons();
+            try {
+                const fd = new FormData();
+                fd.append('file', file);
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/village_finance_upload_receipt`, { method: 'POST', body: fd });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'อัปโหลดไม่สำเร็จ');
+                vfCurrentReceiptUrl = d.url;
+                const isImage = (d.fileType || '').startsWith('image/');
+                preview.innerHTML = '<div class="flex items-center gap-2 p-2 bg-emerald-50 border border-emerald-200 rounded-xl mb-2">' +
+                    (isImage ? '<img src="' + d.url + '" class="w-10 h-10 object-cover rounded-lg">' : '<i data-lucide="file-text" class="w-8 h-8 text-emerald-500"></i>') +
+                    '<span class="text-xs text-emerald-700 font-bold flex-1">แนบไฟล์แล้ว</span>' +
+                    '<button type="button" onclick="vfCurrentReceiptUrl=null; document.getElementById(\'vf-receipt-preview\').innerHTML=\'\'" class="text-rose-500 text-xs">✕</button></div>';
+                lucide.createIcons();
+            } catch(e) {
+                preview.innerHTML = '';
+                showToast('❌ ' + e.message, 'error');
+            }
         }
 
         async function saveVfEntry(type) {
@@ -1629,12 +1661,85 @@
             try {
                 const res = await fetch(`${API_BASE_URL}/api/admin/audience/village_finance_save`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ type, category, expenseType, amount, date, description })
+                    body: JSON.stringify({ type, category, expenseType, amount, date, description, receiptUrl: vfCurrentReceiptUrl })
                 });
                 const d = await res.json();
                 if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
                 closeModal();
                 showToast('✅ บันทึกสำเร็จ', 'success');
+                loadVillageFinance();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+        }
+
+        // ─── 📥 นำเข้ารายรับ-รายจ่ายจากไฟล์ (วางจาก Excel) ────────────
+        function openVfImportModal() {
+            showModal('📥 นำเข้าข้อมูล — วางจาก Excel',
+                '<div class="space-y-3 text-left">' +
+                '<div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-700">' +
+                '<b>วิธีใช้:</b> เปิด Excel → เลือกตาราง (รวมหัวคอลัมน์) → Copy → วางด้านล่าง<br>' +
+                'ต้องมีคอลัมน์: <b>type</b> (income/expense), <b>category</b>, <b>amount</b>, <b>date</b> (YYYY-MM-DD), <b>description</b> (ไม่บังคับ), <b>expenseType</b> (recurring/one_time — เฉพาะ expense)' +
+                '</div>' +
+                '<textarea id="vf-import-text" rows="8" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono" placeholder="type&#9;category&#9;amount&#9;date&#9;description&#10;expense&#9;ค่าไฟฟ้าส่วนกลาง&#9;3000&#9;2026-07-01&#9;บิลเดือนกรกฎาคม"></textarea>' +
+                '<div id="vf-import-preview" class="hidden"></div>' +
+                '<div class="flex gap-2 pt-2">' +
+                '<button onclick="previewVfImport()" class="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-bold text-sm">👁 ดูตัวอย่างก่อนนำเข้า</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+                '</div></div>'
+            );
+        }
+
+        function parseVfPastedData(text) {
+            const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
+            if (lines.length < 2) return { rows: [], error: 'ต้องมีอย่างน้อยหัวตาราง + ข้อมูล 1 แถว' };
+
+            const headers = lines[0].split('\t').map(h => h.trim().toLowerCase());
+            const required = ['type','category','amount','date'];
+            if (!required.every(r => headers.includes(r))) return { rows: [], error: 'ต้องมีคอลัมน์: type, category, amount, date' };
+
+            const rows = [];
+            for (let i = 1; i < lines.length; i++) {
+                const cells = lines[i].split('\t');
+                const row = {};
+                headers.forEach((h, idx) => { row[h] = (cells[idx] || '').trim(); });
+                if (row.type && row.category && row.amount && row.date) rows.push(row);
+            }
+            return { rows, error: null };
+        }
+
+        function previewVfImport() {
+            const text = document.getElementById('vf-import-text')?.value || '';
+            const { rows, error } = parseVfPastedData(text);
+            const previewEl = document.getElementById('vf-import-preview');
+
+            if (error) { showToast('❌ ' + error, 'error'); return; }
+            if (!rows.length) { showToast('ไม่พบข้อมูลที่นำเข้าได้', 'warning'); return; }
+
+            window._vfImportRows = rows;
+            previewEl.classList.remove('hidden');
+            previewEl.innerHTML =
+                '<div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-700 mb-2">✅ พบ ' + rows.length + ' แถว พร้อมนำเข้า</div>' +
+                '<div class="max-h-40 overflow-y-auto border border-slate-200 rounded-xl">' +
+                '<table class="w-full text-[11px]"><thead class="bg-slate-50 sticky top-0"><tr>' +
+                '<th class="p-1.5 text-left">ประเภท</th><th class="p-1.5 text-left">หมวดหมู่</th><th class="p-1.5 text-right">จำนวน</th><th class="p-1.5 text-left">วันที่</th></tr></thead><tbody>' +
+                rows.slice(0,10).map(r => '<tr class="border-t border-slate-100"><td class="p-1.5">' + (r.type==='income'?'รายรับ':'รายจ่าย') + '</td><td class="p-1.5">' + escapeHtml(r.category) + '</td><td class="p-1.5 text-right">' + escapeHtml(r.amount) + '</td><td class="p-1.5">' + escapeHtml(r.date) + '</td></tr>').join('') +
+                (rows.length > 10 ? '<tr><td colspan="4" class="p-1.5 text-center text-slate-400">... และอีก ' + (rows.length-10) + ' แถว</td></tr>' : '') +
+                '</tbody></table></div>' +
+                '<button onclick="confirmVfImport()" class="w-full mt-2 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold text-sm">✅ ยืนยันนำเข้า ' + rows.length + ' รายการ</button>';
+        }
+
+        async function confirmVfImport() {
+            const rows = window._vfImportRows;
+            if (!rows?.length) return;
+            showToast('⏳ กำลังนำเข้า ' + rows.length + ' รายการ...', 'info');
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/village_finance_bulk_import`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rows })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'นำเข้าไม่สำเร็จ');
+                closeModal();
+                showToast('✅ ' + d.message, d.failed > 0 ? 'warning' : 'success');
                 loadVillageFinance();
             } catch(e) { showToast('❌ ' + e.message, 'error'); }
         }
