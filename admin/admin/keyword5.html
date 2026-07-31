@@ -547,6 +547,8 @@
                             <button onclick="loadView('landRegistry');" id="nav-landRegistry" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="landmark" class="w-5 h-5 text-orange-500"></i> <span>ฐานข้อมูลกลาง (ที่ดิน)</span></button>
                             <button onclick="loadView('tenantRegistry');" id="nav-tenantRegistry" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="users" class="w-5 h-5 text-pink-500"></i> <span>ทะเบียนผู้เช่า</span></button>
                             <button onclick="loadView('villageFinance');" id="nav-villageFinance" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="wallet" class="w-5 h-5 text-emerald-500"></i> <span>รายรับ-รายจ่ายส่วนกลาง</span></button>
+                            <button onclick="loadView('execDashboard');" id="nav-execDashboard" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="gauge" class="w-5 h-5 text-violet-500"></i> <span>Executive Dashboard</span></button>
+                            <button onclick="loadView('financialStatement');" id="nav-financialStatement" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="file-bar-chart" class="w-5 h-5 text-teal-500"></i> <span>งบการเงินอัตโนมัติ</span></button>
                             <button onclick="loadView('adminRoles');" id="nav-adminRoles" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="shield" class="w-5 h-5 text-red-500"></i> <span>จัดการสิทธิ์ Admin</span></button>
                             <button onclick="loadView('auditLog');" id="nav-auditLog" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="file-clock" class="w-5 h-5 text-slate-500"></i> <span>Audit Log</span></button>
                             <button onclick="loadView('dataReconciliation');" id="nav-dataReconciliation" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="search-check" class="w-5 h-5 text-rose-500"></i> <span>ตรวจสอบข้อมูลไม่ตรงกัน</span></button>
@@ -2109,6 +2111,205 @@
             }
         }
 
+        // ─── 🎯 EXECUTIVE LIVE DASHBOARD ─────────────────────────────
+        let execDashboardPoll = null;
+        async function renderExecDashboardView() {
+            document.getElementById('content-area').innerHTML =
+                '<div class="slide-in p-2">' +
+                '<div class="mb-6 flex justify-between items-end flex-wrap gap-3">' +
+                '<div><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
+                '<span class="bg-violet-100 text-violet-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="gauge" class="w-8 h-8"></i></span>' +
+                'Executive Dashboard</h1>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">ภาพรวมทั้งระบบในหน้าเดียว · อัปเดตอัตโนมัติทุก 30 วินาที</p></div>' +
+                '<div class="flex items-center gap-2 text-xs text-slate-400"><span id="exec-last-updated"></span><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i></div>' +
+                '</div>' +
+                '<div id="exec-content"><div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div></div>' +
+                '</div>';
+            lucide.createIcons();
+            await loadExecDashboard();
+            if (execDashboardPoll) clearInterval(execDashboardPoll);
+            execDashboardPoll = setInterval(loadExecDashboard, 30000);
+        }
+
+        async function loadExecDashboard() {
+            const el = document.getElementById('exec-content');
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/executive_dashboard_summary`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+
+                const fmt = n => (n||0).toLocaleString(undefined, {maximumFractionDigits:0});
+                const lastUpdatedEl = document.getElementById('exec-last-updated');
+                if (lastUpdatedEl) lastUpdatedEl.textContent = 'อัปเดตล่าสุด ' + new Date(d.generatedAt).toLocaleTimeString('th-TH');
+
+                const kpiCards = [
+                    { icon:'👥', label:'สมาชิกทั้งหมด', value: d.members.total, sub: d.members.totalHomes + ' บ้าน · LINE ' + d.members.lineCoveragePct + '%', color:'blue', view:'userhome' },
+                    { icon:'💰', label:'อัตราจ่ายเดือนนี้', value: d.finance.collectionRate + '%', sub: fmt(d.finance.monthFeeIncome) + ' บาท', color:'emerald', view:'invoiceView' },
+                    { icon:'📊', label:'คงเหลือเดือนนี้', value: fmt(d.finance.monthBalance), sub: 'รายจ่าย ' + fmt(d.finance.monthExpense) + ' บาท', color: d.finance.monthBalance>=0?'blue':'rose', view:'villageFinance' },
+                    { icon:'⚠️', label:'บ้านเสี่ยงค้างชำระ', value: d.risk.housesAtRisk, sub: 'ค้าง ≥3 เดือน', color: d.risk.housesAtRisk>0?'rose':'emerald', view:'escalation' },
+                ];
+
+                const pendingCards = [
+                    { icon:'🧾', label:'สลิปรอตรวจ', value: d.pending.slips, view:'invoiceView' },
+                    { icon:'🔧', label:'แจ้งซ่อมรอ', value: d.pending.repairs, view:null },
+                    { icon:'🚗', label:'รถรออนุมัติ', value: d.pending.cars, view:'carManagement' },
+                    { icon:'👥', label:'ผู้เช่ารอตรวจ', value: d.pending.tenants, view:'tenantRegistry' },
+                ];
+
+                const actionIcon = { delete:'🗑️', update_role:'👮', send_escalation:'⚖️', save_settings:'⚙️', update_cron_schedule:'⏰' };
+
+                el.innerHTML =
+                    '<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">' +
+                    kpiCards.map(c =>
+                        '<div onclick="loadView(\'' + c.view + '\')" class="cursor-pointer bg-' + c.color + '-50 border border-' + c.color + '-200 rounded-3xl p-5 hover:shadow-md transition-all">' +
+                        '<div class="text-2xl mb-1">' + c.icon + '</div>' +
+                        '<div class="text-2xl font-extrabold text-' + c.color + '-700">' + c.value + '</div>' +
+                        '<div class="text-xs font-bold text-' + c.color + '-600">' + c.label + '</div>' +
+                        '<div class="text-[10px] text-' + c.color + '-500 mt-0.5">' + c.sub + '</div></div>'
+                    ).join('') + '</div>' +
+
+                    '<div class="font-bold text-slate-700 text-sm mb-3">⏳ รายการรอดำเนินการ</div>' +
+                    '<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">' +
+                    pendingCards.map(c =>
+                        '<div ' + (c.view ? 'onclick="loadView(\'' + c.view + '\')" class="cursor-pointer glass rounded-2xl p-4 text-center hover:shadow-md transition-all"' : 'class="glass rounded-2xl p-4 text-center" title="ยังไม่มีหน้าจัดการแจ้งซ่อมในระบบ"') + '>' +
+                        '<div class="text-xl mb-1">' + c.icon + '</div>' +
+                        '<div class="text-xl font-extrabold ' + (c.value>0?'text-amber-600':'text-slate-400') + '">' + c.value + '</div>' +
+                        '<div class="text-[10px] font-bold text-slate-500">' + c.label + '</div></div>'
+                    ).join('') + '</div>' +
+
+                    '<div class="glass rounded-3xl overflow-hidden">' +
+                    '<div class="p-4 border-b border-slate-100 font-bold text-slate-800 text-sm flex items-center justify-between">' +
+                    '<span class="flex items-center gap-2"><i data-lucide="activity" class="w-4 h-4 text-violet-500"></i> กิจกรรมล่าสุด</span>' +
+                    '<button onclick="loadView(\'auditLog\')" class="text-xs text-violet-600 font-bold">ดูทั้งหมด →</button></div>' +
+                    (d.recentActivity.length ? d.recentActivity.map(a => {
+                        const dt = new Date(a.created_at).toLocaleString('th-TH', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+                        return '<div class="px-4 py-3 border-t border-slate-50 flex items-center gap-3 text-sm">' +
+                            '<span>' + (actionIcon[a.action]||'📌') + '</span>' +
+                            '<span class="font-bold text-slate-700">' + escapeHtml(a.actor_name||'ไม่ทราบ') + '</span>' +
+                            '<span class="text-slate-400 text-xs">' + escapeHtml(a.action) + '</span>' +
+                            '<span class="text-slate-300 text-xs ml-auto">' + dt + '</span></div>';
+                    }).join('') : '<div class="p-6 text-center text-slate-400 text-sm">ยังไม่มีกิจกรรม</div>') +
+                    '</div>';
+                lucide.createIcons();
+            } catch(e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        // ─── 📊 งบการเงินอัตโนมัติ (Financial Statement) ──────────────
+        async function renderFinancialStatementView() {
+            const curYearTH = new Date().getFullYear() + 543;
+            document.getElementById('content-area').innerHTML =
+                '<div class="slide-in p-2">' +
+                '<div class="mb-6"><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
+                '<span class="bg-teal-100 text-teal-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="file-bar-chart" class="w-8 h-8"></i></span>' +
+                'งบการเงินอัตโนมัติ</h1>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">สร้างงบกำไรขาดทุนจากข้อมูลจริง พร้อมนำเสนอในที่ประชุม AGM</p></div>' +
+                '<div class="glass rounded-3xl p-4 shadow-sm mb-5 flex items-center gap-3 flex-wrap">' +
+                '<label class="text-xs font-bold text-slate-600">ปี (พ.ศ.)</label>' +
+                '<select id="fs-year" class="rounded-2xl border border-slate-200 px-3 py-2 text-sm bg-white">' +
+                [curYearTH, curYearTH-1, curYearTH-2].map(y => '<option value="' + y + '">' + y + '</option>').join('') +
+                '</select>' +
+                '<button onclick="generateFinancialStatement()" class="px-5 py-2 bg-teal-500 hover:bg-teal-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="sparkles" class="w-4 h-4"></i> สร้างงบการเงิน</button>' +
+                '</div>' +
+                '<div id="fs-content"><div class="glass rounded-3xl p-10 text-center text-slate-400">เลือกปีแล้วกด "สร้างงบการเงิน"</div></div>' +
+                '</div>';
+            lucide.createIcons();
+        }
+
+        async function generateFinancialStatement() {
+            const year = document.getElementById('fs-year')?.value;
+            const el = document.getElementById('fs-content');
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังคำนวณ...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/financial_statement_generate?year=${year}`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'สร้างงบล้มเหลว');
+                window._fsData = d;
+
+                const fmt = n => (n||0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+                el.innerHTML =
+                    '<div class="flex justify-end mb-3"><button onclick="previewFinancialStatementPdf()" class="px-4 py-2 bg-teal-100 hover:bg-teal-200 text-teal-700 rounded-xl text-xs font-bold flex items-center gap-1.5"><i data-lucide="printer" class="w-3.5 h-3.5"></i> พิมพ์ / บันทึก PDF</button></div>' +
+                    '<div class="glass rounded-3xl p-6">' +
+                    '<div class="text-center mb-6"><div class="font-bold text-slate-800 text-lg">งบกำไรขาดทุน</div><div class="text-xs text-slate-400">' + d.periodLabel + '</div></div>' +
+
+                    '<div class="mb-5"><div class="font-bold text-emerald-600 text-sm mb-2 flex items-center gap-2">💰 รายได้</div>' +
+                    '<div class="flex justify-between text-sm py-1 border-b border-slate-50"><span class="text-slate-600">รายได้ค่าส่วนกลาง</span><span class="font-bold">' + fmt(d.income.feeIncome) + '</span></div>' +
+                    d.income.otherIncomeByCategory.map(c => '<div class="flex justify-between text-sm py-1 border-b border-slate-50"><span class="text-slate-500 pl-3">' + escapeHtml(c.category) + '</span><span>' + fmt(c.amount) + '</span></div>').join('') +
+                    '<div class="flex justify-between text-sm py-2 font-bold text-emerald-700"><span>รวมรายได้</span><span>' + fmt(d.income.totalIncome) + '</span></div></div>' +
+
+                    '<div class="mb-5"><div class="font-bold text-rose-600 text-sm mb-2 flex items-center gap-2">💸 ค่าใช้จ่าย</div>' +
+                    d.expense.byCategory.map(c => '<div class="flex justify-between text-sm py-1 border-b border-slate-50"><span class="text-slate-500 pl-3">' + escapeHtml(c.category) + '</span><span>' + fmt(c.amount) + '</span></div>').join('') +
+                    '<div class="flex justify-between text-sm py-2 font-bold text-rose-700"><span>รวมค่าใช้จ่าย</span><span>' + fmt(d.expense.totalExpense) + '</span></div>' +
+                    '<div class="text-[11px] text-slate-400 mt-1">ประจำ ' + fmt(d.expense.recurringExpense) + ' · ไม่ประจำ ' + fmt(d.expense.oneTimeExpense) + '</div></div>' +
+
+                    '<div class="pt-4 border-t-2 border-slate-200 flex justify-between items-center">' +
+                    '<span class="font-bold text-slate-800">' + (d.isProfit ? 'กำไรสุทธิ' : 'ขาดทุนสุทธิ') + '</span>' +
+                    '<span class="text-xl font-extrabold ' + (d.isProfit?'text-emerald-600':'text-rose-600') + '">' + fmt(Math.abs(d.netResult)) + ' บาท</span>' +
+                    '</div></div>';
+                lucide.createIcons();
+            } catch(e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function buildFinancialStatementHtml(d, villageName, juristicName) {
+            const fmt = n => (n||0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+            const now = new Date().toLocaleDateString('th-TH', { day:'numeric', month:'long', year:'numeric' });
+            return `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8">
+                <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+                <style>
+                    *{box-sizing:border-box;margin:0;padding:0}
+                    body{font-family:'Sarabun',sans-serif;font-size:14px;color:#1e293b;padding:45px 55px;max-width:700px;margin:0 auto}
+                    .header{text-align:center;margin-bottom:24px;border-bottom:2px solid #0f766e;padding-bottom:16px}
+                    .header h1{font-size:18px;font-weight:700}
+                    .header .sub{font-size:13px;color:#64748b;margin-top:4px}
+                    .section-title{font-weight:700;font-size:14px;margin:18px 0 8px;padding-bottom:4px;border-bottom:1px solid #e2e8f0}
+                    .row{display:flex;justify-content:space-between;padding:5px 0;font-size:13px}
+                    .row.sub{padding-left:16px;color:#64748b}
+                    .row.total{font-weight:700;border-top:1px solid #cbd5e1;margin-top:4px;padding-top:8px}
+                    .net-result{margin-top:24px;padding-top:16px;border-top:3px double #1e293b;display:flex;justify-content:space-between;font-size:16px;font-weight:700}
+                    .btn{display:block;width:100%;padding:14px;background:#0f766e;color:white;border:none;border-radius:12px;font-family:'Sarabun',sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-top:30px}
+                    @media print{.btn{display:none} body{padding:20px}}
+                </style></head><body>
+                <div class="header">
+                    <h1>${juristicName}</h1>
+                    <div class="sub">งบกำไรขาดทุน · ${d.periodLabel}</div>
+                    <div class="sub" style="font-size:11px">จัดทำเมื่อ ${now}</div>
+                </div>
+
+                <div class="section-title">💰 รายได้</div>
+                <div class="row"><span>รายได้ค่าส่วนกลาง</span><span>${fmt(d.income.feeIncome)}</span></div>
+                ${d.income.otherIncomeByCategory.map((c) => `<div class="row sub"><span>${c.category}</span><span>${fmt(c.amount)}</span></div>`).join('')}
+                <div class="row total"><span>รวมรายได้</span><span>${fmt(d.income.totalIncome)}</span></div>
+
+                <div class="section-title">💸 ค่าใช้จ่าย</div>
+                ${d.expense.byCategory.map((c) => `<div class="row sub"><span>${c.category}</span><span>${fmt(c.amount)}</span></div>`).join('')}
+                <div class="row total"><span>รวมค่าใช้จ่าย</span><span>${fmt(d.expense.totalExpense)}</span></div>
+
+                <div class="net-result">
+                    <span>${d.isProfit ? 'กำไรสุทธิ' : 'ขาดทุนสุทธิ'}</span>
+                    <span>${fmt(Math.abs(d.netResult))} บาท</span>
+                </div>
+
+                <button class="btn" onclick="window.print()">🖨️ พิมพ์ / บันทึก PDF</button>
+                </body></html>`;
+        }
+
+        async function previewFinancialStatementPdf() {
+            const d = window._fsData;
+            if (!d) return;
+            const { data } = await supabaseClient.from('payment_settings').select('key,value').in('key', ['village_name','juristic_name']);
+            const cfg = {};
+            (data||[]).forEach(x => { cfg[x.key] = x.value; });
+            const villageName = cfg.village_name || 'Golden Land Serene';
+            const juristicName = cfg.juristic_name || 'นิติบุคคลหมู่บ้านจัดสรร โกลเด้นแลนด์ ซีรีน';
+
+            const w = window.open('', '_blank', 'width=700,height=900');
+            if (w) { w.document.write(buildFinancialStatementHtml(d, villageName, juristicName)); w.document.close(); }
+            else showToast('เบราว์เซอร์บล็อก popup กรุณาอนุญาต', 'warning');
+        }
+
         async function renderTrashBinView() {
             document.getElementById('content-area').innerHTML =
                 '<div class="slide-in p-2">' +
@@ -2268,6 +2469,8 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'landRegistry') await renderLandRegistryView();
             else if (viewName === 'tenantRegistry') await renderTenantRegistryView();
             else if (viewName === 'villageFinance') await renderVillageFinanceView();
+            else if (viewName === 'execDashboard') await renderExecDashboardView();
+            else if (viewName === 'financialStatement') await renderFinancialStatementView();
             else if (viewName === 'adminRoles') await renderAdminRolesView();
             else if (viewName === 'auditLog') await renderAuditLogView();
             else if (viewName === 'dataReconciliation') await renderDataReconciliationView();
