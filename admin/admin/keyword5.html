@@ -547,6 +547,9 @@
                             <button onclick="loadView('landRegistry');" id="nav-landRegistry" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="landmark" class="w-5 h-5 text-orange-500"></i> <span>ฐานข้อมูลกลาง (ที่ดิน)</span></button>
                             <button onclick="loadView('tenantRegistry');" id="nav-tenantRegistry" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="users" class="w-5 h-5 text-pink-500"></i> <span>ทะเบียนผู้เช่า</span></button>
                             <button onclick="loadView('villageFinance');" id="nav-villageFinance" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="wallet" class="w-5 h-5 text-emerald-500"></i> <span>รายรับ-รายจ่ายส่วนกลาง</span></button>
+                            <button onclick="loadView('cronMonitor');" id="nav-cronMonitor" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="clock" class="w-5 h-5 text-cyan-500"></i> <span>งานอัตโนมัติ (Cron)</span></button>
+                            <button onclick="loadView('adminRoles');" id="nav-adminRoles" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="shield" class="w-5 h-5 text-red-500"></i> <span>จัดการสิทธิ์ Admin</span></button>
+                            <button onclick="loadView('auditLog');" id="nav-auditLog" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="file-clock" class="w-5 h-5 text-slate-500"></i> <span>Audit Log</span></button>
                             <button onclick="loadView('dataReconciliation');" id="nav-dataReconciliation" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="search-check" class="w-5 h-5 text-rose-500"></i> <span>ตรวจสอบข้อมูลไม่ตรงกัน</span></button>
                             <button onclick="loadView('dataCompleteness');" id="nav-dataCompleteness" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="pie-chart" class="w-5 h-5 text-purple-500"></i> <span>ความครบถ้วนข้อมูล</span></button>
                             <button onclick="loadView('carManagement');" id="nav-carManagement" class="nav-item w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-indigo-600 text-[15px] font-medium transition-all"><i data-lucide="car" class="w-5 h-5 text-indigo-500"></i> <span>จัดการทะเบียนรถ</span></button>
@@ -1933,6 +1936,383 @@
             }
         }
 
+        // ─── ⏰ CRON MONITOR (งานอัตโนมัติ) ───────────────────────────
+        // ─── ⏰ CRON MONITOR (งานอัตโนมัติ) — ตั้งค่าจากหน้านี้ได้เลย ──
+        const CRON_TASK_LABELS = {
+            daily_payment_reminder:  { icon:'📅', label:'เตือนจ่ายค่าส่วนกลาง', desc:'แจ้ง LINE บ้านที่ยังไม่จ่ายเดือนนี้' },
+            weekly_escalation_check: { icon:'⚠️', label:'เช็คบ้านเสี่ยงค้างชำระ', desc:'แจ้ง admin ผ่าน Telegram ถ้าพบบ้านค้าง ≥3 เดือน' },
+            monthly_trash_purge:     { icon:'🗑️', label:'ล้างถังขยะอัตโนมัติ', desc:'ลบรายการในถังขยะที่เก่ากว่า 30 วัน' },
+        };
+
+        async function renderCronMonitorView() {
+            document.getElementById('content-area').innerHTML =
+                '<div class="slide-in p-2">' +
+                '<div class="mb-6"><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
+                '<span class="bg-cyan-100 text-cyan-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="clock" class="w-8 h-8"></i></span>' +
+                'งานอัตโนมัติ (Cron Jobs)</h1>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">ตั้งเวลาและเปิด/ปิดงานอัตโนมัติได้เอง ไม่ต้องแก้ SQL</p></div>' +
+                '<div id="cron-settings-list" class="mb-6"></div>' +
+                '<div class="font-bold text-slate-700 text-sm mb-3 flex items-center gap-2"><i data-lucide="history" class="w-4 h-4"></i> ประวัติการรัน</div>' +
+                '<div id="cron-log-list"></div></div>';
+            lucide.createIcons();
+            await loadCronSettings();
+            await loadCronLog();
+        }
+
+        function cronExprToFriendly(expr) {
+            // แปลง cron expression เป็นข้อความไทยอ่านง่าย (รองรับ pattern หลักที่ใช้ในระบบนี้)
+            const parts = (expr||'').trim().split(/\s+/);
+            if (parts.length !== 5) return expr;
+            const [min, hour, dom, , dow] = parts;
+            const time = `${hour.padStart(2,'0')}:${min.padStart(2,'0')}`;
+            const dowNames = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
+            if (dom === '*' && dow === '*') return `ทุกวัน เวลา ${time}`;
+            if (dom !== '*' && dow === '*') return `วันที่ ${dom} ของทุกเดือน เวลา ${time}`;
+            if (dom === '*' && dow !== '*') return `ทุกวัน${dowNames[parseInt(dow)]||dow} เวลา ${time}`;
+            return expr;
+        }
+
+        async function loadCronSettings() {
+            const el = document.getElementById('cron-settings-list');
+            el.innerHTML = '<div class="glass rounded-3xl p-8 text-center text-slate-400">⏳ กำลังโหลด...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/cron_settings_list`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+                window._cronJobs = d.jobs || [];
+
+                if (!d.jobs?.length) {
+                    el.innerHTML = '<div class="glass rounded-3xl p-8 text-center text-slate-400">ยังไม่มีการตั้งค่า — รัน migration_rbac_audit_cron.sql ก่อน</div>';
+                    return;
+                }
+
+                el.innerHTML = '<div class="grid grid-cols-1 md:grid-cols-3 gap-4">' + d.jobs.map((j, idx) => {
+                    const info = CRON_TASK_LABELS[j.task_name] || { icon:'⏰', label:j.task_name, desc:'' };
+                    return '<div class="glass rounded-3xl p-4">' +
+                        '<div class="flex items-start justify-between mb-2">' +
+                        '<div><div class="font-bold text-slate-800 text-sm">' + info.icon + ' ' + info.label + '</div>' +
+                        '<div class="text-[11px] text-slate-400 mt-0.5">' + info.desc + '</div></div>' +
+                        '<label class="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-2">' +
+                        '<input type="checkbox" data-idx="' + idx + '" onchange="toggleCronEnabled(this.dataset.idx, this.checked)" ' + (j.enabled?'checked':'') + ' class="sr-only peer">' +
+                        '<div class="w-9 h-5 bg-slate-200 peer-checked:bg-cyan-500 rounded-full transition-all"></div>' +
+                        '<div class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-all peer-checked:translate-x-4"></div>' +
+                        '</label></div>' +
+                        '<div class="text-xs text-cyan-600 font-bold mb-2">🕐 ' + cronExprToFriendly(j.cron_expression) + '</div>' +
+                        '<div class="flex gap-1.5">' +
+                        '<button data-idx="' + idx + '" onclick="openEditCronModal(this.dataset.idx)" class="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-bold">✏️ แก้เวลา</button>' +
+                        '<button data-task="' + j.task_name + '" onclick="runCronNow(this.dataset.task)" class="flex-1 py-1.5 bg-cyan-100 hover:bg-cyan-200 text-cyan-700 rounded-lg text-xs font-bold">▶️ รันเลย</button>' +
+                        '</div></div>';
+                }).join('') + '</div>';
+                lucide.createIcons();
+            } catch(e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        async function toggleCronEnabled(idx, enabled) {
+            const job = window._cronJobs[parseInt(idx)];
+            if (!job) return;
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/cron_settings_save`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        taskName: job.task_name, cronExpression: job.cron_expression, enabled,
+                        actorUid: currentUserProfile?.userId, actorName: currentUserProfile?.displayName,
+                    })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+                showToast(enabled ? '✅ เปิดใช้งานแล้ว' : '⏸️ ปิดใช้งานแล้ว', 'success');
+                loadCronSettings();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); loadCronSettings(); }
+        }
+
+        function openEditCronModal(idx) {
+            const job = window._cronJobs[parseInt(idx)];
+            if (!job) return;
+            const parts = (job.cron_expression||'0 9 * * *').trim().split(/\s+/);
+            const [min, hour, dom, , dow] = parts;
+            let freq = 'daily';
+            if (dom !== '*' && dow === '*') freq = 'monthly';
+            else if (dom === '*' && dow !== '*') freq = 'weekly';
+
+            const info = CRON_TASK_LABELS[job.task_name] || { icon:'⏰', label: job.task_name };
+            showModal(info.icon + ' แก้เวลา — ' + info.label,
+                '<div class="space-y-3 text-left">' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">ความถี่</label>' +
+                '<select id="ce-freq" onchange="onCronFreqChange()" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white">' +
+                '<option value="daily"' + (freq==='daily'?' selected':'') + '>ทุกวัน</option>' +
+                '<option value="weekly"' + (freq==='weekly'?' selected':'') + '>รายสัปดาห์</option>' +
+                '<option value="monthly"' + (freq==='monthly'?' selected':'') + '>รายเดือน</option>' +
+                '</select></div>' +
+                '<div id="ce-dow-wrap" class="' + (freq==='weekly'?'':'hidden') + '">' +
+                '<label class="block text-xs font-bold text-slate-600 mb-1">วันในสัปดาห์</label>' +
+                '<select id="ce-dow" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white">' +
+                ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'].map((d,i) => '<option value="' + i + '"' + (String(i)===dow?' selected':'') + '>' + d + '</option>').join('') +
+                '</select></div>' +
+                '<div id="ce-dom-wrap" class="' + (freq==='monthly'?'':'hidden') + '">' +
+                '<label class="block text-xs font-bold text-slate-600 mb-1">วันที่ในเดือน (1-28)</label>' +
+                '<input id="ce-dom" type="number" min="1" max="28" value="' + (dom!=='*'?dom:'1') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">เวลา (ชั่วโมง:นาที)</label>' +
+                '<input id="ce-time" type="time" value="' + hour.padStart(2,'0') + ':' + min.padStart(2,'0') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '<div class="flex gap-2 pt-2">' +
+                '<button data-task="' + job.task_name + '" onclick="saveCronSchedule(this.dataset.task)" class="flex-1 py-2.5 bg-cyan-500 hover:bg-cyan-600 text-white rounded-2xl font-bold text-sm">💾 บันทึก</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+                '</div></div>'
+            );
+        }
+
+        function onCronFreqChange() {
+            const freq = document.getElementById('ce-freq')?.value;
+            document.getElementById('ce-dow-wrap').classList.toggle('hidden', freq !== 'weekly');
+            document.getElementById('ce-dom-wrap').classList.toggle('hidden', freq !== 'monthly');
+        }
+
+        async function saveCronSchedule(taskName) {
+            const freq = document.getElementById('ce-freq')?.value;
+            const time = document.getElementById('ce-time')?.value || '09:00';
+            const [hour, min] = time.split(':');
+
+            let cronExpression;
+            if (freq === 'daily') cronExpression = `${parseInt(min)} ${parseInt(hour)} * * *`;
+            else if (freq === 'weekly') {
+                const dow = document.getElementById('ce-dow')?.value || '1';
+                cronExpression = `${parseInt(min)} ${parseInt(hour)} * * ${dow}`;
+            } else {
+                const dom = document.getElementById('ce-dom')?.value || '1';
+                cronExpression = `${parseInt(min)} ${parseInt(hour)} ${dom} * *`;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/cron_settings_save`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        taskName, cronExpression, enabled: true,
+                        actorUid: currentUserProfile?.userId, actorName: currentUserProfile?.displayName,
+                    })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+                closeModal();
+                showToast('✅ ตั้งเวลาใหม่แล้ว: ' + cronExprToFriendly(cronExpression), 'success');
+                loadCronSettings();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+        }
+
+        async function runCronNow(taskName) {
+            showToast('⏳ กำลังรัน ' + taskName + '...', 'info');
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/cron_settings_run_now`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ taskName })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'รันไม่สำเร็จ');
+                showToast('✅ ' + (d.summary || 'รันสำเร็จ'), 'success');
+                loadCronLog();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+        }
+
+        async function loadCronLog() {
+            const el = document.getElementById('cron-log-list');
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/cron_run_log`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+                if (!d.logs?.length) {
+                    el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">ยังไม่มีประวัติการรัน — ลองกด "รันเลย" ที่การ์ดด้านบนเพื่อทดสอบ</div>';
+                    return;
+                }
+                el.innerHTML = '<div class="glass rounded-3xl overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
+                    '<thead class="bg-slate-50"><tr><th class="text-left p-3">งาน</th><th class="text-center p-3">สถานะ</th><th class="text-left p-3">ผลลัพธ์</th><th class="text-left p-3">เวลา</th></tr></thead><tbody>' +
+                    d.logs.map(l => {
+                        const dt = new Date(l.started_at).toLocaleString('th-TH', {day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+                        return '<tr class="border-t border-slate-100"><td class="p-3 font-mono text-xs text-slate-700">' + escapeHtml(l.task_name) + '</td>' +
+                            '<td class="p-3 text-center"><span class="text-[10px] font-bold px-2 py-0.5 rounded-full ' + (l.status==='success'?'bg-emerald-100 text-emerald-700':'bg-rose-100 text-rose-700') + '">' + (l.status==='success'?'✅ สำเร็จ':'❌ ล้มเหลว') + '</span></td>' +
+                            '<td class="p-3 text-xs text-slate-500">' + escapeHtml(l.result_summary||'—') + '</td>' +
+                            '<td class="p-3 text-xs text-slate-400">' + dt + '</td></tr>';
+                    }).join('') + '</tbody></table></div></div>';
+            } catch(e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+
+        // ─── 👮 RBAC: จัดการสิทธิ์ Admin ─────────────────────────────
+        const ROLE_LABELS = {
+            member: { label: 'สมาชิกทั่วไป', color: 'slate' },
+            admin: { label: 'Admin (ทั่วไป)', color: 'blue' },
+            staff: { label: 'Staff', color: 'blue' },
+            superadmin: { label: '👑 Superadmin', color: 'red' },
+            security: { label: '🛡️ รปภ.', color: 'amber' },
+            treasurer: { label: '💰 การเงิน', color: 'emerald' },
+        };
+
+        async function renderAdminRolesView() {
+            document.getElementById('content-area').innerHTML =
+                '<div class="slide-in p-2">' +
+                '<div class="mb-6 flex justify-between items-end flex-wrap gap-3">' +
+                '<div><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
+                '<span class="bg-red-100 text-red-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="shield" class="w-8 h-8"></i></span>' +
+                'จัดการสิทธิ์ Admin</h1>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">กำหนดระดับสิทธิ์ให้แต่ละคน · ทุกการเปลี่ยนแปลงถูกบันทึกใน Audit Log</p></div>' +
+                '<button onclick="openAddAdminModal()" class="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="user-plus" class="w-4 h-4"></i> เพิ่ม Admin</button>' +
+                '</div>' +
+                '<div id="admin-roles-list"></div></div>';
+            lucide.createIcons();
+            await loadAdminRolesList();
+        }
+
+        async function loadAdminRolesList() {
+            const el = document.getElementById('admin-roles-list');
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/admin_users_list`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+                window._adminList = d.admins || [];
+                if (!d.admins?.length) {
+                    el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">ยังไม่มี admin ในระบบ</div>';
+                    return;
+                }
+                el.innerHTML = '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">' + d.admins.map((a, idx) => {
+                    const roleInfo = ROLE_LABELS[a.role] || { label: a.role, color: 'slate' };
+                    return '<div class="glass rounded-2xl p-4 flex items-center gap-3">' +
+                        (a.pictureUrl ? '<img src="' + escapeHtml(a.pictureUrl) + '" class="w-10 h-10 rounded-full flex-shrink-0">' : '<div class="w-10 h-10 rounded-full bg-slate-200 flex-shrink-0"></div>') +
+                        '<div class="flex-1 min-w-0"><div class="font-bold text-slate-800 truncate">' + escapeHtml(a.displayName||'ไม่มีชื่อ') + '</div>' +
+                        '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-' + roleInfo.color + '-100 text-' + roleInfo.color + '-700">' + roleInfo.label + '</span></div>' +
+                        '<select data-idx="' + idx + '" onchange="changeAdminRole(this.dataset.idx, this.value)" class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white flex-shrink-0">' +
+                        Object.entries(ROLE_LABELS).map(([k,v]) => '<option value="' + k + '"' + (k===a.role?' selected':'') + '>' + v.label + '</option>').join('') +
+                        '</select></div>';
+                }).join('') + '</div>';
+                lucide.createIcons();
+            } catch(e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        async function changeAdminRole(idx, newRole) {
+            const admin = window._adminList[parseInt(idx)];
+            if (!admin) return;
+            showConfirmModal('⚠️ เปลี่ยนสิทธิ์ "' + escapeHtml(admin.displayName||'') + '"?', 'เปลี่ยนเป็น: ' + (ROLE_LABELS[newRole]?.label||newRole), async () => {
+                try {
+                    const res = await fetch(`${API_BASE_URL}/api/admin/audience/admin_set_role`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            userId: admin.userId, role: newRole,
+                            actorUid: currentUserProfile?.userId, actorName: currentUserProfile?.displayName,
+                        })
+                    });
+                    const d = await res.json();
+                    if (!res.ok) throw new Error(d.error || 'เปลี่ยนสิทธิ์ไม่สำเร็จ');
+                    showToast('✅ เปลี่ยนสิทธิ์แล้ว', 'success');
+                    loadAdminRolesList();
+                } catch(e) { showToast('❌ ' + e.message, 'error'); loadAdminRolesList(); }
+            });
+        }
+
+        function openAddAdminModal() {
+            showModal('👤 เพิ่ม Admin ใหม่',
+                '<div class="space-y-3 text-left">' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">ค้นหาสมาชิก (ชื่อหรือ LINE UID)</label>' +
+                '<input id="add-admin-search" oninput="searchUserForAdmin(this.value)" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="พิมพ์ชื่อสมาชิกที่ต้องการ..."></div>' +
+                '<div id="add-admin-results" class="space-y-1.5 max-h-64 overflow-y-auto"></div>' +
+                '</div>'
+            );
+        }
+
+        let addAdminDebounce = null;
+        function searchUserForAdmin(q) {
+            clearTimeout(addAdminDebounce);
+            const el = document.getElementById('add-admin-results');
+            if (!q || q.trim().length < 2) { el.innerHTML = ''; return; }
+            addAdminDebounce = setTimeout(async () => {
+                el.innerHTML = '<div class="text-center text-xs text-slate-400 py-2">⏳ ค้นหา...</div>';
+                try {
+                    const res = await fetch(`${API_BASE_URL}/api/admin/audience/admin_search_user_for_role`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q.trim() })
+                    });
+                    const d = await res.json();
+                    if (!d.users?.length) { el.innerHTML = '<div class="text-center text-xs text-slate-400 py-2">ไม่พบผู้ใช้</div>'; return; }
+                    el.innerHTML = d.users.map(u =>
+                        '<div class="flex items-center gap-2 p-2 bg-slate-50 rounded-xl">' +
+                        (u.pictureUrl ? '<img src="' + escapeHtml(u.pictureUrl) + '" class="w-8 h-8 rounded-full">' : '<div class="w-8 h-8 rounded-full bg-slate-200"></div>') +
+                        '<span class="text-sm flex-1 truncate">' + escapeHtml(u.displayName||'ไม่มีชื่อ') + '</span>' +
+                        '<button data-uid="' + escapeHtml(u.userId) + '" data-name="' + escapeHtml(u.displayName||'').replace(/"/g,'&quot;') + '" onclick="setAsAdmin(this.dataset.uid,this.dataset.name)" class="px-2.5 py-1 bg-red-500 text-white rounded-lg text-xs font-bold">ตั้งเป็น Admin</button>' +
+                        '</div>'
+                    ).join('');
+                } catch(e) { el.innerHTML = '<div class="text-center text-xs text-rose-400 py-2">ค้นหาล้มเหลว</div>'; }
+            }, 350);
+        }
+
+        async function setAsAdmin(userId, name) {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/admin_set_role`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        userId, role: 'staff',
+                        actorUid: currentUserProfile?.userId, actorName: currentUserProfile?.displayName,
+                    })
+                });
+                if (!res.ok) throw new Error('ตั้งสิทธิ์ไม่สำเร็จ');
+                closeModal();
+                showToast('✅ ตั้ง "' + name + '" เป็น Admin แล้ว', 'success');
+                loadAdminRolesList();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+        }
+
+        // ─── 📝 AUDIT LOG ─────────────────────────────────────────────
+        async function renderAuditLogView() {
+            document.getElementById('content-area').innerHTML =
+                '<div class="slide-in p-2">' +
+                '<div class="mb-6"><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
+                '<span class="bg-slate-100 text-slate-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="file-clock" class="w-8 h-8"></i></span>' +
+                'Audit Log</h1>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">บันทึกทุก action สำคัญของ admin — ใครทำอะไร เมื่อไหร่</p></div>' +
+                '<div class="glass rounded-3xl p-4 shadow-sm mb-4">' +
+                '<input id="al-search" placeholder="🔍 ค้นหาชื่อ admin..." oninput="onAlSearch(this.value)" class="w-full rounded-2xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-slate-300 outline-none"></div>' +
+                '<div id="al-list"></div></div>';
+            lucide.createIcons();
+            await loadAuditLog();
+        }
+
+        let alSearchDebounce = null;
+        function onAlSearch(v) {
+            clearTimeout(alSearchDebounce);
+            alSearchDebounce = setTimeout(() => loadAuditLog(v.trim()), 350);
+        }
+
+        async function loadAuditLog(actor) {
+            const el = document.getElementById('al-list');
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div>';
+            try {
+                const params = new URLSearchParams();
+                if (actor) params.set('actor', actor);
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/audit_log_list?${params}`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+                if (!d.logs?.length) {
+                    el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">ยังไม่มีประวัติ</div>';
+                    return;
+                }
+                const actionIcon = { delete:'🗑️', update_role:'👮', send_escalation:'⚖️', save_settings:'⚙️' };
+                el.innerHTML = '<div class="glass rounded-3xl overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
+                    '<thead class="bg-slate-50"><tr><th class="text-left p-3">ผู้ทำ</th><th class="text-left p-3">Action</th><th class="text-left p-3">เป้าหมาย</th><th class="text-left p-3">รายละเอียด</th><th class="text-left p-3">เวลา</th></tr></thead><tbody>' +
+                    d.logs.map(l => {
+                        const dt = new Date(l.created_at).toLocaleString('th-TH', {day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+                        return '<tr class="border-t border-slate-100">' +
+                            '<td class="p-3 font-bold text-slate-700">' + escapeHtml(l.actor_name||'ไม่ทราบ') + '</td>' +
+                            '<td class="p-3 text-xs">' + (actionIcon[l.action]||'📌') + ' ' + escapeHtml(l.action) + '</td>' +
+                            '<td class="p-3 text-xs text-slate-500">' + escapeHtml(l.target_table||'—') + (l.target_id ? ' #' + escapeHtml(String(l.target_id).slice(0,8)) : '') + '</td>' +
+                            '<td class="p-3 text-xs text-slate-400 max-w-xs truncate">' + escapeHtml(JSON.stringify(l.detail||{})) + '</td>' +
+                            '<td class="p-3 text-xs text-slate-400">' + dt + '</td></tr>';
+                    }).join('') + '</tbody></table></div></div>';
+            } catch(e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
         async function renderTrashBinView() {
             document.getElementById('content-area').innerHTML =
                 '<div class="slide-in p-2">' +
@@ -2024,7 +2404,11 @@
         async function softDeleteViaTrash(table, id, label, idColumn) {
             const res = await fetch(`${API_BASE_URL}/api/admin/audience/trash_delete`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ table, id, idColumn: idColumn || 'id', label })
+                body: JSON.stringify({
+                    table, id, idColumn: idColumn || 'id', label,
+                    actorUid: currentUserProfile?.userId || null,
+                    actorName: currentUserProfile?.displayName || null,
+                })
             });
             const d = await res.json();
             if (!res.ok) throw new Error(d.error || 'ลบไม่สำเร็จ');
@@ -2088,6 +2472,9 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'landRegistry') await renderLandRegistryView();
             else if (viewName === 'tenantRegistry') await renderTenantRegistryView();
             else if (viewName === 'villageFinance') await renderVillageFinanceView();
+            else if (viewName === 'cronMonitor') await renderCronMonitorView();
+            else if (viewName === 'adminRoles') await renderAdminRolesView();
+            else if (viewName === 'auditLog') await renderAuditLogView();
             else if (viewName === 'dataReconciliation') await renderDataReconciliationView();
             else if (viewName === 'dataCompleteness') await renderDataCompletenessView();
             else if (viewName === 'carManagement') await renderCarManagementView();
