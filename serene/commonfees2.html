@@ -1478,6 +1478,7 @@
                                         <th class="px-4 py-3 text-center cursor-pointer hover:bg-slate-200 select-none" onclick="sortKeycardTable('overdueMonths')">
                                             ค้างชำระ <span id="sortIcon_overdueMonths" class="text-slate-400">↕</span>
                                         </th>
+                                        <th class="px-4 py-3 text-left">รหัสการ์ด</th>
                                         <th class="px-4 py-3 text-center cursor-pointer hover:bg-slate-200 select-none" onclick="sortKeycardTable('statusKey')">
                                             สถานะคีย์การ์ด <span id="sortIcon_statusKey" class="text-slate-400">↕</span>
                                         </th>
@@ -1489,7 +1490,7 @@
                                     </tr>
                                 </thead>
                                 <tbody id="keycardTableBody">
-                                    <tr><td colspan="8" class="px-4 py-10 text-center text-slate-400">กำลังโหลด...</td></tr>
+                                    <tr><td colspan="9" class="px-4 py-10 text-center text-slate-400">กำลังโหลด...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -1515,6 +1516,10 @@
                                 <div class="flex items-center gap-2 mt-2">
                                     <span class="text-xs text-slate-500">ค้างชำระ:</span>
                                     <span class="font-bold text-red-600" id="kcModalOverdue"></span>
+                                </div>
+                                <div class="mt-2 pt-2 border-t border-slate-200" id="kcModalCardsWrap">
+                                    <div class="text-xs text-slate-500 mb-1">รหัสการ์ด:</div>
+                                    <div id="kcModalCards" class="space-y-1"></div>
                                 </div>
                             </div>
 
@@ -6302,6 +6307,11 @@ function getKeycardStatus(houseNo) {
     return blocked || rows[0];
 }
 
+function getAllKeycardsForHouse(houseNo) {
+    // ดึงทุกการ์ดของบ้านนี้ (บ้านหนึ่งอาจมีหลายใบ/หลายสมาชิก)
+    return keycardData.filter(r => r.house_number === houseNo);
+}
+
 function getOverdueMonthsForHouse(houseNo) {
     // นับเดือนค้างชำระสะสมจากทุกปีที่มีในระบบ
     const houseAllYears = allData.filter(d => d.house_numbe === houseNo);
@@ -6330,6 +6340,7 @@ function renderKeycardTable() {
         .filter(h => { if(seen.has(h.house_numbe)) return false; seen.add(h.house_numbe); return true; })
         .map(h => {
             const rfid = getKeycardStatus(h.house_numbe);
+            const allCards = getAllKeycardsForHouse(h.house_numbe);
             const overdueMonths = getOverdueMonthsForHouse(h.house_numbe);
             const hasKeycard = !!rfid;
             const isBlocked = rfid && (rfid.is_active === false || rfid.is_active === 'false' || rfid.status === 'blocked');
@@ -6339,7 +6350,7 @@ function renderKeycardTable() {
             else if (isBlocked) statusKey = 'blocked';
             else if (isSuggest) statusKey = 'suggest';
             else statusKey = 'active';
-            return { houseNo:h.house_numbe, owner:h.owner_name||'-', soi:h.soi||'-', overdueMonths, rfid, hasKeycard,
+            return { houseNo:h.house_numbe, owner:h.owner_name||'-', soi:h.soi||'-', overdueMonths, rfid, hasKeycard, allCards,
                 statusKey,
                 reason: rfid?.reason||rfid?.block_reason||'', updatedAt: rfid?.updated_at||rfid?.blocked_at||null };
         });
@@ -6350,7 +6361,8 @@ function renderKeycardTable() {
 
     // filter
     rows = rows.filter(r => {
-        const matchQ   = !q || r.houseNo.toLowerCase().includes(q)||(r.owner||'').toLowerCase().includes(q)||(r.soi||'').includes(q);
+        const cardMatch = r.allCards.some(c => (c.front_number||'').includes(q) || (c.back_number||'').includes(q));
+        const matchQ   = !q || r.houseNo.toLowerCase().includes(q)||(r.owner||'').toLowerCase().includes(q)||(r.soi||'').includes(q)||cardMatch;
         const matchSoi = !filterSoi || r.soi.trim()===filterSoi;
         const matchSt  = filterSt==='all'||r.statusKey===filterSt;
         return matchQ&&matchSoi&&matchSt;
@@ -6380,7 +6392,7 @@ function renderKeycardTable() {
 
     if (countEl) countEl.textContent = `แสดง ${rows.length} หลัง`;
 
-    if (!rows.length) { tbody.innerHTML='<tr><td colspan="8" class="px-4 py-10 text-center text-slate-400">ไม่พบบ้านที่ตรงกับเงื่อนไข</td></tr>'; return; }
+    if (!rows.length) { tbody.innerHTML='<tr><td colspan="9" class="px-4 py-10 text-center text-slate-400">ไม่พบบ้านที่ตรงกับเงื่อนไข</td></tr>'; return; }
 
     const badge = {
         active:    '<span class="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-bold">✅ ใช้งานได้</span>',
@@ -6416,6 +6428,15 @@ function renderKeycardTable() {
             <td class="px-4 py-2.5 text-center text-sm">ซอย ${r.soi}</td>
             <td class="px-4 py-2.5 text-center">
                 ${r.overdueMonths>0?`<span class="font-bold ${r.overdueMonths>=6?'text-red-600':r.overdueMonths>=3?'text-orange-600':'text-amber-600'}">${r.overdueMonths} เดือน</span>`:'<span class="text-green-600 text-xs">ไม่มีค้าง</span>'}
+            </td>
+            <td class="px-4 py-2.5 text-xs">
+                ${r.allCards.length === 0
+                    ? '<span class="text-slate-300">-</span>'
+                    : r.allCards.map(c => `
+                        <div class="flex items-center gap-1 mb-0.5" title="ผู้ถือ: ${c.holder_name||'-'}">
+                            <span class="font-mono text-slate-600">${c.front_number||'-'}</span>
+                            ${c.back_number ? `<span class="text-slate-300">/</span><span class="font-mono text-slate-400">${c.back_number}</span>` : ''}
+                        </div>`).join('')}
             </td>
             <td class="px-4 py-2.5 text-center">${badge[r.statusKey]}</td>
             <td class="px-4 py-2.5 text-xs text-slate-500 max-w-[140px] truncate" title="${r.reason}">${r.reason||'-'}</td>
@@ -6479,6 +6500,19 @@ function openKeycardModal(houseNo, preSelectStatus) {
     document.getElementById('kcModalHouseNoDisplay').textContent = `บ้านเลขที่ ${houseNo} — ซอย ${house?.soi||'-'}`;
     document.getElementById('kcModalOwner').textContent = house?.owner_name||'ไม่ระบุเจ้าของ';
     document.getElementById('kcModalOverdue').textContent = overdueMonths>0?`${overdueMonths} เดือน (฿${(overdueMonths*300).toLocaleString()})`:'ไม่มียอดค้าง';
+
+    // แสดงรหัสการ์ดทั้งหมดของบ้านนี้
+    const allCards = getAllKeycardsForHouse(houseNo);
+    const cardsEl = document.getElementById('kcModalCards');
+    if (cardsEl) {
+        cardsEl.innerHTML = allCards.length === 0
+            ? '<div class="text-xs text-slate-400">ไม่มีข้อมูลการ์ด</div>'
+            : allCards.map(c => `
+                <div class="flex items-center justify-between bg-white border border-slate-200 rounded px-2 py-1 text-xs">
+                    <span class="font-mono text-slate-700">${c.front_number||'-'}${c.back_number ? ' / '+c.back_number : ''}</span>
+                    <span class="text-slate-400">${c.holder_name||'-'}</span>
+                </div>`).join('');
+    }
 
     // reset radio borders
     ['kcOptActive','kcOptBlocked'].forEach(id => {
@@ -6631,18 +6665,20 @@ function exportKeycardCSV() {
         .filter(h=>{if(seen.has(h.house_numbe))return false;seen.add(h.house_numbe);return true;})
         .map(h => {
             const rfid = getKeycardStatus(h.house_numbe);
+            const allCards = getAllKeycardsForHouse(h.house_numbe);
             const overdueMonths = getOverdueMonthsForHouse(h.house_numbe);
             const hasKeycard = !!rfid;
             const isBlocked = rfid && (rfid.is_active===false||rfid.is_active==='false'||rfid.status==='blocked');
             const statusLabel = !hasKeycard ? 'ไม่มีคีย์การ์ด' : isBlocked ? 'blocked' : 'active';
+            const cardNumbers = allCards.map(c => c.front_number).filter(Boolean).join('; ');
             return [
                 h.house_numbe || '', h.owner_name || '', h.soi || '',
-                overdueMonths, statusLabel, rfid?.reason || '',
+                overdueMonths, statusLabel, rfid?.reason || '', cardNumbers,
                 rfid?.updated_at ? new Date(rfid.updated_at).toLocaleDateString('th-TH') : ''
             ];
         });
 
-    const headers = ['house_number','เจ้าของ','ซอย','เดือนค้าง','status','reason','updated_at'];
+    const headers = ['house_number','เจ้าของ','ซอย','เดือนค้าง','status','reason','รหัสการ์ด','updated_at'];
     const csvRows = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(','));
     const csv = '\ufeff' + headers.join(',') + '\n' + csvRows.join('\n');
     downloadCSV(csv, `สถานะคีย์การ์ด_${new Date().toISOString().slice(0,10)}.csv`);
@@ -7543,6 +7579,7 @@ window.closeKeycardModal = closeKeycardModal;
 window.saveKeycardStatus = saveKeycardStatus;
 window.autoSuggestBlock = autoSuggestBlock;
 window.exportKeycardCSV = exportKeycardCSV;
+window.getAllKeycardsForHouse = getAllKeycardsForHouse;
 window.handleKeycardImportFile = handleKeycardImportFile;
 window.closeKcImportModal = closeKcImportModal;
 window.confirmKeycardImport = confirmKeycardImport;
