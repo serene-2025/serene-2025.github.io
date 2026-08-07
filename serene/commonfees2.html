@@ -5165,25 +5165,20 @@ async function purgeRecycleItem(id) {
 // ==========================================
 async function writeAuditLog(action, target, detail) {
     try {
-        // ส่งเฉพาะ column พื้นฐานที่ควรมี — เพิ่ม admin_name/username ได้ถ้าตาราง audit_logs รองรับ
-        const payload = {
-            action,
-            target: target || null,
-            detail: detail || null,
-            created_at: new Date().toISOString()
-        };
-        // ถ้า currentUser มีข้อมูลให้แนบไปด้วย (Supabase จะ ignore ถ้า column ไม่มี ถ้าเปิด RLS แบบ relaxed)
-        if (currentUser?.name)  payload.admin_name = currentUser.name;
-        if (currentUser?.user)  payload.username   = currentUser.user;
-
+        // ส่งเฉพาะ column พื้นฐาน — ไม่ส่ง admin_name/username เพื่อหลีกเลี่ยง PGRST204
         await callSupabaseRest('audit_logs', {
             method: 'POST',
             headers: { 'Prefer': 'return=minimal' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({
+                action,
+                target:     target || null,
+                detail:     detail || null,
+                created_at: new Date().toISOString()
+            })
         });
     } catch (e) {
-        // ไม่แสดง popup ให้ user เพราะ audit log เป็น side-effect — แค่ log ไว้
-        console.warn('writeAuditLog skipped:', e.message);
+        // ไม่แสดง error ให้ user เห็น — audit log เป็น side effect เท่านั้น
+        console.debug('writeAuditLog skipped:', e.message);
     }
 }
 
@@ -5566,7 +5561,8 @@ let landRegistry = {}; // house_no → record (cache)
 
 async function fetchLandRegistry() {
     try {
-        const rows = await callSupabaseRest('land_registry?select=*');
+        // ดึงทีละ 500 รายการ (Supabase default limit = 1000 แต่บางตั้งค่า limit ต่ำกว่า)
+        const rows = await callSupabaseRest('land_registry?select=*&limit=1000&offset=0');
         landRegistry = {};
         (rows || []).forEach(r => {
             const key = (r.house_no || '').trim();
@@ -5575,7 +5571,19 @@ async function fetchLandRegistry() {
         console.log(`✅ โหลด land_registry ${Object.keys(landRegistry).length} รายการ`);
     } catch (e) {
         console.warn('โหลด land_registry ไม่ได้:', e.message);
-        landRegistry = {};
+        // ลอง query แบบ anon โดยไม่มี RLS filter
+        try {
+            const rows2 = await callSupabaseRest('land_registry?select=id,house_no,full_name,soi,house_type,title_deed_number,land_parcel_number,convert_no,map_sheet,transfer_date&limit=1000');
+            landRegistry = {};
+            (rows2 || []).forEach(r => {
+                const key = (r.house_no || '').trim();
+                if (key) landRegistry[key] = r;
+            });
+            console.log(`✅ โหลด land_registry (ลอง 2) ${Object.keys(landRegistry).length} รายการ`);
+        } catch (e2) {
+            console.warn('โหลด land_registry ครั้งที่ 2 ไม่ได้:', e2.message);
+            landRegistry = {};
+        }
     }
 }
 
@@ -6681,9 +6689,23 @@ function loadHouseManagement() {
 }
 
 function _loadHouseManagementUI() {
+    const tbody = document.getElementById('houseTableBody');
+
+    if (Object.keys(landRegistry).length === 0) {
+        // โหลดไม่ได้ — แสดงปุ่ม retry
+        if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="px-4 py-10 text-center">
+            <div class="text-slate-500 mb-3">⚠️ โหลดข้อมูล land_registry ไม่สำเร็จ</div>
+            <button onclick="fetchLandRegistry().then(()=>_loadHouseManagementUI())"
+                class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">
+                🔄 ลองใหม่
+            </button>
+            <div class="text-xs text-slate-400 mt-2">ตรวจสอบว่าตาราง land_registry มี RLS Policy อนุญาต anon key read</div>
+        </td></tr>`;
+        return;
+    }
+
     const soiSelect = document.getElementById('houseSoiFilter');
     if (soiSelect) {
-        // ดึงซอยจาก land_registry เป็นหลัก
         const sois = [...new Set(
             Object.values(landRegistry).map(r => (r.soi || '').replace('ซอย','').trim()).filter(Boolean)
         )].sort((a,b) => { const na=parseInt(a),nb=parseInt(b); return isNaN(na)||isNaN(nb)?a.localeCompare(b,'th'):na-nb; });
@@ -7247,6 +7269,7 @@ window.fetchLandRegistry = fetchLandRegistry;
 window.renderMismatchTable = renderMismatchTable;
 window.exportMismatchCSV = exportMismatchCSV;
 window.loadHouseManagement = loadHouseManagement;
+window._loadHouseManagementUI = _loadHouseManagementUI;
 window.loadKeycardView = loadKeycardView;
 window.renderKeycardTable = renderKeycardTable;
 window.sortKeycardTable = sortKeycardTable;
