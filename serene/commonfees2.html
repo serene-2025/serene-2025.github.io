@@ -6483,11 +6483,6 @@ async function saveKeycardStatus() {
             body: JSON.stringify(patchFields)
         });
 
-        await writeAuditLog(
-            isBlock ? 'block_keycard' : 'unblock_keycard',
-            `rfid:${houseNo}`,
-            `${isBlock ? 'บล็อก' : 'เปิด'}คีย์การ์ด บ้าน ${houseNo}${reason ? ` — ${reason}` : ''}`
-        );
         pushNotification(
             isBlock ? 'warning' : 'success',
             isBlock ? '🔴 บล็อกคีย์การ์ด' : '✅ เปิดคีย์การ์ด',
@@ -6500,6 +6495,13 @@ async function saveKeycardStatus() {
     } catch (err) {
         Swal.fire('ผิดพลาด', err.message, 'error');
     }
+
+    // บันทึก audit log แยกต่างหาก — ไม่ให้ error ของ audit_logs กระทบการทำงานหลัก
+    writeAuditLog(
+        isBlock ? 'block_keycard' : 'unblock_keycard',
+        `rfid:${houseNo}`,
+        `${isBlock ? 'บล็อก' : 'เปิด'}คีย์การ์ด บ้าน ${houseNo}${reason ? ` — ${reason}` : ''}`
+    ).catch(() => {});
 }
 
 async function autoSuggestBlock() {
@@ -6535,8 +6537,9 @@ async function autoSuggestBlock() {
             };
             // PATCH ทุก row ของบ้านนี้ (บ้านหนึ่งมีหลายการ์ด)
             await callSupabaseRest(`rfid?house_number=eq.${encodeURIComponent(h.houseNo)}`, {method:'PATCH', headers:{'Prefer':'return=minimal'}, body:JSON.stringify(patchFields)});
-            await writeAuditLog('block_keycard',`rfid:${h.houseNo}`,`Auto-block ค้าง ${h.overdueMonths} เดือน`);
             success++;
+            // audit log — ไม่ await เพื่อไม่ให้ block loop
+            writeAuditLog('block_keycard',`rfid:${h.houseNo}`,`Auto-block ค้าง ${h.overdueMonths} เดือน`).catch(()=>{});
         } catch(e) { failed++; }
         Swal.update({title:`กำลังบล็อก ${i+1} / ${suggest.length}`});
     }
