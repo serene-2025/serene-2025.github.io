@@ -1405,11 +1405,20 @@
                                 </h2>
                                 <p class="text-xs text-slate-500 mt-0.5">บล็อก/เปิดใช้งานคีย์การ์ดแต่ละบ้าน — ระบบแนะนำบล็อกอัตโนมัติสำหรับบ้านที่ค้าง 3+ เดือน</p>
                             </div>
-                            <div class="flex items-center gap-2">
+                            <div class="flex items-center gap-2 flex-wrap">
                                 <button onclick="autoSuggestBlock()" class="px-3 py-2 bg-orange-100 hover:bg-orange-600 hover:text-white text-orange-700 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors">
                                     <i data-lucide="zap" class="w-4 h-4"></i>
                                     แนะนำบล็อกอัตโนมัติ
                                 </button>
+                                <button onclick="exportKeycardCSV()" class="px-3 py-2 bg-emerald-100 hover:bg-emerald-600 hover:text-white text-emerald-700 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors">
+                                    <i data-lucide="download" class="w-4 h-4"></i>
+                                    Export CSV
+                                </button>
+                                <button onclick="document.getElementById('kcImportFileInput').click()" class="px-3 py-2 bg-indigo-100 hover:bg-indigo-600 hover:text-white text-indigo-700 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors">
+                                    <i data-lucide="upload" class="w-4 h-4"></i>
+                                    Import CSV
+                                </button>
+                                <input type="file" id="kcImportFileInput" accept=".csv" class="hidden" onchange="handleKeycardImportFile(event)">
                                 <button onclick="loadKeycardView()" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-bold flex items-center gap-2">
                                     <i data-lucide="refresh-cw" class="w-4 h-4"></i>
                                     รีเฟรช
@@ -1552,6 +1561,46 @@
                                 <span id="kcSaveBtnLabel">บันทึกสถานะ</span>
                             </button>
                             <button onclick="closeKeycardModal()" class="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm">ยกเลิก</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal: Import CSV Preview -->
+                <div id="kcImportModal" class="fixed inset-0 bg-black/50 z-[998] hidden items-center justify-center p-4">
+                    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col">
+                        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+                            <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                                <i data-lucide="upload" class="w-4 h-4 text-indigo-600"></i>
+                                นำเข้าสถานะคีย์การ์ดจาก CSV
+                            </h3>
+                            <button onclick="closeKcImportModal()" class="text-slate-400 hover:text-red-500 text-2xl font-bold leading-none">×</button>
+                        </div>
+                        <div class="px-6 py-4 flex-1 overflow-y-auto">
+                            <div class="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 text-xs text-amber-700 mb-3">
+                                <i data-lucide="info" class="w-3.5 h-3.5 inline-block mr-1"></i>
+                                รูปแบบไฟล์: คอลัมน์ <code class="bg-amber-100 px-1 rounded">house_number</code>, <code class="bg-amber-100 px-1 rounded">status</code> (active/blocked), <code class="bg-amber-100 px-1 rounded">reason</code> (ไม่บังคับ)
+                            </div>
+                            <div id="kcImportSummary" class="grid grid-cols-3 gap-2 mb-3"></div>
+                            <div class="overflow-x-auto border border-slate-200 rounded-lg">
+                                <table class="w-full text-xs">
+                                    <thead class="bg-slate-100">
+                                        <tr>
+                                            <th class="px-3 py-2 text-left">บ้านเลขที่</th>
+                                            <th class="px-3 py-2 text-center">สถานะที่จะตั้ง</th>
+                                            <th class="px-3 py-2 text-left">เหตุผล</th>
+                                            <th class="px-3 py-2 text-center">ผล</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="kcImportPreviewBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="flex gap-3 px-6 py-4 border-t border-slate-100">
+                            <button id="kcImportConfirmBtn" onclick="confirmKeycardImport()" class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2">
+                                <i data-lucide="check" class="w-4 h-4"></i>
+                                ยืนยันนำเข้า
+                            </button>
+                            <button onclick="closeKcImportModal()" class="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm">ยกเลิก</button>
                         </div>
                     </div>
                 </div>
@@ -5179,6 +5228,7 @@ async function writeAuditLog(action, target, detail) {
         });
     } catch (e) {
         // ไม่แสดง error ให้ user เห็น — audit log เป็น side effect เท่านั้น
+        // แต่ log รายละเอียดเต็มไว้ debug ได้ (ตาราง audit_logs อาจยังไม่มี หรือ RLS บล็อก)
         console.debug('writeAuditLog skipped:', e.message);
     }
 }
@@ -6573,6 +6623,199 @@ async function autoSuggestBlock() {
 }
 
 // ================================================================
+// 📤 EXPORT CSV — สถานะคีย์การ์ด
+// ================================================================
+function exportKeycardCSV() {
+    const seen = new Set();
+    const rows = allData.sort((a,b)=>(b.year||0)-(a.year||0))
+        .filter(h=>{if(seen.has(h.house_numbe))return false;seen.add(h.house_numbe);return true;})
+        .map(h => {
+            const rfid = getKeycardStatus(h.house_numbe);
+            const overdueMonths = getOverdueMonthsForHouse(h.house_numbe);
+            const hasKeycard = !!rfid;
+            const isBlocked = rfid && (rfid.is_active===false||rfid.is_active==='false'||rfid.status==='blocked');
+            const statusLabel = !hasKeycard ? 'ไม่มีคีย์การ์ด' : isBlocked ? 'blocked' : 'active';
+            return [
+                h.house_numbe || '', h.owner_name || '', h.soi || '',
+                overdueMonths, statusLabel, rfid?.reason || '',
+                rfid?.updated_at ? new Date(rfid.updated_at).toLocaleDateString('th-TH') : ''
+            ];
+        });
+
+    const headers = ['house_number','เจ้าของ','ซอย','เดือนค้าง','status','reason','updated_at'];
+    const csvRows = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(','));
+    const csv = '\ufeff' + headers.join(',') + '\n' + csvRows.join('\n');
+    downloadCSV(csv, `สถานะคีย์การ์ด_${new Date().toISOString().slice(0,10)}.csv`);
+}
+
+// ================================================================
+// 📥 IMPORT CSV — นำเข้าสถานะคีย์การ์ดจากไฟล์
+// ================================================================
+let kcImportRows = []; // เก็บข้อมูลที่ parse แล้ว รอ confirm
+
+function parseCSVLine(line) {
+    // parser CSV แบบง่าย รองรับ quote และ comma ใน quote
+    const result = [];
+    let cur = '', inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (c === '"') {
+            if (inQuotes && line[i+1] === '"') { cur += '"'; i++; }
+            else inQuotes = !inQuotes;
+        } else if (c === ',' && !inQuotes) {
+            result.push(cur.trim()); cur = '';
+        } else {
+            cur += c;
+        }
+    }
+    result.push(cur.trim());
+    return result;
+}
+
+function handleKeycardImportFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            // ตัด BOM ออกถ้ามี
+            let text = e.target.result.replace(/^\uFEFF/, '');
+            const lines = text.split(/\r?\n/).filter(l => l.trim());
+            if (lines.length < 2) {
+                Swal.fire('ไฟล์ว่างเปล่า', 'ไม่พบข้อมูลในไฟล์ CSV', 'warning');
+                return;
+            }
+
+            const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().trim());
+            const idxHouse  = headers.findIndex(h => h.includes('house'));
+            const idxStatus = headers.findIndex(h => h.includes('status'));
+            const idxReason = headers.findIndex(h => h.includes('reason'));
+
+            if (idxHouse === -1 || idxStatus === -1) {
+                Swal.fire('รูปแบบไฟล์ไม่ถูกต้อง', 'ต้องมีคอลัมน์ house_number และ status', 'error');
+                return;
+            }
+
+            kcImportRows = lines.slice(1).map(line => {
+                const cols = parseCSVLine(line);
+                const houseNo = (cols[idxHouse] || '').trim();
+                let statusRaw = (cols[idxStatus] || '').trim().toLowerCase();
+                const reason  = idxReason >= 0 ? (cols[idxReason] || '').trim() : '';
+
+                // normalize status
+                let status = null;
+                if (['blocked','บล็อก','ถูกบล็อก','block'].includes(statusRaw)) status = 'blocked';
+                else if (['active','ใช้งานได้','เปิด','open'].includes(statusRaw)) status = 'active';
+
+                const rfid = getKeycardStatus(houseNo);
+                const hasKeycard = !!rfid;
+
+                return { houseNo, status, statusRaw, reason, hasKeycard, valid: !!(houseNo && status && hasKeycard) };
+            }).filter(r => r.houseNo);
+
+            renderKcImportPreview();
+            document.getElementById('kcImportModal').classList.remove('hidden');
+            document.getElementById('kcImportModal').classList.add('flex');
+            lucide.createIcons();
+        } catch (err) {
+            Swal.fire('อ่านไฟล์ไม่สำเร็จ', err.message, 'error');
+        }
+    };
+    reader.readAsText(file, 'UTF-8');
+    event.target.value = ''; // reset input เพื่อเลือกไฟล์เดิมซ้ำได้
+}
+
+function renderKcImportPreview() {
+    const valid   = kcImportRows.filter(r => r.valid).length;
+    const invalid = kcImportRows.length - valid;
+    const noKeycard = kcImportRows.filter(r => !r.hasKeycard).length;
+
+    document.getElementById('kcImportSummary').innerHTML = `
+        <div class="bg-green-50 border border-green-100 rounded-lg p-2 text-center">
+            <div class="text-[10px] text-green-600 font-bold">พร้อมนำเข้า</div>
+            <div class="text-lg font-black text-green-700">${valid}</div>
+        </div>
+        <div class="bg-red-50 border border-red-100 rounded-lg p-2 text-center">
+            <div class="text-[10px] text-red-600 font-bold">ข้อมูลผิดพลาด</div>
+            <div class="text-lg font-black text-red-700">${invalid}</div>
+        </div>
+        <div class="bg-slate-50 border border-slate-200 rounded-lg p-2 text-center">
+            <div class="text-[10px] text-slate-500 font-bold">ไม่มีคีย์การ์ด</div>
+            <div class="text-lg font-black text-slate-600">${noKeycard}</div>
+        </div>`;
+
+    document.getElementById('kcImportPreviewBody').innerHTML = kcImportRows.map(r => {
+        let resultBadge;
+        if (!r.hasKeycard) resultBadge = '<span class="text-slate-400">📭 ไม่มีคีย์การ์ด</span>';
+        else if (!r.status) resultBadge = `<span class="text-red-600">❌ status ไม่ถูกต้อง ("${r.statusRaw}")</span>`;
+        else resultBadge = '<span class="text-green-600">✅ พร้อมนำเข้า</span>';
+
+        return `<tr class="border-b border-slate-100 ${r.valid?'':'bg-red-50/40'}">
+            <td class="px-3 py-1.5 font-bold">${r.houseNo}</td>
+            <td class="px-3 py-1.5 text-center">${r.status === 'blocked' ? '🔴 บล็อก' : r.status === 'active' ? '✅ ใช้งาน' : '-'}</td>
+            <td class="px-3 py-1.5 text-slate-500">${r.reason || '-'}</td>
+            <td class="px-3 py-1.5 text-center">${resultBadge}</td>
+        </tr>`;
+    }).join('');
+
+    const btn = document.getElementById('kcImportConfirmBtn');
+    if (btn) {
+        btn.disabled = valid === 0;
+        btn.classList.toggle('opacity-50', valid === 0);
+        btn.querySelector('span')?.remove();
+        btn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i>ยืนยันนำเข้า (${valid} รายการ)`;
+    }
+    lucide.createIcons();
+}
+
+function closeKcImportModal() {
+    document.getElementById('kcImportModal').classList.add('hidden');
+    document.getElementById('kcImportModal').classList.remove('flex');
+    kcImportRows = [];
+}
+
+async function confirmKeycardImport() {
+    const validRows = kcImportRows.filter(r => r.valid);
+    if (!validRows.length) { Swal.fire('ไม่มีรายการที่นำเข้าได้', '', 'warning'); return; }
+
+    const r = await Swal.fire({
+        title: `นำเข้า ${validRows.length} รายการ?`,
+        text: 'ระบบจะอัปเดตสถานะคีย์การ์ดตามไฟล์ที่เลือก',
+        icon: 'question', showCancelButton: true,
+        confirmButtonText: 'นำเข้าเลย', cancelButtonText: 'ยกเลิก'
+    });
+    if (!r.isConfirmed) return;
+
+    Swal.fire({ title: `กำลังนำเข้า 0 / ${validRows.length}`, allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+
+    let success = 0, failed = 0;
+    for (let i = 0; i < validRows.length; i++) {
+        const row = validRows[i];
+        try {
+            const patchFields = {
+                status:     row.status,
+                is_active:  row.status === 'active',
+                reason:     row.reason || null,
+                updated_at: new Date().toISOString(),
+                updated_by: currentUser?.name || 'Import CSV'
+            };
+            await callSupabaseRest(`rfid?house_number=eq.${encodeURIComponent(row.houseNo)}`, {
+                method: 'PATCH', headers: { 'Prefer': 'return=minimal' }, body: JSON.stringify(patchFields)
+            });
+            writeAuditLog(row.status === 'blocked' ? 'block_keycard' : 'unblock_keycard',
+                `rfid:${row.houseNo}`, `นำเข้าจาก CSV — ${row.reason || ''}`).catch(() => {});
+            success++;
+        } catch (e) { failed++; }
+        Swal.update({ title: `กำลังนำเข้า ${i+1} / ${validRows.length}` });
+    }
+
+    closeKcImportModal();
+    Swal.fire('นำเข้าเสร็จสิ้น', `สำเร็จ ${success} รายการ${failed > 0 ? ` | ล้มเหลว ${failed} รายการ` : ''}`, success > 0 ? 'success' : 'warning');
+    loadKeycardView();
+}
+
+// ================================================================
 // 🔍 MISMATCH REPORT — ตรวจสอบชื่อโฉนด vs ระบบ
 // ================================================================
 
@@ -7299,6 +7542,10 @@ window.openKeycardModal = openKeycardModal;
 window.closeKeycardModal = closeKeycardModal;
 window.saveKeycardStatus = saveKeycardStatus;
 window.autoSuggestBlock = autoSuggestBlock;
+window.exportKeycardCSV = exportKeycardCSV;
+window.handleKeycardImportFile = handleKeycardImportFile;
+window.closeKcImportModal = closeKcImportModal;
+window.confirmKeycardImport = confirmKeycardImport;
 window.onKcStatusChange = onKcStatusChange;
 window.initAnnualReport = initAnnualReport;
 window.generateAnnualReport = generateAnnualReport;
