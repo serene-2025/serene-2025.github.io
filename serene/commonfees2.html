@@ -6243,7 +6243,12 @@ function sortKeycardTable(col) {
 }
 
 function getKeycardStatus(houseNo) {
-    return keycardData.find(r => r.house_number === houseNo) || null;
+    // บ้านหนึ่งอาจมีหลาย row (หลายการ์ด/สมาชิก)
+    const rows = keycardData.filter(r => r.house_number === houseNo);
+    if (!rows.length) return null;
+    // ถ้ามี row ใดถูกบล็อก → ถือว่าบ้านนั้นถูกบล็อก
+    const blocked = rows.find(r => r.is_active === false || r.is_active === 'false');
+    return blocked || rows[0];
 }
 
 function getOverdueMonthsForHouse(houseNo) {
@@ -6275,7 +6280,7 @@ function renderKeycardTable() {
         .map(h => {
             const rfid = getKeycardStatus(h.house_numbe);
             const overdueMonths = getOverdueMonthsForHouse(h.house_numbe);
-            const isBlocked = rfid && rfid.is_active === false;
+            const isBlocked = rfid && (rfid.is_active === false || rfid.is_active === 'false');
             const isSuggest = overdueMonths >= 3 && !isBlocked;
             return { houseNo:h.house_numbe, owner:h.owner_name||'-', soi:h.soi||'-', overdueMonths, rfid,
                 statusKey: isBlocked?'blocked':isSuggest?'suggest':'active',
@@ -6421,7 +6426,7 @@ function openKeycardModal(houseNo, preSelectStatus) {
     document.getElementById('kcReasonCustom').value = rfid?.reason||rfid?.block_reason||'';
 
     // pre-select status ตาม action ที่กด (บล็อก หรือ ปลดบล็อก)
-    const selectVal = preSelectStatus || (rfid && rfid.is_active===false ? 'blocked' : 'active');
+    const selectVal = preSelectStatus || ((rfid && (rfid.is_active===false||rfid.is_active==='false')) ? 'blocked' : 'active');
     document.querySelectorAll('input[name="kcStatus"]').forEach(r => r.checked = false);
     const radio = document.querySelector(`input[name="kcStatus"][value="${selectVal}"]`);
     if (radio) { radio.checked = true; onKcStatusChange(); }
@@ -6464,7 +6469,6 @@ async function saveKeycardStatus() {
     Swal.fire({ title: 'กำลังบันทึก...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
 
     try {
-        const existing = keycardData.find(k => k.house_number === houseNo);
         const patchFields = {
             is_active:  !isBlock,
             reason:     reason || null,
@@ -6472,22 +6476,12 @@ async function saveKeycardStatus() {
             updated_by: currentUser?.name || null
         };
 
-        if (existing) {
-            // มีอยู่แล้ว → PATCH เฉพาะ field ที่ต้องการ
-            await callSupabaseRest(`rfid?id=eq.${existing.id}`, {
-                method: 'PATCH',
-                headers: { 'Prefer': 'return=minimal' },
-                body: JSON.stringify(patchFields)
-            });
-        } else {
-            // ยังไม่มี → หา row ด้วย house_no แล้ว PATCH
-            // (ถ้าตาราง rfid มี house_no column)
-            await callSupabaseRest(`rfid?house_number=eq.${encodeURIComponent(houseNo)}`, {
-                method: 'PATCH',
-                headers: { 'Prefer': 'return=minimal' },
-                body: JSON.stringify({ ...patchFields, house_no: houseNo })
-            });
-        }
+        // PATCH ทุก row ของบ้านนี้ใน rfid (บ้านหนึ่งอาจมีหลายการ์ด/สมาชิก)
+        await callSupabaseRest(`rfid?house_number=eq.${encodeURIComponent(houseNo)}`, {
+            method: 'PATCH',
+            headers: { 'Prefer': 'return=minimal' },
+            body: JSON.stringify(patchFields)
+        });
 
         await writeAuditLog(
             isBlock ? 'block_keycard' : 'unblock_keycard',
@@ -6515,7 +6509,7 @@ async function autoSuggestBlock() {
         .map(h => {
             const rfid=getKeycardStatus(h.house_numbe);
             const overdueMonths=getOverdueMonthsForHouse(h.house_numbe);
-            return {houseNo:h.house_numbe,overdueMonths,isBlocked:rfid&&rfid.is_active===false};
+            return {houseNo:h.house_numbe,overdueMonths,isBlocked:rfid&&(rfid.is_active===false||rfid.is_active==='false')};
         }).filter(h=>h.overdueMonths>=3&&!h.isBlocked);
 
     if (!suggest.length) { Swal.fire('ไม่มีรายการแนะนำ','ไม่พบบ้านค้าง 3+ เดือนที่ยังไม่ถูกบล็อก','success'); return; }
@@ -6533,18 +6527,14 @@ async function autoSuggestBlock() {
     for (let i=0;i<suggest.length;i++) {
         const h = suggest[i];
         try {
-            const existing = keycardData.find(k=>k.house_number===h.houseNo);
             const patchFields = {
                 is_active:  false,
                 reason:     `ค้างชำระค่าส่วนกลาง ${h.overdueMonths} เดือน`,
                 updated_at: new Date().toISOString(),
                 updated_by: currentUser?.name || 'ระบบ'
             };
-            if (existing) {
-                await callSupabaseRest(`rfid?id=eq.${existing.id}`, {method:'PATCH', headers:{'Prefer':'return=minimal'}, body:JSON.stringify(patchFields)});
-            } else {
-                await callSupabaseRest(`rfid?house_number=eq.${encodeURIComponent(h.houseNo)}`, {method:'PATCH', headers:{'Prefer':'return=minimal'}, body:JSON.stringify({...patchFields, house_number:h.houseNo})});
-            }
+            // PATCH ทุก row ของบ้านนี้ (บ้านหนึ่งมีหลายการ์ด)
+            await callSupabaseRest(`rfid?house_number=eq.${encodeURIComponent(h.houseNo)}`, {method:'PATCH', headers:{'Prefer':'return=minimal'}, body:JSON.stringify(patchFields)});
             await writeAuditLog('block_keycard',`rfid:${h.houseNo}`,`Auto-block ค้าง ${h.overdueMonths} เดือน`);
             success++;
         } catch(e) { failed++; }
