@@ -1580,11 +1580,12 @@
                                 <thead class="bg-slate-100">
                                     <tr>
                                         <th class="px-3 py-2.5 text-left">บ้านเลขที่</th>
-                                        <th class="px-3 py-2.5 text-left">ชื่อเจ้าของปัจจุบัน</th>
+                                        <th class="px-3 py-2.5 text-left">ชื่อในโฉนด / ระบบ</th>
                                         <th class="px-3 py-2.5 text-center">ซอย</th>
-                                        <th class="px-3 py-2.5 text-center">ปีข้อมูล</th>
-                                        <th class="px-3 py-2.5 text-center">ประวัติย้าย</th>
-                                        <th class="px-3 py-2.5 text-center">แก้ไข</th>
+                                        <th class="px-3 py-2.5 text-center">ประเภทบ้าน</th>
+                                        <th class="px-3 py-2.5 text-center">เลขโฉนด</th>
+                                        <th class="px-3 py-2.5 text-center">ค้างชำระ</th>
+                                        <th class="px-3 py-2.5 text-center">ดำเนินการ</th>
                                     </tr>
                                 </thead>
                                 <tbody id="houseTableBody"></tbody>
@@ -6671,13 +6672,21 @@ function exportMismatchCSV() {
 let houseEditData = null;
 
 function loadHouseManagement() {
-    // เติม soi filter
+    // ถ้า land_registry ยังไม่ได้โหลด ให้โหลดก่อน
+    if (Object.keys(landRegistry).length === 0) {
+        fetchLandRegistry().then(() => _loadHouseManagementUI());
+    } else {
+        _loadHouseManagementUI();
+    }
+}
+
+function _loadHouseManagementUI() {
     const soiSelect = document.getElementById('houseSoiFilter');
     if (soiSelect) {
-        const sois = [...new Set(allData.map(d => (d.soi || '').trim()).filter(Boolean))].sort((a,b) => {
-            const na = parseInt(a), nb = parseInt(b);
-            return isNaN(na) || isNaN(nb) ? a.localeCompare(b,'th') : na - nb;
-        });
+        // ดึงซอยจาก land_registry เป็นหลัก
+        const sois = [...new Set(
+            Object.values(landRegistry).map(r => (r.soi || '').replace('ซอย','').trim()).filter(Boolean)
+        )].sort((a,b) => { const na=parseInt(a),nb=parseInt(b); return isNaN(na)||isNaN(nb)?a.localeCompare(b,'th'):na-nb; });
         soiSelect.innerHTML = '<option value="">ทุกซอย</option>' +
             sois.map(s => `<option value="${s}">ซอย ${s}</option>`).join('');
     }
@@ -6685,51 +6694,88 @@ function loadHouseManagement() {
 }
 
 function renderHouseTable() {
-    const q    = (document.getElementById('houseSearchInput')?.value || '').toLowerCase().trim();
-    const soi  = document.getElementById('houseSoiFilter')?.value || '';
-    const tbody = document.getElementById('houseTableBody');
-    const countEl = document.getElementById('houseTableCount');
+    const q      = (document.getElementById('houseSearchInput')?.value || '').toLowerCase().trim();
+    const soiF   = document.getElementById('houseSoiFilter')?.value || '';
+    const tbody  = document.getElementById('houseTableBody');
+    const countEl= document.getElementById('houseTableCount');
     if (!tbody) return;
 
-    // เอาบ้านที่ unique (ปีล่าสุดต่อบ้าน)
+    // ใช้ land_registry เป็น source หลัก
+    const landRows = Object.values(landRegistry);
+
+    if (landRows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-10 text-center text-slate-400">ยังไม่ได้โหลดข้อมูล land_registry กรุณารอสักครู่...</td></tr>';
+        return;
+    }
+
+    // รวมข้อมูลการชำระจาก allData (latest year)
     const seen = new Set();
-    const houses = allData
-        .sort((a,b) => (b.year||0) - (a.year||0))
-        .filter(h => {
-            if (seen.has(h.house_numbe)) return false;
-            seen.add(h.house_numbe);
-            return true;
-        })
-        .filter(h => {
-            const matchQ  = !q || (h.house_numbe||'').toLowerCase().includes(q)
-                              || (h.owner_name||'').toLowerCase().includes(q)
-                              || (h.soi||'').toLowerCase().includes(q);
-            const matchSoi = !soi || (h.soi||'').trim() === soi;
-            return matchQ && matchSoi;
-        })
-        .sort((a,b) => String(a.house_numbe||'').localeCompare(String(b.house_numbe||''), 'th', { numeric: true }));
+    const paymentMap = {};
+    allData.sort((a,b)=>(b.year||0)-(a.year||0)).forEach(h => {
+        if (!seen.has(h.house_numbe)) { seen.add(h.house_numbe); paymentMap[h.house_numbe] = h; }
+    });
 
-    if (countEl) countEl.textContent = `แสดง ${houses.length} หลัง`;
+    let houses = landRows.map(land => {
+        const payment = paymentMap[land.house_no] || null;
+        const soiNum  = (land.soi || '').replace('ซอย','').trim();
+        const overdueMonths = getOverdueMonthsForHouse(land.house_no);
+        const nameMismatch  = payment && payment.owner_name && land.full_name &&
+                              payment.owner_name.trim() !== land.full_name.trim();
+        return {
+            houseNo:      land.house_no,
+            landName:     land.full_name || '-',
+            paymentName:  payment?.owner_name || '-',
+            soi:          soiNum,
+            houseType:    land.house_type || '-',
+            titleDeed:    land.title_deed_number || '-',
+            landParcel:   land.land_parcel_number || '-',
+            convertNo:    land.convert_no || '-',
+            transferDate: land.transfer_date || '',
+            overdueMonths,
+            nameMismatch,
+            hasPayment:   !!payment,
+            land, payment
+        };
+    });
 
-    if (houses.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-10 text-center text-slate-400">ไม่พบบ้านที่ตรงกับเงื่อนไข</td></tr>';
+    // Filter
+    houses = houses.filter(h => {
+        const matchQ   = !q || (h.houseNo||'').toLowerCase().includes(q)
+                            || (h.landName||'').toLowerCase().includes(q)
+                            || (h.paymentName||'').toLowerCase().includes(q)
+                            || (h.soi||'').includes(q);
+        const matchSoi = !soiF || h.soi === soiF;
+        return matchQ && matchSoi;
+    }).sort((a,b) => String(a.houseNo||'').localeCompare(String(b.houseNo||''), 'th', { numeric: true }));
+
+    if (countEl) countEl.textContent = `แสดง ${houses.length} จาก ${landRows.length} หลัง`;
+
+    if (!houses.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-10 text-center text-slate-400">ไม่พบบ้านที่ตรงกับเงื่อนไข</td></tr>';
         return;
     }
 
     tbody.innerHTML = houses.map(h => `
-        <tr class="border-b border-slate-100 hover:bg-slate-50">
-            <td class="px-3 py-2.5 font-bold text-indigo-700">${h.house_numbe || '-'}</td>
-            <td class="px-3 py-2.5">${h.owner_name || '<span class="text-slate-400">ไม่ระบุ</span>'}</td>
-            <td class="px-3 py-2.5 text-center">${h.soi ? 'ซอย '+h.soi : '-'}</td>
-            <td class="px-3 py-2.5 text-center text-slate-500">${h.year || '-'}</td>
+        <tr class="border-b border-slate-100 hover:bg-slate-50 ${h.nameMismatch ? 'bg-orange-50/30' : ''}">
+            <td class="px-3 py-2.5 font-bold text-indigo-700">${h.houseNo || '-'}</td>
+            <td class="px-3 py-2.5">
+                <div class="font-medium">${h.landName}</div>
+                ${h.nameMismatch ? `<div class="text-[10px] text-orange-600 font-bold">⚠️ ระบบ: ${h.paymentName}</div>` : ''}
+            </td>
+            <td class="px-3 py-2.5 text-center text-sm">${h.soi ? 'ซอย '+h.soi : '-'}</td>
+            <td class="px-3 py-2.5 text-center text-xs text-slate-600">${h.houseType}</td>
+            <td class="px-3 py-2.5 text-center text-xs text-slate-500">${h.titleDeed}</td>
             <td class="px-3 py-2.5 text-center">
-                <button onclick="openOwnerHistory('${h.house_numbe}')"
-                    class="px-2 py-1 bg-purple-50 hover:bg-purple-600 hover:text-white text-purple-700 rounded text-xs font-bold transition-colors flex items-center gap-1 mx-auto">
-                    <i data-lucide="history" class="w-3 h-3"></i>ประวัติ
-                </button>
+                ${h.overdueMonths > 0
+                    ? `<span class="font-bold text-xs ${h.overdueMonths>=6?'text-red-600':h.overdueMonths>=3?'text-orange-600':'text-amber-600'}">${h.overdueMonths} เดือน</span>`
+                    : `<span class="text-green-600 text-xs">${h.hasPayment ? '✅ ไม่ค้าง' : '-'}</span>`}
             </td>
             <td class="px-3 py-2.5 text-center">
-                <button onclick="openEditHouseModal('${h.house_numbe}')"
+                <button onclick="openOwnerHistory('${h.houseNo}')"
+                    class="px-2 py-1 bg-purple-50 hover:bg-purple-600 hover:text-white text-purple-700 rounded text-xs font-bold transition-colors flex items-center gap-1 mx-auto mb-1">
+                    <i data-lucide="history" class="w-3 h-3"></i>ประวัติ
+                </button>
+                <button onclick="openEditHouseModal('${h.houseNo}')"
                     class="px-2 py-1 bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-700 rounded text-xs font-bold transition-colors flex items-center gap-1 mx-auto">
                     <i data-lucide="pencil" class="w-3 h-3"></i>แก้ไข
                 </button>
@@ -6740,20 +6786,22 @@ function renderHouseTable() {
 }
 
 function openEditHouseModal(houseNo) {
-    const h = allData.find(d => d.house_numbe === houseNo);
-    if (!h) return;
-    houseEditData = { ...h };
+    const land = getLandRecord(houseNo);
+    const h    = allData.find(d => d.house_numbe === houseNo);
+
+    // ใช้ land_registry เป็นหลัก ถ้าไม่มีใช้ house_payments
+    houseEditData = { houseNo, land, h };
 
     document.getElementById('editHouseNo').textContent    = houseNo;
-    document.getElementById('editHouseRowId').value       = h.id || '';
-    document.getElementById('editFieldHouseNo').value     = h.house_numbe || '';
-    document.getElementById('editFieldSoi').value         = h.soi || '';
-    document.getElementById('editFieldOwner').value       = h.owner_name || '';
-    document.getElementById('editFieldPhone').value       = h.phone || '';
-    document.getElementById('editFieldNote').value        = h.note || '';
+    document.getElementById('editHouseRowId').value       = land?.id || h?.id || '';
+    document.getElementById('editFieldHouseNo').value     = houseNo;
+    document.getElementById('editFieldSoi').value         = (land?.soi || h?.soi || '').replace('ซอย','').trim();
+    document.getElementById('editFieldOwner').value       = land?.full_name || h?.owner_name || '';
+    document.getElementById('editFieldPhone').value       = h?.phone || '';
+    document.getElementById('editFieldNote').value        = h?.note || '';
 
     const statusEl = document.getElementById('editFieldLivingStatus');
-    if (statusEl) statusEl.value = h.living_status || 'เจ้าของบ้าน';
+    if (statusEl) statusEl.value = h?.living_status || 'เจ้าของบ้าน';
 
     const modal = document.getElementById('editHouseModal');
     modal.classList.remove('hidden');
@@ -6776,17 +6824,16 @@ async function saveHouseEdit() {
     const newNote   = document.getElementById('editFieldNote').value.trim();
     const houseNo   = document.getElementById('editFieldHouseNo').value.trim();
 
-    if (!newOwner) {
-        Swal.fire('กรุณาระบุชื่อเจ้าของ', '', 'warning'); return;
-    }
+    if (!newOwner) { Swal.fire('กรุณาระบุชื่อเจ้าของ', '', 'warning'); return; }
 
-    const oldOwner = houseEditData?.owner_name || '';
+    const oldOwner = houseEditData?.land?.full_name || houseEditData?.h?.owner_name || '';
     const ownerChanged = newOwner !== oldOwner;
+    const soiFull = newSoi ? `ซอย ${newSoi}` : '';
 
     const r = await Swal.fire({
         title: 'บันทึกข้อมูลบ้าน?',
         html: ownerChanged
-            ? `<div class="text-sm text-left">เจ้าของเปลี่ยนจาก <b>${oldOwner || 'ไม่ระบุ'}</b> → <b>${newOwner}</b><br><span class="text-amber-600">ระบบจะบันทึกลงประวัติการย้ายเจ้าของ</span></div>`
+            ? `<div class="text-sm text-left">ชื่อเจ้าของเปลี่ยนจาก <b>${oldOwner||'ไม่ระบุ'}</b> → <b>${newOwner}</b><br><span class="text-amber-600">ระบบจะบันทึกลงประวัติการย้ายเจ้าของ</span></div>`
             : `<div class="text-sm">บันทึกการเปลี่ยนแปลงข้อมูลบ้าน ${houseNo}</div>`,
         icon: 'question', showCancelButton: true,
         confirmButtonText: 'บันทึก', cancelButtonText: 'ยกเลิก'
@@ -6796,43 +6843,56 @@ async function saveHouseEdit() {
     Swal.fire({ title: 'กำลังบันทึก...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
 
     try {
-        // อัปเดตทุก record ของบ้านนี้ใน house_payments (เพื่อให้ชื่อ/ซอยถูกทุกปี)
-        const { error } = await sb.from('house_payments')
-            .update({
-                owner_name: newOwner,
-                soi: newSoi,
-                phone: newPhone || null,
-                living_status: newStatus,
-                note: newNote || null
-            })
+        // 1. อัปเดต land_registry เป็นหลัก
+        if (houseEditData?.land?.id) {
+            await callSupabaseRest(`land_registry?id=eq.${houseEditData.land.id}`, {
+                method: 'PATCH',
+                headers: { 'Prefer': 'return=minimal' },
+                body: JSON.stringify({
+                    full_name:  newOwner,
+                    soi:        soiFull || null,
+                    updated_at: new Date().toISOString()
+                })
+            });
+            // อัปเดต cache ทันที
+            if (landRegistry[houseNo]) {
+                landRegistry[houseNo].full_name = newOwner;
+                landRegistry[houseNo].soi = soiFull || landRegistry[houseNo].soi;
+            }
+        }
+
+        // 2. อัปเดต house_payments ด้วย (sync ชื่อให้ตรงกัน)
+        await sb.from('house_payments')
+            .update({ owner_name: newOwner, soi: newSoi || null,
+                      phone: newPhone || null, living_status: newStatus, note: newNote || null })
             .eq('house_numbe', houseNo);
 
-        if (error) throw error;
-
-        // บันทึกประวัติย้ายเจ้าของถ้าชื่อเปลี่ยน
+        // 3. บันทึกประวัติย้ายเจ้าของถ้าชื่อเปลี่ยน
         if (ownerChanged) {
             await callSupabaseRest('owner_history', {
                 method: 'POST',
                 headers: { 'Prefer': 'return=minimal' },
                 body: JSON.stringify({
-                    house_no:      houseNo,
-                    old_owner:     oldOwner || null,
-                    new_owner:     newOwner,
-                    changed_by:    currentUser?.name || null,
-                    changed_at:    new Date().toISOString(),
-                    note:          newNote || null
+                    house_no:   houseNo,
+                    old_owner:  oldOwner || null,
+                    new_owner:  newOwner,
+                    changed_by: currentUser?.name || null,
+                    changed_at: new Date().toISOString(),
+                    note:       newNote || null
                 })
             });
         }
 
-        await writeAuditLog('update_house', `house_payments:${houseNo}`,
+        await writeAuditLog('update_house', `land_registry:${houseNo}`,
             `แก้ไขข้อมูลบ้าน ${houseNo}${ownerChanged ? ` (ย้ายเจ้าของ ${oldOwner} → ${newOwner})` : ''}`);
 
         await fetchAllData();
         closeEditHouseModal();
         loadHouseManagement();
-        Swal.fire('บันทึกสำเร็จ', `อัปเดตข้อมูลบ้าน ${houseNo} เรียบร้อย`, 'success');
-        pushNotification('success', 'แก้ไขข้อมูลบ้านสำเร็จ', `บ้าน ${houseNo} — ${ownerChanged ? `ย้ายเจ้าของ → ${newOwner}` : 'อัปเดตข้อมูลแล้ว'}`);
+        Swal.fire('บันทึกสำเร็จ', `อัปเดตข้อมูลบ้าน ${houseNo} ใน land_registry แล้ว`, 'success');
+        pushNotification('success', 'แก้ไขข้อมูลบ้านสำเร็จ',
+            `บ้าน ${houseNo}${ownerChanged ? ` — ย้ายเจ้าของ → ${newOwner}` : ' อัปเดตแล้ว'}`);
+
     } catch (err) {
         Swal.fire('ผิดพลาด', err.message, 'error');
     }
