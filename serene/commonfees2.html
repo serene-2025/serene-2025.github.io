@@ -6484,12 +6484,27 @@ async function saveKeycardStatus() {
             body: JSON.stringify(patchFields)
         });
 
+        // ตรวจสอบว่า PATCH เขียนสำเร็จจริง — ดึงข้อมูลกลับมาเช็ค
+        const verifyRows = await callSupabaseRest(`rfid?house_number=eq.${encodeURIComponent(houseNo)}&select=house_number,status,is_active,reason`);
+        console.log('🔍 ตรวจสอบหลัง PATCH:', verifyRows);
+        const verifyOk = verifyRows && verifyRows.length > 0 &&
+            verifyRows.every(r => (isBlock ? (r.status === 'blocked' || r.is_active === false) : (r.status === 'active' || r.is_active === true)));
+
+        if (!verifyOk) {
+            console.warn('⚠️ PATCH ส่งสำเร็จแต่ค่าที่บันทึกไม่ตรงกับที่คาดหวัง:', verifyRows);
+        }
+
         pushNotification(
             isBlock ? 'warning' : 'success',
             isBlock ? '🔴 บล็อกคีย์การ์ด' : '✅ เปิดคีย์การ์ด',
             `บ้าน ${houseNo}${reason ? ` — ${reason}` : ''}`
         );
-        Swal.fire('บันทึกสำเร็จ', `${isBlock ? 'บล็อก' : 'เปิดใช้งาน'}คีย์การ์ด บ้าน ${houseNo} แล้ว`, 'success');
+        Swal.fire({
+            title: verifyOk ? 'บันทึกสำเร็จ' : 'บันทึกแล้ว แต่ค่าอาจไม่ตรง',
+            html: `${isBlock ? 'บล็อก' : 'เปิดใช้งาน'}คีย์การ์ด บ้าน ${houseNo} แล้ว
+                <br><span class="text-xs text-slate-400">พบ ${verifyRows?.length||0} row | สถานะที่บันทึก: ${verifyRows?.map(r=>r.status).join(', ')||'-'}</span>`,
+            icon: verifyOk ? 'success' : 'warning'
+        });
         closeKeycardModal();
         await loadKeycardView();
 
