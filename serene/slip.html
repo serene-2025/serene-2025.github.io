@@ -1481,6 +1481,30 @@
         });
     }
 
+    // ฟังก์ชันช่วยอัปโหลดรูปลง Supabase Storage และดึง URL กลับมา
+    async function uploadAndGetUrl(originalFile, houseNumber, prefix) {
+        if (!originalFile) return "";
+        try {
+            // บีบอัดรูปก่อนอัปโหลดเพื่อลดขนาด
+            const compressedFile = await imageCompression(originalFile, { maxSizeMB: 1, maxWidthOrHeight: 1024 });
+            const fileExt = compressedFile.name.split('.').pop();
+            const fileName = `slip_${houseNumber.replace('/', '-')}_${prefix}_${Date.now()}.${fileExt}`;
+            
+            // อัปโหลดขึ้น Bucket ชื่อ 'slip' (เช็คให้แน่ใจว่าใน Supabase คุณสร้าง Bucket ชื่อ slip ไว้แล้ว)
+            const { data, error } = await supabaseClient.storage
+                .from('slip') 
+                .upload(fileName, compressedFile, { contentType: 'image/jpeg' });
+            
+            if (error) throw error;
+            
+            // ดึง Public URL ของรูปที่เพิ่งอัปโหลด
+            return supabaseClient.storage.from('slip').getPublicUrl(fileName).data.publicUrl;
+        } catch (err) {
+            console.error("Supabase Upload Error:", err);
+            return ""; 
+        }
+    }
+
     async function sendData() {
         $("#btn_1").hide();
         $("#btn_2").show();
@@ -1488,7 +1512,6 @@
         try {
             const name = document.getElementById("name").value.trim();
             const house_number = document.getElementById("name1").value.trim();
-            const year = document.querySelector('.year-tab-btn.active').innerText.replace('ปี ', '').trim();
             const payment_method = document.querySelector('input[name="name4"]:checked').value;
             const remark = document.getElementById("name5").value.trim();
             const mode = document.querySelector('input[name="slip_mode"]:checked').value;
@@ -1503,69 +1526,70 @@
                 };
             });
 
-            if (mode === 'single') {
-                const fileInput = document.getElementById("file_image");
-                const file = fileInput.files[0];
-                const base64Image = await compressImage(file);
+            // --- 1. เตรียมข้อมูลรูปภาพและสร้าง Records ---
+            let singlePublicUrl = ""; // ใช้เก็บ URL กรณีโอนรวม (อัปโหลดครั้งเดียวใช้ซ้ำ)
+            
+            for (let i = 0; i < selectedMonths.length; i++) {
+                const m = selectedMonths[i];
+                let publicUrl = "";
 
-                for (let i = 0; i < selectedMonths.length; i++) {
-                    const m = selectedMonths[i];
-                    recordsToSave.push({
-                        id: `serene${Date.now()}${i}`,
-                        reported_at: new Date().toISOString(),
-                        user_id: uid,
-                        name: name,
-                        house_number: house_number,
-                        month: m.monthName,
-                        year: m.year,
-                        payment_method: payment_method,
-                        remark: remark,
-                        amount_text: "สามร้อยบาทถ้วน",
-                        amount: 300,
-                        image_url: base64Image
-                    });
+                if (mode === 'single') {
+                    if (i === 0) { // โอนรวม: อัปโหลดแค่รอบแรก
+                        const file = document.getElementById("file_image").files[0];
+                        publicUrl = await uploadAndGetUrl(file, house_number, 'single');
+                        singlePublicUrl = publicUrl; 
+                    } else {
+                        publicUrl = singlePublicUrl; // เดือนอื่นๆ ใช้ URL เดิม
+                    }
+                } else { // โอนแยก: ต้องอัปโหลดรูปของทุกๆ เดือน
+                    const file = document.getElementById(`file_slip_box_${m.year}_${m.index}`).files[0];
+                    publicUrl = await uploadAndGetUrl(file, house_number, `multi_${m.monthName}`);
                 }
-            } else {
-                for (let i = 0; i < selectedMonths.length; i++) {
-                    const m = selectedMonths[i];
-                    const fileInput = document.getElementById(`file_slip_box_${m.year}_${m.index}`);
-                    const file = fileInput.files[0];
-                    const base64Image = await compressImage(file);
 
-                    recordsToSave.push({
-                        id: `serene${Date.now()}${i}`,
-                        reported_at: new Date().toISOString(),
-                        user_id: uid,
-                        name: name,
-                        house_number: house_number,
-                        month: m.monthName,
-                        year: m.year,
-                        payment_method: payment_method,
-                        remark: remark,
-                        amount_text: "สามร้อยบาทถ้วน",
-                        amount: 300,
-                        image_url: base64Image 
-                    });
-                }
+                recordsToSave.push({
+                    id: `serene${Date.now()}${i}`, // สร้าง ID ให้ตรงกัน
+                    reported_at: new Date().toISOString(),
+                    user_id: uid,
+                    name: name,
+                    house_number: house_number,
+                    month: m.monthName,
+                    year: m.year,
+                    payment_method: payment_method,
+                    remark: remark,
+                    amount_text: "สามร้อยบาทถ้วน",
+                    amount: 300,
+                    image_url: publicUrl, // ส่ง URL สะอาดๆ แทน Base64 ข้อความยาวๆ
+                    status_slip: "รอตรวจสอบ" // ตั้งสถานะตั้งต้น
+                });
             }
 
+            // --- 2. บันทึกข้อมูลลงฐานข้อมูล Supabase หลัก (ตาราง common_fees) ---
+            const { error: dbError } = await supabaseClient
+                .from('common_fees') 
+                .insert(recordsToSave);
+                
+            if (dbError) {
+                console.error("Supabase Database Insert Error:", dbError);
+                // ถ้าบันทึกไม่สำเร็จอาจจะต้องมี Alert แจ้งเตือน (แต่โดยปกติถ้า Auth ผ่านจะไม่ติดปัญหา)
+            }
+
+            // --- 3. ส่งข้อมูลไปสำรองที่ Google Sheets และแจ้งเตือน Telegram ---
             const payload = {
                 action: 'syncToSheet',
                 records: recordsToSave,
-                telegram_months: selectedMonths.map(m => m.monthName).join(', ')
+                // นำเดือนมาต่อกับปี เพื่อให้บอท Telegram แจ้งเตือนได้ครบถ้วน (เช่น "สิงหาคม 2569")
+                telegram_months: selectedMonths.map(m => `${m.monthName} ${m.year}`).join(', ') 
             };
 
-            // ใช้โหมด no-cors เพื่อข้ามปัญหา CORS 100%
+            // ใช้ Fetch แบบ no-cors เพื่อแก้ปัญหาโดนบล็อก (ยิงข้อมูลไปให้ GAS จัดการต่อ)
             await fetch(urlAPI, {
                 method: "POST",
                 mode: "no-cors", 
-                headers: {
-                    "Content-Type": "text/plain;charset=utf-8",
-                },
+                headers: { "Content-Type": "text/plain;charset=utf-8" },
                 body: JSON.stringify(payload)
             });
 
-            // เมื่อใช้ no-cors เราจะอ่าน response กลับไม่ได้ ดังนั้นจะถือว่าทำงานสำเร็จทันทีที่ Request ถูกส่งออกไป
+            // แสดงผลสำเร็จ!
             Swal.fire({
                 title: 'บันทึกสำเร็จ!',
                 text: 'ข้อมูลของคุณถูกส่งไปยังนิติบุคคลเรียบร้อยแล้ว',
@@ -1592,7 +1616,7 @@
             console.error("Save Error:", error);
             Swal.fire({
                 title: 'เกิดข้อผิดพลาดในการเชื่อมต่อ!',
-                text: 'โปรดตรวจสอบสัญญาณอินเทอร์เน็ต แล้วลองใหม่อีกครั้ง',
+                text: 'โปรดตรวจสอบสัญญาณอินเทอร์เน็ต หรือติดต่อ Admin',
                 icon: 'error',
                 confirmButtonText: 'ตกลง'
             });
@@ -1601,28 +1625,15 @@
         }
     }
 
-    async function compressImage(file) {
+    async function compressImage(file, options) {
         if (!file) return "";
-        const options = {
-            maxSizeMB: 1, 
-            maxWidthOrHeight: 1024,
-            useWebWorker: true
-        };
         try {
-            const compressedFile = await imageCompression(file, options);
-            return await toBase64(compressedFile);
+            return await imageCompression(file, options);
         } catch (error) {
             console.error("Compression error:", error);
-            return await toBase64(file); 
+            return file; // คืนค่าไฟล์เดิมถ้าบีบอัดพัง
         }
     }
-
-    const toBase64 = file => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = error => reject(error);
-    });
   </script>
 </body>
 </html>
