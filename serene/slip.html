@@ -1527,8 +1527,28 @@
             });
 
             // --- 1. เตรียมข้อมูลรูปภาพและสร้าง Records ---
-            let singlePublicUrl = ""; // ใช้เก็บ URL กรณีโอนรวม (อัปโหลดครั้งเดียวใช้ซ้ำ)
+            let singlePublicUrl = ""; 
             
+            // 🌟 ดึง ID ล่าสุดจากตาราง common_fees เพื่อสร้าง ID รันนิ่ง (เช่น serene005331) 🌟
+            let nextIdNum = 1;
+            try {
+                const { data: lastRecord } = await supabaseClient
+                    .from('common_fees')
+                    .select('id')
+                    .order('id', { ascending: false })
+                    .limit(1);
+                
+                if (lastRecord && lastRecord.length > 0 && lastRecord[0].id) {
+                    const lastIdStr = lastRecord[0].id;
+                    const match = lastIdStr.match(/\d+$/); // ดึงตัวเลขท้ายสุด
+                    if (match) {
+                        nextIdNum = parseInt(match[0], 10) + 1;
+                    }
+                }
+            } catch (idErr) {
+                console.warn("Could not fetch last ID, starting from default.");
+            }
+
             for (let i = 0; i < selectedMonths.length; i++) {
                 const m = selectedMonths[i];
                 let publicUrl = "";
@@ -1546,8 +1566,9 @@
                     publicUrl = await uploadAndGetUrl(file, house_number, `multi_${m.monthName}`);
                 }
                 
-                // แก้ไขการสร้าง ID ให้มีโครงสร้างที่ชัดเจนขึ้น
-                const recordId = `serene_${Date.now()}_${i}`;
+                // 🌟 สร้าง ID แบบรันนิ่ง: "serene" + เติมเลข 0 ข้างหน้าให้ครบ 6 หลัก 🌟
+                const recordId = 'serene' + String(nextIdNum).padStart(6, '0');
+                nextIdNum++; // ขยับเลขไปเรื่อยๆ เผื่อกรณีจ่ายหลายเดือนพร้อมกัน
 
                 recordsToSave.push({
                     id: recordId, 
@@ -1562,7 +1583,8 @@
                     amount_text: "สามร้อยบาทถ้วน",
                     amount: 300,
                     image_url: publicUrl, 
-                    status: "รอตรวจสอบ" // แก้ไขชื่อ Column จาก status_slip เป็น status ให้ตรงกับฐานข้อมูล
+                    status: "รอตรวจสอบ",
+                    house_payment_synced: false // ค่าตั้งต้นตามที่ตารางต้องการ
                 });
             }
 
@@ -1573,58 +1595,36 @@
                 
             if (dbError) {
                 console.error("Supabase Database Insert Error:", dbError);
-                // หากบันทึก Supabase ไม่สำเร็จ ให้ไปต่อเพื่อพยายามเซฟลง Google Sheets อย่างน้อย
             }
 
-            // --- 3. ส่งข้อมูลไปสำรองที่ Google Sheets และแจ้งเตือน Telegram ---
-            const payload = {
-                action: 'syncToSheet',
-                records: recordsToSave,
-                // นำเดือนมาต่อกับปี เพื่อให้บอท Telegram แจ้งเตือนได้ครบถ้วน (เช่น "สิงหาคม 2569")
-                telegram_months: selectedMonths.map(m => `${m.monthName} ${m.year}`).join(', ') 
-            };
-
-            // ใช้ Fetch แบบ no-cors เพื่อแก้ปัญหาโดนบล็อก (ยิงข้อมูลไปให้ GAS จัดการต่อ)
-            await fetch(urlAPI, {
-                method: "POST",
-                mode: "no-cors", 
-                headers: { "Content-Type": "text/plain;charset=utf-8" },
-                body: JSON.stringify(payload)
-            });
-
-            // แสดงผลสำเร็จ!
-            Swal.fire({
-                title: 'บันทึกสำเร็จ!',
-                text: 'ข้อมูลของคุณถูกส่งไปยังนิติบุคคลเรียบร้อยแล้ว',
-                icon: 'success',
-                confirmButtonText: 'ปิด'
-            }).then(() => {
-                checkUnpaidStatus(house_number);
-                document.getElementById('user_form').reset();
-                document.querySelectorAll('.month-check').forEach(cb => {
-                    cb.checked = false;
-                    cb.dispatchEvent(new Event('change'));
-                });
-                document.getElementById('file_image').value = '';
-                document.getElementById('picdata').style.display = 'none';
-                document.getElementById('slip_status_single').style.display = 'none';
-                document.getElementById('totalAmountContainer').style.display = 'none';
+            // 🌟 2.5 อัปเดตตารางสรุป house_payments ให้เปลี่ยนสถานะเดือนที่จ่ายเป็น "รอตรวจสอบ" 🌟
+            try {
+                const monthKeys = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
                 
-                $("#btn_2").hide();
-                $("#btn_1").show();
-                $("#btn_1").prop("disabled", true).removeClass('btn-gradient').addClass('btn-secondary');
-            });
+                // จัดกลุ่มเดือนตามปี (เผื่อจ่ายข้ามปี)
+                const updatesByYear = {};
+                selectedMonths.forEach(m => {
+                    if (!updatesByYear[m.year]) updatesByYear[m.year] = {};
+                    const englishKey = monthKeys[parseInt(m.index)];
+                    updatesByYear[m.year][englishKey] = "รอตรวจสอบ";
+                });
 
-        } catch (error) {
-            console.error("Save Error:", error);
-            Swal.fire({
-                title: 'เกิดข้อผิดพลาดในการเชื่อมต่อ!',
-                text: 'โปรดตรวจสอบสัญญาณอินเทอร์เน็ต หรือติดต่อ Admin',
-                icon: 'error',
-                confirmButtonText: 'ตกลง'
-            });
-            $("#btn_2").hide();
-            $("#btn_1").show();
+                // วนลูปอัปเดตตาราง house_payments ตามปี
+                for (const yearStr in updatesByYear) {
+                    const updatePayload = updatesByYear[yearStr];
+                    const { error: updateErr } = await supabaseClient
+                        .from('house_payments')
+                        .update(updatePayload)
+                        .eq('house_numbe', house_number)
+                        .eq('year', parseInt(yearStr));
+                        
+                    if(updateErr) console.warn("Failed to update house_payments:", updateErr);
+                }
+            } catch (err) {
+                console.warn("Sync house_payments error:", err);
+            }
+
+            // --- 3. ส่งข้อมูลไปสำรองที่ Google Sheets และแจ้งเตือน Telegram (ซ่อนจากเบราว์เซอร์) ---
         }
     }
 
