@@ -4305,11 +4305,22 @@ async function deleteSelected() {
 
     Swal.fire({ title: 'กำลังลบ...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
     try {
+        let sheetOk = 0, sheetFail = 0, sheetUnsupported = false;
         for (const id of ids) {
             const row = allTransactions.find(t => t.id == id);
-            await callGas('delRecord', { record: id, oldfile: row ? row.image_url : '', actor_id: currentUser.id });
+            const gasResult = await callGas('delRecord', { record: id, oldfile: row ? row.image_url : '', actor_id: currentUser.id });
+            if (gasResult?.sheetResult) {
+                gasResult.sheetResult.deleted ? sheetOk++ : sheetFail++;
+            } else {
+                sheetUnsupported = true;
+            }
         }
-        Swal.fire('ลบเรียบร้อย', '', 'success');
+        const sheetHtml = sheetUnsupported
+            ? `<div class="text-xs mt-2 p-2 rounded bg-slate-50 text-slate-500">📄 GAS ยังไม่รองรับการลบ Sheet (ใช้โค้ดเวอร์ชันเก่า)</div>`
+            : `<div class="text-xs mt-2 p-2 rounded ${sheetFail === 0 ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}">
+                📄 Google Sheet: ลบสำเร็จ ${sheetOk} / ไม่พบ ${sheetFail} รายการ
+               </div>`;
+        Swal.fire({ title: 'ลบเรียบร้อย', html: sheetHtml, icon: 'success' });
         await fetchAllData();
         renderTransactions();
     } catch (err) {
@@ -4326,9 +4337,18 @@ async function deleteTx(id) {
     Swal.fire({ title: 'กำลังลบ...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
     try {
         const row = allTransactions.find(t => t.id == id);
-        await callGas('delRecord', { record: id, oldfile: row ? row.image_url : '', actor_id: currentUser.id });
+        const gasResult = await callGas('delRecord', { record: id, oldfile: row ? row.image_url : '', actor_id: currentUser.id });
         await writeAuditLog('delete_record', `house_payments#${id}`, `ลบรายการชำระ บ้าน ${row?.house_number || id}`);
-        Swal.fire('ลบเรียบร้อย', '', 'success');
+
+        // แสดงผลลัพธ์การลบ Google Sheet (debug) — ถ้ามีข้อมูลกลับมา
+        const sheetInfo = gasResult?.sheetResult;
+        const sheetHtml = sheetInfo
+            ? `<div class="text-xs mt-2 p-2 rounded ${sheetInfo.deleted ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}">
+                📄 Google Sheet: ${sheetInfo.deleted ? '✅' : '⚠️'} ${sheetInfo.message}
+               </div>`
+            : `<div class="text-xs mt-2 p-2 rounded bg-slate-50 text-slate-500">📄 GAS ยังไม่รองรับการลบ Sheet (ใช้โค้ดเวอร์ชันเก่า)</div>`;
+
+        Swal.fire({ title: 'ลบเรียบร้อย', html: sheetHtml, icon: 'success' });
         await fetchAllData();
         renderTransactions();
     } catch (err) {
