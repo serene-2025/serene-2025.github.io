@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ระบบบันทึกค่าส่วนกลาง ซีรีน 3</title>
+  <title>ระบบบันทึกค่าส่วนกลาง ซีรีน</title>
   <link rel="icon" href="https://cdn-icons-png.flaticon.com/512/1571/1571031.png" type="image/png">
 
   <!-- Import Libraries -->
@@ -314,7 +314,7 @@
       <form class="needs-validation" novalidate id="user_form">
         <div class="col-md-12 text-center mb-4">
           <h4 class="mb-2 p-3 text-white rounded shadow-sm" style="background: linear-gradient(to right, #0f9b0f, #52c234);">
-            <i class='bx bxs-buildings fs-3'></i> 💴 จ่ายค่าส่วนกลาง Serene 3
+            <i class='bx bxs-buildings fs-3'></i> 💴 จ่ายค่าส่วนกลาง Serene 
           </h4>
         </div>
 
@@ -1077,6 +1077,7 @@
         // 🔥 เปลี่ยนเป็นใส่ API Key ของคุณที่นี่ 🔥
         const THUNDER_API_KEY = '3f953560-a56a-4391-bb07-521218f964fe'; 
         const THUNDER_URL = 'https://api.thunder.in.th/v2/verify/bank';
+        // 🌟 แก้ไข: ใช้คีย์เวิร์ดสั้นๆ ที่มั่นใจว่ามีแน่ๆ เพื่อหลีกเลี่ยงปัญหาเรื่องเว้นวรรคหรือตัวสะกดจากธนาคารต่างๆ
         const expectedAccountName = "นิติบุคคลหมู่บ้านจัดสรร";
 
         fetch(THUNDER_URL, {
@@ -1478,6 +1479,175 @@
         localStorage.setItem('name', document.getElementById('name').value.trim());
         localStorage.setItem('name1', document.getElementById('name1').value.trim());
         confirmSubmit();
+    });
+
+    // 🌟 เพิ่มฟังก์ชัน confirmSubmit และ sendData ที่หายไปตรงนี้ครับ 🌟
+    function confirmSubmit() {
+        Swal.fire({
+            title: 'ยืนยันการบันทึกข้อมูล?',
+            text: "โปรดตรวจสอบข้อมูลให้ถูกต้องก่อนกดยืนยัน",
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#198754',
+            cancelButtonColor: '#d33',
+            confirmButtonText: 'ยืนยัน',
+            cancelButtonText: 'ยกเลิก'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                sendData();
+            }
+        });
+    }
+
+    async function sendData() {
+        $("#btn_1").hide();
+        $("#btn_2").show();
+
+        try {
+            const name = document.getElementById("name").value.trim();
+            const house_number = document.getElementById("name1").value.trim();
+            const year = document.querySelector('.year-tab-btn.active').innerText.replace('ปี ', '').trim();
+            const payment_method = document.querySelector('input[name="name4"]:checked').value;
+            const remark = document.getElementById("name5").value.trim();
+            const mode = document.querySelector('input[name="slip_mode"]:checked').value;
+            const uid = liff.getDecodedIDToken()?.sub || "";
+
+            let recordsToSave = [];
+            
+            // ดึงเดือนที่เลือกทั้งหมด
+            const selectedMonths = Array.from(document.querySelectorAll('.month-check:checked')).map(cb => {
+                return { 
+                    monthName: cb.value, 
+                    year: cb.getAttribute('data-year'),
+                    index: cb.getAttribute('data-month-index')
+                };
+            });
+
+            // สร้าง Record สำหรับแต่ละเดือนที่เลือก
+            if (mode === 'single') {
+                // กรณีโอนรวม: อัปโหลดรูปใบเดียว แล้วใช้รูปนั้นกับทุกเดือน
+                const fileInput = document.getElementById("file_image");
+                const file = fileInput.files[0];
+                const base64Image = await compressImage(file);
+
+                for (let i = 0; i < selectedMonths.length; i++) {
+                    const m = selectedMonths[i];
+                    recordsToSave.push({
+                        id: `serene${Date.now()}${i}`, // สร้าง ID ชั่วคราว
+                        reported_at: new Date().toISOString(),
+                        user_id: uid,
+                        name: name,
+                        house_number: house_number,
+                        month: m.monthName,
+                        year: m.year,
+                        payment_method: payment_method,
+                        remark: remark,
+                        amount_text: "สามร้อยบาทถ้วน",
+                        amount: 300,
+                        image_url: base64Image // ใช้รูปเดียวกัน
+                    });
+                }
+            } else {
+                // กรณีโอนแยก: อัปโหลดรูปของแต่ละเดือน
+                for (let i = 0; i < selectedMonths.length; i++) {
+                    const m = selectedMonths[i];
+                    const fileInput = document.getElementById(`file_slip_box_${m.year}_${m.index}`);
+                    const file = fileInput.files[0];
+                    const base64Image = await compressImage(file);
+
+                    recordsToSave.push({
+                        id: `serene${Date.now()}${i}`,
+                        reported_at: new Date().toISOString(),
+                        user_id: uid,
+                        name: name,
+                        house_number: house_number,
+                        month: m.monthName,
+                        year: m.year,
+                        payment_method: payment_method,
+                        remark: remark,
+                        amount_text: "สามร้อยบาทถ้วน",
+                        amount: 300,
+                        image_url: base64Image // รูปเฉพาะเดือนนั้น
+                    });
+                }
+            }
+
+            // ส่งข้อมูลไปที่ Google Apps Script (Backend)
+            const payload = {
+                action: 'syncToSheet',
+                records: recordsToSave,
+                telegram_months: selectedMonths.map(m => m.monthName).join(', ') // รวมชื่อเดือนสำหรับ Telegram
+            };
+
+            const response = await fetch(urlAPI, {
+                method: "POST",
+                body: JSON.stringify(payload)
+            });
+
+            const result = await response.json();
+
+            if (result.msg === "SUCCESS") {
+                Swal.fire({
+                    title: 'บันทึกสำเร็จ!',
+                    text: 'ข้อมูลของคุณถูกส่งไปยังนิติบุคคลเรียบร้อยแล้ว',
+                    icon: 'success',
+                    confirmButtonText: 'ปิด'
+                }).then(() => {
+                    // รีเฟรชหน้าเว็บหลังบันทึกสำเร็จ (ดึง House Number มาเช็คสถานะใหม่)
+                    checkUnpaidStatus(house_number);
+                    document.getElementById('user_form').reset();
+                    document.querySelectorAll('.month-check').forEach(cb => {
+                        cb.checked = false;
+                        cb.dispatchEvent(new Event('change')); // กระตุ้น UI ให้กลับเป็นสีขาว
+                    });
+                    document.getElementById('file_image').value = '';
+                    document.getElementById('picdata').style.display = 'none';
+                    document.getElementById('slip_status_single').style.display = 'none';
+                    document.getElementById('totalAmountContainer').style.display = 'none';
+                    
+                    $("#btn_2").hide();
+                    $("#btn_1").show();
+                    $("#btn_1").prop("disabled", true).removeClass('btn-gradient').addClass('btn-secondary');
+                });
+            } else {
+                throw new Error(result.detail || "บันทึกไม่สำเร็จ");
+            }
+
+        } catch (error) {
+            console.error("Save Error:", error);
+            Swal.fire({
+                title: 'เกิดข้อผิดพลาด!',
+                text: 'ไม่สามารถบันทึกข้อมูลได้ กรุณาลองใหม่อีกครั้ง',
+                icon: 'error',
+                confirmButtonText: 'ตกลง'
+            });
+            $("#btn_2").hide();
+            $("#btn_1").show();
+        }
+    }
+
+    // ฟังก์ชันบีบอัดรูปภาพ
+    async function compressImage(file) {
+        if (!file) return "";
+        const options = {
+            maxSizeMB: 1, // บีบอัดให้ไม่เกิน 1MB
+            maxWidthOrHeight: 1024,
+            useWebWorker: true
+        };
+        try {
+            const compressedFile = await imageCompression(file, options);
+            return await toBase64(compressedFile);
+        } catch (error) {
+            console.error("Compression error:", error);
+            return await toBase64(file); // ถ้าบีบอัดพลาด ให้ส่งไฟล์ต้นฉบับ
+        }
+    }
+
+    const toBase64 = file => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = error => reject(error);
     });
   </script>
 </body>
