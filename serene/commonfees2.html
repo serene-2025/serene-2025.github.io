@@ -3,7 +3,7 @@
     ============================================================
     Admin Panel - ระบบค่าส่วนกลาง โกลเด้นแลนด์ ซีรีน
     Version: 5.0
-    Updated: 2026-08-10
+    Updated: 2026-07
     Logo: https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/serene23.png
 
     Phase 1 Features:
@@ -995,6 +995,22 @@
                 <!-- ============================================== -->
                 <section id="view-analytics" class="view-section animate-fade-up no-print">
                     <div class="space-y-6">
+                        <!-- ตัวกรองปี/เดือน -->
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+                            <div class="flex flex-wrap items-center gap-3">
+                                <div class="flex items-center gap-2">
+                                    <i data-lucide="filter" class="w-4 h-4 text-indigo-600"></i>
+                                    <span class="text-sm font-bold text-slate-700">ดูข้อมูล:</span>
+                                </div>
+                                <select id="analyticsYearFilter" onchange="renderAnalytics()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white font-medium">
+                                </select>
+                                <select id="analyticsMonthFilter" onchange="renderAnalytics()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white font-medium">
+                                    <option value="">ทั้งปี</option>
+                                </select>
+                                <span class="text-xs text-slate-400">* ตัวกรองเดือนมีผลกับ: Top ซอยค้างชำระ, อัตราชำระตรงเวลา, Aging Report — กราฟอื่นแสดงข้อมูลทั้งปีของปีที่เลือกเสมอ</span>
+                            </div>
+                        </div>
+
                         <!-- กราฟเทียบรายปี (B1) -->
                         <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                             <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
@@ -4440,7 +4456,38 @@ async function submitTxForm(e) {
 }
 
 // =============== ANALYTICS VIEW ===============
+function initAnalyticsFilters() {
+    const yearSel = document.getElementById('analyticsYearFilter');
+    const monthSel = document.getElementById('analyticsMonthFilter');
+    if (!yearSel || !monthSel) return;
+
+    const years = [...new Set(allData.map(d => d.year))].sort((a,b) => b-a);
+    if (years.length === 0) return;
+
+    // เติม option ปีแค่ครั้งแรก (ไม่ให้ reset ค่าที่ผู้ใช้เลือกไว้ทุกครั้งที่ re-render)
+    if (yearSel.options.length === 0) {
+        yearSel.innerHTML = years.map(y => `<option value="${y}">ปี ${y}</option>`).join('');
+    }
+    if (monthSel.options.length <= 1) {
+        monthSel.innerHTML = '<option value="">ทั้งปี</option>' +
+            months.map(m => `<option value="${m.key}">${m.th}</option>`).join('');
+    }
+}
+
+function getAnalyticsYear() {
+    const sel = document.getElementById('analyticsYearFilter');
+    if (sel && sel.value) return sel.value;
+    const years = [...new Set(allData.map(d => d.year))].sort((a,b) => b-a);
+    return years[0] ? years[0].toString() : null;
+}
+
+function getAnalyticsMonthKey() {
+    const sel = document.getElementById('analyticsMonthFilter');
+    return sel && sel.value ? sel.value : null; // null = ทั้งปี
+}
+
 function renderAnalytics() {
+    initAnalyticsFilters();
     renderYearComparison();   
     renderMonthlyChart();
     renderCumulativeOverdueTrend();
@@ -4493,7 +4540,9 @@ function renderYearComparison() {
 }
 
 function renderMonthlyChart() {
-    const filtered = getFilteredData();
+    const targetYear = getAnalyticsYear();
+    const selectedMonthKey = getAnalyticsMonthKey();
+    const filtered = targetYear ? allData.filter(d => d.year.toString() === targetYear.toString()) : [];
     const monthlyData = months.map(m => ({ ...m, paid: 0, unpaid: 0, waiting: 0 }));
     const soiMap = {};
 
@@ -4503,8 +4552,11 @@ function renderMonthlyChart() {
             if (s.includes('จ่ายแล้ว') || s.includes('ชำระแล้ว') || s.includes('ล่วงหน้า')) monthlyData[idx].paid += 300;
             else if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) {
                 monthlyData[idx].unpaid += 300;
-                const soi = item.soi ? item.soi.trim() : 'ไม่ระบุ';
-                soiMap[soi] = (soiMap[soi] || 0) + 300;
+                // ยอดค้างรายซอย: ถ้าเลือกเดือนไว้ นับเฉพาะเดือนนั้น ไม่งั้นนับทั้งปี
+                if (!selectedMonthKey || selectedMonthKey === m.key) {
+                    const soi = item.soi ? item.soi.trim() : 'ไม่ระบุ';
+                    soiMap[soi] = (soiMap[soi] || 0) + 300;
+                }
             }
             else if (s.includes('รอตรวจสอบ') || s.includes('รอข้อมูล')) monthlyData[idx].waiting += 300;
         });
@@ -4519,15 +4571,17 @@ function renderMonthlyChart() {
         const paidPct = total > 0 ? (m.paid / total) * 100 : 0;
         const unpaidPct = total > 0 ? (m.unpaid / total) * 100 : 0;
         const waitingPct = total > 0 ? (m.waiting / total) * 100 : 0;
+        const isSelected = selectedMonthKey === m.key;
+        const dimClass = selectedMonthKey && !isSelected ? 'opacity-30' : '';
         chartHtml += `
-            <div class="flex-1 flex flex-col items-center justify-end h-full gap-1" title="${m.label}: ฿${total.toLocaleString()}">
+            <div class="flex-1 flex flex-col items-center justify-end h-full gap-1 transition-opacity ${dimClass}" title="${m.label}: ฿${total.toLocaleString()}">
                 <div class="text-xs text-slate-500 font-bold">฿${(total/1000).toFixed(0)}k</div>
-                <div class="w-full flex flex-col bar-grow rounded-t overflow-hidden" style="height: ${totalPct}%; min-height: 2px;">
+                <div class="w-full flex flex-col bar-grow rounded-t overflow-hidden ${isSelected ? 'ring-2 ring-indigo-500 ring-offset-1' : ''}" style="height: ${totalPct}%; min-height: 2px;">
                     <div class="bg-yellow-400" style="height: ${waitingPct}%"></div>
                     <div class="bg-red-500" style="height: ${unpaidPct}%"></div>
                     <div class="bg-green-500" style="height: ${paidPct}%"></div>
                 </div>
-                <div class="text-xs font-bold text-slate-600 mt-1">${m.label}</div>
+                <div class="text-xs font-bold ${isSelected ? 'text-indigo-600' : 'text-slate-600'} mt-1">${m.label}</div>
             </div>`;
     });
     document.getElementById('monthlyChart').innerHTML = chartHtml;
@@ -4561,13 +4615,12 @@ function renderCumulativeOverdueTrend() {
     const sumEl = document.getElementById('cumulativeOverdueSummary');
     if (!el) return;
 
-    const years = [...new Set(allData.map(d => d.year))].sort((a,b) => a-b);
-    if (years.length === 0) {
+    const targetYear = getAnalyticsYear();
+    if (!targetYear) {
         el.innerHTML = '<p class="w-full text-center text-slate-400 py-8">ไม่มีข้อมูล</p>';
         sumEl.innerHTML = '';
         return;
     }
-    const targetYear = years[years.length - 1];
     const yearHouses = allData.filter(d => d.year.toString() === targetYear.toString());
 
     let cumulative = 0;
@@ -4602,16 +4655,17 @@ function renderOnTimePaymentRate() {
     const el = document.getElementById('onTimePaymentRanking');
     if (!el) return;
 
-    const years = [...new Set(allData.map(d => d.year))].sort((a,b) => b-a);
-    if (years.length === 0) { el.innerHTML = '<p class="text-center text-slate-400 py-4">ไม่มีข้อมูล</p>'; return; }
-    const targetYear = years[0];
+    const targetYear = getAnalyticsYear();
+    const selectedMonthKey = getAnalyticsMonthKey();
+    if (!targetYear) { el.innerHTML = '<p class="text-center text-slate-400 py-4">ไม่มีข้อมูล</p>'; return; }
     const yearHouses = allData.filter(d => d.year.toString() === targetYear.toString());
+    const monthsToCheck = selectedMonthKey ? months.filter(m => m.key === selectedMonthKey) : months;
 
     const soiMap = {};
     yearHouses.forEach(h => {
         const soi = h.soi ? h.soi.trim() : 'ไม่ระบุ';
         if (!soiMap[soi]) soiMap[soi] = { onTime: 0, total: 0 };
-        months.forEach(m => {
+        monthsToCheck.forEach(m => {
             const s = h[m.key] || '';
             if (!s || s === '-') return;
             soiMap[soi].total++;
@@ -4645,14 +4699,21 @@ function renderOnTimePaymentRate() {
 
 // =============== AGING REPORT ===============
 function getAgingData() {
-    const years = [...new Set(allData.map(d => d.year))].sort((a,b) => b-a);
-    if (years.length === 0) return { targetYear: null, rows: [] };
-    const targetYear = years[0];
+    const targetYear = getAnalyticsYear();
+    const selectedMonthKey = getAnalyticsMonthKey();
+    if (!targetYear) return { targetYear: null, rows: [] };
     const yearHouses = allData.filter(d => d.year.toString() === targetYear.toString());
+
+    // ถ้าเลือกเดือนไว้ นับเฉพาะเดือนตั้งแต่ ม.ค. ถึงเดือนที่เลือก (สแนปช็อต ณ จุดนั้น) ไม่งั้นนับทั้ง 12 เดือน
+    let monthsToCheck = months;
+    if (selectedMonthKey) {
+        const idx = months.findIndex(m => m.key === selectedMonthKey);
+        monthsToCheck = idx >= 0 ? months.slice(0, idx + 1) : months;
+    }
 
     const rows = yearHouses.map(h => {
         let overdueMonths = 0;
-        months.forEach(m => {
+        monthsToCheck.forEach(m => {
             const s = h[m.key] || '';
             if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) overdueMonths++;
         });
@@ -4735,13 +4796,12 @@ function renderRevenueForecast() {
     const chartEl = document.getElementById('forecastChart');
     if (!cardsEl || !chartEl) return;
 
-    const years = [...new Set(allData.map(d => d.year))].sort((a,b) => a-b);
-    if (years.length === 0) {
+    const targetYear = getAnalyticsYear();
+    if (!targetYear) {
         cardsEl.innerHTML = '<p class="col-span-3 text-center text-slate-400 py-4">ไม่มีข้อมูล</p>';
         chartEl.innerHTML = '';
         return;
     }
-    const targetYear = years[years.length - 1];
     const yearHouses = allData.filter(d => d.year.toString() === targetYear.toString());
 
     const actuals = months.map(m => {
@@ -5972,9 +6032,8 @@ function renderPaymentHeatmap() {
     const el = document.getElementById('paymentHeatmap');
     if (!el) return;
 
-    const years = [...new Set(allData.map(d => d.year))].sort((a,b) => b-a);
-    if (years.length === 0) { el.innerHTML = '<p class="text-slate-400 text-sm py-4">ไม่มีข้อมูล</p>'; return; }
-    const targetYear = years[0];
+    const targetYear = getAnalyticsYear();
+    if (!targetYear) { el.innerHTML = '<p class="text-slate-400 text-sm py-4">ไม่มีข้อมูล</p>'; return; }
     const yearHouses = allData.filter(d => d.year.toString() === targetYear.toString());
 
     // รวมซอยทั้งหมด
@@ -8703,6 +8762,10 @@ window.confirmRejectSlip = confirmRejectSlip;
 window.exportYearReceiptsZip = exportYearReceiptsZip;
 window.exportOverdueCSV = exportOverdueCSV;
 window.exportAgingCSV = exportAgingCSV;
+window.renderAnalytics = renderAnalytics;
+window.initAnalyticsFilters = initAnalyticsFilters;
+window.getAnalyticsYear = getAnalyticsYear;
+window.getAnalyticsMonthKey = getAnalyticsMonthKey;
 window.renderEscalationTable = renderEscalationTable;
 window.toggleEscSelectAll = toggleEscSelectAll;
 window.updateEscSelectedCount = updateEscSelectedCount;
