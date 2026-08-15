@@ -1812,27 +1812,47 @@
                 list_type: listTypeInput.value, start_date: startDateInput.value, end_date: endDateInput.value
             };
             
-            if (payload.list_type === 'blocklist') {
-                const {value:pin} = await Swal.fire({title:'ยืนยันระงับ', input:'password', showCancelButton:true});
-                if(pin!=='9999') return;
-                await supabaseClient.from('deleted_cars').insert([payload]);
-                if(editIdInput.value) await supabaseClient.from('allowed_cars').update({status:'pending_delete'}).eq('id', editIdInput.value);
-                else await supabaseClient.from('allowed_cars').insert([{...payload, status:'pending_delete'}]);
-            } else {
-                if(editIdInput.value) {
-                    await supabaseClient.from('allowed_cars').update({...payload, status: (carTypeInput.value === 'motorcycle' ? 'ignore_sync' : 'pending_update')}).eq('id', editIdInput.value);
+            try {
+                if (payload.list_type === 'blocklist') {
+                    const {value:pin} = await Swal.fire({title:'ยืนยันระงับ', input:'password', showCancelButton:true});
+                    if(pin!=='9999') return;
+
+                    const { error: errDel } = await supabaseClient.from('deleted_cars').insert([payload]);
+                    if (errDel) throw errDel;
+
+                    if(editIdInput.value) {
+                        const { error: errUpd } = await supabaseClient.from('allowed_cars').update({status:'pending_delete'}).eq('id', editIdInput.value);
+                        if (errUpd) throw errUpd;
+                    } else {
+                        const { error: errIns } = await supabaseClient.from('allowed_cars').insert([{...payload, status:'pending_delete'}]);
+                        if (errIns) throw errIns;
+                    }
                 } else {
-                    const {data} = await supabaseClient.from('allowed_cars').select('id').eq('plate_number', plate).neq('status', 'pending_delete').maybeSingle();
-                    if(data) return Swal.fire('Error', 'ทะเบียนซ้ำ', 'error');
-                    await supabaseClient.from('allowed_cars').insert([{...payload, status: finalStatus}]);
+                    if(editIdInput.value) {
+                        const { error: errUpd } = await supabaseClient.from('allowed_cars')
+                            .update({...payload, status: (carTypeInput.value === 'motorcycle' ? 'ignore_sync' : 'pending_update')})
+                            .eq('id', editIdInput.value);
+                        if (errUpd) throw errUpd;
+                    } else {
+                        const {data} = await supabaseClient.from('allowed_cars').select('id').eq('plate_number', plate).neq('status', 'pending_delete').maybeSingle();
+                        if(data) return Swal.fire('Error', 'ทะเบียนซ้ำ', 'error');
+                        const { error: errIns } = await supabaseClient.from('allowed_cars').insert([{...payload, status: finalStatus}]);
+                        if (errIns) throw errIns;
+                    }
                 }
+
+                if(originalDeletedIdInput.value && currentView !== 'visitor_history') {
+                     if(currentView === 'deleted') {
+                        const { error: errRm } = await supabaseClient.from('deleted_cars').delete().eq('id', originalDeletedIdInput.value);
+                        if (errRm) throw errRm;
+                     }
+                }
+
+                closeModal(); Swal.fire('สำเร็จ', 'บันทึกเรียบร้อย ระบบกำลังส่งข้อมูลไปที่กล้อง...', 'success'); refreshCurrentView();
+            } catch (err) {
+                console.error('❌ saveData error:', err);
+                Swal.fire('บันทึกไม่สำเร็จ', err.message || 'เกิดข้อผิดพลาดในการเขียนข้อมูล (อาจเป็นเพราะสิทธิ์การเข้าถึง/RLS)', 'error');
             }
-            
-            if(originalDeletedIdInput.value && currentView !== 'visitor_history') { 
-                 if(currentView === 'deleted') await supabaseClient.from('deleted_cars').delete().eq('id', originalDeletedIdInput.value);
-            }
-            
-            closeModal(); Swal.fire('สำเร็จ', 'บันทึกเรียบร้อย', 'success'); refreshCurrentView();
         }
 
         window.handleEdit = (d) => openModal(true, d, false);
@@ -1840,10 +1860,21 @@
         window.handleDelete = async (id, plate) => {
             const {value:pin} = await Swal.fire({title:'ยืนยันลบ', input:'password', showCancelButton:true});
             if(pin==='9999') {
-                const {data} = await supabaseClient.from('allowed_cars').select('*').eq('id', id).single();
-                if(data) await supabaseClient.from('deleted_cars').insert([{...data}]);
-                await supabaseClient.from('allowed_cars').update({status:'pending_delete'}).eq('id', id);
-                refreshCurrentView();
+                try {
+                    const {data, error: errSel} = await supabaseClient.from('allowed_cars').select('*').eq('id', id).single();
+                    if (errSel) throw errSel;
+                    if(data) {
+                        const { error: errIns } = await supabaseClient.from('deleted_cars').insert([{...data}]);
+                        if (errIns) throw errIns;
+                    }
+                    const { error: errUpd } = await supabaseClient.from('allowed_cars').update({status:'pending_delete'}).eq('id', id);
+                    if (errUpd) throw errUpd;
+                    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'สั่งลบแล้ว ระบบกำลังส่งไปที่กล้อง...', showConfirmButton: false, timer: 2500 });
+                    refreshCurrentView();
+                } catch (err) {
+                    console.error('❌ handleDelete error:', err);
+                    Swal.fire('ลบไม่สำเร็จ', err.message || 'เกิดข้อผิดพลาดในการเขียนข้อมูล (อาจเป็นเพราะสิทธิ์การเข้าถึง/RLS)', 'error');
+                }
             }
         };
 
