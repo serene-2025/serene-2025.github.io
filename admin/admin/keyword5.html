@@ -556,6 +556,7 @@
                                     <button onclick="loadView('targeted');" id="nav-targeted" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="target" class="w-5 h-5 text-blue-500"></i> <span>Push เฉพาะกลุ่ม</span></button>
                                     <button onclick="loadView('scheduledBroadcast');" id="nav-scheduledBroadcast" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="clock" class="w-5 h-5 text-blue-500"></i> <span>ตั้งเวลาส่งข้อความ</span></button>
                                     <button onclick="loadView('narrowcastHistory');" id="nav-narrowcastHistory" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="history" class="w-5 h-5 text-violet-500"></i> <span>ประวัติการส่ง</span></button>
+                                    <button onclick="loadView('pushDeliveryLog');" id="nav-pushDeliveryLog" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="check-check" class="w-5 h-5 text-emerald-500"></i> <span>รายงานการส่ง (รายคน)</span></button>
                                     <button onclick="loadView('senderProfiles');" id="nav-senderProfiles" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="user-cog" class="w-5 h-5 text-cyan-500"></i> <span>จัดการ Sender</span></button>
                                     <button onclick="loadView('groups');" id="nav-groups" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all group">
                                 <i data-lucide="users-2" class="w-5 h-5 transition-transform group-hover:scale-110"></i>
@@ -2529,6 +2530,92 @@
             else showToast('เบราว์เซอร์บล็อก popup กรุณาอนุญาต', 'warning');
         }
 
+        // ─── 📊 PUSH DELIVERY LOG (รายงานการส่งรายคน) ─────────────────
+        async function renderPushDeliveryLogView() {
+            document.getElementById('content-area').innerHTML =
+                '<div class="slide-in p-2">' +
+                '<div class="mb-6"><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
+                '<span class="bg-emerald-100 text-emerald-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="check-check" class="w-8 h-8"></i></span>' +
+                'รายงานการส่ง (รายคน)</h1>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">ดูผลการส่งข้อความแบบละเอียดรายคน — ใครได้รับ ใครไม่ได้รับ พร้อม export รายชื่อที่ล้มเหลว</p></div>' +
+                '<div id="pdl-list"></div></div>';
+            lucide.createIcons();
+            await loadPushCampaignList();
+        }
+
+        async function loadPushCampaignList() {
+            const el = document.getElementById('pdl-list');
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/push_campaign_list`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+                if (!d.campaigns?.length) {
+                    el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">ยังไม่มีประวัติการส่ง — ลองส่ง narrowcast ให้หลายคนดูก่อน</div>';
+                    return;
+                }
+                el.innerHTML = '<div class="glass rounded-3xl overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
+                    '<thead class="bg-slate-50"><tr><th class="text-left p-3">กลุ่มเป้าหมาย</th><th class="text-center p-3">ทั้งหมด</th>' +
+                    '<th class="text-center p-3">✅ สำเร็จ</th><th class="text-center p-3">❌ ล้มเหลว</th><th class="text-center p-3">อัตราสำเร็จ</th>' +
+                    '<th class="text-left p-3">เวลา</th><th class="text-center p-3">จัดการ</th></tr></thead><tbody>' +
+                    d.campaigns.map(c => {
+                        const dt = new Date(c.created_at).toLocaleString('th-TH', {day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+                        const rate = c.total_recipients ? Math.round((c.sent_count/c.total_recipients)*100) : 0;
+                        const rateColor = rate === 100 ? 'emerald' : rate >= 90 ? 'amber' : 'rose';
+                        return '<tr class="border-t border-slate-100 hover:bg-slate-50">' +
+                            '<td class="p-3 font-bold text-slate-700">' + escapeHtml(c.target_summary || 'ไม่ระบุ') + '</td>' +
+                            '<td class="p-3 text-center text-slate-500">' + c.total_recipients + '</td>' +
+                            '<td class="p-3 text-center font-bold text-emerald-600">' + c.sent_count + '</td>' +
+                            '<td class="p-3 text-center font-bold text-rose-600">' + c.failed_count + '</td>' +
+                            '<td class="p-3 text-center"><span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-' + rateColor + '-100 text-' + rateColor + '-700">' + rate + '%</span></td>' +
+                            '<td class="p-3 text-xs text-slate-400">' + dt + '</td>' +
+                            '<td class="p-3 text-center"><button data-id="' + c.id + '" onclick="viewPushCampaignDetail(this.dataset.id)" class="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-200">ดูรายละเอียด</button></td>' +
+                            '</tr>';
+                    }).join('') + '</tbody></table></div></div>';
+                lucide.createIcons();
+            } catch(e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        async function viewPushCampaignDetail(campaignId) {
+            showModal('📊 รายละเอียดการส่ง', '<div id="pcd-body" class="text-left"><div class="text-center py-8 text-slate-400">⏳ กำลังโหลด...</div></div>');
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/push_campaign_detail?id=${campaignId}`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+
+                const el = document.getElementById('pcd-body');
+                const failedLogs = d.logs.filter(l => !l.success);
+                const successLogs = d.logs.filter(l => l.success);
+
+                el.innerHTML =
+                    '<div class="grid grid-cols-3 gap-2 mb-4">' +
+                    '<div class="bg-slate-50 rounded-xl p-3 text-center"><div class="text-lg font-extrabold text-slate-700">' + d.campaign.total_recipients + '</div><div class="text-[10px] text-slate-500">ทั้งหมด</div></div>' +
+                    '<div class="bg-emerald-50 rounded-xl p-3 text-center"><div class="text-lg font-extrabold text-emerald-600">' + d.campaign.sent_count + '</div><div class="text-[10px] text-emerald-500">สำเร็จ</div></div>' +
+                    '<div class="bg-rose-50 rounded-xl p-3 text-center"><div class="text-lg font-extrabold text-rose-600">' + d.campaign.failed_count + '</div><div class="text-[10px] text-rose-500">ล้มเหลว</div></div>' +
+                    '</div>' +
+                    (failedLogs.length ? '<button data-id="' + campaignId + '" onclick="exportFailedCsv(this.dataset.id)" class="w-full py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold text-sm mb-4 flex items-center justify-center gap-2"><i data-lucide="download" class="w-4 h-4"></i> Export รายชื่อที่ล้มเหลว (' + failedLogs.length + ' คน) เป็น CSV</button>' : '') +
+                    (failedLogs.length ? '<div class="font-bold text-rose-600 text-xs mb-2">❌ รายชื่อที่ส่งไม่ผ่าน</div>' +
+                        '<div class="max-h-48 overflow-y-auto space-y-1.5 mb-4">' +
+                        failedLogs.slice(0, 50).map(l =>
+                            '<div class="flex items-center justify-between p-2 bg-rose-50 rounded-lg text-xs">' +
+                            '<span class="font-bold text-slate-700">' + escapeHtml(l.display_name || l.house_no || l.user_id.slice(-8)) + '</span>' +
+                            '<span class="text-rose-500">HTTP ' + (l.http_status||'—') + '</span></div>'
+                        ).join('') +
+                        (failedLogs.length > 50 ? '<div class="text-center text-[11px] text-slate-400 py-1">... และอีก ' + (failedLogs.length-50) + ' คน (ดูครบใน CSV)</div>' : '') +
+                        '</div>' : '') +
+                    '<div class="font-bold text-emerald-600 text-xs mb-2">✅ ส่งสำเร็จ ' + successLogs.length + ' คน</div>';
+                lucide.createIcons();
+            } catch(e) {
+                document.getElementById('pcd-body').innerHTML = '<div class="text-rose-500 text-center py-6 text-sm">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function exportFailedCsv(campaignId) {
+            window.open(`${API_BASE_URL}/api/admin/audience/push_campaign_export_failed?id=${campaignId}`, '_blank');
+        }
+
         async function renderTrashBinView() {
             document.getElementById('content-area').innerHTML =
                 '<div class="slide-in p-2">' +
@@ -2673,6 +2760,7 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'redeemHistory') await renderRedeemHistoryView();
             else if (viewName === 'scheduledBroadcast') await renderScheduledBroadcastView();
             else if (viewName === 'narrowcastHistory') await renderNarrowcastHistoryView();
+            else if (viewName === 'pushDeliveryLog') await renderPushDeliveryLogView();
             else if (viewName === 'senderProfiles') await renderSenderProfilesView();
             else if (viewName === 'escalation') await renderEscalationView();
             else if (viewName === 'aiSearch') await renderAiSearchView();
