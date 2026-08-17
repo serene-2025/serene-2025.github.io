@@ -2538,9 +2538,66 @@
                 '<span class="bg-emerald-100 text-emerald-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="check-check" class="w-8 h-8"></i></span>' +
                 'รายงานการส่ง (รายคน)</h1>' +
                 '<p class="text-sm text-slate-500 mt-2 ml-1">ดูผลการส่งข้อความแบบละเอียดรายคน — ใครได้รับ ใครไม่ได้รับ พร้อม export รายชื่อที่ล้มเหลว</p></div>' +
+                '<div id="pdl-storage" class="mb-5"></div>' +
                 '<div id="pdl-list"></div></div>';
             lucide.createIcons();
+            await loadPushStorageStats();
             await loadPushCampaignList();
+        }
+
+        async function loadPushStorageStats() {
+            const el = document.getElementById('pdl-storage');
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/push_storage_stats`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error);
+
+                el.innerHTML =
+                    '<div class="glass rounded-3xl p-4 flex flex-wrap items-center gap-4">' +
+                    '<div class="flex items-center gap-2 text-xs"><i data-lucide="database" class="w-4 h-4 text-slate-400"></i>' +
+                    '<span class="text-slate-500">แคมเปญทั้งหมด <b class="text-slate-700">' + d.totalCampaigns + '</b> · Log รายคน <b class="text-slate-700">' + d.totalLogs + '</b></span></div>' +
+                    (d.oldCampaignsEligibleForPurge > 0 ?
+                        '<button onclick="openPushCleanupModal(' + d.oldCampaignsEligibleForPurge + ')" class="ml-auto px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-xl text-xs font-bold flex items-center gap-1.5">' +
+                        '<i data-lucide="database-zap" class="w-3.5 h-3.5"></i> ล้างประวัติเก่า (' + d.oldCampaignsEligibleForPurge + ' รายการ พร้อมล้าง)</button>'
+                        : '<span class="ml-auto text-[11px] text-emerald-500 flex items-center gap-1"><i data-lucide="check" class="w-3.5 h-3.5"></i> ไม่มีประวัติเก่าที่ต้องล้าง</span>') +
+                    '</div>';
+                lucide.createIcons();
+            } catch(e) { console.warn('loadPushStorageStats', e); }
+        }
+
+        function openPushCleanupModal(eligibleCount) {
+            showModal('🗄️ ล้างประวัติเก่า (คืนพื้นที่ Database)',
+                '<div class="space-y-3 text-left">' +
+                '<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">' +
+                'ล้างเฉพาะแคมเปญที่ส่ง<b>เสร็จสมบูรณ์แล้ว</b>เท่านั้น (สถานะ completed) — ไม่กระทบแคมเปญที่กำลังส่งอยู่<br>' +
+                'ลบแล้ว <b>กู้คืนไม่ได้</b> แนะนำ export CSV รายชื่อที่ล้มเหลวไว้ก่อนถ้ายังต้องการเก็บข้อมูล' +
+                '</div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">ล้างประวัติที่เก่ากว่า (วัน)</label>' +
+                '<select id="pcu-days" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white">' +
+                '<option value="7">7 วัน</option><option value="30" selected>30 วัน</option><option value="90">90 วัน</option>' +
+                '</select></div>' +
+                '<div class="text-xs text-slate-500">พบ ' + eligibleCount + ' แคมเปญที่เก่ากว่า 30 วัน (ปรับตัวเลขได้ด้านบน)</div>' +
+                '<div class="flex gap-2 pt-2">' +
+                '<button onclick="confirmPushCleanup()" class="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold text-sm">🗑️ ล้างตอนนี้</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+                '</div></div>'
+            );
+        }
+
+        async function confirmPushCleanup() {
+            const days = document.getElementById('pcu-days')?.value || '30';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/push_storage_cleanup`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ olderThanDays: days })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ล้างไม่สำเร็จ');
+                closeModal();
+                showToast('✅ ' + d.message, 'success');
+                loadPushStorageStats();
+                loadPushCampaignList();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
         }
 
         async function loadPushCampaignList() {
@@ -5922,6 +5979,13 @@ async function updateAllUserProfiles() {
                                         <i data-lucide="info" class="w-3.5 h-3.5 inline"></i>
                                         <b>Push API</b> ส่งข้อความตรงไปหาเฉพาะ user ที่เลือก (ไม่ต้องสร้าง audience)
                                     </div>
+                                    <div class="flex gap-2">
+                                        <input type="file" id="pu-file-input" accept=".csv,.txt" class="hidden" onchange="handlePuFileUpload(this.files[0])">
+                                        <button onclick="document.getElementById('pu-file-input').click()" class="flex-1 py-2 bg-fuchsia-50 hover:bg-fuchsia-100 text-fuchsia-700 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5">
+                                            <i data-lucide="upload" class="w-3.5 h-3.5"></i> อัปโหลดรายชื่อ User ID (.csv / .txt)
+                                        </button>
+                                    </div>
+                                    <div id="pu-file-status" class="hidden text-xs"></div>
                                     <input type="text" id="pu-search" oninput="filterPushUsers()" placeholder="🔍 ค้นหาชื่อ / บ้านเลขที่ / เบอร์..." class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fuchsia-500 outline-none">
                                     <div class="flex items-center gap-2 text-xs">
                                         <button onclick="pushSelectAll(true)" class="text-fuchsia-600 font-bold hover:underline">เลือกทั้งหมด</button>
@@ -6296,6 +6360,55 @@ async function updateAllUserProfiles() {
                 else pushSelectedUids.delete(uid);
             });
             updatePushCount();
+        }
+
+        // ─── 📄 อัปโหลดรายชื่อ User ID จากไฟล์ (.csv / .txt) ───────────
+        function handlePuFileUpload(file) {
+            if (!file) return;
+            const statusEl = document.getElementById('pu-file-status');
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const text = e.target.result;
+                let ids = [];
+
+                if (file.name.toLowerCase().endsWith('.csv')) {
+                    // รองรับ CSV ที่มีคอลัมน์ userId/uid/line_id หรือแค่คอลัมน์เดียวไม่มีหัว
+                    const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
+                    if (!lines.length) { ids = []; }
+                    else {
+                        const header = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g,''));
+                        const idCol = header.findIndex(h => ['userid','uid','line_id','lineid','id'].includes(h));
+                        if (idCol >= 0) {
+                            ids = lines.slice(1).map(l => l.split(',')[idCol]?.trim().replace(/"/g,'')).filter(Boolean);
+                        } else {
+                            // ไม่มีหัวคอลัมน์ที่รู้จัก → ถือว่าทุกบรรทัดคือ user id (คอลัมน์แรก)
+                            ids = lines.map(l => l.split(',')[0]?.trim().replace(/"/g,'')).filter(Boolean);
+                        }
+                    }
+                } else {
+                    // .txt — หนึ่งบรรทัดต่อหนึ่ง user id
+                    ids = text.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+                }
+
+                // กรองเฉพาะที่หน้าตาเหมือน LINE User ID (ขึ้นต้น U ตามด้วย hex 32 ตัว) กันข้อมูลมั่ว แต่ยังยอมรับตัวอื่นเผื่อ format ไม่ตรง
+                const validIds = ids.filter(id => /^U[0-9a-f]{32}$/i.test(id));
+                const invalidCount = ids.length - validIds.length;
+
+                validIds.forEach(id => pushSelectedUids.add(id));
+                updatePushCount();
+
+                statusEl.classList.remove('hidden');
+                statusEl.innerHTML = invalidCount > 0
+                    ? '<div class="p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-700">✅ เพิ่ม ' + validIds.length + ' รายชื่อ · ⚠️ ข้าม ' + invalidCount + ' แถวที่ไม่ใช่ LINE User ID ที่ถูกต้อง</div>'
+                    : '<div class="p-2 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-700">✅ เพิ่ม ' + validIds.length + ' รายชื่อจากไฟล์สำเร็จ (ผู้ใช้ที่ไม่อยู่ในรายชื่อด้านล่างจะยังถูกส่งด้วย)</div>';
+
+                document.getElementById('pu-file-input').value = '';
+            };
+            reader.onerror = () => {
+                statusEl.classList.remove('hidden');
+                statusEl.innerHTML = '<div class="p-2 bg-rose-50 border border-rose-200 rounded-lg text-rose-600">❌ อ่านไฟล์ไม่สำเร็จ</div>';
+            };
+            reader.readAsText(file);
         }
 
         function updatePushCount() {
