@@ -1190,6 +1190,10 @@
                         <details class="mb-4">
                             <summary class="cursor-pointer text-sm font-bold text-blue-600 select-none">⚙️ ตั้งค่าข้อมูลนิติบุคคล (คลิกเพื่อแก้ไข)</summary>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 p-3 bg-slate-50 rounded-lg">
+                                <div class="md:col-span-2">
+                                    <label class="block text-xs font-bold text-slate-600 mb-1">ชื่อนิติบุคคล (เต็ม)</label>
+                                    <input type="text" id="invSettingOrgName" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-bold" placeholder="นิติบุคคลหมู่บ้านจัดสรร...">
+                                </div>
                                 <div>
                                     <label class="block text-xs font-bold text-slate-600 mb-1">ที่อยู่สำนักงานนิติบุคคล</label>
                                     <input type="text" id="invSettingAddress" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" placeholder="เลขที่ ถนน ตำบล อำเภอ จังหวัด รหัสไปรษณีย์">
@@ -8622,8 +8626,9 @@ const INV_SETTINGS_KEY = 'gls_invoice_settings';
 
 function getInvoiceSettings() {
     const defaults = {
-        address: '',
-        taxId: '',
+        orgName: 'นิติบุคคลหมู่บ้านจัดสรร โกลเด้นแลนด์ ซีรีน',
+        address: '998 หมู่ 2 ต.มาบยางพร อ.ปลวกแดง จ.ระยอง 21140',
+        taxId: '099-4-00278121-8',
         dueDays: 15,
         lateFeePct: 10,
         issuer: 'นางสาว อรนภา ดวงแสงจันทร์',
@@ -8637,6 +8642,7 @@ function getInvoiceSettings() {
 
 function saveInvoiceSettings() {
     const settings = {
+        orgName: document.getElementById('invSettingOrgName').value.trim(),
         address: document.getElementById('invSettingAddress').value.trim(),
         taxId: document.getElementById('invSettingTaxId').value.trim(),
         dueDays: parseInt(document.getElementById('invSettingDueDays').value) || 15,
@@ -8651,6 +8657,7 @@ function saveInvoiceSettings() {
 
 function loadInvoiceView() {
     const s = getInvoiceSettings();
+    document.getElementById('invSettingOrgName').value = s.orgName;
     document.getElementById('invSettingAddress').value = s.address;
     document.getElementById('invSettingTaxId').value = s.taxId;
     document.getElementById('invSettingDueDays').value = s.dueDays;
@@ -8763,6 +8770,7 @@ function updateInvSelectedCount() {
 function buildInvoiceHTML(house, monthKey) {
     const s = getInvoiceSettings();
     const LOGO = 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/serene23.png';
+    const STAMP = 'https://lh3.googleusercontent.com/d/14t2Npp4ow1YEgbykl5xj9rgbzhZHf-fB';
     const today = new Date();
     const thaiToday = today.toLocaleDateString('th-TH', { day:'numeric', month:'long', year:'numeric' });
     const dueDate = new Date(today.getTime() + s.dueDays * 86400000).toLocaleDateString('th-TH', { day:'numeric', month:'long', year:'numeric' });
@@ -8772,15 +8780,26 @@ function buildInvoiceHTML(house, monthKey) {
     const d = getInvoiceRowData(house, monthKey);
 
     const lineItems = [];
-    if (d.currentDue > 0) {
-        lineItems.push({ desc: `ค่าส่วนกลางประจำเดือน ${monthLabel} ปี ${house.year}`, calc: `(${RATE_PER_MONTH} บาท x 1 เดือน)`, amount: d.currentDue });
+    if (!monthKey) {
+        // โหมด "ทั้งปี" — รวมเป็นบิลรายปีก้อนเดียว เช่น "ค่าส่วนกลางประจำปี 2569 (ม.ค. - ธ.ค.)"
+        const monthsUnpaid = d.overdueMonths; // นับครบ 12 เดือนของปีนั้นแล้วจากฟังก์ชัน getInvoiceRowData
+        lineItems.push({
+            desc: `ค่าส่วนกลางประจำปี ${house.year} (ม.ค. - ธ.ค.)`,
+            calc: `(${RATE_PER_MONTH} บาท/เดือน x ${monthsUnpaid || 12} เดือน)`,
+            amount: monthsUnpaid > 0 ? d.overdueAmount : RATE_PER_MONTH * 12
+        });
+    } else {
+        if (d.currentDue > 0) {
+            lineItems.push({ desc: `ค่าส่วนกลางประจำเดือน ${monthLabel} ปี ${house.year}`, calc: `(${RATE_PER_MONTH} บาท/เดือน)`, amount: d.currentDue });
+        }
+        if (d.overdueAmount > 0) {
+            lineItems.push({ desc: `ยอดค้างชำระยกมา (${d.overdueMonths} เดือน)`, calc: `(${RATE_PER_MONTH} บาท x ${d.overdueMonths} เดือน)`, amount: d.overdueAmount });
+        }
+        if (lineItems.length === 0) {
+            lineItems.push({ desc: `ค่าส่วนกลางประจำเดือน ${monthLabel} ปี ${house.year}`, calc: `(${RATE_PER_MONTH} บาท/เดือน)`, amount: 0 });
+        }
     }
-    if (d.overdueAmount > 0) {
-        lineItems.push({ desc: `ยอดค้างชำระยกมา (${d.overdueMonths} เดือน)`, calc: `(${RATE_PER_MONTH} บาท x ${d.overdueMonths} เดือน)`, amount: d.overdueAmount });
-    }
-    if (lineItems.length === 0) {
-        lineItems.push({ desc: `ค่าส่วนกลางประจำเดือน ${monthLabel} ปี ${house.year}`, calc: `(${RATE_PER_MONTH} บาท x 1 เดือน)`, amount: 0 });
-    }
+    const grandTotal = lineItems.reduce((sum, item) => sum + item.amount, 0);
 
     return `<div class="inv-page">
 
@@ -8788,7 +8807,7 @@ function buildInvoiceHTML(house, monthKey) {
   <div class="inv-header">
     <img src="${LOGO}" alt="โลโก้" class="inv-logo">
     <div class="inv-header-text">
-      <div class="inv-org-name">นิติบุคคลหมู่บ้านโกลเด้นแลนด์ ซีรีน</div>
+      <div class="inv-org-name">${s.orgName}</div>
       <div class="inv-org-sub">Golden Land Serene Juristic Person</div>
       ${s.address ? `<div class="inv-org-detail">${s.address}</div>` : ''}
       ${s.taxId ? `<div class="inv-org-detail">เลขประจำตัวผู้เสียภาษี: ${s.taxId}</div>` : ''}
@@ -8823,10 +8842,10 @@ function buildInvoiceHTML(house, monthKey) {
       ${lineItems.map(item => `<tr><td>${item.desc}</td><td class="text-slate-500">${item.calc}</td><td class="text-right">${item.amount.toLocaleString()}</td></tr>`).join('')}
     </tbody>
     <tfoot>
-      <tr class="inv-total-row"><td colspan="2">ยอดเงินรวมที่ต้องชำระ</td><td class="text-right">${d.total.toLocaleString()}</td></tr>
+      <tr class="inv-total-row"><td colspan="2">ยอดเงินรวมที่ต้องชำระ</td><td class="text-right">${grandTotal.toLocaleString()}</td></tr>
     </tfoot>
   </table>
-  <div class="inv-amount-words">(${amountInWords(d.total)})</div>
+  <div class="inv-amount-words">(${amountInWords(grandTotal)})</div>
 
   <!-- ═══ PAYMENT INFO ═══ -->
   <div class="inv-payment-box">
@@ -8844,18 +8863,22 @@ function buildInvoiceHTML(house, monthKey) {
   <div class="inv-footer">
     <div class="inv-sign-row">
       <div class="inv-sign-col">
-        <div class="inv-sign-line"></div>
+        <div class="inv-sign-line">
+          <img src="${STAMP}" alt="ตราประทับ" class="inv-stamp-img">
+        </div>
         <div class="inv-sign-name">( ${s.issuer || '..............................'} )</div>
         <div class="inv-sign-title">${s.issuerTitle || 'ผู้ออกเอกสาร'}</div>
       </div>
       <div class="inv-sign-col">
-        <div class="inv-stamp-box">ตราประทับนิติบุคคล<br>(ถ้ามี)</div>
+        <div class="inv-sign-line"></div>
+        <div class="inv-sign-name">( .............................. )</div>
+        <div class="inv-sign-title">ประธานกรรมการนิติบุคคลหมู่บ้านจัดสรร</div>
       </div>
     </div>
     <div class="inv-footer-bar">
       <span>📅 ออกเอกสาร ณ วันที่ ${thaiToday}</span>
       <span>⚙️ ระบบ Admin Panel v5.0</span>
-      <span>🏢 นิติบุคคลโกลเด้นแลนด์ ซีรีน</span>
+      <span>🏢 ${s.orgName}</span>
     </div>
   </div>
 
@@ -8901,7 +8924,7 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
 
 .inv-page{
   width:210mm;height:297mm;background:#fff;color:#111;
-  padding:12mm 14mm;position:relative;
+  padding:12mm 14mm;position:relative;overflow:hidden;
   page-break-after:always;break-after:page;
 }
 .inv-page:last-child{page-break-after:auto;break-after:auto;}
@@ -8939,10 +8962,10 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
 .inv-footer{position:absolute;bottom:12mm;left:14mm;right:14mm;}
 .inv-sign-row{display:grid;grid-template-columns:1fr 1fr;gap:20pt;margin-bottom:8pt;}
 .inv-sign-col{text-align:center;}
-.inv-sign-line{border-bottom:1.5px solid #000;height:26pt;}
+.inv-sign-line{border-bottom:1.5px solid #000;height:26pt;position:relative;}
 .inv-sign-name{font-size:9.5pt;margin-top:3pt;}
 .inv-sign-title{font-size:8pt;color:#64748b;}
-.inv-stamp-box{border:2px dashed #cbd5e1;border-radius:8pt;height:56pt;display:flex;align-items:center;justify-content:center;font-size:8pt;color:#94a3b8;text-align:center;}
+.inv-stamp-img{position:absolute;bottom:2pt;left:50%;transform:translateX(-50%) rotate(-6deg);width:66pt;height:66pt;object-fit:contain;opacity:0.85;pointer-events:none;}
 .inv-footer-bar{border-top:1px solid #e2e8f0;padding-top:5pt;display:flex;justify-content:space-between;font-size:7.5pt;color:#94a3b8;}
 
 @page{size:A4 portrait;margin:0;}
