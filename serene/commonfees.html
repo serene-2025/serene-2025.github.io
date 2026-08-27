@@ -1243,6 +1243,10 @@
                                 พิมพ์ที่เลือก (<span id="invSelectedCount">0</span>)
                             </button>
                         </div>
+                        <label class="flex items-center gap-2 mt-3 cursor-pointer w-fit">
+                            <input type="checkbox" id="invIncludeAllYears" onchange="loadInvoiceList()" class="w-4 h-4 accent-blue-600">
+                            <span class="text-sm text-slate-600">📅 รวมยอดค้างชำระข้ามปี — แสดงและเรียกเก็บยอดค้างจากทุกปีที่ผ่านมา (ไม่ใช่แค่ปีที่เลือก)</span>
+                        </label>
                     </div>
 
                     <!-- Table -->
@@ -1257,13 +1261,14 @@
                                         <th class="px-3 py-3 text-left">ซอย</th>
                                         <th class="px-3 py-3 text-left">เจ้าของ</th>
                                         <th class="px-3 py-3 text-right">ยอดเดือนนี้</th>
-                                        <th class="px-3 py-3 text-right">ค้างยกมา</th>
+                                        <th class="px-3 py-3 text-right">ค้างในปี</th>
+                                        <th class="px-3 py-3 text-right">ค้างข้ามปี</th>
                                         <th class="px-3 py-3 text-right">รวมทั้งสิ้น</th>
                                         <th class="px-3 py-3 text-center">พิมพ์</th>
                                     </tr>
                                 </thead>
                                 <tbody id="invoiceTableBody">
-                                    <tr><td colspan="9" class="px-4 py-10 text-center text-slate-400">กำลังโหลด...</td></tr>
+                                    <tr><td colspan="10" class="px-4 py-10 text-center text-slate-400">กำลังโหลด...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -8712,10 +8717,32 @@ function getInvoiceRowData(house, monthKey) {
     return { currentDue, overdueMonths, overdueAmount, total };
 }
 
+// รวมยอดค้างชำระจาก "ปีอื่น" ที่ไม่ใช่ปีที่กำลังดูอยู่ — สำหรับบ้านที่ค้างข้ามปี
+// คืนค่าเป็นรายการแยกตามปี เพื่อให้แสดง/พิมพ์แยกบรรทัดชัดเจนตามมาตรฐานธนาคาร
+function getCrossYearOverdue(houseNo, excludeYear) {
+    const otherYearRecords = allData.filter(d => d.house_numbe === houseNo && d.year.toString() !== excludeYear.toString());
+    const byYear = {};
+    otherYearRecords.forEach(rec => {
+        let unpaidMonths = 0;
+        months.forEach(m => {
+            const s = rec[m.key] || '';
+            if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) unpaidMonths++;
+        });
+        if (unpaidMonths > 0) byYear[rec.year] = (byYear[rec.year] || 0) + unpaidMonths;
+    });
+    const rows = Object.entries(byYear)
+        .map(([year, monthsCount]) => ({ year: parseInt(year), months: monthsCount, amount: monthsCount * RATE_PER_MONTH }))
+        .sort((a,b) => a.year - b.year);
+    const totalMonths = rows.reduce((sum, r) => sum + r.months, 0);
+    const totalAmount = rows.reduce((sum, r) => sum + r.amount, 0);
+    return { rows, totalMonths, totalAmount };
+}
+
 function loadInvoiceList() {
     const year = document.getElementById('invFilterYear').value;
     const monthKey = document.getElementById('invFilterMonth').value;
     const soiFilter = document.getElementById('invFilterSoi').value;
+    const includeAllYears = document.getElementById('invIncludeAllYears').checked;
     const q = (document.getElementById('invSearch').value || '').toLowerCase().trim();
     const tbody = document.getElementById('invoiceTableBody');
     const countEl = document.getElementById('invTableCount');
@@ -8731,12 +8758,15 @@ function loadInvoiceList() {
     if (countEl) countEl.textContent = `แสดง ${houses.length} หลัง`;
 
     if (!houses.length) {
-        tbody.innerHTML = '<tr><td colspan="9" class="px-4 py-10 text-center text-slate-400">ไม่พบบ้านที่ตรงกับเงื่อนไข</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="px-4 py-10 text-center text-slate-400">ไม่พบบ้านที่ตรงกับเงื่อนไข</td></tr>';
         return;
     }
 
     tbody.innerHTML = houses.map(h => {
         const d = getInvoiceRowData(h, monthKey);
+        const cross = includeAllYears ? getCrossYearOverdue(h.house_numbe, year) : { rows: [], totalMonths: 0, totalAmount: 0 };
+        const grandTotal = d.total + cross.totalAmount;
+        const crossTitle = cross.rows.map(r => `ปี ${r.year}: ${r.months} ด. (฿${r.amount.toLocaleString()})`).join(' | ');
         return `<tr class="border-b border-slate-100 hover:bg-slate-50">
             <td class="px-3 py-2.5 text-center"><input type="checkbox" class="inv-check" value="${h.house_numbe}" onchange="updateInvSelectedCount()"></td>
             <td class="px-3 py-2.5 font-mono text-xs text-slate-500">${h.sequence_no || '-'}</td>
@@ -8745,7 +8775,8 @@ function loadInvoiceList() {
             <td class="px-3 py-2.5">${h.owner_name || '-'}</td>
             <td class="px-3 py-2.5 text-right">฿${d.currentDue.toLocaleString()}</td>
             <td class="px-3 py-2.5 text-right ${d.overdueAmount>0?'text-red-600 font-bold':'text-slate-400'}">${d.overdueAmount>0?`฿${d.overdueAmount.toLocaleString()} (${d.overdueMonths} ด.)`:'-'}</td>
-            <td class="px-3 py-2.5 text-right font-bold text-blue-700">฿${d.total.toLocaleString()}</td>
+            <td class="px-3 py-2.5 text-right ${cross.totalAmount>0?'text-orange-600 font-bold':'text-slate-300'}" title="${crossTitle}">${cross.totalAmount>0?`฿${cross.totalAmount.toLocaleString()} (${cross.totalMonths} ด. / ${cross.rows.length} ปี)`:'-'}</td>
+            <td class="px-3 py-2.5 text-right font-bold text-blue-700">฿${grandTotal.toLocaleString()}</td>
             <td class="px-3 py-2.5 text-center">
                 <button onclick="openInvoiceSingle('${h.house_numbe}')" class="px-3 py-1.5 bg-blue-100 hover:bg-blue-600 hover:text-white text-blue-700 rounded-lg text-xs font-bold transition-colors">
                     <i data-lucide="printer" class="w-3 h-3 inline"></i> พิมพ์
@@ -8767,7 +8798,7 @@ function updateInvSelectedCount() {
     document.getElementById('invSelectedCount').textContent = n;
 }
 
-function buildInvoiceHTML(house, monthKey) {
+function buildInvoiceHTML(house, monthKey, includeAllYears) {
     const s = getInvoiceSettings();
     const LOGO = 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/serene23.png';
     const STAMP = 'https://lh3.googleusercontent.com/d/14t2Npp4ow1YEgbykl5xj9rgbzhZHf-fB';
@@ -8778,8 +8809,19 @@ function buildInvoiceHTML(house, monthKey) {
     const invoiceNo = house.sequence_no || ('INV-' + house.house_numbe.replace('/', ''));
 
     const d = getInvoiceRowData(house, monthKey);
+    const cross = includeAllYears ? getCrossYearOverdue(house.house_numbe, house.year) : { rows: [], totalMonths: 0, totalAmount: 0 };
 
     const lineItems = [];
+
+    // ยอดค้างชำระจากปีก่อนหน้า (ถ้าเปิดใช้งานตัวเลือก "รวมยอดค้างข้ามปี") — แยกบรรทัดตามปี เรียงเก่าสุดก่อน
+    cross.rows.forEach(r => {
+        lineItems.push({
+            desc: `ยอดค้างชำระยกมาจากปี ${r.year}`,
+            calc: `(${RATE_PER_MONTH} บาท x ${r.months} เดือน)`,
+            amount: r.amount
+        });
+    });
+
     if (!monthKey) {
         // โหมด "ทั้งปี" — รวมเป็นบิลรายปีก้อนเดียว เช่น "ค่าส่วนกลางประจำปี 2569 (ม.ค. - ธ.ค.)"
         const monthsUnpaid = d.overdueMonths; // นับครบ 12 เดือนของปีนั้นแล้วจากฟังก์ชัน getInvoiceRowData
@@ -8793,13 +8835,17 @@ function buildInvoiceHTML(house, monthKey) {
             lineItems.push({ desc: `ค่าส่วนกลางประจำเดือน ${monthLabel} ปี ${house.year}`, calc: `(${RATE_PER_MONTH} บาท/เดือน)`, amount: d.currentDue });
         }
         if (d.overdueAmount > 0) {
-            lineItems.push({ desc: `ยอดค้างชำระยกมา (${d.overdueMonths} เดือน)`, calc: `(${RATE_PER_MONTH} บาท x ${d.overdueMonths} เดือน)`, amount: d.overdueAmount });
+            lineItems.push({ desc: `ยอดค้างชำระยกมา (${d.overdueMonths} เดือน) ปี ${house.year}`, calc: `(${RATE_PER_MONTH} บาท x ${d.overdueMonths} เดือน)`, amount: d.overdueAmount });
         }
         if (lineItems.length === 0) {
             lineItems.push({ desc: `ค่าส่วนกลางประจำเดือน ${monthLabel} ปี ${house.year}`, calc: `(${RATE_PER_MONTH} บาท/เดือน)`, amount: 0 });
         }
     }
     const grandTotal = lineItems.reduce((sum, item) => sum + item.amount, 0);
+    const totalOverdueMonths = cross.totalMonths + d.overdueMonths;
+    const crossYearNote = includeAllYears && cross.rows.length > 0
+        ? `<div class="inv-crossyear-note">📅 รวมยอดค้างชำระสะสมจากทั้งหมด ${cross.rows.length + 1} ปี (${totalOverdueMonths} เดือน)</div>`
+        : '';
 
     return `<div class="inv-page">
 
@@ -8816,6 +8862,7 @@ function buildInvoiceHTML(house, monthKey) {
   </div>
 
   <div class="inv-title">ใบแจ้งหนี้ / ใบแจ้งเตือนชำระค่าส่วนกลาง<br><span style="font-size:9pt;font-weight:400;">INVOICE</span></div>
+  ${crossYearNote}
 
   <!-- ═══ DOC INFO + RECIPIENT ═══ -->
   <div class="inv-info-grid">
@@ -8888,9 +8935,10 @@ function buildInvoiceHTML(house, monthKey) {
 function openInvoiceSingle(houseNo) {
     const year = document.getElementById('invFilterYear').value;
     const monthKey = document.getElementById('invFilterMonth').value;
+    const includeAllYears = document.getElementById('invIncludeAllYears').checked;
     const house = allData.find(h => h.house_numbe === houseNo && h.year.toString() === year.toString());
     if (!house) { Swal.fire('ไม่พบข้อมูล', '', 'warning'); return; }
-    const html = buildInvoiceHTML(house, monthKey);
+    const html = buildInvoiceHTML(house, monthKey, includeAllYears);
     _openInvoicePrintWindow(html, `ใบแจ้งหนี้ — บ้าน ${houseNo}`);
 }
 
@@ -8900,9 +8948,10 @@ function printInvoiceBatch() {
 
     const year = document.getElementById('invFilterYear').value;
     const monthKey = document.getElementById('invFilterMonth').value;
+    const includeAllYears = document.getElementById('invIncludeAllYears').checked;
     const pages = checked.map(houseNo => {
         const house = allData.find(h => h.house_numbe === houseNo && h.year.toString() === year.toString());
-        return house ? buildInvoiceHTML(house, monthKey) : '';
+        return house ? buildInvoiceHTML(house, monthKey, includeAllYears) : '';
     }).filter(Boolean).join('');
 
     _openInvoicePrintWindow(pages, `ใบแจ้งหนี้ — ${checked.length} ฉบับ`);
@@ -8946,7 +8995,7 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
 .inv-table{width:100%;border-collapse:collapse;font-size:10pt;margin-bottom:4pt;}
 .inv-table thead tr{background:#1e293b;color:#fff;}
 .inv-table thead th{padding:6pt 8pt;text-align:left;font-weight:700;}
-.inv-table tbody td{padding:6pt 8pt;border-bottom:1px solid #f1f5f9;}
+.inv-table tbody td{padding:5pt 8pt;border-bottom:1px solid #f1f5f9;font-size:9.5pt;}
 .inv-table .text-right{text-align:right;}
 .inv-table .text-slate-500{color:#64748b;font-size:9pt;}
 .inv-total-row td{background:#eff6ff;font-weight:900;font-size:11pt;padding:8pt;border-top:2px solid #1e40af;color:#1e40af;}
@@ -8958,6 +9007,7 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
 .inv-payment-row span{color:#64748b;min-width:70pt;}
 
 .inv-note{background:#fef2f2;border:1px solid #fecaca;border-radius:6pt;padding:6pt 10pt;font-size:8.5pt;color:#991b1b;margin-bottom:8pt;}
+.inv-crossyear-note{background:#fff7ed;border:1px solid #fed7aa;border-radius:6pt;padding:5pt 10pt;font-size:8.5pt;color:#c2410c;font-weight:700;text-align:center;margin-bottom:6pt;}
 
 .inv-footer{position:absolute;bottom:12mm;left:14mm;right:14mm;}
 .inv-sign-row{display:grid;grid-template-columns:1fr 1fr;gap:20pt;margin-bottom:8pt;}
