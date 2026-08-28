@@ -1282,17 +1282,20 @@
                         <div class="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-slate-100">
                             <label class="flex items-center gap-2 cursor-pointer">
                                 <input type="checkbox" id="invIncludeAheadPayment" onchange="toggleAheadPaymentControls();loadInvoiceList()" class="w-4 h-4 accent-green-600">
-                                <span class="text-sm font-bold text-slate-600">📅 คำนวณยอดจ่ายล่วงหน้า (เดือนที่รอจ่ายล่วงหน้า)</span>
+                                <span class="text-sm font-bold text-slate-600">📅 เพิ่มยอดจ่ายล่วงหน้า (กรณีลูกบ้าน/ธนาคารต้องการชำระล่วงหน้าเพิ่ม)</span>
                             </label>
                             <div id="invAheadStartWrap" class="hidden flex flex-wrap items-center gap-2 w-full mt-1">
-                                <span class="text-sm text-slate-600 ml-6">เริ่มนับจาก:</span>
+                                <span class="text-sm text-slate-600 ml-6">เริ่มจ่ายล่วงหน้าจาก:</span>
                                 <select id="invAheadStartMonth" onchange="loadInvoiceList()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm">
                                     <option value="">เลือกเดือน</option>
                                 </select>
                                 <select id="invAheadStartYear" onchange="loadInvoiceList()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm">
                                     <option value="">เลือกปี</option>
                                 </select>
-                                <span class="text-xs text-slate-400">* เลือกเดือน/ปีที่ต้องการเริ่มนับยอดจ่ายล่วงหน้า (เดือนที่รอจ่ายล่วงหน้าตั้งแต่จุดนี้เป็นต้นไป)</span>
+                                <span class="text-sm text-slate-600">จำนวน:</span>
+                                <input type="number" id="invAheadMonthsCount" value="1" min="1" max="24" onchange="loadInvoiceList()" class="w-20 px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                                <span class="text-sm text-slate-600">เดือน</span>
+                                <span class="text-xs text-slate-400 w-full">* ระบบจะเพิ่มยอดเรียกเก็บล่วงหน้าตามจำนวนเดือนที่ระบุ บวกเข้ายอดรวมที่ต้องชำระ (ไม่ใช่การตรวจจากข้อมูลที่มีอยู่)</span>
                             </div>
                         </div>
                     </div>
@@ -8798,7 +8801,8 @@ function getAheadStartBoundary() {
     const startYearVal = document.getElementById('invAheadStartYear')?.value || '';
     if (!startYearVal) return null; // เปิดใช้งานไว้แต่ยังไม่ได้กำหนดปี ถือว่ายังไม่พร้อมคำนวณ
     const startMonthIdx = startMonthKey ? months.findIndex(m => m.key === startMonthKey) : 0;
-    return { year: parseInt(startYearVal), monthIdx: startMonthIdx < 0 ? 0 : startMonthIdx };
+    const monthsCount = parseInt(document.getElementById('invAheadMonthsCount')?.value) || 1;
+    return { year: parseInt(startYearVal), monthIdx: startMonthIdx < 0 ? 0 : startMonthIdx, monthsCount };
 }
 
 function getInvoiceRowData(house, monthKey, startBoundary, aheadBoundary) {
@@ -8832,15 +8836,10 @@ function getInvoiceRowData(house, monthKey, startBoundary, aheadBoundary) {
         });
     }
 
-    // ยอดจ่ายล่วงหน้า — คำนวณเฉพาะเมื่อเปิดใช้งานและกำหนดจุดเริ่มต้นไว้ (ไม่ผูกกับเดือนที่เลือกเรียกเก็บอีกต่อไป)
-    if (aheadBoundary) {
-        let aheadStartIdx = 0;
-        if (houseYear < aheadBoundary.year) aheadStartIdx = 12; // ทั้งปีนี้อยู่ก่อนจุดเริ่มต้น ไม่นับ
-        else if (houseYear === aheadBoundary.year) aheadStartIdx = aheadBoundary.monthIdx;
-        months.slice(aheadStartIdx).forEach(m => {
-            const s = house[m.key] || '';
-            if (s.includes('ล่วงหน้า')) aheadMonths++;
-        });
+    // ยอดจ่ายล่วงหน้า — ใช้จำนวนเดือนที่แอดมินระบุตรงๆ (ไม่ใช่ตรวจจากสถานะข้อมูลเดิม)
+    // เพราะเป็นยอดที่ธนาคาร/ลูกบ้านต้องการเพิ่มเข้าไปในบิลนี้ ไม่ใช่ยอดที่เคยจ่ายไว้แล้ว
+    if (aheadBoundary && aheadBoundary.monthsCount > 0) {
+        aheadMonths = aheadBoundary.monthsCount;
     }
 
     const overdueAmount = overdueMonths * RATE_PER_MONTH;
@@ -8955,13 +8954,6 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, s
     const d = getInvoiceRowData(house, monthKey, startBoundary, aheadBoundary);
     const cross = includeAllYears ? getCrossYearOverdue(house.house_numbe, house.year, startBoundary) : { rows: [], totalMonths: 0, totalAmount: 0 };
 
-    const startNote = startBoundary
-        ? `<div class="inv-crossyear-note" style="color:#2563eb;background:#eff6ff;border-color:#bfdbfe;">🎯 คำนวณยอดค้างตั้งแต่ ${months[startBoundary.monthIdx]?.th || ''} ปี ${startBoundary.year} เป็นต้นไป (ไม่รวมยอดค้างก่อนหน้านั้น)</div>`
-        : '';
-    const aheadNote = aheadBoundary
-        ? `<div class="inv-crossyear-note" style="color:#16a34a;background:#f0fdf4;border-color:#bbf7d0;">📅 คำนวณยอดจ่ายล่วงหน้าตั้งแต่ ${months[aheadBoundary.monthIdx]?.th || ''} ปี ${aheadBoundary.year} เป็นต้นไป</div>`
-        : '';
-
     const lineItems = [];
 
     // 1) ยอดค้างชำระจากปีก่อนหน้า (ถ้าเปิดใช้งานตัวเลือก "รวมยอดค้างข้ามปี") — แยกบรรทัดตามปี เรียงเก่าสุดก่อน
@@ -9007,12 +8999,13 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, s
         });
     }
 
-    // 5) เครดิตชำระล่วงหน้า (เฉพาะเมื่อเปิดใช้งานและกำหนดจุดเริ่มต้นไว้) — แสดงเป็นยอดติดลบหักจากยอดรวม อยู่ท้ายสุด
-    if (d.aheadMonths > 0) {
+    // 5) ยอดจ่ายล่วงหน้าเพิ่มเติม (ถ้าเปิดใช้งาน) — เป็นยอดที่ต้องการเรียกเก็บเพิ่ม บวกเข้ายอดรวม
+    if (aheadBoundary && d.aheadMonths > 0) {
+        const aheadMonthLabel = months[aheadBoundary.monthIdx]?.th || '';
         lineItems.push({
-            desc: `ล่วงหน้า ${d.aheadMonths} เดือน ${house.year}`,
-            calc: `(-${RATE_PER_MONTH} บาท x ${d.aheadMonths} เดือน)`,
-            amount: -d.aheadAmount
+            desc: `ชำระล่วงหน้า ${d.aheadMonths} เดือน (เริ่ม ${aheadMonthLabel} ${aheadBoundary.year})`,
+            calc: `(${RATE_PER_MONTH} บาท x ${d.aheadMonths} เดือน)`,
+            amount: d.aheadAmount
         });
     }
 
@@ -9020,8 +9013,23 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, s
     const displayTotal = Math.max(grandTotal, 0);
     const creditBalance = grandTotal < 0 ? Math.abs(grandTotal) : 0;
     const totalOverdueMonths = cross.totalMonths + d.overdueMonths;
-    const crossYearNote = includeAllYears && cross.rows.length > 0
-        ? `<div class="inv-crossyear-note">📅 รวมยอดค้างชำระสะสมจากทั้งหมด ${cross.rows.length + 1} ปี (${totalOverdueMonths} เดือน)</div>`
+
+    // รวมรายละเอียดการคำนวณทั้งหมดไว้ในกล่องเดียว แสดงเหนือช่องทางการชำระเงิน (แทนแถบสีด้านบน)
+    const calcDetailRows = [];
+    if (includeAllYears && cross.rows.length > 0) {
+        calcDetailRows.push(`📋 รวมยอดค้างชำระสะสมจากทั้งหมด ${cross.rows.length + 1} ปี (${totalOverdueMonths} เดือน)`);
+    }
+    if (startBoundary) {
+        calcDetailRows.push(`🎯 คำนวณยอดค้างตั้งแต่ ${months[startBoundary.monthIdx]?.th || ''} ปี ${startBoundary.year} เป็นต้นไป (ไม่รวมยอดค้างก่อนหน้านั้น)`);
+    }
+    if (aheadBoundary && d.aheadMonths > 0) {
+        calcDetailRows.push(`📅 เพิ่มยอดชำระล่วงหน้า ${d.aheadMonths} เดือน เริ่มจาก ${months[aheadBoundary.monthIdx]?.th || ''} ปี ${aheadBoundary.year}`);
+    }
+    const calcDetailBox = calcDetailRows.length > 0
+        ? `<div class="inv-calc-detail-box">
+            <div class="inv-calc-detail-title">📝 รายละเอียดการคำนวณ</div>
+            ${calcDetailRows.map(r => `<div class="inv-calc-detail-row">${r}</div>`).join('')}
+          </div>`
         : '';
 
     return `<div class="inv-page">
@@ -9039,9 +9047,6 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, s
   </div>
 
   <div class="inv-title">ใบแจ้งหนี้ / ใบแจ้งเตือนชำระค่าส่วนกลาง<br><span style="font-size:9pt;font-weight:400;">INVOICE</span></div>
-  ${crossYearNote}
-  ${startNote}
-  ${aheadNote}
 
   <!-- ═══ DOC INFO + RECIPIENT ═══ -->
   <div class="inv-info-grid">
@@ -9068,7 +9073,8 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, s
       ${lineItems.map(item => {
           const isCredit = item.amount < 0;
           const isLateFee = item.desc.includes('ค่าปรับ');
-          const rowStyle = isCredit ? 'color:#16a34a;' : isLateFee ? 'color:#dc2626;' : '';
+          const isAheadCharge = item.desc.includes('ชำระล่วงหน้า');
+          const rowStyle = isCredit ? 'color:#16a34a;' : isLateFee ? 'color:#dc2626;' : isAheadCharge ? 'color:#2563eb;' : '';
           const amtDisplay = isCredit ? `-${Math.abs(item.amount).toLocaleString()}` : item.amount.toLocaleString();
           return `<tr style="${rowStyle}"><td>${item.desc}</td><td class="text-slate-500">${item.calc}</td><td class="text-right">${amtDisplay}</td></tr>`;
       }).join('')}
@@ -9078,7 +9084,9 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, s
     </tfoot>
   </table>
   <div class="inv-amount-words">(${amountInWords(displayTotal)})</div>
-  ${creditBalance > 0 ? `<div class="inv-crossyear-note" style="color:#16a34a;background:#f0fdf4;border-color:#bbf7d0;">💚 มียอดเครดิตชำระล่วงหน้าคงเหลือ ${creditBalance.toLocaleString()} บาท จะนำไปหักลดยอดชำระในงวดถัดไป</div>` : ''}
+  ${creditBalance > 0 ? `<div class="inv-crossyear-note" style="color:#16a34a;background:#f0fdf4;border-color:#bbf7d0;">💚 มียอดเครดิตคงเหลือ ${creditBalance.toLocaleString()} บาท จะนำไปหักลดยอดชำระในงวดถัดไป</div>` : ''}
+
+  ${calcDetailBox}
 
   <!-- ═══ PAYMENT INFO ═══ -->
   <div class="inv-payment-box">
@@ -9215,6 +9223,9 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
 
 .inv-note{background:#fef2f2;border:1px solid #fecaca;border-radius:6pt;padding:6pt 10pt;font-size:8.5pt;color:#991b1b;margin-bottom:8pt;}
 .inv-crossyear-note{background:#fff7ed;border:1px solid #fed7aa;border-radius:6pt;padding:5pt 10pt;font-size:8.5pt;color:#c2410c;font-weight:700;text-align:center;margin-bottom:6pt;}
+.inv-calc-detail-box{background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:8pt;padding:8pt 12pt;margin-bottom:8pt;}
+.inv-calc-detail-title{font-size:9pt;font-weight:700;color:#1e293b;margin-bottom:4pt;}
+.inv-calc-detail-row{font-size:8.5pt;color:#475569;line-height:1.6;padding:1pt 0;}
 
 .inv-footer{position:absolute;bottom:12mm;left:14mm;right:14mm;}
 .inv-stamp-wrap{text-align:center;margin-bottom:2pt;}
