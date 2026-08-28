@@ -1222,6 +1222,18 @@
                                     <label class="block text-xs font-bold text-slate-600 mb-1">ชื่อประธานกรรมการนิติบุคคลหมู่บ้านจัดสรร</label>
                                     <input type="text" id="invSettingChairman" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" placeholder="ชื่อ-นามสกุล" value="นายสุริยา เหล่าโนนขวา">
                                 </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-600 mb-1">URL ลายเซ็นผู้ออกเอกสาร</label>
+                                    <input type="text" id="invSettingIssuerSigUrl" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" placeholder="https://... (ไม่บังคับ)">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-600 mb-1">URL ลายเซ็นประธานกรรมการ</label>
+                                    <input type="text" id="invSettingChairmanSigUrl" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" placeholder="https://... (ไม่บังคับ)">
+                                </div>
+                                <div class="md:col-span-2">
+                                    <label class="block text-xs font-bold text-slate-600 mb-1">URL ตราประทับหมู่บ้าน</label>
+                                    <input type="text" id="invSettingStampUrl" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" placeholder="https://...">
+                                </div>
                                 <div class="md:col-span-2">
                                     <button onclick="saveInvoiceSettings()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold">บันทึกการตั้งค่า</button>
                                     <span id="invSettingSavedMsg" class="text-xs text-green-600 ml-2 hidden">✅ บันทึกแล้ว</span>
@@ -8642,7 +8654,10 @@ function getInvoiceSettings() {
         lateFeePct: 10,
         issuer: 'นางสาว อรนภา ดวงแสงจันทร์',
         issuerTitle: 'เจ้าหน้าที่บัญชี / เลขานุการ',
-        chairman: 'นายสุริยา เหล่าโนนขวา'
+        chairman: 'นายสุริยา เหล่าโนนขวา',
+        issuerSigUrl: '',
+        chairmanSigUrl: '',
+        stampUrl: 'https://lh3.googleusercontent.com/d/14t2Npp4ow1YEgbykl5xj9rgbzhZHf-fB'
     };
     try {
         const saved = JSON.parse(localStorage.getItem(INV_SETTINGS_KEY) || '{}');
@@ -8659,7 +8674,10 @@ function saveInvoiceSettings() {
         lateFeePct: parseFloat(document.getElementById('invSettingLateFee').value) || 10,
         issuer: document.getElementById('invSettingIssuer').value.trim(),
         issuerTitle: document.getElementById('invSettingIssuerTitle').value.trim(),
-        chairman: document.getElementById('invSettingChairman').value.trim()
+        chairman: document.getElementById('invSettingChairman').value.trim(),
+        issuerSigUrl: document.getElementById('invSettingIssuerSigUrl').value.trim(),
+        chairmanSigUrl: document.getElementById('invSettingChairmanSigUrl').value.trim(),
+        stampUrl: document.getElementById('invSettingStampUrl').value.trim()
     };
     localStorage.setItem(INV_SETTINGS_KEY, JSON.stringify(settings));
     const msg = document.getElementById('invSettingSavedMsg');
@@ -8676,6 +8694,9 @@ function loadInvoiceView() {
     document.getElementById('invSettingIssuer').value = s.issuer;
     document.getElementById('invSettingIssuerTitle').value = s.issuerTitle;
     document.getElementById('invSettingChairman').value = s.chairman;
+    document.getElementById('invSettingIssuerSigUrl').value = s.issuerSigUrl;
+    document.getElementById('invSettingChairmanSigUrl').value = s.chairmanSigUrl;
+    document.getElementById('invSettingStampUrl').value = s.stampUrl;
 
     const yearSel = document.getElementById('invFilterYear');
     const monthSel = document.getElementById('invFilterMonth');
@@ -8805,15 +8826,19 @@ function updateInvSelectedCount() {
     document.getElementById('invSelectedCount').textContent = n;
 }
 
-function buildInvoiceHTML(house, monthKey, includeAllYears) {
+function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName) {
     const s = getInvoiceSettings();
     const LOGO = 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/serene23.png';
-    const STAMP = 'https://lh3.googleusercontent.com/d/14t2Npp4ow1YEgbykl5xj9rgbzhZHf-fB';
     const today = new Date();
     const thaiToday = today.toLocaleDateString('th-TH', { day:'numeric', month:'long', year:'numeric' });
     const dueDate = new Date(today.getTime() + s.dueDays * 86400000).toLocaleDateString('th-TH', { day:'numeric', month:'long', year:'numeric' });
     const monthLabel = monthKey ? (months.find(m => m.key === monthKey)?.th || '') : 'ทั้งปี';
     const invoiceNo = house.sequence_no || ('INV-' + house.house_numbe.replace('/', ''));
+    const ownerDisplay = overrideOwnerName && overrideOwnerName.trim() ? overrideOwnerName.trim() : (house.owner_name || '-');
+
+    // ดึงเลขที่โฉนดจาก land_registry มาแสดงแทนซอย
+    const landRec = typeof getLandRecord === 'function' ? getLandRecord(house.house_numbe) : null;
+    const titleDeedNo = landRec?.title_deed_number || '-';
 
     const d = getInvoiceRowData(house, monthKey);
     const cross = includeAllYears ? getCrossYearOverdue(house.house_numbe, house.year) : { rows: [], totalMonths: 0, totalAmount: 0 };
@@ -8875,15 +8900,15 @@ function buildInvoiceHTML(house, monthKey, includeAllYears) {
   <div class="inv-info-grid">
     <div class="inv-info-box">
       <div class="inv-info-title">ผู้รับใบแจ้งหนี้</div>
-      <div class="inv-info-row"><span>เจ้าของกรรมสิทธิ์:</span><strong>${house.owner_name || '-'}</strong></div>
+      <div class="inv-info-row"><span>เจ้าของกรรมสิทธิ์:</span><strong>${ownerDisplay}</strong></div>
       <div class="inv-info-row"><span>บ้านเลขที่:</span><strong>${house.house_numbe}</strong></div>
-      <div class="inv-info-row"><span>ซอย:</span><strong>${house.soi || '-'}</strong></div>
+      <div class="inv-info-row"><span>เลขที่โฉนด:</span><strong>${titleDeedNo}</strong></div>
     </div>
     <div class="inv-info-box">
       <div class="inv-info-title">ข้อมูลเอกสาร</div>
       <div class="inv-info-row"><span>เลขที่เอกสาร:</span><strong>${invoiceNo}</strong></div>
       <div class="inv-info-row"><span>วันที่ออกเอกสาร:</span><strong>${thaiToday}</strong></div>
-      <div class="inv-info-row"><span>กำหนดชำระ:</span><strong style="color:#dc2626;">${dueDate}</strong></div>
+      <div class="inv-info-row"><span>กำหนดชำระ:</span><strong style="color:#dc2626;">${s.dueDays} วัน (${dueDate})</strong></div>
     </div>
   </div>
 
@@ -8915,15 +8940,16 @@ function buildInvoiceHTML(house, monthKey, includeAllYears) {
 
   <!-- ═══ SIGNATURE ═══ -->
   <div class="inv-footer">
+    ${s.stampUrl ? `<div class="inv-stamp-wrap"><img src="${s.stampUrl}" alt="ตราประทับหมู่บ้าน" class="inv-stamp-img-top"></div>` : ''}
     <div class="inv-sign-row">
       <div class="inv-sign-col">
-        <div class="inv-sign-line">
-          <img src="${STAMP}" alt="ตราประทับ" class="inv-stamp-img">
-        </div>
+        ${s.issuerSigUrl ? `<img src="${s.issuerSigUrl}" alt="ลายเซ็น" class="inv-personal-sig">` : ''}
+        <div class="inv-sign-line"></div>
         <div class="inv-sign-name">( ${s.issuer || '..............................'} )</div>
         <div class="inv-sign-title">${s.issuerTitle || 'ผู้ออกเอกสาร'}</div>
       </div>
       <div class="inv-sign-col">
+        ${s.chairmanSigUrl ? `<img src="${s.chairmanSigUrl}" alt="ลายเซ็น" class="inv-personal-sig">` : ''}
         <div class="inv-sign-line"></div>
         <div class="inv-sign-name">( ${s.chairman || '..............................'} )</div>
         <div class="inv-sign-title">ประธานกรรมการนิติบุคคลหมู่บ้านจัดสรร</div>
@@ -8939,13 +8965,27 @@ function buildInvoiceHTML(house, monthKey, includeAllYears) {
 </div>`;
 }
 
-function openInvoiceSingle(houseNo) {
+async function openInvoiceSingle(houseNo) {
     const year = document.getElementById('invFilterYear').value;
     const monthKey = document.getElementById('invFilterMonth').value;
     const includeAllYears = document.getElementById('invIncludeAllYears').checked;
     const house = allData.find(h => h.house_numbe === houseNo && h.year.toString() === year.toString());
     if (!house) { Swal.fire('ไม่พบข้อมูล', '', 'warning'); return; }
-    const html = buildInvoiceHTML(house, monthKey, includeAllYears);
+
+    // ให้แก้ไขชื่อเจ้าของกรรมสิทธิ์ก่อนพิมพ์ได้ (บางครั้งต้องออกให้ชื่อธนาคาร หรือชื่ออื่น)
+    const { value: editedName, isConfirmed } = await Swal.fire({
+        title: 'ยืนยันชื่อผู้รับใบแจ้งหนี้',
+        input: 'text',
+        inputValue: house.owner_name || '',
+        inputLabel: `บ้านเลขที่ ${houseNo} — แก้ไขชื่อได้ก่อนพิมพ์ (เช่น ออกในนามธนาคาร)`,
+        showCancelButton: true,
+        confirmButtonText: 'พิมพ์เอกสาร',
+        cancelButtonText: 'ยกเลิก',
+        inputValidator: (v) => !v.trim() ? 'กรุณาระบุชื่อผู้รับ' : undefined
+    });
+    if (!isConfirmed) return;
+
+    const html = buildInvoiceHTML(house, monthKey, includeAllYears, editedName);
     _openInvoicePrintWindow(html, `ใบแจ้งหนี้ — บ้าน ${houseNo}`);
 }
 
@@ -9017,12 +9057,14 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
 .inv-crossyear-note{background:#fff7ed;border:1px solid #fed7aa;border-radius:6pt;padding:5pt 10pt;font-size:8.5pt;color:#c2410c;font-weight:700;text-align:center;margin-bottom:6pt;}
 
 .inv-footer{position:absolute;bottom:12mm;left:14mm;right:14mm;}
+.inv-stamp-wrap{text-align:center;margin-bottom:2pt;}
+.inv-stamp-img-top{width:60pt;height:60pt;object-fit:contain;opacity:0.88;transform:rotate(-6deg);}
 .inv-sign-row{display:grid;grid-template-columns:1fr 1fr;gap:20pt;margin-bottom:8pt;}
 .inv-sign-col{text-align:center;}
-.inv-sign-line{border-bottom:1.5px solid #000;height:26pt;position:relative;}
+.inv-personal-sig{display:block;margin:0 auto -4pt;height:32pt;max-width:90%;object-fit:contain;}
+.inv-sign-line{border-bottom:1.5px solid #000;height:26pt;}
 .inv-sign-name{font-size:9.5pt;margin-top:3pt;}
 .inv-sign-title{font-size:8pt;color:#64748b;}
-.inv-stamp-img{position:absolute;bottom:2pt;left:50%;transform:translateX(-50%) rotate(-6deg);width:66pt;height:66pt;object-fit:contain;opacity:0.85;pointer-events:none;}
 .inv-footer-bar{border-top:1px solid #e2e8f0;padding-top:5pt;display:flex;justify-content:space-between;font-size:7.5pt;color:#94a3b8;}
 
 @page{size:A4 portrait;margin:0;}
