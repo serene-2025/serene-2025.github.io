@@ -1292,10 +1292,15 @@
                                 <select id="invAheadStartYear" onchange="loadInvoiceList()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm">
                                     <option value="">เลือกปี</option>
                                 </select>
-                                <span class="text-sm text-slate-600">จำนวน:</span>
-                                <input type="number" id="invAheadMonthsCount" value="1" min="1" max="24" onchange="loadInvoiceList()" class="w-20 px-3 py-2 rounded-lg border border-slate-300 text-sm">
-                                <span class="text-sm text-slate-600">เดือน</span>
-                                <span class="text-xs text-slate-400 w-full">* ระบบจะเพิ่มยอดเรียกเก็บล่วงหน้าตามจำนวนเดือนที่ระบุ บวกเข้ายอดรวมที่ต้องชำระ (ไม่ใช่การตรวจจากข้อมูลที่มีอยู่)</span>
+                                <span class="text-sm text-slate-600">ถึง:</span>
+                                <select id="invAheadEndMonth" onchange="loadInvoiceList()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                                    <option value="">เลือกเดือน</option>
+                                </select>
+                                <select id="invAheadEndYear" onchange="loadInvoiceList()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                                    <option value="">เลือกปี</option>
+                                </select>
+                                <span id="invAheadMonthsPreview" class="text-xs font-bold text-green-600"></span>
+                                <span class="text-xs text-slate-400 w-full">* เลือกช่วงเดือนที่ต้องการเรียกเก็บล่วงหน้า ระบบจะคำนวณจำนวนเดือนให้อัตโนมัติ บวกเข้ายอดรวมที่ต้องชำระ (ไม่ใช่การตรวจจากข้อมูลที่มีอยู่)</span>
                             </div>
                         </div>
                     </div>
@@ -8774,6 +8779,17 @@ function loadInvoiceView() {
         aheadYearSel.innerHTML = '<option value="">เลือกปี</option>' + years.map(y => `<option value="${y}">ปี ${y}</option>`).join('');
     }
 
+    const aheadEndMonthSel = document.getElementById('invAheadEndMonth');
+    const aheadEndYearSel = document.getElementById('invAheadEndYear');
+    if (aheadEndMonthSel.options.length <= 1) {
+        aheadEndMonthSel.innerHTML = '<option value="">เลือกเดือน</option>' + months.map(m => `<option value="${m.key}">${m.th}</option>`).join('');
+        const nowMonth = months[new Date().getMonth()];
+        aheadEndMonthSel.value = nowMonth.key;
+    }
+    if (aheadEndYearSel.options.length <= 1) {
+        aheadEndYearSel.innerHTML = '<option value="">เลือกปี</option>' + years.map(y => `<option value="${y}">ปี ${y}</option>`).join('');
+    }
+
     loadInvoiceList();
 }
 
@@ -8796,13 +8812,31 @@ function getInvoiceStartBoundary() {
 // ดึงจุดเริ่มต้นคำนวณยอดจ่ายล่วงหน้า — คืนค่า null ถ้าปิดใช้งาน หรือยังไม่ได้กำหนดปี
 function getAheadStartBoundary() {
     const enabled = document.getElementById('invIncludeAheadPayment')?.checked;
-    if (!enabled) return null;
+    const previewEl = document.getElementById('invAheadMonthsPreview');
+    if (!enabled) { if (previewEl) previewEl.textContent = ''; return null; }
+
     const startMonthKey = document.getElementById('invAheadStartMonth')?.value || '';
     const startYearVal = document.getElementById('invAheadStartYear')?.value || '';
-    if (!startYearVal) return null; // เปิดใช้งานไว้แต่ยังไม่ได้กำหนดปี ถือว่ายังไม่พร้อมคำนวณ
+    const endMonthKey = document.getElementById('invAheadEndMonth')?.value || '';
+    const endYearVal = document.getElementById('invAheadEndYear')?.value || '';
+
+    if (!startYearVal || !endYearVal) { if (previewEl) previewEl.textContent = ''; return null; } // ต้องกำหนดทั้งเริ่มต้นและสิ้นสุด
+
     const startMonthIdx = startMonthKey ? months.findIndex(m => m.key === startMonthKey) : 0;
-    const monthsCount = parseInt(document.getElementById('invAheadMonthsCount')?.value) || 1;
-    return { year: parseInt(startYearVal), monthIdx: startMonthIdx < 0 ? 0 : startMonthIdx, monthsCount };
+    const endMonthIdx = endMonthKey ? months.findIndex(m => m.key === endMonthKey) : 11;
+    const startYear = parseInt(startYearVal);
+    const endYear = parseInt(endYearVal);
+
+    // คำนวณจำนวนเดือนจากช่วงที่เลือก (นับรวมทั้งเดือนเริ่มต้นและสิ้นสุด)
+    const monthsCount = (endYear * 12 + endMonthIdx) - (startYear * 12 + startMonthIdx) + 1;
+
+    if (monthsCount <= 0) {
+        if (previewEl) previewEl.textContent = '⚠️ ช่วงวันที่ไม่ถูกต้อง (สิ้นสุดต้องมาหลังเริ่มต้น)';
+        return null;
+    }
+
+    if (previewEl) previewEl.textContent = `= ${monthsCount} เดือน`;
+    return { year: startYear, monthIdx: startMonthIdx < 0 ? 0 : startMonthIdx, monthsCount, endYear, endMonthIdx: endMonthIdx < 0 ? 11 : endMonthIdx };
 }
 
 function getInvoiceRowData(house, monthKey, startBoundary, aheadBoundary) {
@@ -9002,8 +9036,9 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, s
     // 5) ยอดจ่ายล่วงหน้าเพิ่มเติม (ถ้าเปิดใช้งาน) — เป็นยอดที่ต้องการเรียกเก็บเพิ่ม บวกเข้ายอดรวม
     if (aheadBoundary && d.aheadMonths > 0) {
         const aheadMonthLabel = months[aheadBoundary.monthIdx]?.th || '';
+        const aheadEndMonthLabel = months[aheadBoundary.endMonthIdx]?.th || '';
         lineItems.push({
-            desc: `ชำระล่วงหน้า ${d.aheadMonths} เดือน (เริ่ม ${aheadMonthLabel} ${aheadBoundary.year})`,
+            desc: `ชำระล่วงหน้า ${d.aheadMonths} เดือน (เริ่ม ${aheadMonthLabel} ${aheadBoundary.year}) ถึง ${aheadEndMonthLabel} ${aheadBoundary.endYear}`,
             calc: `(${RATE_PER_MONTH} บาท x ${d.aheadMonths} เดือน)`,
             amount: d.aheadAmount
         });
@@ -9023,7 +9058,8 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, s
         calcDetailRows.push(`🎯 คำนวณยอดค้างตั้งแต่ ${months[startBoundary.monthIdx]?.th || ''} ปี ${startBoundary.year} เป็นต้นไป (ไม่รวมยอดค้างก่อนหน้านั้น)`);
     }
     if (aheadBoundary && d.aheadMonths > 0) {
-        calcDetailRows.push(`📅 เพิ่มยอดชำระล่วงหน้า ${d.aheadMonths} เดือน เริ่มจาก ${months[aheadBoundary.monthIdx]?.th || ''} ปี ${aheadBoundary.year}`);
+        const aheadEndMonthLabel2 = months[aheadBoundary.endMonthIdx]?.th || '';
+        calcDetailRows.push(`📅 เพิ่มยอดชำระล่วงหน้า ${d.aheadMonths} เดือน (${months[aheadBoundary.monthIdx]?.th || ''} ${aheadBoundary.year} ถึง ${aheadEndMonthLabel2} ${aheadBoundary.endYear})`);
     }
     const calcDetailBox = calcDetailRows.length > 0
         ? `<div class="inv-calc-detail-box">
@@ -9227,13 +9263,13 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
 .inv-calc-detail-title{font-size:8pt;font-weight:700;color:#1e293b;margin-bottom:2pt;}
 .inv-calc-detail-row{font-size:7.5pt;color:#475569;line-height:1.35;padding:0.5pt 0;}
 
-.inv-footer{margin-top:14pt;position:relative;padding-top:30pt;}
+.inv-footer{margin-top:14pt;position:relative;padding-top:40pt;}
 .inv-stamp-wrap{position:absolute;top:0;left:50%;transform:translateX(-50%);text-align:center;z-index:1;pointer-events:none;}
 .inv-stamp-img-top{width:120pt;height:120pt;object-fit:contain;opacity:0.85;transform:rotate(-6deg);}
 .inv-sign-row{display:grid;grid-template-columns:1fr 1fr;gap:20pt;margin-bottom:6pt;margin-top:2pt;position:relative;z-index:0;}
 .inv-sign-col{text-align:center;}
-.inv-personal-sig{display:block;margin:0 auto 1pt;height:35pt;max-width:100%;object-fit:contain;position:relative;z-index:2;}
-.inv-sign-line{border-bottom:1.5px solid #000;height:14pt;}
+.inv-personal-sig{display:block;margin:0 auto 1pt;height:45pt;max-width:100%;object-fit:contain;position:relative;z-index:2;}
+.inv-sign-line{border-bottom:1.5px solid #000;height:5pt;}
 .inv-sign-name{font-size:9.5pt;margin-top:2pt;}
 .inv-sign-title{font-size:8pt;color:#64748b;}
 .inv-footer-bar{border-top:1px solid #e2e8f0;padding-top:4pt;display:flex;justify-content:space-between;font-size:7pt;color:#94a3b8;margin-top:4pt;}
