@@ -1273,6 +1273,28 @@
                             </select>
                             <span class="text-xs text-slate-400">* ใช้เมื่อต้องการละยอดค้างก่อนหน้าจุดที่กำหนด เช่น กรณีเปลี่ยนเจ้าของบ้านใหม่</span>
                         </div>
+                        <div class="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="invIncludeLateFee" checked onchange="loadInvoiceList()" class="w-4 h-4 accent-red-600">
+                                <span class="text-sm font-bold text-slate-600">💰 คำนวณค่าปรับชำระล่าช้าในเอกสาร</span>
+                            </label>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-slate-100">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="invIncludeAheadPayment" onchange="toggleAheadPaymentControls();loadInvoiceList()" class="w-4 h-4 accent-green-600">
+                                <span class="text-sm font-bold text-slate-600">📅 คำนวณยอดจ่ายล่วงหน้า (เดือนที่รอจ่ายล่วงหน้า)</span>
+                            </label>
+                            <div id="invAheadStartWrap" class="hidden flex flex-wrap items-center gap-2 w-full mt-1">
+                                <span class="text-sm text-slate-600 ml-6">เริ่มนับจาก:</span>
+                                <select id="invAheadStartMonth" onchange="loadInvoiceList()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                                    <option value="">เลือกเดือน</option>
+                                </select>
+                                <select id="invAheadStartYear" onchange="loadInvoiceList()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                                    <option value="">เลือกปี</option>
+                                </select>
+                                <span class="text-xs text-slate-400">* เลือกเดือน/ปีที่ต้องการเริ่มนับยอดจ่ายล่วงหน้า (เดือนที่รอจ่ายล่วงหน้าตั้งแต่จุดนี้เป็นต้นไป)</span>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Table -->
@@ -8738,7 +8760,25 @@ function loadInvoiceView() {
         startYearSel.innerHTML = '<option value="">ไม่กำหนดปี</option>' + years.map(y => `<option value="${y}">ปี ${y}</option>`).join('');
     }
 
+    const aheadMonthSel = document.getElementById('invAheadStartMonth');
+    const aheadYearSel = document.getElementById('invAheadStartYear');
+    if (aheadMonthSel.options.length <= 1) {
+        aheadMonthSel.innerHTML = '<option value="">เลือกเดือน</option>' + months.map(m => `<option value="${m.key}">${m.th}</option>`).join('');
+        const nowMonth = months[new Date().getMonth()];
+        aheadMonthSel.value = nowMonth.key;
+    }
+    if (aheadYearSel.options.length <= 1) {
+        aheadYearSel.innerHTML = '<option value="">เลือกปี</option>' + years.map(y => `<option value="${y}">ปี ${y}</option>`).join('');
+    }
+
     loadInvoiceList();
+}
+
+// แสดง/ซ่อนช่องกำหนดจุดเริ่มต้นคำนวณยอดจ่ายล่วงหน้า ตามสถานะ checkbox เปิด/ปิด
+function toggleAheadPaymentControls() {
+    const enabled = document.getElementById('invIncludeAheadPayment')?.checked;
+    const wrap = document.getElementById('invAheadStartWrap');
+    if (wrap) wrap.classList.toggle('hidden', !enabled);
 }
 
 // ดึงจุดเริ่มต้นคำนวณย้อนหลังที่ผู้ใช้ตั้งค่าไว้ (ถ้ามี) — คืนค่า null ถ้าไม่ได้กำหนด
@@ -8750,7 +8790,18 @@ function getInvoiceStartBoundary() {
     return { year: parseInt(startYearVal), monthIdx: startMonthIdx < 0 ? 0 : startMonthIdx };
 }
 
-function getInvoiceRowData(house, monthKey, startBoundary) {
+// ดึงจุดเริ่มต้นคำนวณยอดจ่ายล่วงหน้า — คืนค่า null ถ้าปิดใช้งาน หรือยังไม่ได้กำหนดปี
+function getAheadStartBoundary() {
+    const enabled = document.getElementById('invIncludeAheadPayment')?.checked;
+    if (!enabled) return null;
+    const startMonthKey = document.getElementById('invAheadStartMonth')?.value || '';
+    const startYearVal = document.getElementById('invAheadStartYear')?.value || '';
+    if (!startYearVal) return null; // เปิดใช้งานไว้แต่ยังไม่ได้กำหนดปี ถือว่ายังไม่พร้อมคำนวณ
+    const startMonthIdx = startMonthKey ? months.findIndex(m => m.key === startMonthKey) : 0;
+    return { year: parseInt(startYearVal), monthIdx: startMonthIdx < 0 ? 0 : startMonthIdx };
+}
+
+function getInvoiceRowData(house, monthKey, startBoundary, aheadBoundary) {
     const houseYear = parseInt(house.year);
 
     // จุดเริ่มต้นของการนับย้อนหลังในปีนี้ (index เดือนแรกที่จะนับ) — ถ้ากำหนดจุดเริ่มต้นไว้
@@ -8765,17 +8816,13 @@ function getInvoiceRowData(house, monthKey, startBoundary) {
     const currentDue = monthKey && !(monthStatus.includes('จ่ายแล้ว') || monthStatus.includes('ชำระแล้ว') || monthStatus.includes('ล่วงหน้า')) ? RATE_PER_MONTH : 0;
 
     let overdueMonths = 0; // เดือนก่อนหน้าเดือนที่เลือก (ในช่วงที่กำหนด) ที่ยังไม่จ่าย
-    let aheadMonths = 0;   // เดือนถัดจากเดือนที่เลือก (เดือนข้างหน้า) ที่จ่ายล่วงหน้าไว้แล้ว — เป็นเครดิต
+    let aheadMonths = 0;   // เดือนที่รอจ่ายล่วงหน้า — คำนวณเฉพาะเมื่อเปิดใช้งาน (มี aheadBoundary) เท่านั้น
 
     if (monthKey) {
         const idx = months.findIndex(m => m.key === monthKey);
         months.slice(Math.min(rangeStartIdx, idx), idx).forEach(m => {
             const s = house[m.key] || '';
             if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) overdueMonths++;
-        });
-        months.slice(idx + 1).forEach(m => {
-            const s = house[m.key] || '';
-            if (s.includes('ล่วงหน้า')) aheadMonths++;
         });
     } else {
         // โหมด "ทั้งปี" — ไม่มีเดือนปัจจุบันให้อ้างอิง จึงนับเฉพาะยอดค้างจากจุดเริ่มต้นถึงสิ้นปี
@@ -8784,6 +8831,18 @@ function getInvoiceRowData(house, monthKey, startBoundary) {
             if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) overdueMonths++;
         });
     }
+
+    // ยอดจ่ายล่วงหน้า — คำนวณเฉพาะเมื่อเปิดใช้งานและกำหนดจุดเริ่มต้นไว้ (ไม่ผูกกับเดือนที่เลือกเรียกเก็บอีกต่อไป)
+    if (aheadBoundary) {
+        let aheadStartIdx = 0;
+        if (houseYear < aheadBoundary.year) aheadStartIdx = 12; // ทั้งปีนี้อยู่ก่อนจุดเริ่มต้น ไม่นับ
+        else if (houseYear === aheadBoundary.year) aheadStartIdx = aheadBoundary.monthIdx;
+        months.slice(aheadStartIdx).forEach(m => {
+            const s = house[m.key] || '';
+            if (s.includes('ล่วงหน้า')) aheadMonths++;
+        });
+    }
+
     const overdueAmount = overdueMonths * RATE_PER_MONTH;
     const aheadAmount = aheadMonths * RATE_PER_MONTH;
     const total = currentDue + overdueAmount;
@@ -8822,6 +8881,7 @@ function loadInvoiceList() {
     const soiFilter = document.getElementById('invFilterSoi').value;
     const includeAllYears = document.getElementById('invIncludeAllYears').checked;
     const startBoundary = getInvoiceStartBoundary();
+    const aheadBoundary = getAheadStartBoundary();
     const q = (document.getElementById('invSearch').value || '').toLowerCase().trim();
     const tbody = document.getElementById('invoiceTableBody');
     const countEl = document.getElementById('invTableCount');
@@ -8842,7 +8902,7 @@ function loadInvoiceList() {
     }
 
     tbody.innerHTML = houses.map(h => {
-        const d = getInvoiceRowData(h, monthKey, startBoundary);
+        const d = getInvoiceRowData(h, monthKey, startBoundary, aheadBoundary);
         const cross = includeAllYears ? getCrossYearOverdue(h.house_numbe, year, startBoundary) : { rows: [], totalMonths: 0, totalAmount: 0 };
         const grandTotal = d.total + cross.totalAmount - d.aheadAmount;
         const crossTitle = cross.rows.map(r => `ปี ${r.year}: ${r.months} ด. (฿${r.amount.toLocaleString()})`).join(' | ');
@@ -8878,7 +8938,7 @@ function updateInvSelectedCount() {
     document.getElementById('invSelectedCount').textContent = n;
 }
 
-function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, startBoundary) {
+function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, startBoundary, includeLateFee, aheadBoundary) {
     const s = getInvoiceSettings();
     const LOGO = 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/serene23.png';
     const today = new Date();
@@ -8892,11 +8952,14 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, s
     const landRec = typeof getLandRecord === 'function' ? getLandRecord(house.house_numbe) : null;
     const titleDeedNo = landRec?.title_deed_number || '-';
 
-    const d = getInvoiceRowData(house, monthKey, startBoundary);
+    const d = getInvoiceRowData(house, monthKey, startBoundary, aheadBoundary);
     const cross = includeAllYears ? getCrossYearOverdue(house.house_numbe, house.year, startBoundary) : { rows: [], totalMonths: 0, totalAmount: 0 };
 
     const startNote = startBoundary
         ? `<div class="inv-crossyear-note" style="color:#2563eb;background:#eff6ff;border-color:#bfdbfe;">🎯 คำนวณยอดค้างตั้งแต่ ${months[startBoundary.monthIdx]?.th || ''} ปี ${startBoundary.year} เป็นต้นไป (ไม่รวมยอดค้างก่อนหน้านั้น)</div>`
+        : '';
+    const aheadNote = aheadBoundary
+        ? `<div class="inv-crossyear-note" style="color:#16a34a;background:#f0fdf4;border-color:#bbf7d0;">📅 คำนวณยอดจ่ายล่วงหน้าตั้งแต่ ${months[aheadBoundary.monthIdx]?.th || ''} ปี ${aheadBoundary.year} เป็นต้นไป</div>`
         : '';
 
     const lineItems = [];
@@ -8932,9 +8995,10 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, s
         }
     }
 
-    // 4) ค่าปรับชำระล่าช้า — คำนวณจากยอดค้างทั้งหมด "ก่อนเดือนปัจจุบัน" เท่านั้น (ไม่รวมยอดเดือนที่เพิ่งเรียกเก็บ ยังไม่ถือว่าล่าช้า)
+    // 4) ค่าปรับชำระล่าช้า — เปิด/ปิดได้ด้วย includeLateFee (ค่าเริ่มต้น = เปิด) — คำนวณจากยอดค้างทั้งหมด "ก่อนเดือนปัจจุบัน" เท่านั้น
     const overdueBeforeCurrent = cross.totalAmount + d.overdueAmount;
-    const lateFeeAmount = Math.round(overdueBeforeCurrent * (s.lateFeePct / 100));
+    const lateFeeEnabled = includeLateFee !== false; // undefined หรือ true ถือว่าเปิด (ค่าเริ่มต้นเดิม)
+    const lateFeeAmount = lateFeeEnabled ? Math.round(overdueBeforeCurrent * (s.lateFeePct / 100)) : 0;
     if (lateFeeAmount > 0) {
         lineItems.push({
             desc: `ค่าปรับชำระล่าช้า (${s.lateFeePct}% ของยอดค้างชำระ ${overdueBeforeCurrent.toLocaleString()} บาท)`,
@@ -8943,7 +9007,7 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, s
         });
     }
 
-    // 5) เครดิตชำระล่วงหน้า (เฉพาะเดือนถัดจากเดือนที่เลือก / เดือนข้างหน้า) — แสดงเป็นยอดติดลบหักจากยอดรวม อยู่ท้ายสุด
+    // 5) เครดิตชำระล่วงหน้า (เฉพาะเมื่อเปิดใช้งานและกำหนดจุดเริ่มต้นไว้) — แสดงเป็นยอดติดลบหักจากยอดรวม อยู่ท้ายสุด
     if (d.aheadMonths > 0) {
         lineItems.push({
             desc: `ล่วงหน้า ${d.aheadMonths} เดือน ${house.year}`,
@@ -8977,6 +9041,7 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, s
   <div class="inv-title">ใบแจ้งหนี้ / ใบแจ้งเตือนชำระค่าส่วนกลาง<br><span style="font-size:9pt;font-weight:400;">INVOICE</span></div>
   ${crossYearNote}
   ${startNote}
+  ${aheadNote}
 
   <!-- ═══ DOC INFO + RECIPIENT ═══ -->
   <div class="inv-info-grid">
@@ -9023,9 +9088,9 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName, s
     <div class="inv-payment-row"><span>เลขที่บัญชี:</span><strong style="letter-spacing:1px;color:#2563eb;">4271924463</strong></div>
   </div>
 
-  <div class="inv-note">
+  ${lateFeeEnabled ? `<div class="inv-note">
     ⚠️ ค่าปรับชำระล่าช้าข้างต้นคำนวณจากยอดค้างชำระสะสมถึงเดือนก่อนหน้าในอัตรา ${s.lateFeePct}% หากยังคงค้างชำระต่อไป นิติบุคคลฯ ขอสงวนสิทธิ์คิดค่าปรับเพิ่มเติมในรอบถัดไปตามอัตราเดียวกัน
-  </div>
+  </div>` : ''}
 
   <!-- ═══ SIGNATURE ═══ -->
   <div class="inv-footer">
@@ -9058,7 +9123,9 @@ async function openInvoiceSingle(houseNo) {
     const year = document.getElementById('invFilterYear').value;
     const monthKey = document.getElementById('invFilterMonth').value;
     const includeAllYears = document.getElementById('invIncludeAllYears').checked;
+    const includeLateFee = document.getElementById('invIncludeLateFee').checked;
     const startBoundary = getInvoiceStartBoundary();
+    const aheadBoundary = getAheadStartBoundary();
     const house = allData.find(h => h.house_numbe === houseNo && h.year.toString() === year.toString());
     if (!house) { Swal.fire('ไม่พบข้อมูล', '', 'warning'); return; }
 
@@ -9075,7 +9142,7 @@ async function openInvoiceSingle(houseNo) {
     });
     if (!isConfirmed) return;
 
-    const html = buildInvoiceHTML(house, monthKey, includeAllYears, editedName, startBoundary);
+    const html = buildInvoiceHTML(house, monthKey, includeAllYears, editedName, startBoundary, includeLateFee, aheadBoundary);
     _openInvoicePrintWindow(html, `ใบแจ้งหนี้ — บ้าน ${houseNo}`);
 }
 
@@ -9086,10 +9153,12 @@ function printInvoiceBatch() {
     const year = document.getElementById('invFilterYear').value;
     const monthKey = document.getElementById('invFilterMonth').value;
     const includeAllYears = document.getElementById('invIncludeAllYears').checked;
+    const includeLateFee = document.getElementById('invIncludeLateFee').checked;
     const startBoundary = getInvoiceStartBoundary();
+    const aheadBoundary = getAheadStartBoundary();
     const pages = checked.map(houseNo => {
         const house = allData.find(h => h.house_numbe === houseNo && h.year.toString() === year.toString());
-        return house ? buildInvoiceHTML(house, monthKey, includeAllYears, null, startBoundary) : '';
+        return house ? buildInvoiceHTML(house, monthKey, includeAllYears, null, startBoundary, includeLateFee, aheadBoundary) : '';
     }).filter(Boolean).join('');
 
     _openInvoicePrintWindow(pages, `ใบแจ้งหนี้ — ${checked.length} ฉบับ`);
@@ -9443,6 +9512,7 @@ window.renderAnalytics = renderAnalytics;
 window.loadInvoiceView = loadInvoiceView;
 window.saveInvoiceSettings = saveInvoiceSettings;
 window.loadInvoiceList = loadInvoiceList;
+window.toggleAheadPaymentControls = toggleAheadPaymentControls;
 window.toggleInvSelectAll = toggleInvSelectAll;
 window.updateInvSelectedCount = updateInvSelectedCount;
 window.openInvoiceSingle = openInvoiceSingle;
