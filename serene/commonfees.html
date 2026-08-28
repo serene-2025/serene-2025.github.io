@@ -8843,9 +8843,17 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName) {
     const d = getInvoiceRowData(house, monthKey);
     const cross = includeAllYears ? getCrossYearOverdue(house.house_numbe, house.year) : { rows: [], totalMonths: 0, totalAmount: 0 };
 
+    // นับเดือนที่ชำระล่วงหน้าในปีของบิลนี้ (สถานะ "ล่วงหน้า") — ใช้หักลดยอดรวมเป็นเครดิต
+    let prepayMonths = 0;
+    months.forEach(m => {
+        const st = house[m.key] || '';
+        if (st.includes('ล่วงหน้า')) prepayMonths++;
+    });
+    const prepayAmount = prepayMonths * RATE_PER_MONTH;
+
     const lineItems = [];
 
-    // ยอดค้างชำระจากปีก่อนหน้า (ถ้าเปิดใช้งานตัวเลือก "รวมยอดค้างข้ามปี") — แยกบรรทัดตามปี เรียงเก่าสุดก่อน
+    // 1) ยอดค้างชำระจากปีก่อนหน้า (ถ้าเปิดใช้งานตัวเลือก "รวมยอดค้างข้ามปี") — แยกบรรทัดตามปี เรียงเก่าสุดก่อน
     cross.rows.forEach(r => {
         lineItems.push({
             desc: `ยอดค้างชำระยกมาจากปี ${r.year}`,
@@ -8863,17 +8871,42 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName) {
             amount: monthsUnpaid > 0 ? d.overdueAmount : RATE_PER_MONTH * 12
         });
     } else {
-        if (d.currentDue > 0) {
-            lineItems.push({ desc: `ค่าส่วนกลางประจำเดือน ${monthLabel} ปี ${house.year}`, calc: `(${RATE_PER_MONTH} บาท/เดือน)`, amount: d.currentDue });
-        }
+        // 2) ยอดค้างในปีเดียวกัน (ก่อนเดือนที่เลือก) — แสดงก่อนยอดเดือนปัจจุบัน
         if (d.overdueAmount > 0) {
             lineItems.push({ desc: `ยอดค้างชำระยกมา (${d.overdueMonths} เดือน) ปี ${house.year}`, calc: `(${RATE_PER_MONTH} บาท x ${d.overdueMonths} เดือน)`, amount: d.overdueAmount });
+        }
+        // 3) ค่าส่วนกลางเดือนปัจจุบันที่เรียกเก็บ
+        if (d.currentDue > 0) {
+            lineItems.push({ desc: `ค่าส่วนกลางประจำเดือน ${monthLabel} ปี ${house.year}`, calc: `(${RATE_PER_MONTH} บาท/เดือน)`, amount: d.currentDue });
         }
         if (lineItems.length === 0) {
             lineItems.push({ desc: `ค่าส่วนกลางประจำเดือน ${monthLabel} ปี ${house.year}`, calc: `(${RATE_PER_MONTH} บาท/เดือน)`, amount: 0 });
         }
     }
+
+    // 4) ค่าปรับชำระล่าช้า — คำนวณจากยอดค้างทั้งหมด "ก่อนเดือนปัจจุบัน" เท่านั้น (ไม่รวมยอดเดือนที่เพิ่งเรียกเก็บ ยังไม่ถือว่าล่าช้า)
+    const overdueBeforeCurrent = cross.totalAmount + d.overdueAmount;
+    const lateFeeAmount = Math.round(overdueBeforeCurrent * (s.lateFeePct / 100));
+    if (lateFeeAmount > 0) {
+        lineItems.push({
+            desc: `ค่าปรับชำระล่าช้า (${s.lateFeePct}% ของยอดค้างชำระ ${overdueBeforeCurrent.toLocaleString()} บาท)`,
+            calc: `(${s.lateFeePct}% x ${overdueBeforeCurrent.toLocaleString()} บาท)`,
+            amount: lateFeeAmount
+        });
+    }
+
+    // 5) เครดิตชำระล่วงหน้า (ถ้ามี) — แสดงเป็นยอดติดลบหักจากยอดรวม อยู่ท้ายสุด
+    if (prepayMonths > 0) {
+        lineItems.push({
+            desc: `ล่วงหน้า ${prepayMonths} เดือน ${house.year}`,
+            calc: `(-${RATE_PER_MONTH} บาท x ${prepayMonths} เดือน)`,
+            amount: -prepayAmount
+        });
+    }
+
     const grandTotal = lineItems.reduce((sum, item) => sum + item.amount, 0);
+    const displayTotal = Math.max(grandTotal, 0);
+    const creditBalance = grandTotal < 0 ? Math.abs(grandTotal) : 0;
     const totalOverdueMonths = cross.totalMonths + d.overdueMonths;
     const crossYearNote = includeAllYears && cross.rows.length > 0
         ? `<div class="inv-crossyear-note">📅 รวมยอดค้างชำระสะสมจากทั้งหมด ${cross.rows.length + 1} ปี (${totalOverdueMonths} เดือน)</div>`
@@ -8918,13 +8951,20 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName) {
       <tr><th style="width:50%">รายการ</th><th style="width:30%">การคำนวณ</th><th style="width:20%" class="text-right">จำนวนเงิน (บาท)</th></tr>
     </thead>
     <tbody>
-      ${lineItems.map(item => `<tr><td>${item.desc}</td><td class="text-slate-500">${item.calc}</td><td class="text-right">${item.amount.toLocaleString()}</td></tr>`).join('')}
+      ${lineItems.map(item => {
+          const isCredit = item.amount < 0;
+          const isLateFee = item.desc.includes('ค่าปรับ');
+          const rowStyle = isCredit ? 'color:#16a34a;' : isLateFee ? 'color:#dc2626;' : '';
+          const amtDisplay = isCredit ? `-${Math.abs(item.amount).toLocaleString()}` : item.amount.toLocaleString();
+          return `<tr style="${rowStyle}"><td>${item.desc}</td><td class="text-slate-500">${item.calc}</td><td class="text-right">${amtDisplay}</td></tr>`;
+      }).join('')}
     </tbody>
     <tfoot>
-      <tr class="inv-total-row"><td colspan="2">ยอดเงินรวมที่ต้องชำระ</td><td class="text-right">${grandTotal.toLocaleString()}</td></tr>
+      <tr class="inv-total-row"><td colspan="2">ยอดเงินรวมที่ต้องชำระ</td><td class="text-right">${displayTotal.toLocaleString()}</td></tr>
     </tfoot>
   </table>
-  <div class="inv-amount-words">(${amountInWords(grandTotal)})</div>
+  <div class="inv-amount-words">(${amountInWords(displayTotal)})</div>
+  ${creditBalance > 0 ? `<div class="inv-crossyear-note" style="color:#16a34a;background:#f0fdf4;border-color:#bbf7d0;">💚 มียอดเครดิตชำระล่วงหน้าคงเหลือ ${creditBalance.toLocaleString()} บาท จะนำไปหักลดยอดชำระในงวดถัดไป</div>` : ''}
 
   <!-- ═══ PAYMENT INFO ═══ -->
   <div class="inv-payment-box">
@@ -8935,7 +8975,7 @@ function buildInvoiceHTML(house, monthKey, includeAllYears, overrideOwnerName) {
   </div>
 
   <div class="inv-note">
-    ⚠️ หากชำระล่าช้าเกินกำหนด นิติบุคคลฯ ขอสงวนสิทธิ์คิดค่าปรับ ${s.lateFeePct}% ต่อเดือนของยอดคงค้าง
+    ⚠️ ค่าปรับชำระล่าช้าข้างต้นคำนวณจากยอดค้างชำระสะสมถึงเดือนก่อนหน้าในอัตรา ${s.lateFeePct}% หากยังคงค้างชำระต่อไป นิติบุคคลฯ ขอสงวนสิทธิ์คิดค่าปรับเพิ่มเติมในรอบถัดไปตามอัตราเดียวกัน
   </div>
 
   <!-- ═══ SIGNATURE ═══ -->
