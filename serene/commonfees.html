@@ -2761,6 +2761,33 @@
                                 </button>
                             </div>
                         </div>
+
+                        <!-- Backup รูปสลิปไป Google Drive -->
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div class="bg-gradient-to-r from-purple-500 to-indigo-500 text-white p-5">
+                                <h3 class="font-bold text-lg flex items-center gap-2">
+                                    <i data-lucide="hard-drive-upload" class="w-5 h-5"></i>
+                                    สำรองรูปสลิปไป Google Drive
+                                </h3>
+                                <p class="text-white/80 text-sm mt-1">ย้ายรูปสลิปจาก Supabase Storage ไป Google Drive เพื่อลดพื้นที่ใช้งานใน Supabase — แทนที่ URL เดิมด้วย URL ใหม่อัตโนมัติ</p>
+                            </div>
+                            <div class="p-5">
+                                <div class="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700 mb-4">
+                                    ⚠️ แนะนำให้สำรองฐานข้อมูลก่อนเริ่ม เผื่อเกิดข้อผิดพลาดระหว่างย้ายไฟล์ — ระบบประมวลผลทีละ 15 รายการต่อรอบ และแทนที่ image_url เดิมทันทีที่ย้ายสำเร็จ
+                                </div>
+                                <div class="flex items-center gap-3 mb-3 flex-wrap">
+                                    <button onclick="startSlipBackup()" id="backupStartBtn" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-bold flex items-center gap-2">
+                                        <i data-lucide="play" class="w-4 h-4"></i>
+                                        เริ่ม Backup
+                                    </button>
+                                    <button onclick="stopSlipBackup()" id="backupStopBtn" class="hidden px-4 py-2 bg-red-100 hover:bg-red-600 hover:text-white text-red-700 rounded-lg text-sm font-bold">
+                                        ⏹ หยุด
+                                    </button>
+                                    <span id="backupProgress" class="text-sm text-slate-600 font-medium"></span>
+                                </div>
+                                <div id="backupLog" class="hidden bg-slate-50 rounded-lg p-3 text-xs font-mono max-h-48 overflow-y-auto space-y-1 border border-slate-200"></div>
+                            </div>
+                        </div>
                     </div>
                 </section>
 
@@ -5900,6 +5927,97 @@ async function handleGenerateNewYearData() {
     } catch (err) {
         Swal.fire('ผิดพลาด', err.message, 'error');
     }
+}
+
+// ================================================================
+// 💾 สำรองรูปสลิปจาก Supabase Storage → Google Drive
+// ================================================================
+let backupRunning = false;
+let backupTotalSuccess = 0;
+let backupTotalFailed = 0;
+
+function _backupLog(html) {
+    const logEl = document.getElementById('backupLog');
+    if (!logEl) return;
+    logEl.classList.remove('hidden');
+    logEl.innerHTML += html;
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function startSlipBackup() {
+    if (backupRunning) return;
+
+    const confirmResult = await Swal.fire({
+        title: 'เริ่ม Backup รูปสลิป?',
+        html: `ระบบจะย้ายรูปสลิปจาก Supabase Storage ไป Google Drive ทีละ 15 รายการ<br>
+               และแทนที่ URL เดิมในฐานข้อมูลด้วย URL ใหม่ทันทีที่ย้ายสำเร็จ<br><br>
+               <b class="text-amber-600">⚠️ แนะนำให้สำรองฐานข้อมูลก่อนเริ่ม</b>`,
+        icon: 'warning', showCancelButton: true,
+        confirmButtonText: 'เริ่มเลย', cancelButtonText: 'ยกเลิก'
+    });
+    if (!confirmResult.isConfirmed) return;
+
+    backupRunning = true;
+    backupTotalSuccess = 0;
+    backupTotalFailed = 0;
+
+    const startBtn = document.getElementById('backupStartBtn');
+    const stopBtn = document.getElementById('backupStopBtn');
+    const progressEl = document.getElementById('backupProgress');
+    const logEl = document.getElementById('backupLog');
+
+    logEl.innerHTML = '';
+    logEl.classList.remove('hidden');
+    startBtn.disabled = true;
+    startBtn.classList.add('opacity-50');
+    stopBtn.classList.remove('hidden');
+
+    let round = 0;
+    while (backupRunning) {
+        round++;
+        progressEl.textContent = `กำลังประมวลผลรอบที่ ${round}...`;
+        try {
+            const res = await callGas('backup_slips_to_drive', { batchSize: 15 });
+
+            if (res.done) {
+                _backupLog(`<div class="text-green-600 font-bold">✅ ${res.message}</div>`);
+                break;
+            }
+
+            backupTotalSuccess += res.success;
+            backupTotalFailed += res.failed;
+            _backupLog(`<div>รอบ ${round}: สำเร็จ <b class="text-green-600">${res.success}</b> / ล้มเหลว <b class="text-red-600">${res.failed}</b> (จากทั้งหมด ${res.processed} รายการ)</div>`);
+
+            if (res.errors && res.errors.length > 0) {
+                res.errors.forEach(er => {
+                    _backupLog(`<div class="text-red-500 pl-3">⚠️ id=${er.id}: ${er.error}</div>`);
+                });
+            }
+            progressEl.textContent = `รวมสำเร็จ ${backupTotalSuccess} / ล้มเหลว ${backupTotalFailed}`;
+
+        } catch (err) {
+            _backupLog(`<div class="text-red-600 font-bold">❌ เกิดข้อผิดพลาด: ${err.message}</div>`);
+            break;
+        }
+        // หน่วงเล็กน้อยกันยิงคำขอถี่เกินไป
+        await new Promise(r => setTimeout(r, 600));
+    }
+
+    backupRunning = false;
+    startBtn.disabled = false;
+    startBtn.classList.remove('opacity-50');
+    stopBtn.classList.add('hidden');
+    progressEl.textContent = `เสร็จสิ้น — รวมสำเร็จ ${backupTotalSuccess} / ล้มเหลว ${backupTotalFailed}`;
+
+    if (backupTotalSuccess > 0 || backupTotalFailed > 0) {
+        Swal.fire('เสร็จสิ้น', `Backup รูปสลิปเสร็จแล้ว\nสำเร็จ ${backupTotalSuccess} รายการ\nล้มเหลว ${backupTotalFailed} รายการ`, backupTotalFailed > 0 ? 'warning' : 'success');
+        await fetchAllData();
+    }
+}
+
+function stopSlipBackup() {
+    backupRunning = false;
+    _backupLog('<div class="text-amber-600 font-bold">⏹ หยุดโดยผู้ใช้ — สามารถกด "เริ่ม Backup" ต่อได้ภายหลัง (ระบบจะข้ามรายการที่ทำสำเร็จแล้วอัตโนมัติ)</div>');
 }
 
 // ==========================================
@@ -10485,6 +10603,8 @@ window.renderDebtStatementHouseList = renderDebtStatementHouseList;
 window.openDebtStatementModal = openDebtStatementModal;
 window.closeDebtStatementModal = closeDebtStatementModal;
 window.printDebtStatement = printDebtStatement;
+window.startSlipBackup = startSlipBackup;
+window.stopSlipBackup = stopSlipBackup;
 window.toggleAheadPaymentControls = toggleAheadPaymentControls;
 window.toggleInvSelectAll = toggleInvSelectAll;
 window.updateInvSelectedCount = updateInvSelectedCount;
