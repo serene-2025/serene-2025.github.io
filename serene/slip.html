@@ -598,7 +598,6 @@
   <script>
     // --- Supabase Configuration ---
     const SUPABASE_URL = 'https://zmdywddraaeegzkvpwsw.supabase.co';
-    // อัปเดตคีย์ Publishable ใหม่แทนของเดิมได้ที่นี่เลยครับ
     const SUPABASE_KEY = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ'; 
     
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -611,9 +610,9 @@
     let globalHousePaymentData = []; 
     let globalSlipAlerts = {}; 
     let globalSlipData = {}; 
+    let pendingAPIRequests = {}; // ตัวแปรล็อคปุ่มรอ API
     const urlAPI = "https://script.google.com/macros/s/AKfycbz6Ua9LYQikcgL8OcT3CkEcxfxQNFctPZ1fg5dDP6WTRQEZpvklObLufFFx2a-XBeruYw/exec";
 
-    // ฟังก์ชันสร้างแท็บปี/เดือน อัจฉริยะ
     function buildYearMonthUI(houseData) {
         const currentYear = new Date().getFullYear() + 543;
         let unpaidYears = [];
@@ -644,12 +643,12 @@
         const monthKeys = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
         const yearColors = {
-            2566: { theme: '#6c757d', bgLight: '#f8f9fa' }, // เทา
-            2567: { theme: '#0d6efd', bgLight: '#e7f1ff' }, // น้ำเงิน
-            2568: { theme: '#198754', bgLight: '#d1e7dd' }, // เขียว
-            2569: { theme: '#dc3545', bgLight: '#f8d7da' }, // แดง
-            2570: { theme: '#0dcaf0', bgLight: '#cff4fc' }, // ฟ้า
-            2571: { theme: '#fd7e14', bgLight: '#ffe5d0' }, // ส้ม
+            2566: { theme: '#6c757d', bgLight: '#f8f9fa' }, 
+            2567: { theme: '#0d6efd', bgLight: '#e7f1ff' }, 
+            2568: { theme: '#198754', bgLight: '#d1e7dd' }, 
+            2569: { theme: '#dc3545', bgLight: '#f8d7da' }, 
+            2570: { theme: '#0dcaf0', bgLight: '#cff4fc' }, 
+            2571: { theme: '#fd7e14', bgLight: '#ffe5d0' }, 
             default: { theme: '#212529', bgLight: '#e9ecef' }
         };
 
@@ -1196,12 +1195,10 @@
                     verifiedCurrency.style.display = 'inline';
                 }
 
-                // ดึงชื่อมาทำเป็นตัวพิมพ์ใหญ่ทั้งหมดเพื่อเช็คได้ง่ายขึ้น
                 let upperTH = receiverNameTH.toUpperCase();
                 let upperEN = receiverNameEN.toUpperCase();
 
                 let isAmountCorrect = (actualAmount === expectedAmount);
-                // ตรวจสอบชื่อให้ครอบคลุมตามที่ตั้งค่าในระบบ Thunder API
                 let isNameCorrect = upperTH.includes("โกลเด้นแลนด์") || 
                                     upperTH.includes("GOLDENLAND") || 
                                     upperEN.includes("GOLDENLAND") ||
@@ -1720,15 +1717,21 @@
                       expectedAmount = 300; 
                   }
 
-                  scanQRFromFile(file).then(payload => {
+                  pendingAPIRequests[inputElement.id] = true;
+                  checkFormValidity(); 
+
+                  scanQRFromFile(file).then(async payload => {
                       if (payload) {
-                          checkSlipWithBackend(payload, expectedAmount, inputElement);
+                          await checkSlipWithBackend(payload, expectedAmount, inputElement);
                       } else {
                           if(statusDiv) {
                               statusDiv.style.display = 'block';
                               statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-info-circle'></i> ไม่พบ QR Code บนรูปภาพ *ยังบันทึกได้</span>`;
                           }
                       }
+                      
+                      delete pendingAPIRequests[inputElement.id];
+                      checkFormValidity();
                   });
               }
           }
@@ -1781,6 +1784,18 @@
       }
 
       const btn = document.getElementById('btn_1');
+      let isAnyPending = Object.keys(pendingAPIRequests || {}).length > 0;
+
+      if (isAnyPending) {
+          btn.disabled = true;
+          btn.innerHTML = "<span class='spinner-border spinner-border-sm me-2'></span>กำลังตรวจสอบสลิป...";
+          btn.classList.remove('btn-gradient');
+          btn.classList.add('btn-secondary');
+          return; 
+      } else {
+          btn.innerHTML = "<i class='bx bxs-save'></i> บันทึกข้อมูล";
+      }
+
       if (name && name1Suffix.length > 0 && name1Hidden.length > 4 && selectedMonthsCount > 0 && filesValid && name4) {
         btn.disabled = false; btn.classList.remove('btn-secondary'); btn.classList.add('btn-gradient'); 
       } else {
