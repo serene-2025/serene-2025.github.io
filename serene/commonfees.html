@@ -12708,18 +12708,38 @@ function closeReceiptFromInvoiceModal() {
 }
 
 // คำนวณรายการ+ยอดเงิน — คัดลอกตรรกะเดียวกับ buildInvoiceHTML ทุกประการ เพื่อให้ยอดตรงกันเป๊ะ
+function _getUnpaidMonthRange(houseRecord, uptoMonthIdx) {
+    // หาเดือนแรกและเดือนสุดท้ายที่ยังไม่จ่ายในปีนั้น (จำกัดถึงก่อนเดือนที่กำหนด ถ้ามี)
+    let firstIdx = -1, lastIdx = -1;
+    const limit = (uptoMonthIdx != null) ? uptoMonthIdx : 12;
+    for (let i = 0; i < limit; i++) {
+        const st = houseRecord[months[i].key] || '';
+        if (st.includes('ยังไม่จ่าย') || st.includes('ค้าง')) {
+            if (firstIdx === -1) firstIdx = i;
+            lastIdx = i;
+        }
+    }
+    if (firstIdx === -1) return null;
+    return { startLabel: months[firstIdx].label, endLabel: months[lastIdx].label };
+}
+
 function _computeReceiptLineItems(house, monthKey, includeAllYears, startBoundary, includeLateFee, aheadBoundary) {
     const s = getInvoiceSettings();
-    const monthLabel = monthKey ? (months.find(m => m.key === monthKey)?.th || '') : 'ทั้งปี';
+    const monthLabel = monthKey ? (months.find(m => m.key === monthKey)?.label || '') : 'ทั้งปี';
+    const selectedIdx = monthKey ? months.findIndex(m => m.key === monthKey) : null;
 
     const d = getInvoiceRowData(house, monthKey, startBoundary, aheadBoundary);
     const cross = includeAllYears ? getCrossYearOverdue(house.house_numbe, house.year, startBoundary) : { rows: [], totalMonths: 0, totalAmount: 0 };
 
     const lineItems = [];
 
+    // 1) ค้างข้ามปี — แสดงช่วงเดือนจริงที่ค้าง (เดือนแรก-เดือนสุดท้าย) ของแต่ละปี
     cross.rows.forEach(r => {
+        const yearRecord = allData.find(rec => rec.house_numbe === house.house_numbe && rec.year === r.year);
+        const range = yearRecord ? _getUnpaidMonthRange(yearRecord, null) : null;
+        const periodLabel = range ? `${range.startLabel} ${r.year} - ${range.endLabel} ${r.year}` : `${r.year}`;
         lineItems.push({
-            desc: `จ่ายค่าส่วนกลาง บ้านเลขที่ ${house.house_numbe} ( ${r.year} )`,
+            desc: `จ่ายค่าส่วนกลาง บ้านเลขที่ ${house.house_numbe} ( ${periodLabel} )`,
             qty: r.months, unitPrice: RATE_PER_MONTH, amount: r.amount, isPenalty: false, isCredit: false
         });
     });
@@ -12732,12 +12752,16 @@ function _computeReceiptLineItems(house, monthKey, includeAllYears, startBoundar
             amount: monthsUnpaid > 0 ? d.overdueAmount : RATE_PER_MONTH * 12, isPenalty: false, isCredit: false
         });
     } else {
+        // 2) ค้างในปีเดียวกัน (ก่อนเดือนที่เลือก) — แสดงช่วงเดือนจริงที่ค้าง
         if (d.overdueAmount > 0) {
+            const range = _getUnpaidMonthRange(house, selectedIdx);
+            const periodLabel = range ? `${range.startLabel} ${house.year} - ${range.endLabel} ${house.year}` : `${house.year}`;
             lineItems.push({
-                desc: `จ่ายค่าส่วนกลาง บ้านเลขที่ ${house.house_numbe} ( ${d.overdueMonths} เดือน ปี ${house.year} )`,
+                desc: `จ่ายค่าส่วนกลาง บ้านเลขที่ ${house.house_numbe} ( ${periodLabel} )`,
                 qty: d.overdueMonths, unitPrice: RATE_PER_MONTH, amount: d.overdueAmount, isPenalty: false, isCredit: false
             });
         }
+        // 3) เดือนปัจจุบัน
         if (d.currentDue > 0) {
             lineItems.push({
                 desc: `จ่ายค่าส่วนกลาง บ้านเลขที่ ${house.house_numbe} ( ${monthLabel} ${house.year} )`,
@@ -12763,8 +12787,8 @@ function _computeReceiptLineItems(house, monthKey, includeAllYears, startBoundar
     }
 
     if (aheadBoundary && d.aheadMonths > 0) {
-        const aheadMonthLabel = months[aheadBoundary.monthIdx]?.th || '';
-        const aheadEndMonthLabel = months[aheadBoundary.endMonthIdx]?.th || '';
+        const aheadMonthLabel = months[aheadBoundary.monthIdx]?.label || '';
+        const aheadEndMonthLabel = months[aheadBoundary.endMonthIdx]?.label || '';
         lineItems.push({
             desc: `ชำระล่วงหน้า ${d.aheadMonths} เดือน (เริ่ม ${aheadMonthLabel} ${aheadBoundary.year}) ถึง ${aheadEndMonthLabel} ${aheadBoundary.endYear}`,
             qty: d.aheadMonths, unitPrice: RATE_PER_MONTH, amount: d.aheadAmount, isPenalty: false, isCredit: false
@@ -12779,7 +12803,8 @@ function buildReceiptFromInvoiceHTML(d) {
     const LOGO = 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/serene23.png';
     const invS = getInvoiceSettings();
     const today = new Date();
-    const dateStr = today.toLocaleDateString('th-TH', { day:'numeric', month:'long', year:'numeric' });
+    const thaiMonthNames = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+    const dateStr = `${today.getDate()} ${thaiMonthNames[today.getMonth()]} พ.ศ. ${toBEYear(today.getFullYear())}`;
 
     const rows = d.lineItems.map((item, i) => `
         <tr>
@@ -12852,7 +12877,7 @@ function buildReceiptFromInvoiceHTML(d) {
     </div>
     <div class="rfi-total-block">
       <div class="rfi-total-row"><span>ภาษีมูลค่าเพิ่ม</span><span>0%</span><span>0.00</span></div>
-      <div class="rfi-words-row">ตัวอักษร. (${amountInWords(d.total)})</div>
+      <div class="rfi-total-row"><span>ตัวอักษร.</span><span style="flex:1;text-align:right;">(${amountInWords(d.total)})</span></div>
       <div class="rfi-total-row rfi-total-main"><span>จำนวนเงินรวม (บาท)</span><span></span><span>${d.total.toLocaleString()}</span></div>
     </div>
   </div>
@@ -12867,23 +12892,22 @@ function buildReceiptFromInvoiceHTML(d) {
         <label class="rfi-check-row"><span class="rfi-checkbox">☐</span> เงินสด:</label>
         <label class="rfi-check-row"><span class="rfi-checkbox">☑</span> เงินโอน:</label>
         <label class="rfi-check-row"><span class="rfi-checkbox">☐</span> อื่นๆ</label>
+        <div class="rfi-check-row" style="display:block;margin-top:3pt;">รายละเอียดเพิ่มเติม .....................................</div>
       </div>
     </div>
     <div class="rfi-sign-block">
-      ${invS.chairmanSigUrl ? `<img src="${invS.chairmanSigUrl}" class="rfi-personal-sig">` : ''}
-      <div class="rfi-sign-line"></div>
       <div class="rfi-sign-role">อนุมัติโดย</div>
       <div class="rfi-sign-title">ประธานกรรมการ นิติบุคคล</div>
       <div class="rfi-sign-title">หมู่บ้านจัดสรรโกลเด้นแลนด์ ซีรีน</div>
+      <div class="rfi-sig-space">${invS.chairmanSigUrl ? `<img src="${invS.chairmanSigUrl}" class="rfi-personal-sig">` : ''}</div>
       <div class="rfi-sign-name">${invS.chairman}</div>
       <div class="rfi-sign-date">วันที่ ${dateStr}</div>
     </div>
     <div class="rfi-sign-block">
-      ${invS.issuerSigUrl ? `<img src="${invS.issuerSigUrl}" class="rfi-personal-sig">` : ''}
-      <div class="rfi-sign-line"></div>
       <div class="rfi-sign-role">รับชำระเงิน</div>
       <div class="rfi-sign-title">เหรัญญิก&การเงิน นิติบุคคล</div>
       <div class="rfi-sign-title">หมู่บ้านจัดสรรโกลเด้นแลนด์ ซีรีน</div>
+      <div class="rfi-sig-space">${invS.issuerSigUrl ? `<img src="${invS.issuerSigUrl}" class="rfi-personal-sig">` : ''}</div>
       <div class="rfi-sign-name">${invS.issuer}</div>
       <div class="rfi-sign-date">วันที่ ${dateStr}</div>
     </div>
@@ -12973,7 +12997,6 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
 .rfi-note-title{font-weight:700;font-size:9pt;margin-bottom:3pt;}
 .rfi-note-text{font-size:8pt;color:#475569;line-height:1.7;}
 .rfi-total-row{display:flex;justify-content:space-between;gap:10pt;font-size:9pt;padding:2pt 0;border-bottom:1px solid #e2e8f0;}
-.rfi-words-row{font-size:8.5pt;font-style:italic;color:#475569;padding:4pt 0;text-align:right;}
 .rfi-total-main{background:#fde68a;font-weight:900;font-size:10pt;padding:5pt 4pt;border:none;}
 
 .rfi-footer{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10pt;margin-top:16pt;}
@@ -12981,9 +13004,9 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
 .rfi-bank-line{font-size:8.5pt;margin-bottom:1pt;}
 .rfi-check-row{display:inline-flex;align-items:center;gap:3pt;font-size:8.5pt;margin-right:8pt;}
 .rfi-checkbox{font-size:10pt;}
-.rfi-sign-block{text-align:center;position:relative;padding-top:26pt;}
-.rfi-personal-sig{position:absolute;top:0;left:50%;transform:translateX(-50%);height:26pt;max-width:90%;object-fit:contain;}
-.rfi-sign-line{border-bottom:1.3px solid #000;height:6pt;margin-bottom:3pt;}
+.rfi-sign-block{text-align:center;}
+.rfi-sig-space{height:26pt;display:flex;align-items:center;justify-content:center;}
+.rfi-personal-sig{height:26pt;max-width:90%;object-fit:contain;}
 .rfi-sign-role{font-weight:700;font-size:9pt;margin-bottom:2pt;}
 .rfi-sign-title{font-size:7.5pt;color:#475569;}
 .rfi-sign-name{font-weight:700;font-size:8.5pt;text-decoration:underline;margin-top:2pt;}
