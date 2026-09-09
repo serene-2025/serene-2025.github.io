@@ -301,6 +301,67 @@
 
         lucide.createIcons();
 
+        // ─── 🎫 สร้าง Flex Message ยืนยันลงทะเบียน (ฝั่ง client) ────────
+        // ใช้ liff.sendMessages() แทน push API ของ backend — ส่งแบบนี้
+        // "ไม่กินโควต้า push message" เพราะเป็นการส่งผ่าน LIFF โดยตรง
+        // (นับเป็นข้อความที่ user "ส่งเอง" ในหน้าแชท ไม่ใช่ bot push หา user)
+        function buildCarRegistrationFlex(payload) {
+            const bubble = {
+                type: 'bubble',
+                hero: payload.imageUrl ? {
+                    type: 'image', url: payload.imageUrl, size: 'full',
+                    aspectRatio: '20:13', aspectMode: 'cover'
+                } : undefined,
+                body: {
+                    type: 'box', layout: 'vertical', spacing: 'md',
+                    contents: [
+                        { type: 'text', text: '🚗 ลงทะเบียนรถสำเร็จ', weight: 'bold', size: 'lg', wrap: true },
+                        { type: 'text', text: '⏳ รอตรวจสอบ', size: 'sm', color: '#F59E0B', weight: 'bold' },
+                        { type: 'separator', margin: 'lg' },
+                        {
+                            type: 'box', layout: 'vertical', margin: 'lg', spacing: 'sm',
+                            contents: [
+                                flexInfoRow('ชื่อ-สกุล', payload.fullname),
+                                flexInfoRow('บ้านเลขที่', payload.house_number),
+                                flexInfoRow('ทะเบียนรถ', payload.plate_number),
+                                flexInfoRow('ประเภทรถ', payload.car_type),
+                                flexInfoRow('จังหวัด', payload.province),
+                            ]
+                        },
+                        { type: 'separator', margin: 'lg' },
+                        {
+                            type: 'text', size: 'xs', color: '#999999', wrap: true, margin: 'lg',
+                            text: 'นิติบุคคลจะตรวจสอบและแจ้งผลอนุมัติให้ทราบผ่าน LINE นี้ค่ะ'
+                        }
+                    ]
+                }
+            };
+            return { type: 'flex', altText: `ลงทะเบียนรถสำเร็จ - ${payload.plate_number}`, contents: bubble };
+        }
+
+        function flexInfoRow(label, value) {
+            return {
+                type: 'box', layout: 'baseline', spacing: 'sm',
+                contents: [
+                    { type: 'text', text: label, color: '#aaaaaa', size: 'sm', flex: 2 },
+                    { type: 'text', text: String(value || '-'), wrap: true, color: '#666666', size: 'sm', flex: 4 }
+                ]
+            };
+        }
+
+        // ส่งการ์ดยืนยันเข้าห้องแชทผ่าน liff.sendMessages() — ทำงานได้เฉพาะตอนเปิด
+        // LIFF จากในแอป LINE เท่านั้น (isInClient) ถ้าเปิดจาก browser ปกติจะข้ามให้เงียบๆ
+        async function sendConfirmationViaLiff(payload) {
+            try {
+                if (!liff.isInClient()) return; // เปิดจาก browser นอก LINE — ส่งไม่ได้ ข้ามไป
+                const flexMsg = buildCarRegistrationFlex(payload);
+                await liff.sendMessages([flexMsg]);
+            } catch (e) {
+                console.warn('sendMessages ไม่สำเร็จ (ไม่กระทบการลงทะเบียน):', e);
+                // ปล่อยผ่านเงียบๆ — การลงทะเบียนสำเร็จไปแล้ว แค่การ์ดยืนยันส่งไม่ได้เฉยๆ
+            }
+        }
+
         // ─── 🔐 LIFF: เชื่อมต่อ LINE + ดึง uid ผู้ลงทะเบียน ─────────────
         let currentUid = null;
         let currentProfile = null;
@@ -477,16 +538,29 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
                 });
-                const result = await res.json();
+                const rawText = await res.text();
+                let result;
+                try { result = JSON.parse(rawText); }
+                catch (_) {
+                    // ตอบกลับไม่ใช่ JSON (เช่น 404 "Not Found" ธรรมดา) — มักแปลว่า backend
+                    // ยังไม่ได้ deploy endpoint นี้ขึ้น Supabase จริง แจ้งให้เข้าใจง่ายกว่าเดิม
+                    throw new Error(
+                        res.status === 404
+                            ? 'ระบบยังไม่พร้อมใช้งาน (ไม่พบ endpoint) กรุณาแจ้งแอดมินให้ deploy ระบบล่าสุดก่อน'
+                            : 'เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง (HTTP ' + res.status + ') กรุณาลองใหม่อีกครั้ง'
+                    );
+                }
                 if (!res.ok) throw new Error(result.error || 'ส่งข้อมูลไม่สำเร็จ');
+
+                // ส่งการ์ดยืนยันเข้าห้องแชท LINE ผ่าน LIFF (ไม่กินโควต้า push)
+                // ทำแบบ fire-and-forget ไม่รอผลลัพธ์ กันหน้าจอค้างถ้าส่งช้า/ไม่สำเร็จ
+                if (currentUid) sendConfirmationViaLiff(payload);
 
                 // แสดงข้อความสำเร็จ
                 Swal.fire({
                     icon: 'success',
                     title: 'ส่งคำขอสำเร็จ',
-                    text: currentUid
-                        ? 'ข้อมูลของคุณถูกส่งไปยังนิติบุคคลเรียบร้อยแล้ว และส่งข้อความยืนยันเข้า LINE ให้แล้ว กรุณารอการอนุมัติ'
-                        : 'ข้อมูลของคุณถูกส่งไปยังนิติบุคคลเรียบร้อยแล้ว กรุณารอการอนุมัติ',
+                    text: 'ข้อมูลของคุณถูกส่งไปยังนิติบุคคลเรียบร้อยแล้ว กรุณารอการอนุมัติ ตรวจสอบสถานะได้จากแท็บ "รายการที่ลง"',
                     confirmButtonColor: '#6366f1'
                 }).then(() => {
                     document.getElementById('registrationForm').reset();
