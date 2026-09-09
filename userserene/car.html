@@ -8,6 +8,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
@@ -110,6 +111,7 @@
                     <span class="text-2xl">📝</span>
                     <h2 class="text-lg font-bold text-slate-800">ลงทะเบียนรถใหม่</h2>
                 </div>
+                <div id="liffStatusBox" class="mb-4 text-center text-xs text-slate-400">⏳ กำลังเชื่อมต่อ LINE...</div>
 
                 <form id="registrationForm" onsubmit="submitForm(event)">
                     
@@ -257,9 +259,10 @@
         <div id="viewStatus" class="px-6 mt-6 hidden">
             <div class="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
                 <h2 class="text-lg font-bold text-slate-800 mb-4 text-center">📋 ตรวจสอบสถานะ</h2>
-                
+                <p class="text-xs text-slate-400 text-center mb-4">แสดงรายการที่คุณลงทะเบียนผ่าน LINE นี้อัตโนมัติ</p>
+
                 <div class="flex gap-2 mb-6">
-                    <input type="text" id="searchHouse" placeholder="ระบุบ้านเลขที่ของคุณ..." class="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm">
+                    <input type="text" id="searchHouse" placeholder="หรือค้นหาด้วยบ้านเลขที่..." class="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 text-sm">
                     <button onclick="checkStatus()" class="bg-indigo-100 text-indigo-600 px-4 py-3 rounded-xl font-bold text-sm active:scale-95 transition-all">ค้นหา</button>
                 </div>
 
@@ -290,12 +293,59 @@
         const supabaseUrl = 'https://zmdywddraaeegzkvpwsw.supabase.co';
         const supabaseKey = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ';
         const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
+        const EDGE_FUNCTION_URL = 'https://zmdywddraaeegzkvpwsw.supabase.co/functions/v1/line-webhook';
 
-        // Telegram Bot Configuration
-        const TELEGRAM_BOT_TOKEN = '8064168284:AAFDzyATjQ0fJhsCNQRDulL1FlpU3CykFAs';
+        // Telegram Bot Configuration (สำรอง — การแจ้งเตือนหลักตอนนี้ทำผ่าน backend แล้ว)
+        const TELEGRAM_BOT_TOKEN = '7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY';
         const TELEGRAM_CHAT_ID = '-4574041962';
 
         lucide.createIcons();
+
+        // ─── 🔐 LIFF: เชื่อมต่อ LINE + ดึง uid ผู้ลงทะเบียน ─────────────
+        let currentUid = null;
+        let currentProfile = null;
+
+        async function initLiff() {
+            const statusBox = document.getElementById('liffStatusBox');
+            try {
+                // ดึง LIFF ID จากระบบตั้งค่ากลาง (แก้ได้จากหน้า Admin โดยไม่ต้อง deploy ใหม่)
+                const { data: cfg } = await supabaseClient
+                    .from('system_settings').select('value').eq('key', 'car_liff_id').maybeSingle();
+                const liffId = cfg?.value;
+
+                if (!liffId || liffId === 'YOUR_CAR_LIFF_ID_HERE') {
+                    if (statusBox) statusBox.innerHTML = '⚠️ ยังไม่ได้ตั้งค่า LIFF — กรอกข้อมูลได้ปกติแต่จะไม่เชื่อมกับ LINE';
+                    return;
+                }
+
+                await liff.init({ liffId });
+                if (!liff.isLoggedIn()) {
+                    liff.login({ redirectUri: window.location.href });
+                    return; // จะ redirect กลับมาใหม่หลัง login
+                }
+
+                currentProfile = await liff.getProfile();
+                currentUid = currentProfile.userId;
+
+                if (statusBox) {
+                    statusBox.innerHTML =
+                        '<div class="flex items-center justify-center gap-2 text-emerald-600 font-medium">' +
+                        (currentProfile.pictureUrl ? '<img src="' + currentProfile.pictureUrl + '" class="w-5 h-5 rounded-full">' : '') +
+                        '<span>✅ เชื่อมต่อ LINE: ' + (currentProfile.displayName || '') + '</span></div>';
+                }
+
+                // เติมชื่อให้อัตโนมัติจากโปรไฟล์ LINE (ผู้ใช้ยังแก้ไขเองได้)
+                const fullnameInput = document.getElementById('fullname');
+                if (fullnameInput && !fullnameInput.value) fullnameInput.value = currentProfile.displayName || '';
+
+                // โหลดรายการลงทะเบียนของ user นี้ล่วงหน้า (เผื่อสลับไปแท็บสถานะ)
+                checkStatusByUid();
+            } catch (e) {
+                console.error('LIFF init error', e);
+                if (statusBox) statusBox.innerHTML = '⚠️ เชื่อมต่อ LINE ไม่สำเร็จ — กรอกข้อมูลได้ปกติ';
+            }
+        }
+        initLiff();
 
         // Image Preview and Resize (Compression)
         let selectedFile = null;
@@ -373,116 +423,70 @@
                 document.getElementById('navStatus').classList.add('active');
                 document.getElementById('viewStatus').classList.remove('hidden');
                 lucide.createIcons();
+                if (currentUid) checkStatusByUid(); // auto-โหลดรายการของ user นี้ทันที
             }
         }
 
         // Form Submission
         async function submitForm(e) {
             e.preventDefault();
-            
+
             if (!selectedFile) {
                 return Swal.fire('แจ้งเตือน', 'กรุณาอัปโหลดรูปภาพรถ', 'warning');
             }
 
             const submitBtn = document.getElementById('submitBtn');
             submitBtn.disabled = true;
-            submitBtn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin mx-auto"></i> กำลังตรวจสอบข้อมูล...';
+            submitBtn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin mx-auto"></i> กำลังอัปโหลดรูปภาพ...';
             lucide.createIcons();
 
             try {
                 const plate = document.getElementById('plate_number').value.trim().toUpperCase();
 
-                // 1. เช็คทะเบียนซ้ำในระบบปัจจุบัน (allowed_cars)
-                const { data: existingAllowed, error: allowedError } = await supabaseClient
-                    .from('allowed_cars')
-                    .select('id')
-                    .eq('plate_number', plate)
-                    .neq('status', 'pending_delete')
-                    .maybeSingle();
-
-                if (existingAllowed) {
-                    Swal.fire('แจ้งเตือน', 'ทะเบียนรถนี้มีอยู่ในระบบแล้ว (ไม่ต้องลงทะเบียนใหม่)', 'warning');
-                    return;
-                }
-
-                // 2. เช็คคำขอที่กำลังรออนุมัติ (car_registrations)
-                const { data: existingPending, error: pendingError } = await supabaseClient
-                    .from('car_registrations')
-                    .select('id')
-                    .eq('plate_number', plate)
-                    .eq('status', 'pending')
-                    .maybeSingle();
-
-                if (existingPending) {
-                    Swal.fire('แจ้งเตือน', 'ทะเบียนรถนี้ได้ส่งคำขอไปแล้ว และกำลังรอแอดมินพิจารณาอนุมัติ', 'warning');
-                    return;
-                }
-
-                submitBtn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin mx-auto"></i> กำลังอัปโหลดรูปภาพ...';
-                lucide.createIcons();
-
-                // 3. Upload Image
-                const fileExt = 'jpg'; // บังคับเป็น jpg ตามที่เราตั้งไว้ตอนบีบอัด
+                // 1. Upload Image ก่อน (ยังทำฝั่ง frontend ได้ เพราะ bucket เป็น public)
+                const fileExt = 'jpg'; // บังคับเป็น jpg ตามที่ตั้งไว้ตอนบีบอัด
                 const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
-                
-                const { data: uploadData, error: uploadError } = await supabaseClient.storage
+
+                const { error: uploadError } = await supabaseClient.storage
                     .from('car_images')
                     .upload(`public/${fileName}`, selectedFile);
-
                 if (uploadError) throw uploadError;
 
-                // Get public URL
                 const { data: publicUrlData } = supabaseClient.storage
                     .from('car_images')
                     .getPublicUrl(`public/${fileName}`);
-                
                 const imageUrl = publicUrlData.publicUrl;
 
                 submitBtn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin mx-auto"></i> กำลังบันทึกข้อมูล...';
                 lucide.createIcons();
 
-                // 4. Save Data to Database
+                // 2. ส่งข้อมูลผ่าน backend (ตรวจซ้ำ + บันทึก + ส่ง Flex Message ยืนยันทาง LINE ให้เอง)
                 const payload = {
+                    uid: currentUid || null,
                     fullname: document.getElementById('fullname').value.trim(),
                     house_number: document.getElementById('house_number').value.trim(),
                     phone: document.getElementById('phone').value.trim(),
                     car_type: document.getElementById('car_type').value,
                     plate_number: plate,
                     province: document.getElementById('province').value.trim(),
-                    image_url: imageUrl,
-                    status: 'pending'
+                    imageUrl,
                 };
 
-                const { error: dbError } = await supabaseClient
-                    .from('car_registrations')
-                    .insert([payload]);
-
-                if (dbError) throw dbError;
-
-                // 5. Send Notification to Telegram Group (Admin)
-                const messageCaption = `🚨 *มีคำขอลงทะเบียนรถใหม่* 🚨\n\n🏠 *บ้านเลขที่:* ${payload.house_number}\n👤 *ชื่อ:* ${payload.fullname}\n📱 *โทร:* ${payload.phone}\n🚙 *ประเภท:* ${payload.car_type}\n🔢 *ทะเบียน:* ${payload.plate_number}\n📍 *จังหวัด:* ${payload.province}\n\nกรุณาเข้าสู่ระบบ Admin เพื่อตรวจสอบและพิจารณาอนุมัติ`;
-
-                try {
-                    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            chat_id: TELEGRAM_CHAT_ID,
-                            photo: imageUrl,
-                            caption: messageCaption,
-                            parse_mode: 'Markdown'
-                        })
-                    });
-                } catch (tgError) {
-                    console.error("Telegram Notification Error:", tgError);
-                    // ปล่อยผ่าน หากแจ้งเตือนมีปัญหา แต่ข้อมูลส่งเข้า DB เรียบร้อยแล้ว
-                }
+                const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/car_registration_submit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const result = await res.json();
+                if (!res.ok) throw new Error(result.error || 'ส่งข้อมูลไม่สำเร็จ');
 
                 // แสดงข้อความสำเร็จ
                 Swal.fire({
                     icon: 'success',
                     title: 'ส่งคำขอสำเร็จ',
-                    text: 'ข้อมูลของคุณถูกส่งไปยังนิติบุคคลเรียบร้อยแล้ว กรุณารอการอนุมัติ',
+                    text: currentUid
+                        ? 'ข้อมูลของคุณถูกส่งไปยังนิติบุคคลเรียบร้อยแล้ว และส่งข้อความยืนยันเข้า LINE ให้แล้ว กรุณารอการอนุมัติ'
+                        : 'ข้อมูลของคุณถูกส่งไปยังนิติบุคคลเรียบร้อยแล้ว กรุณารอการอนุมัติ',
                     confirmButtonColor: '#6366f1'
                 }).then(() => {
                     document.getElementById('registrationForm').reset();
@@ -491,12 +495,12 @@
                     selectedFile = null;
                     document.getElementById('searchHouse').value = payload.house_number;
                     switchTab('status');
-                    checkStatus();
+                    if (currentUid) checkStatusByUid(); else checkStatus();
                 });
 
             } catch (err) {
                 console.error(err);
-                Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถส่งข้อมูลได้ กรุณาลองใหม่อีกครั้ง', 'error');
+                Swal.fire('เกิดข้อผิดพลาด', err.message || 'ไม่สามารถส่งข้อมูลได้ กรุณาลองใหม่อีกครั้ง', 'error');
             } finally {
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = 'ส่งข้อมูลลงทะเบียน';
@@ -507,7 +511,7 @@
         async function checkStatus() {
             const house = document.getElementById('searchHouse').value.trim();
             const listDiv = document.getElementById('statusList');
-            
+
             if (!house) return;
 
             listDiv.innerHTML = '<div class="text-center py-4"><i data-lucide="loader-2" class="w-6 h-6 animate-spin mx-auto text-indigo-500"></i></div>';
@@ -521,39 +525,64 @@
                     .order('created_at', { ascending: false });
 
                 if (error) throw error;
-
-                if (data.length === 0) {
-                    listDiv.innerHTML = '<div class="text-center text-slate-500 text-sm py-4">ไม่พบข้อมูลของบ้านเลขที่นี้</div>';
-                    return;
-                }
-
-                listDiv.innerHTML = '';
-                data.forEach(item => {
-                    let statusHtml = '';
-                    if (item.status === 'pending') statusHtml = '<span class="bg-amber-100 text-amber-600 px-2 py-1 rounded text-[10px] font-bold">⏳ รอตรวจสอบ</span>';
-                    else if (item.status === 'approved') statusHtml = '<span class="bg-emerald-100 text-emerald-600 px-2 py-1 rounded text-[10px] font-bold">✅ อนุมัติแล้ว</span>';
-                    else if (item.status === 'rejected') statusHtml = '<span class="bg-rose-100 text-rose-600 px-2 py-1 rounded text-[10px] font-bold">❌ ไม่อนุมัติ</span>';
-
-                    const date = new Date(item.created_at).toLocaleDateString('th-TH');
-
-                    listDiv.innerHTML += `
-                        <div class="border border-slate-100 rounded-xl p-3 flex gap-3 items-center bg-slate-50">
-                            <img src="${item.image_url}" class="w-16 h-16 rounded-lg object-cover border border-slate-200">
-                            <div class="flex-1">
-                                <div class="flex justify-between items-start">
-                                    <div class="font-bold text-sm text-slate-800">${item.plate_number}</div>
-                                    ${statusHtml}
-                                </div>
-                                <div class="text-xs text-slate-500">${item.province}</div>
-                                <div class="text-[10px] text-slate-400 mt-1">ส่งเมื่อ: ${date}</div>
-                            </div>
-                        </div>
-                    `;
-                });
-
+                renderStatusList(data, 'ไม่พบข้อมูลของบ้านเลขที่นี้');
             } catch (err) {
                 listDiv.innerHTML = '<div class="text-center text-rose-500 text-sm py-4">เกิดข้อผิดพลาดในการโหลดข้อมูล</div>';
             }
+        }
+
+        // ─── ดึงรายการที่ user คนนี้เคยลงทะเบียนไว้ อัตโนมัติผ่าน uid (LIFF) ───
+        async function checkStatusByUid() {
+            if (!currentUid) return;
+            const listDiv = document.getElementById('statusList');
+            listDiv.innerHTML = '<div class="text-center py-4"><i data-lucide="loader-2" class="w-6 h-6 animate-spin mx-auto text-indigo-500"></i></div>';
+            lucide.createIcons();
+
+            try {
+                const { data, error } = await supabaseClient
+                    .from('car_registrations')
+                    .select('*')
+                    .eq('uid', currentUid)
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+                renderStatusList(data, 'คุณยังไม่เคยลงทะเบียนรถผ่าน LINE นี้ — ลองค้นหาด้วยบ้านเลขที่ด้านบนได้');
+            } catch (err) {
+                listDiv.innerHTML = '<div class="text-center text-rose-500 text-sm py-4">เกิดข้อผิดพลาดในการโหลดข้อมูล</div>';
+            }
+        }
+
+        // ─── Render รายการสถานะรถ (ใช้ร่วมกันทั้งค้นด้วยบ้านเลขที่ และค้นด้วย uid) ───
+        function renderStatusList(data, emptyMessage) {
+            const listDiv = document.getElementById('statusList');
+            if (!data || data.length === 0) {
+                listDiv.innerHTML = '<div class="text-center text-slate-500 text-sm py-4">' + emptyMessage + '</div>';
+                return;
+            }
+
+            listDiv.innerHTML = '';
+            data.forEach(item => {
+                let statusHtml = '';
+                if (item.status === 'pending') statusHtml = '<span class="bg-amber-100 text-amber-600 px-2 py-1 rounded text-[10px] font-bold">⏳ รอตรวจสอบ</span>';
+                else if (item.status === 'approved') statusHtml = '<span class="bg-emerald-100 text-emerald-600 px-2 py-1 rounded text-[10px] font-bold">✅ อนุมัติแล้ว</span>';
+                else if (item.status === 'rejected') statusHtml = '<span class="bg-rose-100 text-rose-600 px-2 py-1 rounded text-[10px] font-bold">❌ ไม่อนุมัติ</span>';
+
+                const date = new Date(item.created_at).toLocaleDateString('th-TH');
+
+                listDiv.innerHTML += `
+                    <div class="border border-slate-100 rounded-xl p-3 flex gap-3 items-center bg-slate-50">
+                        <img src="${item.image_url}" class="w-16 h-16 rounded-lg object-cover border border-slate-200">
+                        <div class="flex-1">
+                            <div class="flex justify-between items-start">
+                                <div class="font-bold text-sm text-slate-800">${item.plate_number}</div>
+                                ${statusHtml}
+                            </div>
+                            <div class="text-xs text-slate-500">${item.house_number} · ${item.province}</div>
+                            <div class="text-[10px] text-slate-400 mt-1">ส่งเมื่อ: ${date}</div>
+                        </div>
+                    </div>
+                `;
+            });
         }
     </script>
 </body>
