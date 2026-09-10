@@ -514,6 +514,7 @@
                                     <button onclick="loadView('crmMembers');" id="nav-crmMembers" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="users-round" class="w-5 h-5 text-emerald-500"></i> <span>สมาชิก &amp; แต้ม</span></button>
                                     <button onclick="loadView('carManagement');" id="nav-carManagement" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="car" class="w-5 h-5 text-indigo-500"></i> <span>จัดการทะเบียนรถ</span></button>
                                     <button onclick="loadView('complaintManagement');" id="nav-complaintManagement" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="megaphone" class="w-5 h-5 text-rose-500"></i> <span>จัดการเรื่องร้องเรียน</span></button>
+                                    <button onclick="loadView('notificationChannels');" id="nav-notificationChannels" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="bell-ring" class="w-5 h-5 text-cyan-500"></i> <span>ช่องทางแจ้งเตือน</span></button>
                                 </div>
                             </div>
 
@@ -2842,6 +2843,7 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'dataCompleteness') await renderDataCompletenessView();
             else if (viewName === 'carManagement') await renderCarManagementView();
             else if (viewName === 'complaintManagement') await renderComplaintManagementView();
+            else if (viewName === 'notificationChannels') await renderNotificationChannelsView();
             else if (viewName === 'slipManagement') await renderSlipManagementView();
             else if (viewName === 'crmRewards') await renderCrmRewardsView();
             else if (viewName === 'crmNews')    await renderCrmNewsView();
@@ -12087,6 +12089,19 @@ async function updateAllUserProfiles() {
             box.classList.remove('hidden');
         }
 
+        // โหลดรายชื่อกลุ่ม LINE ที่บอทเข้าร่วมอยู่ — ใช้ในหน้า "ช่องทางแจ้งเตือน" ใหม่
+        async function fetchAvailableLineGroups() {
+            try {
+                const { data, error } = await supabaseClient
+                    .from('line_groups').select('group_id, joined_at').order('joined_at', { ascending: false });
+                if (error) throw error;
+                return data || [];
+            } catch (e) {
+                console.warn('fetchAvailableLineGroups', e);
+                return [];
+            }
+        }
+
         async function saveSingleSetting(key, value) {
             await supabaseClient.from('system_settings').upsert({ key, value }, { onConflict: 'key' });
         }
@@ -13960,6 +13975,168 @@ const CAR_PER_PAGE = 30;
             rejected:    { icon:'❌', label:'ไม่รับพิจารณา', color:'rose' },
         };
         let complaintStatusFilter = '';
+
+        // ─── 🔔 ช่องทางแจ้งเตือน (Notification Channels) — Reusable ────
+        async function renderNotificationChannelsView() {
+            document.getElementById('content-area').innerHTML =
+                '<div class="slide-in p-2">' +
+                '<div class="mb-6 flex justify-between items-end flex-wrap gap-3">' +
+                '<div><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
+                '<span class="bg-cyan-100 text-cyan-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="bell-ring" class="w-8 h-8"></i></span>' +
+                'ช่องทางแจ้งเตือน</h1>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">ตั้งค่า Bot Token / Channel Access Token เองได้อิสระ — ใช้ร่วมกันได้ทุกฟีเจอร์ในระบบ</p></div>' +
+                '<button onclick="openChannelModal()" class="px-5 py-2.5 bg-cyan-500 hover:bg-cyan-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i> เพิ่มช่องทาง</button>' +
+                '</div>' +
+                '<div id="channels-list"></div></div>';
+            lucide.createIcons();
+            await loadChannelsList();
+        }
+
+        function maskToken(token) {
+            if (!token) return '<span class="text-slate-300">ยังไม่ได้ตั้งค่า</span>';
+            if (token.length <= 8) return '••••••••';
+            return token.slice(0, 4) + '••••••••' + token.slice(-4);
+        }
+
+        async function loadChannelsList() {
+            const el = document.getElementById('channels-list');
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/notification_channel_list`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+                window._channelsList = d.channels || [];
+
+                if (!d.channels?.length) {
+                    el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">ยังไม่มีช่องทางแจ้งเตือน กดปุ่ม "เพิ่มช่องทาง" เพื่อเริ่มต้น</div>';
+                    return;
+                }
+
+                el.innerHTML = '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' + d.channels.map((c, idx) => {
+                    return '<div class="glass rounded-3xl p-5' + (c.is_active ? '' : ' opacity-50') + '">' +
+                        '<div class="flex justify-between items-start mb-3">' +
+                        '<div><div class="font-bold text-slate-800">' + escapeHtml(c.name) + '</div>' +
+                        '<code class="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">' + escapeHtml(c.channel_key) + '</code></div>' +
+                        '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full ' + (c.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500') + '">' + (c.is_active ? '✅ ใช้งานอยู่' : '⏸️ ปิดใช้งาน') + '</span>' +
+                        '</div>' +
+                        '<div class="space-y-1.5 text-xs mb-4">' +
+                        '<div class="flex items-center gap-2"><i data-lucide="send" class="w-3.5 h-3.5 text-sky-500 flex-shrink-0"></i><span class="text-slate-400 w-24">Telegram Bot:</span><span class="font-mono">' + maskToken(c.telegram_bot_token) + '</span></div>' +
+                        '<div class="flex items-center gap-2"><i data-lucide="hash" class="w-3.5 h-3.5 text-sky-500 flex-shrink-0"></i><span class="text-slate-400 w-24">Chat ID:</span><span class="font-mono">' + (c.telegram_chat_id ? escapeHtml(c.telegram_chat_id) : '<span class="text-slate-300">ยังไม่ได้ตั้งค่า</span>') + '</span></div>' +
+                        '<div class="flex items-center gap-2"><i data-lucide="message-circle" class="w-3.5 h-3.5 text-emerald-500 flex-shrink-0"></i><span class="text-slate-400 w-24">LINE Token:</span><span class="font-mono">' + maskToken(c.line_channel_access_token) + '</span></div>' +
+                        '<div class="flex items-center gap-2"><i data-lucide="users" class="w-3.5 h-3.5 text-emerald-500 flex-shrink-0"></i><span class="text-slate-400 w-24">Group ID:</span><span class="font-mono truncate">' + (c.line_group_id ? escapeHtml(c.line_group_id) : '<span class="text-slate-300">ยังไม่ได้ตั้งค่า</span>') + '</span></div>' +
+                        '</div>' +
+                        '<div class="flex gap-2">' +
+                        '<button data-idx="' + idx + '" onclick="openChannelModal(this.dataset.idx)" class="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold">✏️ แก้ไข</button>' +
+                        '<button data-key="' + escapeHtml(c.channel_key) + '" onclick="testChannel(this.dataset.key)" class="flex-1 py-2 bg-cyan-100 hover:bg-cyan-200 text-cyan-700 rounded-xl text-xs font-bold">🧪 ทดสอบส่ง</button>' +
+                        '<button data-id="' + c.id + '" data-name="' + escapeHtml(c.name).replace(/"/g,'&quot;') + '" onclick="deleteChannel(this.dataset.id,this.dataset.name)" class="px-3 py-2 bg-rose-50 text-rose-500 rounded-xl text-xs font-bold hover:bg-rose-100">🗑️</button>' +
+                        '</div></div>';
+                }).join('') + '</div>';
+                lucide.createIcons();
+            } catch(e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function openChannelModal(idx) {
+            const c = idx !== undefined ? window._channelsList[parseInt(idx)] : null;
+            showModal((c ? '✏️ แก้ไข' : '➕ เพิ่ม') + 'ช่องทางแจ้งเตือน',
+                '<div class="space-y-3 text-left">' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">ชื่อช่องทาง (แสดงในหน้านี้)</label>' +
+                '<input id="ch-name" value="' + (c ? escapeHtml(c.name) : '') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="เช่น แจ้งเตือนเรื่องร้องเรียน"></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">Channel Key (รหัสที่โค้ดใช้เรียก — ห้ามซ้ำ)</label>' +
+                '<input id="ch-key" value="' + (c ? escapeHtml(c.channel_key) : '') + '" ' + (c ? 'readonly' : '') + ' class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-mono' + (c ? ' bg-slate-50 text-slate-400' : '') + '" placeholder="เช่น complaint, car_registration">' +
+                (c ? '<p class="text-[10px] text-slate-400 mt-1">แก้ไม่ได้หลังสร้างแล้ว (โค้ดอ้างอิงค่านี้ตรงๆ)</p>' : '') + '</div>' +
+                '<div class="pt-2 border-t border-slate-100">' +
+                '<div class="text-xs font-bold text-sky-600 mb-2 flex items-center gap-1.5"><i data-lucide="send" class="w-3.5 h-3.5"></i> Telegram</div>' +
+                '<input id="ch-tg-token" value="' + (c?.telegram_bot_token ? escapeHtml(c.telegram_bot_token) : '') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-mono mb-2" placeholder="Bot Token (เช่น 123456:AAxxxxx)">' +
+                '<input id="ch-tg-chat" value="' + (c?.telegram_chat_id ? escapeHtml(c.telegram_chat_id) : '') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="Chat ID (เช่น -1001234567890)">' +
+                '</div>' +
+                '<div class="pt-2 border-t border-slate-100">' +
+                '<div class="text-xs font-bold text-emerald-600 mb-2 flex items-center gap-1.5"><i data-lucide="message-circle" class="w-3.5 h-3.5"></i> LINE</div>' +
+                '<input id="ch-line-token" value="' + (c?.line_channel_access_token ? escapeHtml(c.line_channel_access_token) : '') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-mono mb-2" placeholder="Channel Access Token">' +
+                '<select id="ch-line-group" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white">' +
+                '<option value="">— เลือกกลุ่ม LINE (ไม่บังคับ) —</option>' +
+                '</select>' +
+                '<p class="text-[10px] text-slate-400 mt-1">รายชื่อกลุ่มดึงจากกลุ่มที่บอทหลักเข้าร่วมอยู่ — ถ้าใช้ LINE OA อื่น พิมพ์ Group ID เองในช่อง select ไม่ได้ ต้องเอา ID มาวางแทน</p>' +
+                '</div>' +
+                '<label class="flex items-center gap-2 text-xs pt-1"><input type="checkbox" id="ch-active" ' + (!c || c.is_active ? 'checked' : '') + ' class="w-4 h-4 accent-cyan-500"> เปิดใช้งานช่องทางนี้</label>' +
+                '<div class="flex gap-2 pt-2">' +
+                '<button data-id="' + (c?.id || '') + '" onclick="saveChannel(this.dataset.id)" class="flex-1 py-2.5 bg-cyan-500 hover:bg-cyan-600 text-white rounded-2xl font-bold text-sm">💾 บันทึก</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+                '</div></div>'
+            );
+            lucide.createIcons();
+            populateChannelLineGroupSelect(c?.line_group_id);
+        }
+
+        async function populateChannelLineGroupSelect(currentValue) {
+            const sel = document.getElementById('ch-line-group');
+            if (!sel) return;
+            const groups = await fetchAvailableLineGroups();
+            sel.innerHTML = '<option value="">— เลือกกลุ่ม LINE (ไม่บังคับ) —</option>' +
+                groups.map(g => {
+                    const dt = new Date(g.joined_at).toLocaleDateString('th-TH', { day:'2-digit', month:'short', year:'2-digit' });
+                    return '<option value="' + escapeHtml(g.group_id) + '"' + (g.group_id === currentValue ? ' selected' : '') + '>' +
+                        g.group_id.slice(0,16) + '... (เข้าร่วม ' + dt + ')</option>';
+                }).join('');
+            // ถ้ามีค่าเดิมแต่ไม่อยู่ใน dropdown (เช่น LINE OA อื่น) ให้เพิ่ม option ไว้เผื่อไม่ให้ค่าหาย
+            if (currentValue && !groups.some(g => g.group_id === currentValue)) {
+                sel.innerHTML += '<option value="' + escapeHtml(currentValue) + '" selected>' + currentValue.slice(0,16) + '... (ค่าเดิม/OA อื่น)</option>';
+            }
+        }
+
+        async function saveChannel(id) {
+            const payload = {
+                id: id || null,
+                channelKey: document.getElementById('ch-key')?.value?.trim(),
+                name: document.getElementById('ch-name')?.value?.trim(),
+                telegramBotToken: document.getElementById('ch-tg-token')?.value?.trim(),
+                telegramChatId: document.getElementById('ch-tg-chat')?.value?.trim(),
+                lineChannelAccessToken: document.getElementById('ch-line-token')?.value?.trim(),
+                lineGroupId: document.getElementById('ch-line-group')?.value,
+                isActive: document.getElementById('ch-active')?.checked,
+            };
+            if (!payload.channelKey || !payload.name) return showToast('กรอกชื่อและ Channel Key ก่อน', 'warning');
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/notification_channel_save`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+                closeModal();
+                showToast('✅ บันทึกช่องทางแล้ว', 'success');
+                loadChannelsList();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+        }
+
+        function deleteChannel(id, name) {
+            showConfirmModal('⚠️ ลบช่องทาง "' + escapeHtml(name) + '"?', 'ฟีเจอร์ที่อ้างอิง channel_key นี้จะไม่ส่งแจ้งเตือนอีกต่อไป', async () => {
+                try {
+                    const res = await fetch(`${API_BASE_URL}/api/admin/audience/notification_channel_delete`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id })
+                    });
+                    if (!res.ok) throw new Error('ลบไม่สำเร็จ');
+                    showToast('✅ ลบแล้ว', 'success');
+                    loadChannelsList();
+                } catch(e) { showToast('❌ ' + e.message, 'error'); }
+            });
+        }
+
+        async function testChannel(channelKey) {
+            showToast('⏳ กำลังส่งข้อความทดสอบ...', 'info');
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/notification_channel_test`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channelKey })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ทดสอบไม่สำเร็จ');
+                showToast('✅ ' + d.message, 'success');
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+        }
 
         async function renderComplaintManagementView() {
             document.getElementById('content-area').innerHTML =
