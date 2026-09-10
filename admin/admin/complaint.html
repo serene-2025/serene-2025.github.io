@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ระบบร้องเรียนนิติบุคคล</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- LINE LIFF SDK -->
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+    <!-- Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
+        
+        body { 
+            font-family: 'Prompt', sans-serif;
+            -webkit-tap-highlight-color: transparent; 
+            background-color: #f8fafc;
+        }
+        
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+        .no-scroll { touch-action: none; }
+        
+        /* Animations */
+        @keyframes slideUpFade {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes popIn {
+            0% { opacity: 0; transform: scale(0.9); }
+            50% { transform: scale(1.02); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-5px); }
+            100% { transform: translateY(0px); }
+        }
+        
+        .animate-slide-up { animation: slideUpFade 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .animate-pop-in { animation: popIn 0.3s ease-out forwards; }
+        .animate-float { animation: float 3s ease-in-out infinite; }
+        
+        /* Custom UI Elements */
+        .glass-header {
+            background: linear-gradient(135deg, rgba(79, 70, 229, 0.95), rgba(67, 56, 202, 0.95));
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+        
+        .input-field {
+            transition: all 0.3s ease;
+        }
+        .input-field:focus {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.15);
+        }
+
+        .pb-safe { padding-bottom: calc(env(safe-area-inset-bottom) + 1rem); }
+    </style>
+</head>
+<body class="text-slate-800 antialiased">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // ─── Configuration ────────────────────────────────────────────
+        const SUPABASE_URL = 'https://zmdywddraaeegzkvpwsw.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ';
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        const EDGE_FUNCTION_URL = 'https://zmdywddraaeegzkvpwsw.supabase.co/functions/v1/line-webhook';
+
+        // ─── แปลง base64 dataURL → Blob (สำหรับอัปโหลดรูป/ลายเซ็น) ───
+        function dataUrlToBlob(dataUrl) {
+            const [meta, base64] = dataUrl.split(',');
+            const mime = meta.match(/:(.*?);/)[1];
+            const bytes = atob(base64);
+            const arr = new Uint8Array(bytes.length);
+            for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+            return new Blob([arr], { type: mime });
+        }
+
+        // ─── อัปโหลดไฟล์ขึ้น Supabase Storage คืนค่า public URL ───
+        async function uploadToStorage(bucket, blob, ext) {
+            const fileName = `public/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
+            const { error } = await supabaseClient.storage.from(bucket).upload(fileName, blob);
+            if (error) throw error;
+            const { data } = supabaseClient.storage.from(bucket).getPublicUrl(fileName);
+            return data.publicUrl;
+        }
+
+        const Modal = ({ isOpen, type, title, message, onClose }) => {
+            if (!isOpen) return null;
+            
+            const isSuccess = type === 'success';
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-pop-in">
+                    <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl flex flex-col items-center text-center">
+                        <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${isSuccess ? 'bg-green-100 text-green-500' : 'bg-red-100 text-red-500'}`}>
+                            <i className={`ph-fill ${isSuccess ? 'ph-check-circle' : 'ph-warning-circle'} text-4xl`}></i>
+                        </div>
+                        <h3 className="text-xl font-bold text-slate-800 mb-2">{title}</h3>
+                        <p className="text-sm text-slate-500 mb-6 leading-relaxed">{message}</p>
+                        <button 
+                            onClick={onClose}
+                            className={`w-full py-3 rounded-xl font-semibold text-white transition-transform active:scale-95 ${isSuccess ? 'bg-green-500 shadow-lg shadow-green-500/30' : 'bg-slate-800 shadow-lg shadow-slate-800/30'}`}>
+                            ตกลง
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        const SignaturePad = ({ onReady }) => {
+            const canvasRef = useRef(null);
+            const [isDrawing, setIsDrawing] = useState(false);
+            const [hasDrawn, setHasDrawn] = useState(false);
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                canvas.width = canvas.offsetWidth;
+                canvas.height = canvas.offsetHeight;
+                ctx.lineWidth = 3;
+                ctx.lineCap = 'round';
+                ctx.strokeStyle = '#1e1b4b'; // Deep Indigo
+                
+                onReady({
+                    clear: () => {
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        setHasDrawn(false);
+                    },
+                    getData: () => {
+                        const blank = document.createElement('canvas');
+                        blank.width = canvas.width; blank.height = canvas.height;
+                        if(canvas.toDataURL() === blank.toDataURL()) return null;
+                        return canvas.toDataURL('image/png').split(',')[1];
+                    }
+                });
+            }, []);
+
+            const getCoordinates = (e) => {
+                const canvas = canvasRef.current;
+                const rect = canvas.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                return { x: clientX - rect.left, y: clientY - rect.top };
+            };
+
+            const startDrawing = (e) => {
+                const { x, y } = getCoordinates(e);
+                const ctx = canvasRef.current.getContext('2d');
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                setIsDrawing(true);
+                setHasDrawn(true);
+            };
+
+            const draw = (e) => {
+                if (!isDrawing) return;
+                e.preventDefault();
+                const { x, y } = getCoordinates(e);
+                const ctx = canvasRef.current.getContext('2d');
+                ctx.lineTo(x, y);
+                ctx.stroke();
+            };
+
+            const stopDrawing = () => setIsDrawing(false);
+
+            return (
+                <div className={`relative border-2 border-dashed rounded-2xl overflow-hidden bg-slate-50 transition-colors duration-300 ${hasDrawn ? 'border-indigo-400 bg-indigo-50/30' : 'border-slate-300'}`}>
+                    <canvas
+                        ref={canvasRef}
+                        className="w-full h-40 no-scroll cursor-crosshair touch-none"
+                        onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={stopDrawing} onMouseLeave={stopDrawing}
+                        onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={stopDrawing}
+                    ></canvas>
+                    {!hasDrawn && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 pointer-events-none animate-pulse">
+                            <i className="ph ph-pen-nib text-2xl mb-1"></i>
+                            <span className="text-xs">เซ็นชื่อลงในกรอบนี้</span>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('form');
+            const [isSubmitting, setIsSubmitting] = useState(false);
+            const [modalConfig, setModalConfig] = useState({ isOpen: false, type: '', title: '', message: '' });
+
+            const [formData, setFormData] = useState({
+                name: '', houseNo: '', phone: '', category: 'พื้นที่ส่วนกลาง/ไฟถนน', issue: ''
+            });
+            const [imagePreview, setImagePreview] = useState(null);
+            const [imageBlob, setImageBlob] = useState(null);
+
+            const [currentUid, setCurrentUid] = useState(null);
+            const [currentProfile, setCurrentProfile] = useState(null);
+            const [liffStatus, setLiffStatus] = useState('⏳ กำลังเชื่อมต่อ LINE...');
+            const [history, setHistory] = useState([]);
+            const [historyLoading, setHistoryLoading] = useState(false);
+
+            let signatureRef = useRef(null);
+
+            // ─── 🔐 เชื่อมต่อ LIFF จริง — ดึง LIFF ID จากระบบตั้งค่ากลาง เหมือนระบบรถ ───
+            useEffect(() => {
+                (async () => {
+                    try {
+                        const { data: cfg } = await supabaseClient
+                            .from('system_settings').select('value').eq('key', 'complaint_liff_id').maybeSingle();
+                        const liffId = cfg?.value;
+
+                        if (!liffId || liffId === 'YOUR_COMPLAINT_LIFF_ID_HERE') {
+                            setLiffStatus('⚠️ ยังไม่ได้ตั้งค่า LIFF — กรอกข้อมูลได้ปกติแต่จะไม่เชื่อมกับ LINE');
+                            return;
+                        }
+
+                        await liff.init({ liffId });
+                        if (!liff.isLoggedIn()) {
+                            liff.login({ redirectUri: window.location.href });
+                            return;
+                        }
+
+                        const profile = await liff.getProfile();
+                        setCurrentUid(profile.userId);
+                        setCurrentProfile(profile);
+                        setLiffStatus('✅ เชื่อมต่อ LINE: ' + (profile.displayName || ''));
+                        // หมายเหตุ: ไม่ auto-fill ชื่อ-สกุลจากโปรไฟล์ LINE ตั้งใจ — ให้กรอกชื่อจริงเอง
+                        // (ชื่อ LINE เก็บแยกไว้อ้างอิงในฐานข้อมูลแทน ไม่ใส่ในช่องชื่อ-สกุล)
+                    } catch (e) {
+                        console.error('LIFF init error', e);
+                        setLiffStatus('⚠️ เชื่อมต่อ LINE ไม่สำเร็จ — กรอกข้อมูลได้ปกติ');
+                    }
+                })();
+            }, []);
+
+            // ─── โหลดประวัติการร้องเรียนของ user นี้จากฐานข้อมูลจริง ───
+            const loadHistory = async (uid) => {
+                if (!uid) return;
+                setHistoryLoading(true);
+                try {
+                    const { data, error } = await supabaseClient
+                        .from('complaints').select('*')
+                        .eq('uid', uid)
+                        .order('created_at', { ascending: false });
+                    if (error) throw error;
+                    setHistory(data || []);
+                } catch (e) {
+                    console.error('loadHistory error', e);
+                } finally {
+                    setHistoryLoading(false);
+                }
+            };
+
+            useEffect(() => {
+                if (activeTab === 'history' && currentUid) loadHistory(currentUid);
+            }, [activeTab, currentUid]);
+
+            const handleImageChange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    setImageBlob(file);
+                    const reader = new FileReader();
+                    reader.onloadend = () => setImagePreview(reader.result);
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const submitForm = async (e) => {
+                e.preventDefault();
+                const sigBase64Url = signatureRef.current.getData();
+
+                if (!sigBase64Url) {
+                    setModalConfig({
+                        isOpen: true,
+                        type: 'error',
+                        title: 'ข้อมูลไม่ครบถ้วน',
+                        message: 'กรุณาเซ็นชื่อรับรองด้วยลายมือชื่อของคุณ เพื่อใช้เป็นหลักฐานในการดำเนินการ'
+                    });
+                    return;
+                }
+
+                setIsSubmitting(true);
+
+                try {
+                    // 1. อัปโหลดรูปภาพประกอบ (ถ้ามี)
+                    let imageUrl = null;
+                    if (imageBlob) {
+                        imageUrl = await uploadToStorage('complaint_images', imageBlob, 'jpg');
+                    }
+
+                    // 2. อัปโหลดลายเซ็น (แปลงจาก canvas → PNG blob)
+                    const sigDataUrl = 'data:image/png;base64,' + sigBase64Url;
+                    const sigBlob = dataUrlToBlob(sigDataUrl);
+                    const signatureUrl = await uploadToStorage('complaint_images', sigBlob, 'png');
+
+                    // 3. ส่งข้อมูลผ่าน backend (บันทึก + แจ้ง Telegram กลุ่มพร้อมรูป)
+                    const payload = {
+                        uid: currentUid || null,
+                        lineDisplayName: currentProfile?.displayName || null,
+                        fullname: formData.name.trim(),
+                        houseNo: formData.houseNo.trim(),
+                        phone: formData.phone.trim(),
+                        category: formData.category,
+                        issue: formData.issue.trim(),
+                        imageUrl,
+                        signatureUrl,
+                    };
+
+                    const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/complaint_submit`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                    const rawText = await res.text();
+                    let result;
+                    try { result = JSON.parse(rawText); }
+                    catch (_) {
+                        throw new Error(res.status === 404
+                            ? 'ระบบยังไม่พร้อมใช้งาน กรุณาแจ้งแอดมินให้ deploy ระบบล่าสุดก่อน'
+                            : 'เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง (HTTP ' + res.status + ')');
+                    }
+                    if (!res.ok) throw new Error(result.error || 'ส่งข้อมูลไม่สำเร็จ');
+
+                    setIsSubmitting(false);
+                    setModalConfig({
+                        isOpen: true,
+                        type: 'success',
+                        title: 'ส่งเรื่องร้องเรียนสำเร็จ',
+                        message: 'นิติบุคคลได้รับเรื่องของคุณแล้ว และจะแจ้งผลการดำเนินการให้ทราบผ่านช่องทางแชท'
+                    });
+
+                    setFormData({ ...formData, issue: '' });
+                    setImagePreview(null);
+                    setImageBlob(null);
+                    signatureRef.current.clear();
+                    setActiveTab('history');
+                    if (currentUid) loadHistory(currentUid);
+
+                } catch (err) {
+                    console.error(err);
+                    setIsSubmitting(false);
+                    setModalConfig({
+                        isOpen: true,
+                        type: 'error',
+                        title: 'เกิดข้อผิดพลาด',
+                        message: err.message || 'ไม่สามารถส่งข้อมูลได้ กรุณาลองใหม่อีกครั้ง'
+                    });
+                }
+            };
+
+            return (
+                <div className="max-w-md mx-auto bg-slate-50 min-h-screen relative pb-28 shadow-2xl overflow-hidden">
+                    
+                    <Modal 
+                        {...modalConfig} 
+                        onClose={() => setModalConfig({...modalConfig, isOpen: false})} 
+                    />
+
+                    {/* Header แบบใหม่ - Glassmorphism & Gradient */}
+                    <div className="glass-header text-white pt-8 pb-10 px-6 rounded-b-[40px] shadow-lg shadow-indigo-900/20 relative z-10">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-white opacity-5 rounded-full -mr-10 -mt-10"></div>
+                        <div className="flex items-center gap-4 relative z-10">
+                            <div className="w-14 h-14 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center border border-white/30 shadow-inner animate-float">
+                                <i className="ph-fill ph-buildings text-3xl text-white"></i>
+                            </div>
+                            <div>
+                                <h1 className="text-2xl font-bold tracking-wide drop-shadow-md">นิติบุคคลหมู่บ้าน</h1>
+                                <p className="text-indigo-100 text-sm font-light mt-0.5 flex items-center gap-1">
+                                    <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+                                    ระบบรับเรื่องร้องเรียนทางการ
+                                </p>
+                            </div>
+                        </div>
+                        <p className="text-[11px] text-indigo-100/80 mt-3 relative z-10">{liffStatus}</p>
+                    </div>
+
+                    {/* Content Area */}
+                    <div className="p-5 -mt-6 relative z-20">
+                        
+                        {/* ---------------- แท็บ: แจ้งเรื่อง ---------------- */}
+                        {activeTab === 'form' && (
+                            <form onSubmit={submitForm} className="space-y-4 animate-slide-up">
+                                
+                                {/* กล่องข้อความแนะนำ (Disclaimer) */}
+                                <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/60 rounded-2xl p-4 flex items-start gap-3 shadow-sm">
+                                    <div className="bg-amber-100 rounded-full p-1.5 shrink-0">
+                                        <i className="ph-fill ph-warning-circle text-amber-600 text-xl"></i>
+                                    </div>
+                                    <div>
+                                        <strong className="block text-amber-800 text-sm font-semibold mb-1">ข้อความแนะนำทางการ</strong>
+                                        <p className="text-[11px] text-amber-700/90 leading-relaxed font-light">
+                                            ระบบนี้เป็นระบบทางการของนิติบุคคลหมู่บ้านจัดสรร ข้อมูลการร้องเรียน รูปภาพ และลายมือชื่อ เป็นข้อมูลหลักฐานที่สามารถนำไปยื่นต่อเจ้าหน้าที่ผู้มีส่วนเกี่ยวข้อง หรือใช้ประกอบการดำเนินการทางกฎหมายต่อไปได้
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {/* Section 1: ข้อมูลผู้แจ้ง */}
+                                <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100/50 space-y-4">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <div className="w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center"><i className="ph-fill ph-user text-lg"></i></div>
+                                        <h2 className="text-sm font-semibold text-slate-700">ข้อมูลผู้แจ้ง</h2>
+                                    </div>
+                                    
+                                    <div className="space-y-3">
+                                        <div>
+                                            <label className="block text-[11px] text-slate-500 mb-1 ml-1 font-medium">ชื่อ-นามสกุล</label>
+                                            <input type="text" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}
+                                                className="input-field w-full bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-indigo-400 focus:bg-white" placeholder="ชื่อ-นามสกุลจริง" />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="block text-[11px] text-slate-500 mb-1 ml-1 font-medium">บ้านเลขที่</label>
+                                                <input type="text" required value={formData.houseNo} onChange={e => setFormData({...formData, houseNo: e.target.value})}
+                                                    className="input-field w-full bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-indigo-400 focus:bg-white" placeholder="เช่น 99/9" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[11px] text-slate-500 mb-1 ml-1 font-medium">เบอร์โทรศัพท์</label>
+                                                <input type="tel" required value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})}
+                                                    className="input-field w-full bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-indigo-400 focus:bg-white" placeholder="08X-XXX-XXXX" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Section 2: รายละเอียด */}
+                                <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100/50 space-y-4">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <div className="w-8 h-8 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center"><i className="ph-fill ph-clipboard-text text-lg"></i></div>
+                                        <h2 className="text-sm font-semibold text-slate-700">รายละเอียดที่ต้องการแจ้ง</h2>
+                                    </div>
+                                    
+                                    <div className="space-y-3">
+                                        <div className="relative">
+                                            <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}
+                                                className="input-field w-full bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-3 text-sm appearance-none outline-none focus:border-indigo-400 focus:bg-white font-medium text-slate-700">
+                                                <option>ความสะอาด/ขยะ</option>
+                                                <option>พื้นที่ส่วนกลาง/ไฟถนน</option>
+                                                <option>ความปลอดภัย/รปภ.</option>
+                                                <option>เพื่อนบ้าน/เสียงดัง/สัตว์เลี้ยง</option>
+                                                <option>อื่นๆ</option>
+                                            </select>
+                                            <i className="ph ph-caret-down absolute right-4 top-3.5 text-slate-400 pointer-events-none text-lg"></i>
+                                        </div>
+
+                                        <textarea required rows="3" value={formData.issue} onChange={e => setFormData({...formData, issue: e.target.value})}
+                                            className="input-field w-full bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-indigo-400 focus:bg-white resize-none"
+                                            placeholder="อธิบายรายละเอียดที่ต้องการแจ้งอย่างชัดเจน..."></textarea>
+
+                                        <div>
+                                            <label className="block text-[11px] text-slate-500 mb-2 ml-1 font-medium">รูปภาพประกอบการพิจารณา (แนะนำ)</label>
+                                            {imagePreview ? (
+                                                <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 aspect-video flex items-center justify-center group">
+                                                    <img src={imagePreview} className="w-full h-full object-cover" alt="Preview" />
+                                                    <button type="button" onClick={() => setImagePreview(null)} 
+                                                        className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white backdrop-blur-sm">
+                                                        <div className="bg-red-500/90 rounded-full p-2"><i className="ph ph-trash text-xl"></i></div>
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-slate-300 rounded-2xl bg-slate-50/50 hover:bg-slate-100 hover:border-indigo-300 transition-colors cursor-pointer input-field">
+                                                    <div className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-indigo-500 mb-2">
+                                                        <i className="ph-fill ph-camera text-xl"></i>
+                                                    </div>
+                                                    <p className="text-xs text-slate-500 font-medium">แตะเพื่อแนบรูปภาพ</p>
+                                                    <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
+                                                </label>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Section 3: ลายเซ็น */}
+                                <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100/50 space-y-3">
+                                    <div className="flex justify-between items-center mb-1">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center"><i className="ph-fill ph-signature text-lg"></i></div>
+                                            <h2 className="text-sm font-semibold text-slate-700">ลายมือชื่อรับรอง</h2>
+                                        </div>
+                                        <button type="button" onClick={() => signatureRef.current?.clear()} className="text-[11px] bg-slate-100 px-3 py-1.5 rounded-full text-slate-600 hover:bg-slate-200 font-medium transition-colors">
+                                            เซ็นใหม่
+                                        </button>
+                                    </div>
+                                    
+                                    <SignaturePad onReady={(methods) => signatureRef.current = methods} />
+                                </div>
+
+                                {/* Submit Button */}
+                                <button type="submit" disabled={isSubmitting}
+                                    className={`w-full py-4 rounded-2xl text-white font-semibold text-lg flex items-center justify-center gap-2 transition-all duration-300
+                                    ${isSubmitting ? 'bg-slate-300 cursor-not-allowed scale-95' : 'bg-gradient-to-r from-indigo-600 to-blue-600 hover:shadow-lg hover:shadow-indigo-500/30 active:scale-95'}`}>
+                                    {isSubmitting ? (
+                                        <><i className="ph ph-spinner animate-spin text-2xl"></i> กำลังเข้ารหัสและส่งข้อมูล...</>
+                                    ) : (
+                                        <><i className="ph-fill ph-paper-plane-right text-xl"></i> ยืนยันการส่งเรื่องร้องเรียน</>
+                                    )}
+                                </button>
+                            </form>
+                        )}
+
+                        {/* ---------------- แท็บ: ประวัติ ---------------- */}
+                        {activeTab === 'history' && (
+                            <div className="space-y-4 animate-slide-up">
+                                <div className="flex justify-between items-end mb-2 px-1">
+                                    <h2 className="font-bold text-slate-800 text-lg">ประวัติการแจ้งเรื่อง</h2>
+                                    <span className="text-[10px] text-slate-400 font-medium">เฉพาะที่แจ้งผ่าน LINE นี้</span>
+                                </div>
+
+                                {historyLoading && (
+                                    <div className="text-center text-slate-400 py-10">
+                                        <i className="ph ph-spinner animate-spin text-3xl"></i>
+                                    </div>
+                                )}
+
+                                {!historyLoading && !currentUid && (
+                                    <div className="text-center text-slate-400 text-sm py-10 bg-white rounded-3xl border border-slate-100/50">
+                                        <i className="ph ph-line-vertical text-3xl mb-2 block opacity-50"></i>
+                                        ต้องเชื่อมต่อ LINE ก่อนถึงจะดูประวัติได้
+                                    </div>
+                                )}
+
+                                {!historyLoading && currentUid && history.length === 0 && (
+                                    <div className="text-center text-slate-400 text-sm py-10 bg-white rounded-3xl border border-slate-100/50">
+                                        <i className="ph ph-clipboard-text text-3xl mb-2 block opacity-50"></i>
+                                        ยังไม่เคยแจ้งเรื่องร้องเรียนผ่าน LINE นี้
+                                    </div>
+                                )}
+
+                                {!historyLoading && history.map((item) => {
+                                    const statusMap = {
+                                        pending:     { bar: 'bg-amber-400', badge: 'bg-amber-50 text-amber-600 border-amber-200/50', icon: 'ph-clock', label: 'รอตรวจสอบ' },
+                                        in_progress: { bar: 'bg-blue-400',  badge: 'bg-blue-50 text-blue-600 border-blue-200/50', icon: 'ph-wrench', label: 'กำลังดำเนินการ' },
+                                        resolved:    { bar: 'bg-green-500', badge: 'bg-green-50 text-green-600 border-green-200/50', icon: 'ph-check-circle', label: 'ดำเนินการแล้ว' },
+                                        rejected:    { bar: 'bg-red-400',   badge: 'bg-red-50 text-red-600 border-red-200/50', icon: 'ph-x-circle', label: 'ไม่รับพิจารณา' },
+                                    };
+                                    const st = statusMap[item.status] || statusMap.pending;
+                                    const dateStr = new Date(item.created_at).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' });
+                                    return (
+                                        <div key={item.id} className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100/50 relative overflow-hidden group">
+                                            <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${st.bar}`}></div>
+
+                                            <div className="flex justify-between items-start mb-3 pl-2">
+                                                <div>
+                                                    <span className="text-[10px] font-bold tracking-wider text-slate-400 block mb-1">{dateStr} • {item.id.slice(0, 8)}</span>
+                                                    <h3 className="font-bold text-slate-700 text-sm">{item.category}</h3>
+                                                </div>
+                                                <span className={`${st.badge} border text-[10px] px-2.5 py-1 rounded-full font-bold flex items-center gap-1 whitespace-nowrap`}>
+                                                    <i className={`ph-fill ${st.icon}`}></i> {st.label}
+                                                </span>
+                                            </div>
+                                            <p className="text-sm text-slate-600 leading-relaxed bg-slate-50/70 p-3 rounded-2xl ml-2 font-light">
+                                                "{item.issue}"
+                                            </p>
+                                            {item.admin_note && (
+                                                <div className="mt-2 ml-2 text-xs text-indigo-600 bg-indigo-50 p-3 rounded-2xl">
+                                                    <b>ผลการดำเนินการ:</b> {item.admin_note}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+
+                    </div>
+
+                    {/* Bottom Navigation (Floating Style) */}
+                    <div className="fixed bottom-6 left-6 right-6 z-40">
+                        <div className="bg-slate-900/90 backdrop-blur-md rounded-full shadow-2xl border border-slate-700 p-1.5 flex justify-between items-center max-w-sm mx-auto">
+                            <button onClick={() => setActiveTab('form')} 
+                                className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-full transition-all duration-300
+                                ${activeTab === 'form' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-white'}`}>
+                                <i className={`${activeTab === 'form' ? 'ph-fill' : 'ph'} ph-plus-circle text-xl`}></i>
+                                <span className={`text-xs font-semibold ${activeTab === 'form' ? 'block' : 'hidden'}`}>แจ้งเรื่องใหม่</span>
+                            </button>
+                            
+                            <button onClick={() => setActiveTab('history')} 
+                                className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-full transition-all duration-300
+                                ${activeTab === 'history' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-white'}`}>
+                                <i className={`${activeTab === 'history' ? 'ph-fill' : 'ph'} ph-list-dashes text-xl`}></i>
+                                <span className={`text-xs font-semibold ${activeTab === 'history' ? 'block' : 'hidden'}`}>ประวัติของฉัน</span>
+                            </button>
+                        </div>
+                    </div>
+                    
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
