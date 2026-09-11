@@ -2238,6 +2238,11 @@
                             <select id="ledgerFilterCategory" onchange="renderLedgerTable()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm">
                                 <option value="">ทุกหมวดหมู่</option>
                             </select>
+                            <select id="ledgerFilterRecurring" onchange="renderLedgerTable()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                                <option value="">รายจ่ายทุกลักษณะ</option>
+                                <option value="true">🔁 รายจ่ายประจำ</option>
+                                <option value="false">🎯 รายจ่ายไม่ประจำ</option>
+                            </select>
                             <div class="relative flex-1 min-w-40">
                                 <i data-lucide="search" class="w-4 h-4 absolute left-3 top-2.5 text-slate-400 pointer-events-none"></i>
                                 <input type="text" id="ledgerSearch" placeholder="ค้นหารายละเอียด..." class="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300 text-sm" oninput="renderLedgerTable()">
@@ -2291,6 +2296,14 @@
                                 <button type="button" onclick="setLedgerType('expense')" id="ledgerTypeExpenseBtn" class="flex-1 py-2 rounded-lg border-2 border-slate-200 text-slate-500 font-bold text-sm">💸 รายจ่าย</button>
                             </div>
                             <input type="hidden" id="ledgerType" value="income">
+                            <div id="ledgerRecurringWrap" class="hidden">
+                                <label class="block text-xs font-bold text-slate-600 mb-1">ลักษณะรายจ่าย</label>
+                                <div class="flex gap-2">
+                                    <button type="button" onclick="setLedgerRecurring(true)" id="ledgerRecurringBtn" class="flex-1 py-1.5 rounded-lg border-2 border-blue-500 bg-blue-50 text-blue-700 font-bold text-xs">🔁 รายจ่ายประจำ</button>
+                                    <button type="button" onclick="setLedgerRecurring(false)" id="ledgerNonRecurringBtn" class="flex-1 py-1.5 rounded-lg border-2 border-slate-200 text-slate-500 font-bold text-xs">🎯 รายจ่ายไม่ประจำ</button>
+                                </div>
+                                <input type="hidden" id="ledgerIsRecurring" value="false">
+                            </div>
                             <div>
                                 <label class="block text-xs font-bold text-slate-600 mb-1">วันที่</label>
                                 <input type="date" id="ledgerDate" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
@@ -2345,6 +2358,7 @@
                     </div>
 
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4" id="finReportSummaryCards"></div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4" id="finReportExpenseTypeCards"></div>
 
                     <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-4">
                         <h3 class="font-bold text-slate-700 mb-3 text-sm">รายรับ-รายจ่ายรายเดือน</h3>
@@ -13233,6 +13247,7 @@ function _filterLedgerTransactions() {
     const to = document.getElementById('ledgerFilterTo').value;
     const typeF = document.getElementById('ledgerFilterType').value;
     const catF = document.getElementById('ledgerFilterCategory').value;
+    const recF = document.getElementById('ledgerFilterRecurring').value;
     const q = (document.getElementById('ledgerSearch').value || '').toLowerCase().trim();
 
     return financialTransactions.filter(t => {
@@ -13240,8 +13255,10 @@ function _filterLedgerTransactions() {
         const matchTo = !to || (t.txn_date||'') <= to;
         const matchType = !typeF || t.txn_type === typeF;
         const matchCat = !catF || t.category === catF;
+        const isRecurringVal = t.is_recurring === true || t.is_recurring === 'true';
+        const matchRec = !recF || (t.txn_type === 'expense' && String(isRecurringVal) === recF);
         const matchQ = !q || (t.description||'').toLowerCase().includes(q) || (t.category||'').toLowerCase().includes(q);
-        return matchFrom && matchTo && matchType && matchCat && matchQ;
+        return matchFrom && matchTo && matchType && matchCat && matchRec && matchQ;
     }).sort((a,b) => (b.txn_date||'').localeCompare(a.txn_date||''));
 }
 
@@ -13260,13 +13277,17 @@ function renderLedgerTable() {
 
     tbody.innerHTML = rows.map(t => {
         const isIncome = t.txn_type === 'income';
+        const isRecurringVal = t.is_recurring === true || t.is_recurring === 'true';
         const dt = t.txn_date ? new Date(t.txn_date + 'T00:00:00').toLocaleDateString('th-TH', {day:'numeric',month:'short',year:'2-digit'}) : '-';
+        const recurringBadge = !isIncome
+            ? `<span class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${isRecurringVal?'bg-blue-100 text-blue-700':'bg-purple-100 text-purple-700'}">${isRecurringVal?'🔁 ประจำ':'🎯 ไม่ประจำ'}</span>`
+            : '';
         return `<tr class="border-b border-slate-100 hover:bg-slate-50">
             <td class="px-3 py-2.5 text-xs text-slate-500 whitespace-nowrap">${dt}</td>
             <td class="px-3 py-2.5 text-center">
                 <span class="px-2 py-0.5 rounded-full text-xs font-bold ${isIncome?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}">${isIncome?'รายรับ':'รายจ่าย'}</span>
             </td>
-            <td class="px-3 py-2.5 text-sm">${t.category || '-'}</td>
+            <td class="px-3 py-2.5 text-sm">${t.category || '-'}${recurringBadge}</td>
             <td class="px-3 py-2.5 text-xs text-slate-600">${t.description || '-'}</td>
             <td class="px-3 py-2.5 text-right font-bold ${isIncome?'text-green-700':'text-red-700'}">${isIncome?'+':'-'}฿${Number(t.amount||0).toLocaleString()}</td>
             <td class="px-3 py-2.5 text-xs text-slate-500">${t.recorded_by || '-'}</td>
@@ -13293,6 +13314,21 @@ function setLedgerType(type) {
     const prevVal = catSel.value;
     catSel.innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join('');
     if (cats.includes(prevVal)) catSel.value = prevVal;
+
+    document.getElementById('ledgerRecurringWrap').classList.toggle('hidden', type !== 'expense');
+}
+
+function setLedgerRecurring(isRecurring) {
+    document.getElementById('ledgerIsRecurring').value = isRecurring ? 'true' : 'false';
+    const recBtn = document.getElementById('ledgerRecurringBtn');
+    const nonRecBtn = document.getElementById('ledgerNonRecurringBtn');
+    if (isRecurring) {
+        recBtn.className = 'flex-1 py-1.5 rounded-lg border-2 border-blue-500 bg-blue-50 text-blue-700 font-bold text-xs';
+        nonRecBtn.className = 'flex-1 py-1.5 rounded-lg border-2 border-slate-200 text-slate-500 font-bold text-xs';
+    } else {
+        nonRecBtn.className = 'flex-1 py-1.5 rounded-lg border-2 border-purple-500 bg-purple-50 text-purple-700 font-bold text-xs';
+        recBtn.className = 'flex-1 py-1.5 rounded-lg border-2 border-slate-200 text-slate-500 font-bold text-xs';
+    }
 }
 
 function openLedgerModal(id) {
@@ -13305,6 +13341,7 @@ function openLedgerModal(id) {
         : '<i data-lucide="wallet" class="w-4 h-4 text-green-600"></i> บันทึกรายการ';
 
     setLedgerType(txn?.txn_type || 'income');
+    setLedgerRecurring(txn?.is_recurring === true || txn?.is_recurring === 'true');
     document.getElementById('ledgerDate').value = txn?.txn_date || new Date().toISOString().slice(0,10);
     document.getElementById('ledgerCategory').value = txn?.category || '';
     document.getElementById('ledgerDescription').value = txn?.description || '';
@@ -13332,13 +13369,15 @@ async function saveLedgerEntry() {
     if (!category) { Swal.fire('กรุณาเลือกหมวดหมู่', '', 'warning'); return; }
     if (!amount || amount <= 0) { Swal.fire('กรุณาระบุจำนวนเงินให้ถูกต้อง', '', 'warning'); return; }
 
+    const txnType = document.getElementById('ledgerType').value;
     const payload = {
         txn_date: date,
-        txn_type: document.getElementById('ledgerType').value,
+        txn_type: txnType,
         category: category,
         description: document.getElementById('ledgerDescription').value.trim() || null,
         amount: amount,
         payment_method: document.getElementById('ledgerPaymentMethod').value,
+        is_recurring: txnType === 'expense' ? (document.getElementById('ledgerIsRecurring').value === 'true') : null,
         recorded_by: currentUser?.name || null,
         updated_at: new Date().toISOString()
     };
@@ -13439,6 +13478,27 @@ function renderFinanceReports() {
         <div class="${net>=0?'bg-blue-50 border-blue-200':'bg-orange-50 border-orange-200'} border rounded-xl p-4 text-center">
             <div class="text-xs font-bold ${net>=0?'text-blue-700':'text-orange-700'}">กำไร/ขาดทุนสุทธิ</div>
             <div class="text-2xl font-black ${net>=0?'text-blue-700':'text-orange-700'} mt-1">฿${net.toLocaleString()}</div>
+        </div>`;
+
+    // แยกรายจ่ายประจำ vs ไม่ประจำ
+    const expenseTxns = yearTxns.filter(t => t.txn_type === 'expense');
+    const recurringExpense = expenseTxns.filter(t => t.is_recurring === true || t.is_recurring === 'true').reduce((s,t) => s + Number(t.amount||0), 0);
+    const nonRecurringExpense = totalExpense - recurringExpense;
+    const recPct = totalExpense > 0 ? (recurringExpense/totalExpense*100) : 0;
+    const nonRecPct = totalExpense > 0 ? (nonRecurringExpense/totalExpense*100) : 0;
+
+    document.getElementById('finReportExpenseTypeCards').innerHTML = `
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <div class="text-xs font-bold text-blue-700">🔁 รายจ่ายประจำ (Fixed) — ${recPct.toFixed(0)}%</div>
+            <div class="text-xl font-black text-blue-700 mt-1">฿${recurringExpense.toLocaleString()}</div>
+            <div class="bg-blue-100 rounded-full h-1.5 mt-2 overflow-hidden"><div class="bg-blue-500 h-full" style="width:${recPct}%"></div></div>
+            <p class="text-[10px] text-blue-500 mt-1">ค่าใช้จ่ายคงที่ต่อเนื่อง เช่น ค่าจ้าง รปภ., ค่าไฟส่วนกลาง</p>
+        </div>
+        <div class="bg-purple-50 border border-purple-200 rounded-xl p-4">
+            <div class="text-xs font-bold text-purple-700">🎯 รายจ่ายไม่ประจำ (Variable) — ${nonRecPct.toFixed(0)}%</div>
+            <div class="text-xl font-black text-purple-700 mt-1">฿${nonRecurringExpense.toLocaleString()}</div>
+            <div class="bg-purple-100 rounded-full h-1.5 mt-2 overflow-hidden"><div class="bg-purple-500 h-full" style="width:${nonRecPct}%"></div></div>
+            <p class="text-[10px] text-purple-500 mt-1">ค่าใช้จ่ายผันแปร เช่น ค่าซ่อมบำรุง ค่าอุปกรณ์</p>
         </div>`;
 
     // กราฟแท่งรายเดือน (ใช้รูปแบบ div-height เดียวกับกราฟใน Analytics)
@@ -13559,6 +13619,7 @@ function renderBalanceSheet() {
 window.openLedgerModal = openLedgerModal;
 window.closeLedgerModal = closeLedgerModal;
 window.setLedgerType = setLedgerType;
+window.setLedgerRecurring = setLedgerRecurring;
 window.saveLedgerEntry = saveLedgerEntry;
 window.deleteLedgerEntry = deleteLedgerEntry;
 window.renderLedgerTable = renderLedgerTable;
