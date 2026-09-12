@@ -14029,9 +14029,17 @@ const CAR_PER_PAGE = 30;
                     const dt = new Date(c.created_at).toLocaleDateString('th-TH', { day:'2-digit', month:'short', year:'2-digit', hour:'2-digit', minute:'2-digit' });
                     return '<div class="glass rounded-3xl p-5">' +
                         '<div class="flex justify-between items-start mb-3">' +
-                        '<div><div class="font-bold text-slate-800">' + escapeHtml(c.fullname||'—') + '</div>' +
-                        '<div class="text-xs text-slate-400 mt-0.5">🏠 บ้าน ' + escapeHtml(c.house_no||'—') + ' · 📞 ' + escapeHtml(c.phone||'—') + '</div></div>' +
-                        '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-' + st.color + '-100 text-' + st.color + '-700">' + st.icon + ' ' + st.label + '</span>' +
+                        '<div class="flex items-center gap-2.5">' +
+                        (c.line_picture_url
+                            ? '<img src="' + escapeHtml(c.line_picture_url) + '" class="w-11 h-11 rounded-full object-cover border border-slate-200 flex-shrink-0">'
+                            : '<div class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0"><i data-lucide="user" class="w-5 h-5 text-slate-400"></i></div>') +
+                        '<div>' +
+                        '<div class="font-bold text-slate-800">' + escapeHtml(c.fullname||'—') + '</div>' +
+                        (c.line_display_name && c.line_display_name !== c.fullname
+                            ? '<div class="text-[11px] text-fuchsia-500">💬 LINE: ' + escapeHtml(c.line_display_name) + '</div>' : '') +
+                        '<div class="text-xs text-slate-400 mt-0.5">🏠 บ้าน ' + escapeHtml(c.house_no||'—') + ' · 📞 ' + escapeHtml(c.phone||'—') + '</div>' +
+                        '</div></div>' +
+                        '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-' + st.color + '-100 text-' + st.color + '-700 flex-shrink-0">' + st.icon + ' ' + st.label + '</span>' +
                         '</div>' +
                         '<div class="text-xs font-bold text-rose-500 mb-1">🏷️ ' + escapeHtml(c.category||'—') + '</div>' +
                         '<div class="text-sm text-slate-600 bg-slate-50 rounded-xl p-3 mb-3">' + escapeHtml(c.issue||'') + '</div>' +
@@ -14039,16 +14047,88 @@ const CAR_PER_PAGE = 30;
                         (c.image_url ? '<img src="' + escapeHtml(c.image_url) + '" onclick="window.open(\'' + escapeHtml(c.image_url) + '\',\'_blank\')" class="w-16 h-16 object-cover rounded-xl border border-slate-200 cursor-pointer" title="รูปประกอบ">' : '') +
                         (c.signature_url ? '<img src="' + escapeHtml(c.signature_url) + '" onclick="window.open(\'' + escapeHtml(c.signature_url) + '\',\'_blank\')" class="w-16 h-16 object-contain rounded-xl border border-slate-200 bg-white cursor-pointer p-1" title="ลายเซ็นรับรอง">' : '') +
                         '</div>' +
+                        (c.admin_note ? '<div class="text-xs text-indigo-600 bg-indigo-50 rounded-xl p-2.5 mb-3"><b>ตอบกลับล่าสุด:</b> ' + escapeHtml(c.admin_note) + '</div>' : '') +
                         '<div class="text-[11px] text-slate-400 mb-3">ยื่นเมื่อ ' + dt + '</div>' +
-                        '<select data-idx="' + idx + '" onchange="updateComplaintStatus(this.dataset.idx, this.value)" class="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white">' +
+                        '<div class="flex gap-2 mb-2">' +
+                        '<select data-idx="' + idx + '" onchange="updateComplaintStatus(this.dataset.idx, this.value)" class="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white">' +
                         Object.entries(COMPLAINT_STATUS_LABELS).map(([k,v]) => '<option value="' + k + '"' + (k===c.status?' selected':'') + '>' + v.icon + ' ' + v.label + '</option>').join('') +
                         '</select>' +
+                        (c.uid ? '<button data-idx="' + idx + '" onclick="openComplaintReplyModal(this.dataset.idx)" class="px-3 py-2 bg-fuchsia-500 hover:bg-fuchsia-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 flex-shrink-0"><i data-lucide="send" class="w-3.5 h-3.5"></i> ตอบกลับ</button>' : '') +
+                        '</div>' +
                         '</div>';
                 }).join('') + '</div>';
                 lucide.createIcons();
             } catch(e) {
                 el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
             }
+        }
+
+        // ─── 💬 ตอบกลับผู้แจ้ง — เลือกจาก Template หรือพิมพ์เอง ─────────
+        const COMPLAINT_REPLY_TEMPLATES = [
+            { key: 'received',    icon: '📩', label: 'รับเรื่องแล้ว', text: 'เจ้าหน้าที่ได้รับเรื่องร้องเรียนของท่านแล้ว กำลังตรวจสอบและจะดำเนินการโดยเร็วที่สุดค่ะ 🙏', status: 'in_progress' },
+            { key: 'in_progress', icon: '🔧', label: 'กำลังดำเนินการ', text: 'ขณะนี้เจ้าหน้าที่กำลังดำเนินการแก้ไขปัญหาตามที่ท่านแจ้งอยู่ค่ะ จะรีบแจ้งผลให้ทราบอีกครั้ง', status: 'in_progress' },
+            { key: 'resolved',    icon: '✅', label: 'ดำเนินการเสร็จแล้ว', text: 'เรื่องที่ท่านแจ้งได้รับการดำเนินการเรียบร้อยแล้วค่ะ ขอบคุณที่แจ้งให้ทราบ 🙏 หากยังพบปัญหาอยู่ สามารถแจ้งกลับมาได้เลยค่ะ', status: 'resolved' },
+            { key: 'contact',     icon: '📞', label: 'โปรดติดต่อกลับ', text: 'รบกวนติดต่อกลับที่สำนักงานนิติบุคคลด้วยค่ะ เพื่อขอข้อมูลเพิ่มเติมประกอบการดำเนินการ 🙏', status: null },
+            { key: 'rejected',    icon: '❌', label: 'ไม่สามารถดำเนินการได้', text: 'ขออภัยค่ะ เรื่องที่ท่านแจ้งไม่อยู่ในความรับผิดชอบของนิติบุคคล/ไม่สามารถดำเนินการได้ในกรณีนี้', status: 'rejected' },
+        ];
+
+        function openComplaintReplyModal(idx) {
+            const c = window._complaintItems[parseInt(idx)];
+            if (!c) return;
+            showModal('💬 ตอบกลับ — ' + escapeHtml(c.fullname||'ผู้แจ้ง'),
+                '<div class="space-y-3 text-left">' +
+                '<div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-2.5">เรื่อง: ' + escapeHtml((c.issue||'').slice(0,80)) + (c.issue?.length > 80 ? '...' : '') + '</div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">เลือกข้อความสำเร็จรูป</label>' +
+                '<div class="grid grid-cols-1 gap-1.5">' +
+                COMPLAINT_REPLY_TEMPLATES.map((t, ti) =>
+                    '<button data-ti="' + ti + '" onclick="fillComplaintReplyTemplate(this.dataset.ti)" class="text-left px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold hover:border-fuchsia-400 hover:bg-fuchsia-50 flex items-center gap-2">' +
+                    '<span>' + t.icon + '</span><span>' + t.label + '</span></button>'
+                ).join('') +
+                '</div></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">ข้อความที่จะส่ง (แก้ไขเพิ่มเติมได้)</label>' +
+                '<textarea id="reply-message" rows="4" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none" placeholder="เลือก template ด้านบน หรือพิมพ์ข้อความเองที่นี่..."></textarea></div>' +
+                '<label class="flex items-center gap-2 text-xs"><input type="checkbox" id="reply-update-status" checked class="w-4 h-4 accent-fuchsia-500"> อัปเดตสถานะเรื่องตามที่เลือก template ไว้ด้วย</label>' +
+                '<div class="flex gap-2 pt-2">' +
+                '<button data-id="' + c.id + '" onclick="sendComplaintReply(this.dataset.id)" class="flex-1 py-2.5 bg-fuchsia-500 hover:bg-fuchsia-600 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2"><i data-lucide="send" class="w-4 h-4"></i> ส่งข้อความ</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+                '</div></div>'
+            );
+            lucide.createIcons();
+        }
+
+        let _selectedReplyTemplateStatus = null;
+        function fillComplaintReplyTemplate(ti) {
+            const t = COMPLAINT_REPLY_TEMPLATES[parseInt(ti)];
+            if (!t) return;
+            const textarea = document.getElementById('reply-message');
+            if (textarea) textarea.value = t.text;
+            _selectedReplyTemplateStatus = t.status;
+        }
+
+        async function sendComplaintReply(complaintId) {
+            const message = document.getElementById('reply-message')?.value?.trim();
+            const shouldUpdateStatus = document.getElementById('reply-update-status')?.checked;
+            if (!message) return showToast('พิมพ์หรือเลือกข้อความก่อนส่ง', 'warning');
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/complaint_reply_send`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        complaintId, message,
+                        updateStatus: (shouldUpdateStatus && _selectedReplyTemplateStatus) ? _selectedReplyTemplateStatus : null,
+                    })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ส่งไม่สำเร็จ');
+
+                // บันทึกข้อความที่ตอบไว้ใน admin_note ให้เห็นในการ์ดด้วย (แยกจาก audit_log)
+                await supabaseClient.from('complaints').update({ admin_note: message }).eq('id', complaintId);
+
+                closeModal();
+                showToast('✅ ส่งข้อความตอบกลับแล้ว', 'success');
+                _selectedReplyTemplateStatus = null;
+                loadComplaintList();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
         }
 
         async function updateComplaintStatus(idx, newStatus) {
