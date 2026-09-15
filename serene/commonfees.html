@@ -1411,8 +1411,9 @@
                                 <label class="block text-xs font-bold text-slate-600 mb-1">ผู้ตรวจสอบ (ไม่บังคับ)</label>
                                 <input type="text" id="rfiInspector" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
                             </div>
-                            <div class="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-500">
-                                📋 รายการและยอดเงินจะคำนวณเหมือนใบแจ้งหนี้ที่ตั้งค่าไว้ในหน้านี้ทุกประการ (ยอดค้างข้ามปี/ค่าปรับ/ยอดล่วงหน้า ตามตัวกรองที่เลือกอยู่)
+                            <div id="rfiCalcSummary" class="bg-teal-50 border border-teal-200 rounded-lg px-3 py-2 text-xs text-teal-800"></div>
+                            <div class="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
+                                ⚠️ ยอดข้างต้นคำนวณจากตัวกรอง ณ ตอนที่เปิดหน้าต่างนี้ — ถ้าต้องการเปลี่ยนเดือน/ปีอ้างอิง ให้ปิดหน้าต่างนี้ ปรับตัวกรองในหน้าใบแจ้งหนี้ก่อน แล้วค่อยกด "ใบเสร็จ" ใหม่
                             </div>
                         </div>
                         <div class="flex gap-3 px-6 py-4 border-t border-slate-100">
@@ -12951,11 +12952,16 @@ function renderBankProofHouseList() {
     lucide.createIcons();
 }
 
+let _bpCapturedState = null;
+
 function openBankProofModal(houseNo) {
     const s = getBankProofSettings();
     const f = _getBpFilterState();
     const house = allData.find(h => h.house_numbe === houseNo && h.year.toString() === f.year.toString());
     if (!house) { Swal.fire('ไม่พบข้อมูล', '', 'warning'); return; }
+
+    // จับภาพนิ่งตัวกรอง ณ ตอนเปิด modal — กันค่าคลาดเคลื่อนถ้าตัวกรองถูกเปลี่ยนก่อนกดพิมพ์จริง
+    _bpCapturedState = { houseNo, ...f };
 
     document.getElementById('bpHouseNo').value = houseNo;
     document.getElementById('bpModalHouseLabel').textContent = `${houseNo} — ${house.owner_name || ''}`;
@@ -12965,7 +12971,8 @@ function openBankProofModal(houseNo) {
     document.getElementById('bpInspector').value = '';
 
     const { grandTotal } = _computeReceiptLineItems(house, f.monthKey, f.includeAllYears, null, f.includeLateFee, f.aheadBoundary);
-    document.getElementById('bpTotalPreview').textContent = `ยอดรวมที่จะแสดงในเอกสาร ฿${grandTotal.toLocaleString()}`;
+    const monthLabel = f.monthKey ? (months.find(m => m.key === f.monthKey)?.th || f.monthKey) : 'ทุกเดือน (ทั้งปี)';
+    document.getElementById('bpTotalPreview').innerHTML = `📋 อ้างอิงเดือน <b>${monthLabel} ปี ${f.year}</b><br>ยอดรวมที่จะแสดงในเอกสาร <b>฿${grandTotal.toLocaleString()}</b>`;
 
     const modal = document.getElementById('bankProofModal');
     modal.classList.remove('hidden'); modal.classList.add('flex');
@@ -12979,7 +12986,11 @@ function closeBankProofModal() {
 
 function printBankProof() {
     const houseNo = document.getElementById('bpHouseNo').value;
-    const f = _getBpFilterState();
+
+    // ใช้ค่าที่จับภาพนิ่งไว้ตอนเปิด modal เสมอ (ไม่อ่านค่าสดจาก DOM ซ้ำ)
+    const f = _bpCapturedState;
+    if (!f || f.houseNo !== houseNo) { Swal.fire('ข้อมูลไม่ตรงกัน', 'กรุณาปิดหน้าต่างนี้แล้วกดออกเอกสารใหม่อีกครั้ง', 'warning'); return; }
+
     const house = allData.find(h => h.house_numbe === houseNo && h.year.toString() === f.year.toString());
     if (!house) { Swal.fire('ไม่พบข้อมูล', '', 'warning'); return; }
 
@@ -13030,16 +13041,38 @@ function _nextRfiReceiptNo() {
     return RFI_COUNTER_PREFIX + dd + mm + yyyy;
 }
 
+let _rfiCapturedState = null;
+
 function openReceiptFromInvoice(houseNo) {
     const year = document.getElementById('invFilterYear').value;
     const house = allData.find(h => h.house_numbe === houseNo && h.year.toString() === year.toString());
     if (!house) { Swal.fire('ไม่พบข้อมูล', '', 'warning'); return; }
+
+    // จับภาพนิ่งของตัวกรอง ณ ตอนนี้ทั้งหมด — กันไม่ให้ค่าคลาดเคลื่อนถ้าตัวกรองถูกเปลี่ยนระหว่างเปิด modal กับกดพิมพ์
+    const monthKey = document.getElementById('invFilterMonth').value;
+    _rfiCapturedState = {
+        houseNo, year,
+        monthKey,
+        includeAllYears: document.getElementById('invIncludeAllYears').checked,
+        includeLateFee: document.getElementById('invIncludeLateFee').checked,
+        startBoundary: getInvoiceStartBoundary(),
+        aheadBoundary: getAheadStartBoundary()
+    };
 
     document.getElementById('rfiHouseNo').value = houseNo;
     document.getElementById('rfiPayerName').value = house.owner_name || '';
     document.getElementById('rfiPayerAddress').value = '';
     document.getElementById('rfiPayerTaxId').value = '';
     document.getElementById('rfiInspector').value = '';
+
+    // แสดงสรุปให้แอดมินเห็นชัดๆ ว่ากำลังคำนวณจากช่วงไหน ก่อนพิมพ์จริง
+    const monthLabel = monthKey ? (months.find(m => m.key === monthKey)?.th || monthKey) : 'ทุกเดือน (ทั้งปี)';
+    const { grandTotal } = _computeReceiptLineItems(house, monthKey, _rfiCapturedState.includeAllYears, _rfiCapturedState.startBoundary, _rfiCapturedState.includeLateFee, _rfiCapturedState.aheadBoundary);
+    document.getElementById('rfiCalcSummary').innerHTML =
+        `📋 คำนวณอ้างอิงเดือน <b>${monthLabel} ปี ${year}</b>` +
+        (_rfiCapturedState.includeAllYears ? ' • รวมยอดค้างข้ามปี' : '') +
+        (_rfiCapturedState.includeLateFee ? ' • คิดค่าปรับ' : ' • ไม่คิดค่าปรับ') +
+        `<br>ยอดรวมโดยประมาณ: <b>฿${grandTotal.toLocaleString()}</b>`;
 
     const modal = document.getElementById('receiptFromInvoiceModal');
     modal.classList.remove('hidden'); modal.classList.add('flex');
@@ -13265,17 +13298,15 @@ function buildReceiptFromInvoiceHTML(d) {
 
 function printReceiptFromInvoice() {
     const houseNo = document.getElementById('rfiHouseNo').value;
-    const year = document.getElementById('invFilterYear').value;
-    const monthKey = document.getElementById('invFilterMonth').value;
-    const includeAllYears = document.getElementById('invIncludeAllYears').checked;
-    const includeLateFee = document.getElementById('invIncludeLateFee').checked;
-    const startBoundary = getInvoiceStartBoundary();
-    const aheadBoundary = getAheadStartBoundary();
 
-    const house = allData.find(h => h.house_numbe === houseNo && h.year.toString() === year.toString());
+    // ใช้ค่าที่จับภาพนิ่งไว้ตอนเปิด modal เสมอ (ไม่อ่านค่าสดจาก DOM ซ้ำ) — กันไม่ให้คลาดเคลื่อนถ้าตัวกรองถูกเปลี่ยนไปหลังเปิด modal แล้ว
+    const st = _rfiCapturedState;
+    if (!st || st.houseNo !== houseNo) { Swal.fire('ข้อมูลไม่ตรงกัน', 'กรุณาปิดหน้าต่างนี้แล้วกด "ใบเสร็จ" ใหม่อีกครั้ง', 'warning'); return; }
+
+    const house = allData.find(h => h.house_numbe === houseNo && h.year.toString() === st.year.toString());
     if (!house) { Swal.fire('ไม่พบข้อมูล', '', 'warning'); return; }
 
-    const { lineItems, grandTotal } = _computeReceiptLineItems(house, monthKey, includeAllYears, startBoundary, includeLateFee, aheadBoundary);
+    const { lineItems, grandTotal } = _computeReceiptLineItems(house, st.monthKey, st.includeAllYears, st.startBoundary, st.includeLateFee, st.aheadBoundary);
 
     const data = {
         receiptNo: _nextRfiReceiptNo(),
