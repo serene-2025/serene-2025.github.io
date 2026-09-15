@@ -1396,6 +1396,10 @@
                         <div class="px-6 py-5 space-y-3">
                             <input type="hidden" id="rfiHouseNo">
                             <div>
+                                <label class="block text-xs font-bold text-slate-600 mb-1">วันที่ในใบเสร็จ</label>
+                                <input type="date" id="rfiReceiptDate" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                            </div>
+                            <div>
                                 <label class="block text-xs font-bold text-slate-600 mb-1">ผู้ชำระเงิน (แก้ไขได้ — เช่น ชื่อธนาคารถ้าธนาคารเป็นผู้ชำระ)</label>
                                 <input type="text" id="rfiPayerName" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
                             </div>
@@ -13032,13 +13036,14 @@ window.printBankProof = printBankProof;
 // คัดลอกตรรกะการคำนวณจาก buildInvoiceHTML มาทั้งหมด เพื่อไม่แตะโค้ดใบแจ้งหนี้เดิมที่ทำงานอยู่แล้ว
 // ================================================================
 const RFI_COUNTER_PREFIX = 'SE';
+const RFI_COUNTER_KEY = 'gls_receipt_from_invoice_counter';
 
 function _nextRfiReceiptNo() {
     const now = new Date();
-    const dd = String(now.getDate()).padStart(2, '0');
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const yyyy = now.getFullYear();
-    return RFI_COUNTER_PREFIX + dd + mm + yyyy;
+    const yy = String(toBEYear(now.getFullYear())).slice(-2);
+    let n = parseInt(localStorage.getItem(RFI_COUNTER_KEY) || '0') + 1;
+    localStorage.setItem(RFI_COUNTER_KEY, String(n));
+    return RFI_COUNTER_PREFIX + yy + String(n).padStart(5, '0');
 }
 
 let _rfiCapturedState = null;
@@ -13060,6 +13065,7 @@ function openReceiptFromInvoice(houseNo) {
     };
 
     document.getElementById('rfiHouseNo').value = houseNo;
+    document.getElementById('rfiReceiptDate').value = new Date().toISOString().slice(0, 10);
     document.getElementById('rfiPayerName').value = house.owner_name || '';
     document.getElementById('rfiPayerAddress').value = '';
     document.getElementById('rfiPayerTaxId').value = '';
@@ -13179,18 +13185,25 @@ function _computeReceiptLineItems(house, monthKey, includeAllYears, startBoundar
 function buildReceiptFromInvoiceHTML(d) {
     const LOGO = 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/serene23.png';
     const invS = getInvoiceSettings();
-    const today = new Date();
+    // ใช้วันที่ที่แก้ไขได้จาก d.receiptDate (YYYY-MM-DD) ถ้ามี — ไม่งั้น fallback เป็นวันนี้ (เผื่อเรียกจากจุดอื่นที่ยังไม่ส่งมา)
+    const docDate = d.receiptDate ? new Date(d.receiptDate + 'T00:00:00') : new Date();
     const thaiMonthNames = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
-    const dateStr = `${today.getDate()} ${thaiMonthNames[today.getMonth()]} พ.ศ. ${toBEYear(today.getFullYear())}`;
+    const dateStr = `${docDate.getDate()} ${thaiMonthNames[docDate.getMonth()]} พ.ศ. ${toBEYear(docDate.getFullYear())}`;
 
-    const rows = d.lineItems.map((item, i) => `
+    const rows = d.lineItems.map((item, i) => {
+        const isAheadCharge = item.desc.includes('ชำระล่วงหน้า');
+        const rowColor = item.isPenalty ? '#dc2626' : isAheadCharge ? '#2563eb' : '';
+        const rowStyle = rowColor ? `color:${rowColor};` : '';
+        const amtStyle = rowColor ? `color:${rowColor};font-weight:700;` : '';
+        return `
         <tr>
             <td class="rfi-td-center">${i+1}</td>
-            <td class="rfi-td-desc" style="${item.isPenalty ? 'color:#dc2626;' : ''}">${item.desc}</td>
+            <td class="rfi-td-desc" style="${rowStyle}">${item.desc}</td>
             <td class="rfi-td-center">${item.qty ?? ''}</td>
             <td class="rfi-td-center">${item.unitPrice ?? ''}</td>
-            <td class="rfi-td-right" style="${item.isPenalty ? 'color:#dc2626;font-weight:700;' : ''}">${item.amount.toLocaleString()}</td>
-        </tr>`).join('');
+            <td class="rfi-td-right" style="${amtStyle}">${item.amount.toLocaleString()}</td>
+        </tr>`;
+    }).join('');
 
     const payerAddress = d.payerAddress || `บ้านเลขที่ ${d.houseNo} หมู่ 2 ต.มาบยางพร อ.ปลวกแดง จ.ระยอง`;
 
@@ -13308,8 +13321,12 @@ function printReceiptFromInvoice() {
 
     const { lineItems, grandTotal } = _computeReceiptLineItems(house, st.monthKey, st.includeAllYears, st.startBoundary, st.includeLateFee, st.aheadBoundary);
 
+    const receiptDateStr = document.getElementById('rfiReceiptDate').value;
+    if (!receiptDateStr) { Swal.fire('กรุณาระบุวันที่', '', 'warning'); return; }
+
     const data = {
         receiptNo: _nextRfiReceiptNo(),
+        receiptDate: receiptDateStr,
         payerName: document.getElementById('rfiPayerName').value.trim() || house.owner_name || '-',
         payerAddress: document.getElementById('rfiPayerAddress').value.trim(),
         payerTaxId: document.getElementById('rfiPayerTaxId').value.trim(),
@@ -13349,11 +13366,11 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
 .rfi-page:last-child{page-break-after:auto;break-after:auto;}
 
 .rfi-header{display:flex;justify-content:space-between;align-items:center;}
-.rfi-header-left{display:flex;align-items:center;gap:10pt;}
-.rfi-logo{width:58pt;height:58pt;object-fit:contain;}
+.rfi-header-left{display:flex;align-items:center;gap:12pt;}
+.rfi-logo{width:76pt;height:76pt;object-fit:contain;}
 .rfi-org-brand{line-height:1.15;}
-.rfi-org-brand-main{font-size:14pt;font-weight:900;color:#78350f;letter-spacing:1.5pt;}
-.rfi-org-brand-sub{font-size:11pt;font-weight:400;font-style:italic;color:#c2703d;letter-spacing:2pt;margin-top:1pt;}
+.rfi-org-brand-main{font-size:17pt;font-weight:900;color:#78350f;letter-spacing:1.5pt;}
+.rfi-org-brand-sub{font-size:13pt;font-weight:400;font-style:italic;color:#c2703d;letter-spacing:2pt;margin-top:1pt;}
 .rfi-header-right{text-align:right;}
 .rfi-online-note{font-size:8pt;color:#e11d48;margin-bottom:2pt;}
 .rfi-doc-title-th{font-size:16pt;font-weight:900;color:#1e293b;}
