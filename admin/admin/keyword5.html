@@ -229,6 +229,8 @@
 
         // ─── Auto-inject apikey header ทุกครั้งที่เรียก Edge Function ───
         // ป้องกัน "No API key found in request" error
+        // 🛡️ Two-Tier Guard: ใส่ x-admin-uid ไปด้วยทุก request อัตโนมัติ — ทำให้
+        // backend รู้ว่า "ใครเรียก" โดยไม่ต้องแก้ fetch() นับร้อยจุดในไฟล์นี้เลย
         const _origFetch = window.fetch.bind(window);
         window.fetch = function(input, init = {}) {
             const url = typeof input === 'string' ? input : input.url;
@@ -236,7 +238,8 @@
                 init.headers = {
                     ...(init.headers || {}),
                     'apikey': SUPABASE_KEY,
-                    'Authorization': `Bearer ${SUPABASE_KEY}`
+                    'Authorization': `Bearer ${SUPABASE_KEY}`,
+                    'x-admin-uid': currentUserProfile?.userId || '',
                 };
             }
             return _origFetch(input, init);
@@ -244,6 +247,9 @@
 
         const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         let currentUserProfile = null;
+        let currentUserRole = null;           // 🛡️ role ของคนที่ login อยู่ตอนนี้
+        let myAllowedModules = [];            // 🛡️ รายชื่อโมดูลที่ role นี้เข้าได้ (ว่าง = ยังไม่โหลด)
+        let myAllModulesAccess = false;       // 🛡️ true เฉพาะ superadmin (bypass ทุกด่าน)
         let currentView = 'keywords';
         let isSidebarOpen = false;
         let currentKeywords = [];
@@ -310,9 +316,26 @@
                     return;
                 }
 
-                if (userProfile && userProfile.role === 'admin') {
+                // 🛡️ Two-Tier Guard: เปิดให้เข้าได้หลาย role ไม่ใช่แค่ 'admin' อีกต่อไป
+                // (เดิม: role === 'admin' ตรงๆ เท่านั้น) — แต่ละ role จะเห็นเมนูไม่เท่ากัน
+                // ตามที่ตั้งค่าไว้ในตาราง role_module_permissions (ดึงมาด้านล่าง)
+                const allowedLoginRoles = ['admin', 'staff', 'superadmin', 'security', 'treasurer'];
+                if (userProfile && allowedLoginRoles.includes(userProfile.role)) {
+                    currentUserRole = userProfile.role;
+                    await loadMyPermissions(profile.userId);
                     renderMainLayout();
-                    loadView('keywords');
+                    applyMenuPermissions(); // ซ่อนปุ่มเมนูที่ role นี้ไม่มีสิทธิ์ทันทีหลัง render
+
+                    // เลือกหน้าแรกที่เข้าได้จริง — ถ้า role นี้ไม่มีสิทธิ์ 'keywords'
+                    // (ค่าเริ่มต้น) ให้ไปหน้าแรกในลิสต์ที่อนุญาตแทน กัน guard บล็อกตั้งแต่ต้น
+                    const landingView = (myAllModulesAccess || myAllowedModules.includes('keywords'))
+                        ? 'keywords' : (myAllowedModules[0] || null);
+                    if (landingView) {
+                        loadView(landingView);
+                    } else {
+                        document.getElementById('content-area').innerHTML =
+                            '<div class="text-center py-20 text-slate-400">ยังไม่มีสิทธิ์เข้าเมนูไหนเลย กรุณาติดต่อ Super Admin เพื่อเปิดสิทธิ์ให้ค่ะ</div>';
+                    }
                 } else {
                     renderAccessDenied(profile);
                 }
@@ -510,6 +533,7 @@
                                     <button onclick="loadView('carManagement');" id="nav-carManagement" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="car" class="w-5 h-5 text-indigo-500"></i> <span>จัดการทะเบียนรถ</span></button>
                                     <button onclick="loadView('complaintManagement');" id="nav-complaintManagement" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="megaphone" class="w-5 h-5 text-rose-500"></i> <span>จัดการเรื่องร้องเรียน</span></button>
                                     <button onclick="loadView('notificationChannels');" id="nav-notificationChannels" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="bell-ring" class="w-5 h-5 text-cyan-500"></i> <span>ช่องทางแจ้งเตือน</span></button>
+                                    <button onclick="loadView('geminiKeys');" id="nav-geminiKeys" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="key-round" class="w-5 h-5 text-amber-500"></i> <span>Gemini API Keys</span></button>
                                 </div>
                             </div>
 
@@ -1992,9 +2016,85 @@
                 '<p class="text-sm text-slate-500 mt-2 ml-1">กำหนดระดับสิทธิ์ให้แต่ละคน · ทุกการเปลี่ยนแปลงถูกบันทึกใน Audit Log</p></div>' +
                 '<button onclick="openAddAdminModal()" class="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="user-plus" class="w-4 h-4"></i> เพิ่ม Admin</button>' +
                 '</div>' +
-                '<div id="admin-roles-list"></div></div>';
+                '<div class="flex gap-1.5 mb-4">' +
+                '<button data-tab="people" onclick="switchAdminRolesTab(this.dataset.tab)" id="ar-tab-people" class="px-4 py-2 rounded-xl text-xs font-bold bg-red-500 text-white">👤 รายชื่อ Admin</button>' +
+                '<button data-tab="menu" onclick="switchAdminRolesTab(this.dataset.tab)" id="ar-tab-menu" class="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 text-slate-600">🛡️ สิทธิ์เมนู (Two-Tier Guard)</button>' +
+                '</div>' +
+                '<div id="admin-roles-list"></div>' +
+                '<div id="menu-permissions-matrix" class="hidden"></div></div>';
             lucide.createIcons();
             await loadAdminRolesList();
+        }
+
+        function switchAdminRolesTab(tab) {
+            document.getElementById('ar-tab-people').className = 'px-4 py-2 rounded-xl text-xs font-bold ' + (tab==='people' ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-600');
+            document.getElementById('ar-tab-menu').className = 'px-4 py-2 rounded-xl text-xs font-bold ' + (tab==='menu' ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-600');
+            document.getElementById('admin-roles-list').classList.toggle('hidden', tab !== 'people');
+            document.getElementById('menu-permissions-matrix').classList.toggle('hidden', tab !== 'menu');
+            if (tab === 'menu' && !window._permMatrixLoaded) loadMenuPermissionsMatrix();
+        }
+
+        // ─── 🛡️ ตารางสิทธิ์เมนู (Role × Module Matrix) ─────────────────
+        const GUARDABLE_MODULES = [
+            { key: 'keywords', label: 'คีย์เวิร์ด' }, { key: 'dataai', label: 'ฐานความรู้ AI' },
+            { key: 'adminRoles', label: 'จัดการสิทธิ์ Admin' }, { key: 'auditLog', label: 'Audit Log' },
+            { key: 'carManagement', label: 'จัดการทะเบียนรถ' }, { key: 'complaintManagement', label: 'จัดการเรื่องร้องเรียน' },
+            { key: 'notificationChannels', label: 'ช่องทางแจ้งเตือน' }, { key: 'geminiKeys', label: 'Gemini API Keys' },
+            { key: 'landRegistry', label: 'ฐานข้อมูลกลาง (ที่ดิน)' }, { key: 'tenantRegistry', label: 'ทะเบียนผู้เช่า' },
+            { key: 'userhome', label: 'ทะเบียนบ้าน & สมาชิก' }, { key: 'dataReconciliation', label: 'ตรวจสอบข้อมูลไม่ตรงกัน' },
+            { key: 'crmDash', label: 'CRM Dashboard' }, { key: 'rewardsManage', label: 'จัดการของรางวัล' },
+            { key: 'sysSettings', label: 'ตั้งค่าระบบ' }, { key: 'execDashboard', label: 'Executive Dashboard' },
+        ];
+        const GUARDABLE_ROLES = ['admin', 'staff', 'security', 'treasurer']; // superadmin bypass เสมอ ไม่ต้องมีในตาราง
+
+        async function loadMenuPermissionsMatrix() {
+            const el = document.getElementById('menu-permissions-matrix');
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/role_permissions_list`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+
+                const permMap = {}; // "role:module" -> allowed
+                (d.permissions || []).forEach(p => { permMap[`${p.role}:${p.module_key}`] = p.allowed; });
+
+                el.innerHTML = '<div class="glass rounded-3xl p-4 mb-3 text-xs text-slate-500 flex items-center gap-2"><i data-lucide="info" class="w-4 h-4 flex-shrink-0"></i> superadmin เข้าได้ทุกเมนูเสมอ ไม่ต้องตั้งค่าที่นี่ — คลิกช่องเพื่อเปิด/ปิดสิทธิ์ บันทึกทันทีไม่ต้องกด save</div>' +
+                    '<div class="glass rounded-3xl overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-xs">' +
+                    '<thead class="bg-slate-50"><tr><th class="text-left p-3 sticky left-0 bg-slate-50">เมนู</th>' +
+                    GUARDABLE_ROLES.map(r => '<th class="text-center p-3">' + (ROLE_LABELS[r]?.label || r) + '</th>').join('') +
+                    '</tr></thead><tbody>' +
+                    GUARDABLE_MODULES.map(m => '<tr class="border-t border-slate-100">' +
+                        '<td class="p-3 font-bold sticky left-0 bg-white">' + m.label + '<div class="text-[10px] text-slate-400 font-normal">' + m.key + '</div></td>' +
+                        GUARDABLE_ROLES.map(r => {
+                            const checked = permMap[`${r}:${m.key}`] === true;
+                            return '<td class="text-center p-3"><input type="checkbox" data-role="' + r + '" data-module="' + m.key + '" ' + (checked ? 'checked' : '') +
+                                ' onchange="toggleModulePermission(this)" class="w-4 h-4 accent-red-500 cursor-pointer"></td>';
+                        }).join('') +
+                    '</tr>').join('') +
+                    '</tbody></table></div></div>';
+                lucide.createIcons();
+                window._permMatrixLoaded = true;
+            } catch(e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        async function toggleModulePermission(checkbox) {
+            const role = checkbox.dataset.role, moduleKey = checkbox.dataset.module, allowed = checkbox.checked;
+            checkbox.disabled = true;
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/role_permissions_toggle`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ role, moduleKey, allowed })
+                });
+                if (!res.ok) throw new Error('บันทึกไม่สำเร็จ');
+                showToast((allowed ? '✅ เปิด' : '⏸️ ปิด') + 'สิทธิ์ "' + moduleKey + '" ให้ ' + role + ' แล้ว', 'success');
+            } catch(e) {
+                checkbox.checked = !allowed; // revert กลับถ้า error
+                showToast('❌ ' + e.message, 'error');
+            } finally {
+                checkbox.disabled = false;
+            }
         }
 
         async function loadAdminRolesList() {
@@ -2570,7 +2670,43 @@
             return d;
         }
 
+        // 🛡️ Two-Tier Guard: โหลดสิทธิ์เมนูของ role ตัวเองจาก backend (ครั้งเดียวตอน login)
+        async function loadMyPermissions(uid) {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/my_permissions?uid=${encodeURIComponent(uid)}`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดสิทธิ์ไม่สำเร็จ');
+                myAllModulesAccess = !!d.allModules;
+                myAllowedModules = d.modules || [];
+            } catch (e) {
+                console.error('loadMyPermissions error', e);
+                // โหลดสิทธิ์ไม่สำเร็จ — ปลอดภัยไว้ก่อน ไม่ให้เข้าอะไรเลยจนกว่าจะลองใหม่สำเร็จ
+                myAllModulesAccess = false;
+                myAllowedModules = [];
+            }
+        }
+
+        // ซ่อนปุ่มเมนูที่ role ปัจจุบันไม่มีสิทธิ์ — เรียกครั้งเดียวหลัง renderMainLayout
+        function applyMenuPermissions() {
+            if (myAllModulesAccess) return; // superadmin เห็นทุกเมนู ไม่ต้องซ่อนอะไร
+            document.querySelectorAll('nav button[id^="nav-"]').forEach(btn => {
+                const moduleKey = btn.id.replace('nav-', '');
+                if (!myAllowedModules.includes(moduleKey)) {
+                    btn.style.display = 'none';
+                }
+            });
+        }
+
         async function loadView(viewName) {
+            // 🛡️ Two-Tier Guard (Tier 1 — Frontend): เช็คสิทธิ์ก่อนโหลด view ทุกครั้ง
+            // กันทั้งกดเมนูที่ถูกซ่อนผ่านการแก้ HTML เอง และเรียก loadView() ตรงๆ
+            // จาก Console — ไม่ใช่ด่านสุดท้าย (มี backend guard ซ้ำอีกชั้น) แต่ช่วยกัน
+            // ไม่ให้หน้าจอโหลดอะไรที่ไม่ควรเห็นเลยตั้งแต่แรก
+            if (!myAllModulesAccess && myAllowedModules.length > 0 && !myAllowedModules.includes(viewName)) {
+                showToast('🚫 คุณไม่มีสิทธิ์เข้าหน้านี้ (role: ' + (currentUserRole || '-') + ')', 'error');
+                return;
+            }
+
             currentView = viewName;
             searchQuery = "";
             currentPage = 1;
@@ -2634,6 +2770,7 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'carManagement') await renderCarManagementView();
             else if (viewName === 'complaintManagement') await renderComplaintManagementView();
             else if (viewName === 'notificationChannels') await renderNotificationChannelsView();
+            else if (viewName === 'geminiKeys') await renderGeminiKeysView();
             else if (viewName === 'crmRewards') await renderCrmRewardsView();
             else if (viewName === 'crmNews')    await renderCrmNewsView();
             else if (viewName === 'crmVerify')  await renderCrmVerifyView();
@@ -13683,6 +13820,135 @@ const CAR_PER_PAGE = 30;
         let complaintStatusFilter = '';
 
         // ─── 🔔 ช่องทางแจ้งเตือน (Notification Channels) — Reusable ────
+        // ─── 💾 สำรองข้อมูลอัตโนมัติ (Backup System) ──────────────────
+        // ─── 🔑 Gemini API Key Pool (Multi-Key + Auto Failover) ────────
+        async function renderGeminiKeysView() {
+            document.getElementById('content-area').innerHTML =
+                '<div class="slide-in p-2">' +
+                '<div class="mb-6 flex justify-between items-end flex-wrap gap-3">' +
+                '<div><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
+                '<span class="bg-amber-100 text-amber-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="key-round" class="w-8 h-8"></i></span>' +
+                'Gemini API Keys</h1>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">ใส่หลายคีย์ได้ — ถ้าคีย์ไหนโดน rate limit (429) หรือ error ระบบสลับไปใช้ตัวถัดไปอัตโนมัติ</p></div>' +
+                '<button onclick="openGeminiKeyModal()" class="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i> เพิ่มคีย์</button>' +
+                '</div>' +
+                '<div id="gemini-keys-list"></div></div>';
+            lucide.createIcons();
+            await loadGeminiKeysList();
+        }
+
+        async function loadGeminiKeysList() {
+            const el = document.getElementById('gemini-keys-list');
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/gemini_key_list`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+                window._geminiKeysList = d.keys || [];
+
+                if (!d.keys?.length) {
+                    el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">ยังไม่มีคีย์ในระบบ — ระบบจะใช้ GEMINI_API_KEY จาก Environment Variable แทนโดยอัตโนมัติ<br>กดปุ่ม "เพิ่มคีย์" เพื่อเริ่มใช้ Multi-Key Pool</div>';
+                    return;
+                }
+
+                const now = new Date();
+                el.innerHTML = '<div class="glass rounded-3xl overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
+                    '<thead class="bg-slate-50"><tr><th class="text-left p-3">ลำดับ</th><th class="text-left p-3">ชื่อ</th><th class="text-left p-3">คีย์</th>' +
+                    '<th class="text-center p-3">สถานะ</th><th class="text-center p-3">สำเร็จ</th><th class="text-center p-3">ล้มเหลว</th><th class="text-center p-3">จัดการ</th></tr></thead><tbody>' +
+                    d.keys.map((k, idx) => {
+                        const inCooldown = k.cooldown_until && new Date(k.cooldown_until) > now;
+                        const statusBadge = !k.is_active
+                            ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">⏸️ ปิดใช้งาน</span>'
+                            : inCooldown
+                            ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">😴 พักอยู่</span>'
+                            : '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✅ พร้อมใช้</span>';
+                        return '<tr class="border-t border-slate-100">' +
+                            '<td class="p-3 font-bold text-slate-400">#' + k.priority + '</td>' +
+                            '<td class="p-3 font-bold">' + escapeHtml(k.label) + '</td>' +
+                            '<td class="p-3 font-mono text-xs text-slate-500">' + escapeHtml(k.key_value) + '</td>' +
+                            '<td class="p-3 text-center">' + statusBadge + (inCooldown ? '<div class="text-[10px] text-amber-500 mt-0.5">ถึง ' + new Date(k.cooldown_until).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}) + '</div>' : '') + '</td>' +
+                            '<td class="p-3 text-center text-emerald-600 font-bold">' + (k.success_count||0) + '</td>' +
+                            '<td class="p-3 text-center text-rose-500 font-bold">' + (k.fail_count||0) + '</td>' +
+                            '<td class="p-3"><div class="flex gap-1.5 justify-center">' +
+                            '<button data-idx="' + idx + '" onclick="openGeminiKeyModal(this.dataset.idx)" class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-bold">✏️</button>' +
+                            (inCooldown ? '<button data-id="' + k.id + '" onclick="resetGeminiKeyCooldown(this.dataset.id)" class="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-lg text-xs font-bold" title="ปลุกคีย์ทันที">⏰</button>' : '') +
+                            '<button data-id="' + k.id + '" data-label="' + escapeHtml(k.label).replace(/"/g,'&quot;') + '" onclick="deleteGeminiKey(this.dataset.id,this.dataset.label)" class="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-500 rounded-lg text-xs font-bold">🗑️</button>' +
+                            '</div></td></tr>';
+                    }).join('') + '</tbody></table></div></div>';
+                lucide.createIcons();
+            } catch(e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function openGeminiKeyModal(idx) {
+            const k = idx !== undefined ? window._geminiKeysList[parseInt(idx)] : null;
+            showModal((k ? '✏️ แก้ไข' : '➕ เพิ่ม') + 'คีย์ Gemini',
+                '<div class="space-y-3 text-left">' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">ชื่อเรียก</label>' +
+                '<input id="gk-label" value="' + (k ? escapeHtml(k.label) : '') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="เช่น คีย์หลัก, คีย์สำรอง 1"></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">API Key' + (k ? ' (เว้นว่าง = ไม่เปลี่ยนคีย์เดิม)' : '') + '</label>' +
+                '<input id="gk-value" type="text" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="' + (k ? k.key_value : 'AIza...') + '"></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">ลำดับความสำคัญ (0 = ใช้ก่อนสุด)</label>' +
+                '<input id="gk-priority" type="number" value="' + (k ? k.priority : window._geminiKeysList.length) + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '<label class="flex items-center gap-2 text-xs"><input type="checkbox" id="gk-active" ' + (!k || k.is_active ? 'checked' : '') + ' class="w-4 h-4 accent-amber-500"> เปิดใช้งานคีย์นี้</label>' +
+                '<div class="flex gap-2 pt-2">' +
+                '<button data-id="' + (k?.id || '') + '" onclick="saveGeminiKey(this.dataset.id)" class="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold text-sm">💾 บันทึก</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+                '</div></div>'
+            );
+        }
+
+        async function saveGeminiKey(id) {
+            const payload = {
+                id: id || null,
+                label: document.getElementById('gk-label')?.value?.trim(),
+                keyValue: document.getElementById('gk-value')?.value?.trim(),
+                priority: parseInt(document.getElementById('gk-priority')?.value) || 0,
+                isActive: document.getElementById('gk-active')?.checked,
+            };
+            if (!payload.label) return showToast('กรอกชื่อเรียกก่อน', 'warning');
+            if (!id && !payload.keyValue) return showToast('กรอก API Key ก่อน', 'warning');
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/gemini_key_save`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+                closeModal();
+                showToast('✅ บันทึกคีย์แล้ว', 'success');
+                loadGeminiKeysList();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+        }
+
+        function deleteGeminiKey(id, label) {
+            showConfirmModal('⚠️ ลบคีย์ "' + escapeHtml(label) + '"?', 'ถ้านี่เป็นคีย์เดียวที่เหลือ ระบบจะ fallback ไปใช้ Environment Variable แทน', async () => {
+                try {
+                    const res = await fetch(`${API_BASE_URL}/api/admin/audience/gemini_key_delete`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id })
+                    });
+                    if (!res.ok) throw new Error('ลบไม่สำเร็จ');
+                    showToast('✅ ลบแล้ว', 'success');
+                    loadGeminiKeysList();
+                } catch(e) { showToast('❌ ' + e.message, 'error'); }
+            });
+        }
+
+        async function resetGeminiKeyCooldown(id) {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/gemini_key_reset_cooldown`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id })
+                });
+                if (!res.ok) throw new Error('ปลุกคีย์ไม่สำเร็จ');
+                showToast('✅ ปลุกคีย์แล้ว พร้อมใช้ทันที', 'success');
+                loadGeminiKeysList();
+            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+        }
+
         async function renderNotificationChannelsView() {
             document.getElementById('content-area').innerHTML =
                 '<div class="slide-in p-2">' +
