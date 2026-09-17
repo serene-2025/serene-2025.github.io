@@ -11671,6 +11671,7 @@ async function updateAllUserProfiles() {
             lucide.createIcons();
             await loadSysSettings();
             await loadAdminUtilSenderOptions();
+            await loadLanguageRichMenuUI();
         }
 
         async function loadAdminUtilSenderOptions() {
@@ -11887,6 +11888,21 @@ async function updateAllUserProfiles() {
                     : '') +
                 '</div>' +
 
+                // 🌐 Rich Menu ตามภาษา — ตรวจจากภาษาที่ตั้งในแอป LINE ของผู้ใช้
+                '<div class="p-3 bg-violet-50 border border-violet-200 rounded-2xl">' +
+                '<label class="block text-xs font-bold text-violet-700 mb-1.5">🌐 Rich Menu ตามภาษา (อัตโนมัติตอนแอดเพื่อน)</label>' +
+                '<p class="text-[10px] text-slate-500 mb-2">ตรวจจากภาษาที่ผู้ใช้ตั้งไว้ในแอป LINE — ถ้าไม่ตั้งค่าภาษาไหนไว้ที่นี่ จะใช้ Rich Menu เริ่มต้นเดิมเสมอ</p>' +
+                '<div id="lang-richmenu-list" class="space-y-1.5 mb-3"></div>' +
+                '<div class="flex gap-2">' +
+                '<select id="lang-code-select" class="border border-violet-200 bg-white rounded-xl px-2 py-2 text-xs">' +
+                '<option value="th">🇹🇭 ไทย (th)</option><option value="en">🇬🇧 อังกฤษ (en)</option>' +
+                '<option value="zh-Hant">🇹🇼 จีนตัวเต็ม (zh-Hant)</option><option value="zh-Hans">🇨🇳 จีนตัวย่อ (zh-Hans)</option>' +
+                '<option value="ja">🇯🇵 ญี่ปุ่น (ja)</option><option value="ko">🇰🇷 เกาหลี (ko)</option>' +
+                '</select>' +
+                '<select id="lang-richmenu-select" class="flex-1 border border-violet-200 bg-white rounded-xl px-2 py-2 text-xs"><option value="">⏳ กำลังโหลด Rich Menu...</option></select>' +
+                '<button onclick="addLanguageRichMenuMapping()" class="px-3 py-2 bg-violet-500 hover:bg-violet-600 text-white rounded-xl text-xs font-bold">➕ เพิ่ม</button>' +
+                '</div></div>' +
+
                 // gen link boxes
                 '<div id="liff-links-box" class="hidden space-y-2"></div>' +
                 '<div id="crm-liff-links-box" class="hidden space-y-2"></div>' +
@@ -12002,6 +12018,70 @@ async function updateAllUserProfiles() {
 
         async function saveSingleSetting(key, value) {
             await supabaseClient.from('system_settings').upsert({ key, value }, { onConflict: 'key' });
+        }
+
+        // ─── 🌐 Rich Menu ตามภาษา — จัดการ mapping ───────────────────
+        async function loadLanguageRichMenuUI() {
+            const listEl = document.getElementById('lang-richmenu-list');
+            const selectEl = document.getElementById('lang-richmenu-select');
+            if (!listEl || !selectEl) return;
+
+            try {
+                // โหลด Rich Menu ทั้งหมดที่มีในระบบ (ใช้ตารางเดิม rich_menus)
+                const { data: menus } = await supabaseClient.from('rich_menus').select('rich_menu_id, name').order('name');
+                window._allRichMenus = menus || [];
+                selectEl.innerHTML = (menus?.length ? menus : []).map(m =>
+                    '<option value="' + escapeHtml(m.rich_menu_id) + '">' + escapeHtml(m.name) + '</option>'
+                ).join('') || '<option value="">— ยังไม่มี Rich Menu ในระบบ —</option>';
+
+                // โหลด mapping ปัจจุบัน
+                const { data: setting } = await supabaseClient.from('system_settings').select('value').eq('key', 'language_richmenu_map').maybeSingle();
+                const map = setting?.value || {};
+                window._langRichMenuMap = map;
+                renderLanguageRichMenuList();
+            } catch (e) {
+                console.warn('loadLanguageRichMenuUI', e);
+            }
+        }
+
+        function renderLanguageRichMenuList() {
+            const listEl = document.getElementById('lang-richmenu-list');
+            if (!listEl) return;
+            const map = window._langRichMenuMap || {};
+            const entries = Object.entries(map);
+
+            if (!entries.length) {
+                listEl.innerHTML = '<div class="text-[11px] text-slate-400 italic">ยังไม่ได้ตั้งค่าภาษาไหนเลย — ใช้ Rich Menu เริ่มต้นทั้งหมด</div>';
+                return;
+            }
+
+            listEl.innerHTML = entries.map(([lang, richMenuId]) => {
+                const menu = (window._allRichMenus || []).find(m => m.rich_menu_id === richMenuId);
+                return '<div class="flex items-center justify-between bg-white rounded-xl px-3 py-2 text-xs border border-violet-100">' +
+                    '<span><b>' + escapeHtml(lang) + '</b> → ' + escapeHtml(menu?.name || richMenuId) + '</span>' +
+                    '<button data-lang="' + escapeHtml(lang) + '" onclick="removeLanguageRichMenuMapping(this.dataset.lang)" class="text-rose-400 hover:text-rose-600">🗑️</button>' +
+                    '</div>';
+            }).join('');
+        }
+
+        async function addLanguageRichMenuMapping() {
+            const lang = document.getElementById('lang-code-select')?.value;
+            const richMenuId = document.getElementById('lang-richmenu-select')?.value;
+            if (!lang || !richMenuId) return showToast('เลือกภาษาและ Rich Menu ก่อน', 'warning');
+
+            window._langRichMenuMap = window._langRichMenuMap || {};
+            window._langRichMenuMap[lang] = richMenuId;
+            await saveSingleSetting('language_richmenu_map', window._langRichMenuMap);
+            renderLanguageRichMenuList();
+            showToast('✅ เพิ่มการตั้งค่าแล้ว', 'success');
+        }
+
+        async function removeLanguageRichMenuMapping(lang) {
+            if (!window._langRichMenuMap) return;
+            delete window._langRichMenuMap[lang];
+            await saveSingleSetting('language_richmenu_map', window._langRichMenuMap);
+            renderLanguageRichMenuList();
+            showToast('✅ ลบแล้ว', 'success');
         }
 
         async function previewRichMenu(type) {
