@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>แกลเลอรี่ภาพหมู่บ้าน</title>
+
+<!-- LINE LIFF SDK -->
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+<!-- React -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<!-- Supabase -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+    body { font-family: 'Prompt', sans-serif; background: #F8F7FC; }
+    @keyframes slideUp { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: translateY(0); } }
+    .animate-slide-up { animation: slideUp 0.3s ease-out; }
+    .heart-pop { animation: pop 0.3s ease; }
+    @keyframes pop { 0%{transform:scale(1);} 50%{transform:scale(1.3);} 100%{transform:scale(1);} }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // ─── Configuration ────────────────────────────────────────────
+    const SUPABASE_URL = 'https://zmdywddraaeegzkvpwsw.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ';
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const EDGE_FUNCTION_URL = 'https://zmdywddraaeegzkvpwsw.supabase.co/functions/v1/line-webhook';
+
+    const MONTH_NAMES_TH = ['', 'มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+
+    function currentMonthYear() {
+        const now = new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+    function monthLabel(monthYear) {
+        const [y, m] = monthYear.split('-');
+        return `${MONTH_NAMES_TH[parseInt(m)]} ${parseInt(y) + 543}`;
+    }
+
+    async function uploadToStorage(blob) {
+        const fileName = `public/${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
+        const { error } = await supabaseClient.storage.from('gallery_images').upload(fileName, blob);
+        if (error) throw error;
+        const { data } = supabaseClient.storage.from('gallery_images').getPublicUrl(fileName);
+        return data.publicUrl;
+    }
+
+    const App = () => {
+        const [activeTab, setActiveTab] = useState('gallery');
+        const [currentUid, setCurrentUid] = useState(null);
+        const [currentProfile, setCurrentProfile] = useState(null);
+        const [liffStatus, setLiffStatus] = useState('⏳ กำลังเชื่อมต่อ LINE...');
+
+        const [photos, setPhotos] = useState([]);
+        const [loading, setLoading] = useState(false);
+        const [selectedMonth, setSelectedMonth] = useState(currentMonthYear());
+
+        const [caption, setCaption] = useState('');
+        const [houseNo, setHouseNo] = useState('');
+        const [imageBlob, setImageBlob] = useState(null);
+        const [imagePreview, setImagePreview] = useState(null);
+        const [uploading, setUploading] = useState(false);
+        const [toast, setToast] = useState(null);
+
+        // ─── 🔐 เชื่อมต่อ LIFF จริง — ดึง LIFF ID จากระบบตั้งค่ากลาง ───
+        useEffect(() => {
+            (async () => {
+                try {
+                    const { data: cfg } = await supabaseClient
+                        .from('system_settings').select('value').eq('key', 'gallery_liff_id').maybeSingle();
+                    const liffId = cfg?.value;
+
+                    if (!liffId || liffId === 'YOUR_GALLERY_LIFF_ID_HERE') {
+                        setLiffStatus('⚠️ ยังไม่ได้ตั้งค่า LIFF — ดูภาพได้ปกติแต่อัปโหลด/โหวตไม่ได้');
+                        return;
+                    }
+
+                    await liff.init({ liffId });
+                    if (!liff.isLoggedIn()) {
+                        liff.login({ redirectUri: window.location.href });
+                        return;
+                    }
+
+                    const profile = await liff.getProfile();
+                    setCurrentUid(profile.userId);
+                    setCurrentProfile(profile);
+                    setLiffStatus('✅ เชื่อมต่อ LINE: ' + (profile.displayName || ''));
+                } catch (e) {
+                    console.error('LIFF init error', e);
+                    setLiffStatus('⚠️ เชื่อมต่อ LINE ไม่สำเร็จ — ดูภาพได้ปกติแต่อัปโหลด/โหวตไม่ได้');
+                }
+            })();
+        }, []);
+
+        const loadPhotos = async (uid) => {
+            setLoading(true);
+            try {
+                const params = new URLSearchParams({ month: selectedMonth });
+                if (uid) params.set('uid', uid);
+                const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/gallery_list?${params}`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดไม่สำเร็จ');
+                setPhotos(d.items || []);
+            } catch (e) {
+                console.error('loadPhotos', e);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        useEffect(() => { loadPhotos(currentUid); }, [selectedMonth, currentUid]);
+
+        const showToast = (msg, type = 'success') => {
+            setToast({ msg, type });
+            setTimeout(() => setToast(null), 2500);
+        };
+
+        const handleImageChange = (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                setImageBlob(file);
+                const reader = new FileReader();
+                reader.onloadend = () => setImagePreview(reader.result);
+                reader.readAsDataURL(file);
+            }
+        };
+
+        const submitUpload = async () => {
+            if (!imageBlob) return showToast('เลือกรูปภาพก่อนค่ะ', 'error');
+            if (!currentUid) return showToast('ต้องเชื่อมต่อ LINE ก่อนอัปโหลดค่ะ', 'error');
+
+            setUploading(true);
+            try {
+                const imageUrl = await uploadToStorage(imageBlob);
+                const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/gallery_upload`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        uid: currentUid, lineDisplayName: currentProfile?.displayName || null,
+                        linePictureUrl: currentProfile?.pictureUrl || null,
+                        houseNo: houseNo.trim() || null, imageUrl, caption: caption.trim() || null,
+                    })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'อัปโหลดไม่สำเร็จ');
+
+                showToast('🎉 ส่งภาพเรียบร้อย รอแอดมินตรวจสอบก่อนขึ้นแกลเลอรี่นะคะ');
+                setCaption(''); setHouseNo(''); setImageBlob(null); setImagePreview(null);
+                setActiveTab('gallery');
+            } catch (e) {
+                showToast(e.message || 'เกิดข้อผิดพลาด', 'error');
+            } finally {
+                setUploading(false);
+            }
+        };
+
+        const vote = async (photoId) => {
+            if (!currentUid) return showToast('ต้องเชื่อมต่อ LINE ก่อนโหวตค่ะ', 'error');
+            setPhotos(prev => prev.map(p => p.id === photoId ? { ...p, hasVoted: true, vote_count: p.vote_count + 1 } : p));
+            try {
+                const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/gallery_vote`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ photoId, voterUid: currentUid })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหวตไม่สำเร็จ');
+            } catch (e) {
+                setPhotos(prev => prev.map(p => p.id === photoId ? { ...p, hasVoted: false, vote_count: Math.max(0, p.vote_count - 1) } : p));
+                showToast(e.message, 'error');
+            }
+        };
+
+        return (
+            <div className="max-w-md mx-auto min-h-screen bg-white shadow-xl relative">
+                <div className="bg-gradient-to-br from-violet-500 to-indigo-600 text-white pt-8 pb-6 px-6 rounded-b-[32px] shadow-lg relative z-10">
+                    <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center">
+                            <span className="text-2xl">📸</span>
+                        </div>
+                        <div>
+                            <h1 className="text-xl font-bold">แกลเลอรี่ภาพหมู่บ้าน</h1>
+                            <p className="text-violet-100 text-xs mt-0.5">อัปโหลด แชร์ และโหวตภาพประจำเดือน</p>
+                        </div>
+                    </div>
+                    <p className="text-[11px] text-violet-100/80 mt-3">{liffStatus}</p>
+                </div>
+
+                <div className="flex gap-2 px-5 -mt-4 relative z-20 mb-4">
+                    <button onClick={() => setActiveTab('gallery')}
+                        className={`flex-1 py-3 rounded-2xl font-bold text-sm shadow-md transition-all ${activeTab === 'gallery' ? 'bg-violet-500 text-white' : 'bg-white text-slate-500'}`}>
+                        🖼️ แกลเลอรี่
+                    </button>
+                    <button onClick={() => setActiveTab('upload')}
+                        className={`flex-1 py-3 rounded-2xl font-bold text-sm shadow-md transition-all ${activeTab === 'upload' ? 'bg-violet-500 text-white' : 'bg-white text-slate-500'}`}>
+                        ➕ อัปโหลด
+                    </button>
+                </div>
+
+                <div className="px-5 pb-8">
+                    {activeTab === 'gallery' && (
+                        <div className="animate-slide-up">
+                            <div className="text-center mb-4">
+                                <h2 className="font-bold text-slate-800">🏆 ภาพประจำเดือน {monthLabel(selectedMonth)}</h2>
+                                <p className="text-xs text-slate-400 mt-0.5">แตะรูปหัวใจเพื่อโหวต — โหวตได้คนละ 1 ครั้งต่อภาพ</p>
+                            </div>
+
+                            {loading && <div className="text-center py-12 text-slate-400"><span className="text-2xl">⏳</span></div>}
+
+                            {!loading && photos.length === 0 && (
+                                <div className="text-center py-16 text-slate-400 bg-slate-50 rounded-3xl">
+                                    <span className="text-4xl block mb-2">📭</span>
+                                    ยังไม่มีภาพในเดือนนี้<br/>เป็นคนแรกที่อัปโหลดสิ!
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-3">
+                                {photos.map((p, idx) => (
+                                    <div key={p.id} className="bg-white rounded-2xl overflow-hidden shadow-sm border border-slate-100 relative">
+                                        {idx === 0 && p.vote_count > 0 && (
+                                            <div className="absolute top-2 left-2 bg-amber-400 text-white text-[10px] font-bold px-2 py-0.5 rounded-full z-10 shadow">
+                                                🏆 อันดับ 1
+                                            </div>
+                                        )}
+                                        <img src={p.image_url} className="w-full h-32 object-cover" />
+                                        <div className="p-2.5">
+                                            {p.caption && <p className="text-[11px] text-slate-600 mb-1.5 line-clamp-2">{p.caption}</p>}
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-[10px] text-slate-400 truncate flex-1">{p.line_display_name || p.house_no || 'ไม่ระบุ'}</span>
+                                                <button onClick={() => !p.hasVoted && vote(p.id)}
+                                                    disabled={p.hasVoted}
+                                                    className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-full flex-shrink-0 ${p.hasVoted ? 'bg-rose-100 text-rose-500' : 'bg-slate-100 text-slate-500 active:scale-95'}`}>
+                                                    <span className={p.hasVoted ? 'heart-pop' : ''}>{p.hasVoted ? '❤️' : '🤍'}</span> {p.vote_count}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'upload' && (
+                        <div className="animate-slide-up space-y-4">
+                            <div className="bg-violet-50 border border-violet-200 rounded-2xl p-3 text-xs text-violet-700">
+                                📌 ภาพที่อัปโหลดจะ<b>รอแอดมินตรวจสอบก่อน</b> ถึงจะขึ้นแกลเลอรี่ให้คนอื่นเห็นและโหวตได้ค่ะ
+                            </div>
+
+                            <div>
+                                <label className="text-sm font-bold text-slate-700 mb-1.5 block">รูปภาพ *</label>
+                                {imagePreview ? (
+                                    <div className="relative">
+                                        <img src={imagePreview} className="w-full h-48 object-cover rounded-2xl border border-slate-200" />
+                                        <button onClick={() => { setImageBlob(null); setImagePreview(null); }}
+                                            className="absolute top-2 right-2 w-8 h-8 bg-black/50 text-white rounded-full flex items-center justify-center">✕</button>
+                                    </div>
+                                ) : (
+                                    <label className="flex flex-col items-center justify-center h-40 border-2 border-dashed border-slate-200 rounded-2xl cursor-pointer bg-slate-50">
+                                        <span className="text-3xl mb-1">📷</span>
+                                        <span className="text-xs text-slate-400">แตะเพื่อเลือกรูปภาพ</span>
+                                        <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
+                                    </label>
+                                )}
+                            </div>
+
+                            <div>
+                                <label className="text-sm font-bold text-slate-700 mb-1.5 block">บ้านเลขที่ (ไม่บังคับ)</label>
+                                <input value={houseNo} onChange={e => setHouseNo(e.target.value)}
+                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-violet-500 text-sm"
+                                    placeholder="เช่น 998/27" />
+                            </div>
+
+                            <div>
+                                <label className="text-sm font-bold text-slate-700 mb-1.5 block">คำบรรยายภาพ (ไม่บังคับ)</label>
+                                <textarea value={caption} onChange={e => setCaption(e.target.value)} rows={3}
+                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-violet-500 text-sm resize-none"
+                                    placeholder="เล่าเรื่องราวของภาพนี้สักนิด..." />
+                            </div>
+
+                            <button onClick={submitUpload} disabled={uploading}
+                                className="w-full py-3.5 bg-violet-500 text-white rounded-2xl font-bold shadow-lg disabled:opacity-50">
+                                {uploading ? '⏳ กำลังอัปโหลด...' : '📤 ส่งภาพเข้าแกลเลอรี่'}
+                            </button>
+                        </div>
+                    )}
+                </div>
+
+                {toast && (
+                    <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-2xl shadow-lg text-white text-sm font-bold z-50 animate-slide-up ${toast.type === 'error' ? 'bg-rose-500' : 'bg-emerald-500'}`}>
+                        {toast.msg}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
