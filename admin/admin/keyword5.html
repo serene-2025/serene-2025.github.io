@@ -534,6 +534,7 @@
                                     <button onclick="loadView('complaintManagement');" id="nav-complaintManagement" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="megaphone" class="w-5 h-5 text-rose-500"></i> <span>จัดการเรื่องร้องเรียน</span></button>
                                     <button onclick="loadView('notificationChannels');" id="nav-notificationChannels" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="bell-ring" class="w-5 h-5 text-cyan-500"></i> <span>ช่องทางแจ้งเตือน</span></button>
                                     <button onclick="loadView('galleryManagement');" id="nav-galleryManagement" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="images" class="w-5 h-5 text-violet-500"></i> <span>แกลเลอรี่ภาพหมู่บ้าน</span></button>
+                                    <button onclick="loadView('schemaHealthCheck');" id="nav-schemaHealthCheck" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="stethoscope" class="w-5 h-5 text-teal-500"></i> <span>ตรวจสอบ Schema</span></button>
                                     <button onclick="loadView('geminiKeys');" id="nav-geminiKeys" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="key-round" class="w-5 h-5 text-amber-500"></i> <span>Gemini API Keys</span></button>
                                 </div>
                             </div>
@@ -2772,6 +2773,7 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'complaintManagement') await renderComplaintManagementView();
             else if (viewName === 'notificationChannels') await renderNotificationChannelsView();
             else if (viewName === 'galleryManagement') await renderGalleryManagementView();
+            else if (viewName === 'schemaHealthCheck') await renderSchemaHealthCheckView();
             else if (viewName === 'geminiKeys') await renderGeminiKeysView();
             else if (viewName === 'crmRewards') await renderCrmRewardsView();
             else if (viewName === 'crmNews')    await renderCrmNewsView();
@@ -14068,6 +14070,71 @@ const CAR_PER_PAGE = 30;
             rejected: { icon:'❌', label:'ปฏิเสธ', color:'rose' },
         };
         let galleryStatusFilter = 'pending';
+
+        // ─── 🩺 ตรวจสอบ Schema — เช็คตารางที่ระบบต้องใช้ ว่ามีครบไหม ─────
+        async function renderSchemaHealthCheckView() {
+            document.getElementById('content-area').innerHTML =
+                '<div class="slide-in p-2">' +
+                '<div class="mb-6"><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
+                '<span class="bg-teal-100 text-teal-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="stethoscope" class="w-8 h-8"></i></span>' +
+                'ตรวจสอบ Schema</h1>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">เช็คว่าตารางที่ระบบต้องใช้ทั้งหมดมีอยู่ในฐานข้อมูลจริงหรือยัง — มีประโยชน์มากตอนย้าย Supabase project ใหม่</p></div>' +
+                '<div id="schema-check-result"></div></div>';
+            lucide.createIcons();
+            await runSchemaHealthCheck();
+        }
+
+        async function runSchemaHealthCheck() {
+            const el = document.getElementById('schema-check-result');
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังตรวจสอบตารางทั้งหมด (~65 ตาราง อาจใช้เวลาสักครู่)...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/schema_health_check`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ตรวจสอบล้มเหลว');
+
+                const missingCount = d.missingImportant.length;
+                const summaryColor = missingCount === 0 ? 'emerald' : 'rose';
+                const summaryIcon = missingCount === 0 ? '✅' : '⚠️';
+
+                let html = '<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">' +
+                    '<div class="glass rounded-3xl p-5 text-center"><div class="text-3xl font-bold text-emerald-600">' + d.existing.length + '</div><div class="text-xs text-slate-500 mt-1">✅ มีอยู่แล้ว</div></div>' +
+                    '<div class="glass rounded-3xl p-5 text-center"><div class="text-3xl font-bold text-rose-600">' + missingCount + '</div><div class="text-xs text-slate-500 mt-1">❌ ยังไม่มี (สำคัญ)</div></div>' +
+                    '<div class="glass rounded-3xl p-5 text-center"><div class="text-3xl font-bold text-slate-400">' + d.missingDeprecated.length + '</div><div class="text-xs text-slate-500 mt-1">⚪ ไม่มี (ระบบเก่าที่ย้ายออกแล้ว)</div></div>' +
+                    '</div>';
+
+                html += '<div class="glass rounded-3xl p-4 mb-4 bg-' + summaryColor + '-50 border border-' + summaryColor + '-200 text-' + summaryColor + '-700 text-sm font-bold">' +
+                    summaryIcon + ' ' + (missingCount === 0 ? 'ตารางสำคัญครบทุกตัวแล้ว ใช้งานได้ปกติ' : 'พบตารางสำคัญที่ยังไม่มี ' + missingCount + ' ตาราง — รัน SQL migration ที่เกี่ยวข้องให้ครบก่อนใช้งานฟีเจอร์นั้นๆ') +
+                    '</div>';
+
+                if (missingCount > 0) {
+                    html += '<div class="glass rounded-3xl p-5 mb-4">' +
+                        '<h3 class="font-bold text-rose-600 mb-3 flex items-center gap-2"><i data-lucide="alert-triangle" class="w-4 h-4"></i> ตารางที่ยังไม่มี (ต้องรัน migration)</h3>' +
+                        '<div class="flex flex-wrap gap-1.5">' +
+                        d.missingImportant.map(t => '<code class="text-xs bg-rose-100 text-rose-700 px-2 py-1 rounded-lg font-bold">' + t + '</code>').join('') +
+                        '</div></div>';
+                }
+
+                if (d.missingDeprecated.length > 0) {
+                    html += '<div class="glass rounded-3xl p-5 mb-4 opacity-70">' +
+                        '<h3 class="font-bold text-slate-500 mb-3 flex items-center gap-2"><i data-lucide="info" class="w-4 h-4"></i> ตารางระบบการเงินเดิม (ย้ายไประบบภายนอกแล้ว — ไม่ต้องสร้างใหม่)</h3>' +
+                        '<div class="flex flex-wrap gap-1.5">' +
+                        d.missingDeprecated.map(t => '<code class="text-xs bg-slate-100 text-slate-500 px-2 py-1 rounded-lg">' + t + '</code>').join('') +
+                        '</div></div>';
+                }
+
+                html += '<div class="glass rounded-3xl p-5">' +
+                    '<h3 class="font-bold text-emerald-600 mb-3 flex items-center gap-2"><i data-lucide="check-circle" class="w-4 h-4"></i> ตารางที่มีอยู่แล้ว (' + d.existing.length + ')</h3>' +
+                    '<div class="flex flex-wrap gap-1.5">' +
+                    d.existing.map(t => '<code class="text-xs bg-emerald-50 text-emerald-700 px-2 py-1 rounded-lg">' + t + '</code>').join('') +
+                    '</div></div>' +
+                    '<button onclick="runSchemaHealthCheck()" class="mt-4 px-5 py-2.5 bg-teal-500 hover:bg-teal-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="refresh-cw" class="w-4 h-4"></i> ตรวจสอบใหม่</button>';
+
+                el.innerHTML = html;
+                lucide.createIcons();
+            } catch(e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
 
         async function renderGalleryManagementView() {
             const now = new Date();
