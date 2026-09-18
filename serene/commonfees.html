@@ -4321,6 +4321,17 @@ function getSlipStatusBadge(slipStatus) {
     return { label: slipStatus, bg: 'bg-slate-100', text: 'text-slate-600', border: 'border-slate-200', icon: 'ℹ️' };
 }
 
+// หายอดที่ "ควรจะได้" จากสลิปเดียวกัน — รองรับกรณีลูกบ้านโอนจ่ายรวมหลายเดือนในสลิปใบเดียว
+// (ระบบบันทึกเป็นหลายแถว แถวละเดือน แต่ทุกแถวใช้ trans_ref เดียวกันเพราะมาจากสลิปใบเดียว)
+function getExpectedAmountForFee(fee) {
+    const ownAmount = fee.amount || RATE_PER_MONTH;
+    if (!fee.transRef) return { expected: ownAmount, linkedCount: 1 };
+    const linkedFees = allTransactions.filter(t => t.transRef && t.transRef === fee.transRef);
+    if (linkedFees.length <= 1) return { expected: ownAmount, linkedCount: 1 };
+    const total = linkedFees.reduce((sum, t) => sum + (t.amount || RATE_PER_MONTH), 0);
+    return { expected: total, linkedCount: linkedFees.length };
+}
+
 function calculateHouseTotal(house) {
     let paid = 0, unpaid = 0, waiting = 0;
     months.forEach(m => {
@@ -5030,9 +5041,10 @@ function renderPending() {
     let html = '<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">';
     pendingFees.forEach(fee => {
         const slipBadge = getSlipStatusBadge(fee.slipStatus);
-        const expectedAmount = fee.amount || RATE_PER_MONTH;
+        const { expected: expectedAmount, linkedCount } = getExpectedAmountForFee(fee);
         const hasVerifiedAmount = fee.verifiedAmount !== null && fee.verifiedAmount !== undefined && fee.verifiedAmount !== '';
         const amountMismatch = hasVerifiedAmount && Number(fee.verifiedAmount) !== Number(expectedAmount);
+        const isCombinedPayment = linkedCount > 1;
         html += `
             <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div class="bg-gradient-to-r from-orange-400 to-orange-500 p-3 flex justify-between items-center text-white">
@@ -5042,6 +5054,7 @@ function renderPending() {
                 <div class="px-3 pt-3">
                     <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold border ${slipBadge.bg} ${slipBadge.text} ${slipBadge.border}">${slipBadge.icon} ${slipBadge.label}</span>
                     ${amountMismatch ? `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold border bg-red-100 text-red-700 border-red-300 ml-1">⚠️ ยอดสลิปไม่ตรง (฿${Number(fee.verifiedAmount).toLocaleString()})</span>` : ''}
+                    ${isCombinedPayment && !amountMismatch ? `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold border bg-sky-100 text-sky-700 border-sky-300 ml-1">🔗 โอนรวม ${linkedCount} เดือน (฿${expectedAmount.toLocaleString()})</span>` : ''}
                 </div>
                 <div class="p-4 space-y-2 text-sm">
                     <div class="flex justify-between border-b border-slate-100 pb-2">
@@ -5130,10 +5143,12 @@ function openSlipCompare(feeId) {
         </div>`;
 
     // ข้อมูลจากระบบตรวจสอบสลิปธนาคารอัตโนมัติ (OCR/API) + เทียบยอดที่ระบบอ่านได้กับยอดที่แจ้ง
+    // รองรับกรณีลูกบ้านโอนรวมหลายเดือนในสลิปเดียว (เช็คจาก trans_ref ที่ซ้ำกันในหลายแถว)
     const slipBadge = getSlipStatusBadge(fee.slipStatus);
-    const expectedAmount = fee.amount || RATE_PER_MONTH;
+    const { expected: expectedAmount, linkedCount } = getExpectedAmountForFee(fee);
     const hasVerifiedAmount = fee.verifiedAmount !== null && fee.verifiedAmount !== undefined && fee.verifiedAmount !== '';
     const amountMismatch = hasVerifiedAmount && Number(fee.verifiedAmount) !== Number(expectedAmount);
+    const isCombinedPayment = linkedCount > 1;
     const autoVerifyEl = document.getElementById('compareAutoVerify');
     if (autoVerifyEl) {
         autoVerifyEl.innerHTML = `
@@ -5148,8 +5163,9 @@ function openSlipCompare(feeId) {
                     <div><span class="text-slate-500">วันเวลาในสลิป:</span> <b>${fee.slipDatetime || '-'}</b></div>
                     <div><span class="text-slate-500">ยอดที่ตรวจพบ:</span> <b class="${amountMismatch ? 'text-red-600' : 'text-green-600'}">${hasVerifiedAmount ? '฿' + Number(fee.verifiedAmount).toLocaleString() : '-'}</b></div>
                 </div>
-                ${amountMismatch ? `<div class="mt-2 bg-red-100 text-red-700 rounded px-2 py-1.5 text-xs font-bold flex items-center gap-1.5"><i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i> ยอดในสลิป (฿${Number(fee.verifiedAmount).toLocaleString()}) ไม่ตรงกับยอดที่แจ้ง (฿${expectedAmount.toLocaleString()}) — กรุณาตรวจสอบก่อนอนุมัติ</div>` : ''}
-                ${hasVerifiedAmount && !amountMismatch ? `<div class="mt-2 bg-green-100 text-green-700 rounded px-2 py-1.5 text-xs font-bold flex items-center gap-1.5"><i data-lucide="check-circle" class="w-3.5 h-3.5"></i> ยอดในสลิปตรงกับยอดที่แจ้ง</div>` : ''}
+                ${isCombinedPayment ? `<div class="mt-2 bg-sky-100 text-sky-700 rounded px-2 py-1.5 text-xs font-bold flex items-center gap-1.5"><i data-lucide="link" class="w-3.5 h-3.5"></i> สลิปนี้ใช้ร่วมกับ ${linkedCount} รายการ (โอนรวมกัน) — ยอดรวมที่คาดหวัง ฿${expectedAmount.toLocaleString()}</div>` : ''}
+                ${amountMismatch ? `<div class="mt-2 bg-red-100 text-red-700 rounded px-2 py-1.5 text-xs font-bold flex items-center gap-1.5"><i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i> ยอดในสลิป (฿${Number(fee.verifiedAmount).toLocaleString()}) ไม่ตรงกับยอด${isCombinedPayment ? 'รวมที่คาดหวัง' : 'ที่แจ้ง'} (฿${expectedAmount.toLocaleString()}) — กรุณาตรวจสอบก่อนอนุมัติ</div>` : ''}
+                ${hasVerifiedAmount && !amountMismatch ? `<div class="mt-2 bg-green-100 text-green-700 rounded px-2 py-1.5 text-xs font-bold flex items-center gap-1.5"><i data-lucide="check-circle" class="w-3.5 h-3.5"></i> ยอดในสลิปตรงกับยอด${isCombinedPayment ? 'รวม' : 'ที่แจ้ง'}</div>` : ''}
             </div>`;
     }
 
