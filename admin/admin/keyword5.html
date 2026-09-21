@@ -2280,54 +2280,118 @@
                 const lastUpdatedEl = document.getElementById('exec-last-updated');
                 if (lastUpdatedEl) lastUpdatedEl.textContent = 'อัปเดตล่าสุด ' + new Date(d.generatedAt).toLocaleTimeString('th-TH');
 
+                // ─── 1) KPI หลัก — สมาชิก + ความครอบคลุม LINE ───
                 const kpiCards = [
-                    { icon:'👥', label:'สมาชิกทั้งหมด', value: d.members.total, sub: d.members.totalHomes + ' บ้าน · LINE ' + d.members.lineCoveragePct + '%', color:'blue', view:'userhome' },
-                    { icon:'💰', label:'อัตราจ่ายเดือนนี้', value: d.finance.collectionRate + '%', sub: fmt(d.finance.monthFeeIncome) + ' บาท', color:'emerald', view:'invoiceView' },
-                    { icon:'📊', label:'คงเหลือเดือนนี้', value: fmt(d.finance.monthBalance), sub: 'รายจ่าย ' + fmt(d.finance.monthExpense) + ' บาท', color: d.finance.monthBalance>=0?'blue':'rose', view:'villageFinance' },
-                    { icon:'⚠️', label:'บ้านเสี่ยงค้างชำระ', value: d.risk.housesAtRisk, sub: 'ค้าง ≥3 เดือน', color: d.risk.housesAtRisk>0?'rose':'emerald', view:'escalation' },
+                    { icon:'👥', label:'สมาชิกทั้งหมด', value: fmt(d.members.total), sub: fmt(d.members.totalHomes) + ' บ้าน', color:'blue', view:'userhome' },
+                    { icon:'📱', label:'ครอบคลุม LINE', value: d.members.lineCoveragePct + '%', sub: fmt(d.members.homesWithLine) + '/' + fmt(d.members.totalHomes) + ' บ้าน', color: d.members.lineCoveragePct>=70?'emerald':'amber', view:'userhome' },
+                    { icon:'📢', label:'เรื่องร้องเรียนเดือนนี้', value: fmt(d.engagement.complaints.thisMonth), sub: '⏳ รอตรวจสอบ ' + fmt(d.engagement.complaints.pending), color: d.engagement.complaints.pending>0?'rose':'emerald', view:'complaintManagement' },
+                    { icon:'🔧', label:'แจ้งซ่อมเดือนนี้', value: fmt(d.engagement.repairs.thisMonth), sub: '⏳ รอดำเนินการ ' + fmt(d.engagement.repairs.pending), color: d.engagement.repairs.pending>0?'amber':'emerald', view:'repairManagement' },
                 ];
 
-                const pendingCards = [
-                    { icon:'🧾', label:'สลิปรอตรวจ', value: d.pending.slips, view:'invoiceView' },
-                    { icon:'🔧', label:'แจ้งซ่อมรอ', value: d.pending.repairs, view:null },
-                    { icon:'🚗', label:'รถรออนุมัติ', value: d.pending.cars, view:'carManagement' },
-                    { icon:'👥', label:'ผู้เช่ารอตรวจ', value: d.pending.tenants, view:'tenantRegistry' },
+                // ─── 2) Engagement แยกตามระบบ — คลิกไปหน้าจัดการได้เลย ───
+                const engagementCards = [
+                    { icon:'📢', label:'ร้องเรียน', pending: d.engagement.complaints.pending, thisMonth: d.engagement.complaints.thisMonth, extra: '✅ แก้แล้ว ' + fmt(d.engagement.complaints.resolved), view:'complaintManagement', color:'rose' },
+                    { icon:'📸', label:'แกลเลอรี่', pending: d.engagement.gallery.pending, thisMonth: d.engagement.gallery.thisMonth, extra: '❤️ โหวตรวม ' + fmt(d.engagement.gallery.totalVotes), view:'galleryManagement', color:'violet' },
+                    { icon:'🔧', label:'แจ้งซ่อม', pending: d.engagement.repairs.pending, thisMonth: d.engagement.repairs.thisMonth, extra: '✅ เสร็จแล้ว ' + fmt(d.engagement.repairs.completed), view:'repairManagement', color:'blue' },
+                    { icon:'🚗', label:'ทะเบียนรถ', pending: d.engagement.cars.pending, thisMonth: d.engagement.cars.thisMonth, extra: null, view:'carManagement', color:'cyan' },
+                    { icon:'🏠', label:'ผู้เช่า', pending: d.engagement.tenants.pending, thisMonth: null, extra: null, view:'tenantRegistry', color:'orange' },
                 ];
 
-                const actionIcon = { delete:'🗑️', update_role:'👮', send_escalation:'⚖️', save_settings:'⚙️', update_cron_schedule:'⏰' };
+                // ─── 3) กราฟกิจกรรม 7 วันล่าสุด (CSS bar chart) ───
+                const maxTrend = Math.max(1, ...d.weeklyTrend.map(t => t.total));
+                const trendBars = d.weeklyTrend.map(t => {
+                    const heightPct = Math.round((t.total / maxTrend) * 100);
+                    const isToday = t.date === new Date().toISOString().slice(0,10);
+                    return '<div class="flex flex-col items-center flex-1 gap-1.5">' +
+                        '<div class="text-[10px] font-bold ' + (isToday?'text-violet-600':'text-slate-400') + '">' + t.total + '</div>' +
+                        '<div class="w-full bg-slate-100 rounded-t-lg relative" style="height:80px">' +
+                        '<div class="absolute bottom-0 left-0 right-0 rounded-t-lg transition-all ' + (isToday?'bg-violet-500':'bg-violet-200') + '" style="height:' + Math.max(4,heightPct) + '%"></div>' +
+                        '</div>' +
+                        '<div class="text-[10px] font-bold ' + (isToday?'text-violet-600':'text-slate-400') + '">' + t.label + '</div>' +
+                        '</div>';
+                }).join('');
+
+                // ─── 4) สุขภาพระบบ — Gemini Key Pool + ช่องทางแจ้งเตือน ───
+                const geminiPct = d.systemHealth.gemini.total ? Math.round((d.systemHealth.gemini.active / d.systemHealth.gemini.total) * 100) : 0;
+                const notifPct = d.systemHealth.notifications.total ? Math.round((d.systemHealth.notifications.configured / d.systemHealth.notifications.total) * 100) : 0;
+
+                const healthBar = (label, active, total, pct, icon, view) =>
+                    '<div onclick="loadView(\'' + view + '\')" class="cursor-pointer hover:bg-slate-50 rounded-2xl p-3 transition-all">' +
+                    '<div class="flex justify-between items-center mb-1.5">' +
+                    '<span class="text-xs font-bold text-slate-600 flex items-center gap-1.5">' + icon + ' ' + label + '</span>' +
+                    '<span class="text-xs font-bold ' + (pct>=70?'text-emerald-600':pct>=30?'text-amber-600':'text-rose-600') + '">' + active + '/' + total + '</span>' +
+                    '</div>' +
+                    '<div class="w-full bg-slate-100 rounded-full h-2"><div class="h-2 rounded-full transition-all ' + (pct>=70?'bg-emerald-500':pct>=30?'bg-amber-500':'bg-rose-500') + '" style="width:' + Math.max(4,pct) + '%"></div></div>' +
+                    '</div>';
+
+                // ─── 5) ภาพเด่นประจำเดือน (แกลเลอรี่) ───
+                const topPhoto = d.engagement.gallery.topPhoto;
+
+                const actionIcon = { delete:'🗑️', update_role:'👮', send_escalation:'⚖️', save_settings:'⚙️', update_cron_schedule:'⏰', role_permission_change:'🛡️', complaint_reply:'💬' };
 
                 el.innerHTML =
-                    '<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">' +
+                    // KPI หลัก
+                    '<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">' +
                     kpiCards.map(c =>
-                        '<div onclick="loadView(\'' + c.view + '\')" class="cursor-pointer bg-' + c.color + '-50 border border-' + c.color + '-200 rounded-3xl p-5 hover:shadow-md transition-all">' +
+                        '<div onclick="loadView(\'' + c.view + '\')" class="cursor-pointer bg-' + c.color + '-50 border border-' + c.color + '-200 rounded-3xl p-5 hover:shadow-md hover:-translate-y-0.5 transition-all">' +
                         '<div class="text-2xl mb-1">' + c.icon + '</div>' +
                         '<div class="text-2xl font-extrabold text-' + c.color + '-700">' + c.value + '</div>' +
                         '<div class="text-xs font-bold text-' + c.color + '-600">' + c.label + '</div>' +
                         '<div class="text-[10px] text-' + c.color + '-500 mt-0.5">' + c.sub + '</div></div>'
                     ).join('') + '</div>' +
 
-                    '<div class="font-bold text-slate-700 text-sm mb-3">⏳ รายการรอดำเนินการ</div>' +
-                    '<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">' +
-                    pendingCards.map(c =>
-                        '<div ' + (c.view ? 'onclick="loadView(\'' + c.view + '\')" class="cursor-pointer glass rounded-2xl p-4 text-center hover:shadow-md transition-all"' : 'class="glass rounded-2xl p-4 text-center" title="ยังไม่มีหน้าจัดการแจ้งซ่อมในระบบ"') + '>' +
-                        '<div class="text-xl mb-1">' + c.icon + '</div>' +
-                        '<div class="text-xl font-extrabold ' + (c.value>0?'text-amber-600':'text-slate-400') + '">' + c.value + '</div>' +
-                        '<div class="text-[10px] font-bold text-slate-500">' + c.label + '</div></div>'
+                    // แถวกลาง — กราฟ 7 วัน + สุขภาพระบบ
+                    '<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">' +
+                    '<div class="md:col-span-2 glass rounded-3xl p-5">' +
+                    '<div class="font-bold text-slate-700 text-sm mb-4 flex items-center gap-2"><i data-lucide="bar-chart-3" class="w-4 h-4 text-violet-500"></i> กิจกรรมรวม 7 วันล่าสุด</div>' +
+                    '<div class="flex items-end gap-2">' + trendBars + '</div>' +
+                    '</div>' +
+                    '<div class="glass rounded-3xl p-5">' +
+                    '<div class="font-bold text-slate-700 text-sm mb-2 flex items-center gap-2"><i data-lucide="heart-pulse" class="w-4 h-4 text-emerald-500"></i> สุขภาพระบบ</div>' +
+                    healthBar('Gemini Keys', d.systemHealth.gemini.active, d.systemHealth.gemini.total, geminiPct, '🔑', 'geminiKeys') +
+                    healthBar('ช่องทางแจ้งเตือน', d.systemHealth.notifications.configured, d.systemHealth.notifications.total, notifPct, '🔔', 'notificationChannels') +
+                    '</div></div>' +
+
+                    // Engagement cards — แยกตามระบบ
+                    '<div class="font-bold text-slate-700 text-sm mb-3">📈 ภาพรวมแต่ละระบบ</div>' +
+                    '<div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">' +
+                    engagementCards.map(c =>
+                        '<div onclick="loadView(\'' + c.view + '\')" class="cursor-pointer glass rounded-2xl p-4 hover:shadow-md hover:-translate-y-0.5 transition-all">' +
+                        '<div class="flex justify-between items-start mb-2">' +
+                        '<span class="text-xl">' + c.icon + '</span>' +
+                        (c.pending > 0 ? '<span class="text-[9px] font-bold bg-' + c.color + '-100 text-' + c.color + '-700 px-1.5 py-0.5 rounded-full">⏳ ' + c.pending + '</span>' : '<span class="text-[9px] font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">✅</span>') +
+                        '</div>' +
+                        '<div class="text-xs font-bold text-slate-700">' + c.label + '</div>' +
+                        (c.thisMonth !== null ? '<div class="text-[10px] text-slate-400 mt-0.5">เดือนนี้ ' + c.thisMonth + '</div>' : '') +
+                        (c.extra ? '<div class="text-[9px] text-slate-400 mt-1">' + c.extra + '</div>' : '') +
+                        '</div>'
                     ).join('') + '</div>' +
 
-                    '<div class="glass rounded-3xl overflow-hidden">' +
+                    // แถวล่าง — ภาพเด่นแกลเลอรี่ + กิจกรรมล่าสุด
+                    '<div class="grid grid-cols-1 md:grid-cols-3 gap-4">' +
+
+                    (topPhoto ?
+                        '<div onclick="loadView(\'galleryManagement\')" class="cursor-pointer glass rounded-3xl overflow-hidden hover:shadow-md transition-all">' +
+                        '<div class="relative"><img src="' + escapeHtml(topPhoto.image_url) + '" class="w-full h-32 object-cover">' +
+                        '<span class="absolute top-2 left-2 bg-amber-400 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow">🏆 ภาพเด่นเดือนนี้</span></div>' +
+                        '<div class="p-3"><div class="text-xs font-bold text-slate-700 truncate">' + escapeHtml(topPhoto.line_display_name||'ไม่ระบุ') + '</div>' +
+                        '<div class="text-[10px] text-slate-400 mt-0.5">❤️ ' + fmt(topPhoto.vote_count) + ' โหวต</div></div></div>'
+                        : '<div class="glass rounded-3xl p-5 flex flex-col items-center justify-center text-center text-slate-400 text-xs"><span class="text-3xl mb-2">📭</span>ยังไม่มีภาพในแกลเลอรี่เดือนนี้</div>'
+                    ) +
+
+                    '<div class="md:col-span-2 glass rounded-3xl overflow-hidden">' +
                     '<div class="p-4 border-b border-slate-100 font-bold text-slate-800 text-sm flex items-center justify-between">' +
                     '<span class="flex items-center gap-2"><i data-lucide="activity" class="w-4 h-4 text-violet-500"></i> กิจกรรมล่าสุด</span>' +
                     '<button onclick="loadView(\'auditLog\')" class="text-xs text-violet-600 font-bold">ดูทั้งหมด →</button></div>' +
                     (d.recentActivity.length ? d.recentActivity.map(a => {
                         const dt = new Date(a.created_at).toLocaleString('th-TH', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
-                        return '<div class="px-4 py-3 border-t border-slate-50 flex items-center gap-3 text-sm">' +
+                        return '<div class="px-4 py-2.5 border-t border-slate-50 flex items-center gap-3 text-sm">' +
                             '<span>' + (actionIcon[a.action]||'📌') + '</span>' +
-                            '<span class="font-bold text-slate-700">' + escapeHtml(a.actor_name||'ไม่ทราบ') + '</span>' +
-                            '<span class="text-slate-400 text-xs">' + escapeHtml(a.action) + '</span>' +
-                            '<span class="text-slate-300 text-xs ml-auto">' + dt + '</span></div>';
+                            '<span class="font-bold text-slate-700 text-xs truncate">' + escapeHtml(a.actor_name||a.actor_uid||'ไม่ทราบ') + '</span>' +
+                            '<span class="text-slate-400 text-[10px]">' + escapeHtml(a.action) + '</span>' +
+                            '<span class="text-slate-300 text-[10px] ml-auto flex-shrink-0">' + dt + '</span></div>';
                     }).join('') : '<div class="p-6 text-center text-slate-400 text-sm">ยังไม่มีกิจกรรม</div>') +
-                    '</div>';
+                    '</div></div>';
                 lucide.createIcons();
             } catch(e) {
                 el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
