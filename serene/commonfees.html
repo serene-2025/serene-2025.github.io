@@ -4482,13 +4482,27 @@ const months = [
 ];
 
 // =============== API HELPERS ===============
-async function callGas(action, data = {}) {
-    const r = await fetch(GAS_API_URL, {
-        method: 'POST',
-        mode: 'cors',
-        body: JSON.stringify({ action, ...data }),
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' }
-    });
+// action ที่ "อ่านอย่างเดียว" เท่านั้น — ปลอดภัยที่จะลองใหม่อัตโนมัติถ้าเน็ตหลุดชั่วคราว
+// action อื่นๆ (ส่ง LINE, สร้าง/แก้/ลบข้อมูล) ห้าม retry อัตโนมัติ เพราะถ้าคำขอเดิมสำเร็จไปแล้วแต่ผลลัพธ์หลุดหายระหว่างทาง
+// การลองใหม่จะทำให้เกิดผลซ้ำ (เช่น ส่ง LINE แจ้งเตือนซ้ำ, สร้างรายการซ้ำ)
+const READONLY_GAS_ACTIONS = ['getDataSheet', 'getData', 'get_dashboard_stats', 'get_line_users_for_house', 'get_settings', 'list_admins', 'get_audit_logs', 'list_recycle_bin'];
+
+async function callGas(action, data = {}, retriesLeft = 2) {
+    let r;
+    try {
+        r = await fetch(GAS_API_URL, {
+            method: 'POST',
+            mode: 'cors',
+            body: JSON.stringify({ action, ...data }),
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+        });
+    } catch (networkErr) {
+        if (READONLY_GAS_ACTIONS.includes(action) && retriesLeft > 0) {
+            await new Promise(res => setTimeout(res, (3 - retriesLeft) * 700));
+            return callGas(action, data, retriesLeft - 1);
+        }
+        throw new Error(`เชื่อมต่อ GAS ไม่สำเร็จ (เครือข่ายมีปัญหา): ${networkErr.message}`);
+    }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const result = await r.json();
     if (result && result.error) throw new Error(result.error);
@@ -4496,17 +4510,30 @@ async function callGas(action, data = {}) {
 }
 
 // Supabase REST helper - ใช้สำหรับ read-only ผ่าน anon key
-async function callSupabaseRest(path, options = {}) {
+async function callSupabaseRest(path, options = {}, retriesLeft = 2) {
     const url = `${SUPABASE_URL}/rest/v1/${path}`;
-    const r = await fetch(url, {
-        ...options,
-        headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-            ...(options.headers || {})
+    const method = (options.method || 'GET').toUpperCase();
+    const isReadOnly = method === 'GET'; // ลองใหม่เฉพาะการ "อ่าน" เท่านั้น — POST/PATCH/DELETE ถ้าลองซ้ำเสี่ยงบันทึกข้อมูลซ้ำถ้าคำขอเดิมสำเร็จไปแล้วแต่ผลลัพธ์หลุดหายระหว่างทาง
+    let r;
+    try {
+        r = await fetch(url, {
+            ...options,
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                'Content-Type': 'application/json',
+                ...(options.headers || {})
+            }
+        });
+    } catch (networkErr) {
+        // fetch() throw = ปัญหาระดับเครือข่าย (เน็ตหลุด/DNS/timeout ชั่วคราว) ไม่ใช่ error จากเซิร์ฟเวอร์ — ลองใหม่ได้ถ้าเป็นการอ่าน
+        // ต่างจาก HTTP error (404/500 ฯลฯ) ที่ retry ไปก็ไม่มีประโยชน์ เพราะปัญหาไม่ได้อยู่ที่เครือข่าย
+        if (isReadOnly && retriesLeft > 0) {
+            await new Promise(res => setTimeout(res, (3 - retriesLeft) * 700)); // หน่วงเพิ่มขึ้นทีละรอบ: 700ms, 1400ms
+            return callSupabaseRest(path, options, retriesLeft - 1);
         }
-    });
+        throw new Error(`เชื่อมต่อ Supabase ไม่สำเร็จ (เครือข่ายมีปัญหา): ${networkErr.message}`);
+    }
     if (!r.ok) {
         const text = await r.text();
         throw new Error(`Supabase ${r.status}: ${text}`);
