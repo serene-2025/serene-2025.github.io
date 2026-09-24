@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ระบบบันทึกค่าส่วนกลาง ซีรีน 2</title>
+  <title>ระบบบันทึกค่าส่วนกลาง ซีรีน 3</title>
   <link rel="icon" href="https://cdn-icons-png.flaticon.com/512/1571/1571031.png" type="image/png">
 
   <!-- Import Libraries -->
@@ -597,8 +597,8 @@
 
   <script>
     // --- Supabase Configuration ---
-    const SUPABASE_URL = 'https://zmdywddraaeegzkvpwsw.supabase.co';
-    const SUPABASE_KEY = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ'; 
+    const SUPABASE_URL = 'https://kiumelolsilduqnvrekf.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_xxxxxxxxxxxxxxxxxxxxxxxxxxxx'; 
     
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -1136,6 +1136,7 @@
         });
     }
 
+    // ฟังก์ชันนี้ได้เพิ่มระบบ Auto-Retry เพื่อแก้ปัญหาโอนข้ามธนาคารแล้วข้อมูลวิ่งมาไม่ทัน
     async function checkSlipWithBackend(payload, expectedAmount, inputElement) {
         const THUNDER_API_KEY = '3f953560-a56a-4391-bb07-521218f964fe';
         let statusDivId = inputElement.id === 'file_image' ? 'slip_status_single' : inputElement.id.replace('file_', 'status_');
@@ -1153,473 +1154,145 @@
             statusDiv.innerHTML = `<span class="text-primary"><i class='bx bx-loader-alt bx-spin'></i> กำลังตรวจสอบกับธนาคาร...</span>`;
         }
 
-        try {
-            const response = await fetch('https://api.thunder.in.th/v2/verify/bank', {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + THUNDER_API_KEY, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ payload: payload })
-            });
+        let maxRetries = 2; // ยอมให้เช็คซ้ำสูงสุด 2 รอบ (รวมรอบแรกเป็น 3 รอบ)
+        let apiResult = null;
 
-            const result = await response.json();
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                const response = await fetch('https://api.thunder.in.th/v2/verify/bank', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + THUNDER_API_KEY, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ payload: payload })
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    apiResult = result;
+                    break; // ถ้าเจอข้อมูลแล้วให้หลุดลูปทันที
+                } else {
+                    // ถ้าเช็คแล้วไม่เจอ (อาจเพราะเพิ่งโอนมาใหม่ๆ ข้อมูลยังไม่เข้าระบบ ITMX)
+                    if (attempt < maxRetries) {
+                        if(statusDiv) statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-loader-alt bx-spin'></i> ข้อมูลธนาคารมาช้า... กำลังดึงข้อมูลซ้ำรอบที่ ${attempt + 2}</span>`;
+                        await new Promise(r => setTimeout(r, 2500)); // หน่วงเวลา 2.5 วินาทีแล้วลองใหม่
+                    } else {
+                        apiResult = result; // หมดโควตาลองใหม่ ให้เก็บค่า error ไว้แสดงผล
+                    }
+                }
+            } catch (error) {
+                if (attempt < maxRetries) {
+                    if(statusDiv) statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-loader-alt bx-spin'></i> เชื่อมต่อขัดข้อง... กำลังลองใหม่รอบที่ ${attempt + 2}</span>`;
+                    await new Promise(r => setTimeout(r, 2000));
+                } else {
+                    apiResult = null; // Error ระบบพังจริงๆ
+                }
+            }
+        }
+
+        // --- ส่วนประมวลผลข้อมูลหลังจากได้ผลลัพธ์จาก API หรือครบจำนวนรอบที่ลองใหม่ ---
+        if (apiResult && apiResult.success) {
+            const slipData = apiResult.data.rawSlip;
+            let actualAmount = slipData?.amount?.amount ? parseFloat(slipData.amount.amount) : parseFloat(slipData?.amount || 0);
             
-            if (result.success) {
-                const slipData = result.data.rawSlip;
-                let actualAmount = slipData?.amount?.amount ? parseFloat(slipData.amount.amount) : parseFloat(slipData?.amount || 0);
-                
-                let receiverNameTH = slipData?.receiver?.account?.name?.th || "";
-                let receiverNameEN = slipData?.receiver?.account?.name?.en || "";
-                
-                let senderName = slipData?.sender?.account?.name?.th || slipData?.sender?.account?.name?.en || "ไม่ระบุชื่อผู้โอน";
-                let transRef = slipData?.transRef || "ไม่ระบุ";
-                
-                let rawDate = slipData?.date || slipData?.transDate || "";
-                let transferDateTime = "ไม่ระบุข้อมูลเวลา";
-                if (rawDate) {
-                    try {
-                        let d = new Date(rawDate);
-                        let day = ("0" + d.getDate()).slice(-2);
-                        let month = ("0" + (d.getMonth() + 1)).slice(-2);
-                        let year = d.getFullYear() + 543; 
-                        let hours = ("0" + d.getHours()).slice(-2);
-                        let minutes = ("0" + d.getMinutes()).slice(-2);
-                        transferDateTime = `${day}/${month}/${year} ${hours}:${minutes} น.`;
-                    } catch(e) {
-                        transferDateTime = rawDate; 
-                    }
-                } else if (slipData?.transTime) {
-                    transferDateTime = (slipData.transDate + " " + slipData.transTime).trim();
+            let receiverNameTH = slipData?.receiver?.account?.name?.th || "";
+            let receiverNameEN = slipData?.receiver?.account?.name?.en || "";
+            
+            let senderName = slipData?.sender?.account?.name?.th || slipData?.sender?.account?.name?.en || "ไม่ระบุชื่อผู้โอน";
+            let transRef = slipData?.transRef || "ไม่ระบุ";
+            
+            let rawDate = slipData?.date || slipData?.transDate || "";
+            let transferDateTime = "ไม่ระบุข้อมูลเวลา";
+            if (rawDate) {
+                try {
+                    let d = new Date(rawDate);
+                    let day = ("0" + d.getDate()).slice(-2);
+                    let month = ("0" + (d.getMonth() + 1)).slice(-2);
+                    let year = d.getFullYear() + 543; 
+                    let hours = ("0" + d.getHours()).slice(-2);
+                    let minutes = ("0" + d.getMinutes()).slice(-2);
+                    transferDateTime = `${day}/${month}/${year} ${hours}:${minutes} น.`;
+                } catch(e) {
+                    transferDateTime = rawDate; 
                 }
+            } else if (slipData?.transTime) {
+                transferDateTime = (slipData.transDate + " " + slipData.transTime).trim();
+            }
 
-                if (verifiedText && verifiedCurrency && inputElement.id === 'file_image') {
-                    verifiedText.innerText = actualAmount.toLocaleString();
-                    verifiedCurrency.style.display = 'inline';
+            if (verifiedText && verifiedCurrency && inputElement.id === 'file_image') {
+                verifiedText.innerText = actualAmount.toLocaleString();
+                verifiedCurrency.style.display = 'inline';
+            }
+
+            let upperTH = receiverNameTH.toUpperCase();
+            let upperEN = receiverNameEN.toUpperCase();
+
+            let isAmountCorrect = (actualAmount === expectedAmount);
+            let isNameCorrect = upperTH.includes("โกลเด้นแลนด์") || 
+                                upperTH.includes("GOLDENLAND") || 
+                                upperEN.includes("GOLDENLAND") ||
+                                upperTH.includes("นิติบุคคล");
+            
+            let statusText = "ตรวจสอบผ่าน";
+
+            if (!isAmountCorrect) {
+                if (verifiedBox && verifiedText && inputElement.id === 'file_image') {
+                    verifiedBox.classList.add('blink-red-box');
+                    verifiedText.classList.remove('text-success');
+                    verifiedText.classList.add('text-danger');
                 }
-
-                let upperTH = receiverNameTH.toUpperCase();
-                let upperEN = receiverNameEN.toUpperCase();
-
-                let isAmountCorrect = (actualAmount === expectedAmount);
-                let isNameCorrect = upperTH.includes("โกลเด้นแลนด์") || 
-                                    upperTH.includes("GOLDENLAND") || 
-                                    upperEN.includes("GOLDENLAND") ||
-                                    upperTH.includes("นิติบุคคล");
-                
-                let statusText = "ตรวจสอบผ่าน";
-
-                if (!isAmountCorrect) {
-                    if (verifiedBox && verifiedText && inputElement.id === 'file_image') {
-                        verifiedBox.classList.add('blink-red-box');
-                        verifiedText.classList.remove('text-success');
-                        verifiedText.classList.add('text-danger');
-                    }
-                } else {
-                    if (verifiedBox && verifiedText && inputElement.id === 'file_image') {
-                        verifiedBox.classList.remove('blink-red-box');
-                        verifiedText.classList.remove('text-danger');
-                        verifiedText.classList.add('text-success');
-                    }
-                }
-
-                if (!isAmountCorrect && !isNameCorrect) {
-                    statusText = "ยอดผิดและบัญชีไม่ใช่ส่วนกลาง";
-                    if(statusDiv) statusDiv.innerHTML = `<span class="text-danger"><i class='bx bx-x-circle'></i> ยอดผิด (${actualAmount} บ.) และบัญชีไม่ใช่ส่วนกลาง *ยังบันทึกได้</span>`;
-                    globalSlipAlerts[inputElement.id] = `บัญชีและยอดโอนไม่ถูกต้อง (โอนมา ${actualAmount} บ.)`;
-                } else if (!isAmountCorrect) {
-                    statusText = "ยอดเงินไม่ถูกต้อง";
-                    if(statusDiv) statusDiv.innerHTML = `<span class="text-danger"><i class='bx bx-x-circle'></i> ยอดเงินไม่ถูกต้อง! (พบยอด ${actualAmount} บ.) *ยังบันทึกได้</span>`;
-                    globalSlipAlerts[inputElement.id] = `ยอดไม่ตรง (โอนมา ${actualAmount} บ.)`;
-                } else if (!isNameCorrect) {
-                    statusText = "บัญชีไม่ใช่ส่วนกลาง";
-                    if(statusDiv) statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-error-circle'></i> บัญชีปลายทางไม่ใช่ "โกลเด้นแลนด์ ซีรีน" *ยังบันทึกได้</span>`;
-                    globalSlipAlerts[inputElement.id] = `บัญชีปลายทางไม่ถูกต้อง`;
-                } else {
-                    if(statusDiv) statusDiv.innerHTML = `<span class="text-success"><i class='bx bx-check-circle'></i> ตรวจสอบผ่าน (ยอดโอน ${actualAmount} บ.)</span>`;
-                }
-                
-                globalSlipData[inputElement.id] = { 
-                    senderName: senderName, 
-                    transRef: transRef, 
-                    actualAmount: actualAmount, 
-                    statusText: statusText,
-                    transferDateTime: transferDateTime
-                };
             } else {
-                if(statusDiv) statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-info-circle'></i> ไม่พบข้อมูลสลิปนี้ หรือสลิปเก่าเกินไป *ยังบันทึกได้</span>`;
-                globalSlipAlerts[inputElement.id] = `ตรวจไม่พบสลิป/สลิปหมดอายุ/สลิปปลอม`;
-                globalSlipData[inputElement.id] = { senderName: "ตรวจสอบไม่พบ", transRef: "-", actualAmount: 0, statusText: "สลิปเก่า/สลิปปลอม", transferDateTime: "-" };
-                
-                if (verifiedText && verifiedCurrency && inputElement.id === 'file_image') {
-                    verifiedText.innerText = '-';
-                    verifiedCurrency.style.display = 'none';
-                    if(verifiedBox) {
-                        verifiedBox.classList.remove('blink-red-box');
-                        verifiedText.classList.remove('text-danger');
-                        verifiedText.classList.add('text-success');
-                    }
+                if (verifiedBox && verifiedText && inputElement.id === 'file_image') {
+                    verifiedBox.classList.remove('blink-red-box');
+                    verifiedText.classList.remove('text-danger');
+                    verifiedText.classList.add('text-success');
                 }
             }
 
-        } catch (error) {
+            if (!isAmountCorrect && !isNameCorrect) {
+                statusText = "ยอดผิดและบัญชีไม่ใช่ส่วนกลาง";
+                if(statusDiv) statusDiv.innerHTML = `<span class="text-danger"><i class='bx bx-x-circle'></i> ยอดผิด (${actualAmount} บ.) และบัญชีไม่ใช่ส่วนกลาง *ยังบันทึกได้</span>`;
+                globalSlipAlerts[inputElement.id] = `บัญชีและยอดโอนไม่ถูกต้อง (โอนมา ${actualAmount} บ.)`;
+            } else if (!isAmountCorrect) {
+                statusText = "ยอดเงินไม่ถูกต้อง";
+                if(statusDiv) statusDiv.innerHTML = `<span class="text-danger"><i class='bx bx-x-circle'></i> ยอดเงินไม่ถูกต้อง! (พบยอด ${actualAmount} บ.) *ยังบันทึกได้</span>`;
+                globalSlipAlerts[inputElement.id] = `ยอดไม่ตรง (โอนมา ${actualAmount} บ.)`;
+            } else if (!isNameCorrect) {
+                statusText = "บัญชีไม่ใช่ส่วนกลาง";
+                if(statusDiv) statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-error-circle'></i> บัญชีปลายทางไม่ใช่ "โกลเด้นแลนด์ ซีรีน" *ยังบันทึกได้</span>`;
+                globalSlipAlerts[inputElement.id] = `บัญชีปลายทางไม่ถูกต้อง`;
+            } else {
+                if(statusDiv) statusDiv.innerHTML = `<span class="text-success"><i class='bx bx-check-circle'></i> ตรวจสอบผ่าน (ยอดโอน ${actualAmount} บ.)</span>`;
+            }
+            
+            globalSlipData[inputElement.id] = { 
+                senderName: senderName, 
+                transRef: transRef, 
+                actualAmount: actualAmount, 
+                statusText: statusText,
+                transferDateTime: transferDateTime
+            };
+
+        } else if (apiResult) {
+            // กรณีพยายามวนลูปขอข้อมูลครบแล้ว แต่ยังหาข้อมูลสลิปไม่เจอจริงๆ (เช่น เป็นสลิปเก่า หรือปลอม)
+            if(statusDiv) statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-info-circle'></i> ไม่พบข้อมูลสลิปนี้บนระบบธนาคาร *ยังบันทึกได้</span>`;
+            globalSlipAlerts[inputElement.id] = `ตรวจไม่พบสลิป/สลิปหมดอายุ/สลิปปลอม`;
+            globalSlipData[inputElement.id] = { senderName: "ตรวจสอบไม่พบ", transRef: "-", actualAmount: 0, statusText: "สลิปเก่า/สลิปปลอม", transferDateTime: "-" };
+            
+            if (verifiedText && verifiedCurrency && inputElement.id === 'file_image') {
+                verifiedText.innerText = '-';
+                verifiedCurrency.style.display = 'none';
+                if(verifiedBox) {
+                    verifiedBox.classList.remove('blink-red-box');
+                    verifiedText.classList.remove('text-danger');
+                    verifiedText.classList.add('text-success');
+                }
+            }
+        } else {
+            // กรณีติดต่อ API ไม่ได้เลยแม้จะพยายามใหม่แล้ว (อินเทอร์เน็ตหลุด)
             if(statusDiv) statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-info-circle'></i> ระบบขัดข้องชั่วคราว (รอแอดมินตรวจ)</span>`;
             globalSlipAlerts[inputElement.id] = `ระบบตรวจสลิปขัดข้อง`;
             globalSlipData[inputElement.id] = { senderName: "ระบบขัดข้อง", transRef: "-", actualAmount: 0, statusText: "API ล่มขณะตรวจ", transferDateTime: "-" };
         }
-    }
-
-    async function compressImage(file) {
-        const options = { maxSizeMB: 1, maxWidthOrHeight: 1200, useWebWorker: true, fileType: "image/jpeg" };
-        try {
-            const compressedBlob = await imageCompression(file, options);
-            return new File([compressedBlob], file.name.replace(/\.[^/.]+$/, "") + ".jpg", { type: 'image/jpeg', lastModified: Date.now() });
-        } catch (error) {
-            try {
-                options.useWebWorker = false;
-                const fallbackBlob = await imageCompression(file, options);
-                return new File([fallbackBlob], file.name.replace(/\.[^/.]+$/, "") + ".jpg", { type: 'image/jpeg', lastModified: Date.now() });
-            } catch (finalError) {
-                return file;
-            }
-        }
-    }
-
-    function zoomImage(src) {
-        if (!src) return;
-        Swal.fire({
-            imageUrl: src, imageAlt: 'Slip Preview', width: 'auto', padding: '1em',
-            showConfirmButton: false, showCloseButton: true, customClass: { image: 'img-fluid rounded shadow' }
-        });
-    }
-
-    function confirmSubmit() {
-        const name = document.getElementById('name').value.trim();
-        const name1Hidden = document.getElementById('name1').value.trim();
-        
-        const selectedMonthElements = document.querySelectorAll('.month-check:checked');
-        const selectedItems = Array.from(selectedMonthElements).map(el => `${el.value} ${el.getAttribute('data-year').substring(2)}`);
-        const totalAmount = (selectedItems.length * 300).toLocaleString();
-        
-        const mode = document.querySelector('input[name="slip_mode"]:checked').value;
-        const modeText = mode === 'single' ? '<span class="badge bg-success">โอนยอดรวม (1 สลิป)</span>' : '<span class="badge bg-primary">โอนแยกยอด (หลายสลิป)</span>';
-
-        Swal.fire({
-            title: 'ยืนยันข้อมูลการชำระเงิน',
-            html: `
-                <div class="text-start p-3 bg-light rounded border border-success">
-                    <p class="mb-1"><i class='bx bxs-home text-success'></i> <strong>บ้านเลขที่:</strong> <span class="text-primary">${name1Hidden}</span></p>
-                    <p class="mb-1"><i class='bx bxs-user text-success'></i> <strong>ชื่อ-สกุล:</strong> ${name}</p>
-                    <p class="mb-1"><i class='bx bxs-check-square text-success'></i> <strong>จำนวน:</strong> ${selectedItems.length} เดือน</p>
-                    <p class="mb-1"><small class="text-muted">(${selectedItems.join(', ')})</small></p>
-                    <p class="mb-2"><i class='bx bx-camera text-success'></i> <strong>รูปแบบ:</strong> ${modeText}</p>
-                    <hr class="my-2">
-                    <p class="fs-5 text-danger mb-0 text-center"><strong>ยอดรวมทั้งหมด: ${totalAmount} บาท</strong></p>
-                </div>
-                <p class="small text-danger mt-3 mb-0">* โปรดตรวจสอบความถูกต้องก่อนกดบันทึก</p>
-            `,
-            icon: 'info', showCancelButton: true, confirmButtonColor: '#198754', cancelButtonColor: '#6c757d',
-            confirmButtonText: '<i class="bx bx-check-circle"></i> ยืนยันข้อมูล', cancelButtonText: 'ยกเลิก / แก้ไข'
-        }).then((result) => {
-            if (result.isConfirmed) { getAllElmForm(); }
-        });
-    }
-
-    async function getAllElmForm() {
-      if (!uid) { if(liff.isLoggedIn()){ const idToken = liff.getDecodedIDToken(); if(idToken) uid = idToken.sub; } }
-
-      const name = document.getElementById("name").value.trim();
-      const name1Hidden = document.getElementById("name1").value.trim(); 
-      const mode = document.querySelector('input[name="slip_mode"]:checked').value;
-      
-      const selectedMonthElements = document.querySelectorAll('.month-check:checked');
-      const selectedItems = Array.from(selectedMonthElements).map(el => ({
-          month: el.value, year: el.getAttribute('data-year'), idx: el.getAttribute('data-month-index'), uid: el.id
-      }));
-
-      window.addEventListener('beforeunload', preventCloseHandler);
-
-      let progressInterval;
-      let currentProgress = 0;
-
-      Swal.fire({
-        title: 'กำลังดำเนินการ...',
-        html: `
-          <div class="mt-2 mb-4">
-             <i class='bx bx-cloud-upload bx-flashing' style="font-size: 4.5rem; color: #198754;"></i>
-          </div>
-          <div class="progress" style="height: 22px; border-radius: 12px; box-shadow: inset 0 1px 3px rgba(0,0,0,.1);">
-             <div id="saveProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success fw-bold" role="progressbar" style="width: 0%; font-size: 1rem;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
-          </div>
-          <p class="mt-3 mb-1 fw-bold text-success fs-5" id="saveProgressText">กำลังเตรียมข้อมูล...</p>
-          <p class="small text-muted mb-3" id="saveSubText">โปรดรอสักครู่ (ความเร็วขึ้นอยู่กับเน็ตของคุณ)</p>
-        `,
-        allowOutsideClick: false, allowEscapeKey: false, showConfirmButton: false, showCancelButton: false, showCloseButton: false,   
-        didOpen: () => {
-          const progressBar = document.getElementById('saveProgressBar');
-          progressInterval = setInterval(() => {
-              if (currentProgress < 90) {
-                  currentProgress += Math.floor(Math.random() * 5) + 1; 
-                  if(currentProgress > 90) currentProgress = 90;
-                  progressBar.style.width = currentProgress + '%';
-                  progressBar.innerHTML = currentProgress + '%';
-              }
-          }, 300); 
-        }
-      });
-
-      $("#btn_1").hide(); $("#btn_2").show();
-      const payMethod = document.querySelector('input[name="name4"]:checked').value;
-      const note = document.getElementById("name5").value.trim();
-
-      try {
-          let monthImageMap = {}; 
-
-          if (mode === 'single') {
-              document.getElementById('saveProgressText').innerHTML = "กำลังบีบอัดและอัปโหลดสลิป...";
-              let file = document.getElementById('file_image').files[0];
-              
-              let compressedFile = await compressImage(file);
-              let fileName = `single_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
-              
-              const { error: uploadError } = await supabaseClient.storage.from('slip-images').upload(fileName, compressedFile, { cacheControl: '3600', upsert: false, contentType: 'image/jpeg' });
-              if (uploadError) throw new Error("อัปโหลดรูปไม่สำเร็จ: " + uploadError.message);
-              
-              const { data: publicUrlData } = supabaseClient.storage.from('slip-images').getPublicUrl(fileName);
-              const imageUrl = publicUrlData.publicUrl;
-
-              selectedItems.forEach(item => monthImageMap[item.uid] = imageUrl);
-          } else {
-              let uploadedCount = 0;
-              for(let i=0; i < selectedItems.length; i++) {
-                  let item = selectedItems[i];
-                  let fileInput = document.getElementById(`file_slip_box_${item.year}_${item.idx}`);
-                  let file = fileInput.files[0];
-                  
-                  uploadedCount++;
-                  document.getElementById('saveProgressText').innerHTML = `กำลังอัปโหลดสลิป (${uploadedCount}/${selectedItems.length})...`;
-                  
-                  let compressedFile = await compressImage(file);
-                  let fileName = `multi_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
-                  
-                  const { error: uploadError } = await supabaseClient.storage.from('slip-images').upload(fileName, compressedFile, { cacheControl: '3600', upsert: false, contentType: 'image/jpeg' });
-                  if (uploadError) throw new Error(`อัปโหลดรูปเดือน ${item.month} ไม่สำเร็จ: ` + uploadError.message);
-                  
-                  const { data: publicUrlData } = supabaseClient.storage.from('slip-images').getPublicUrl(fileName);
-                  monthImageMap[item.uid] = publicUrlData.publicUrl;
-              }
-          }
-
-          document.getElementById('saveProgressText').innerHTML = "กำลังคำนวณรหัสอ้างอิง (ID)...";
-
-          const { data: recentRecords, error: idError } = await supabaseClient
-            .from('common_fees')
-            .select('id')
-            .like('id', 'serene______')
-            .order('id', { ascending: false })
-            .limit(50);
-          
-          if(idError) throw new Error("อ่านฐานข้อมูลไม่สำเร็จ: " + idError.message);
-
-          let currentIdNum = 0;
-          if (recentRecords && recentRecords.length > 0) {
-              recentRecords.forEach(record => {
-                  if(record.id) {
-                      let numStr = record.id.replace('serene', '');
-                      if (/^\d{6}$/.test(numStr)) {
-                          let num = parseInt(numStr, 10);
-                          if (num > currentIdNum) {
-                              currentIdNum = num;
-                          }
-                      }
-                  }
-              });
-          }
-
-          document.getElementById('saveProgressText').innerHTML = "กำลังบันทึกข้อมูลหลัก...";
-
-          let maxRetries = 3;
-          let isSuccess = false;
-          let finalSheetPayload = [];
-
-          while (maxRetries > 0 && !isSuccess) {
-              let supabasePayload = [];
-              finalSheetPayload = [];
-              let tempIdNum = currentIdNum; 
-              let currentDate = new Date();
-
-              for (let i = 0; i < selectedItems.length; i++) {
-                  let item = selectedItems[i];
-                  tempIdNum++; 
-                  let newId = 'serene' + ('000000' + tempIdNum).slice(-6); 
-
-                  let currentFileInputId = (mode === 'single') ? 'file_image' : `file_slip_box_${item.year}_${item.idx}`;
-                  let alertNote = globalSlipAlerts[currentFileInputId];
-                  let slipDetails = globalSlipData[currentFileInputId] || { senderName: "ไม่ได้ตรวจผ่าน API", transRef: "-", actualAmount: 0, statusText: "ไม่พบข้อมูลสแกน", transferDateTime: "-" };
-                  
-                  let finalRemark = note;
-                  if (alertNote) {
-                      finalRemark = `[🚨 แอดมินโปรดตรวจ: ${alertNote}] ` + finalRemark;
-                  }
-                  if (mode === 'multi') {
-                      finalRemark += (finalRemark ? ' ' : '') + '(แนบสลิปแยก)';
-                  }
-
-                  let recordObj = {
-                      'id': newId,
-                      'reported_at': currentDate.toISOString(),
-                      'user_id': uid,
-                      'name': name,
-                      'house_number': name1Hidden,
-                      'month': item.month,
-                      'year': item.year,
-                      'payment_method': payMethod,
-                      'remark': finalRemark, 
-                      'amount_text': "สามร้อยบาทถ้วน",
-                      'amount': 300,
-                      'image_url': monthImageMap[item.uid], 
-                      'status': "รอตรวจสอบ",
-                      'sender_name': slipDetails.senderName,
-                      'trans_ref': slipDetails.transRef,
-                      'verified_amount': slipDetails.actualAmount,
-                      'slip_status': slipDetails.statusText,
-                      'slip_datetime': slipDetails.transferDateTime
-                  };
-                  
-                  supabasePayload.push(recordObj);
-                  finalSheetPayload.push(recordObj);
-              }
-
-              const { error: insertError } = await supabaseClient.from('common_fees').insert(supabasePayload);
-              
-              if (insertError) {
-                  if (insertError.code === '23505' || insertError.message.includes('duplicate key')) {
-                      currentIdNum += selectedItems.length; 
-                      maxRetries--;
-                      await new Promise(r => setTimeout(r, 500)); 
-                      continue; 
-                  } else {
-                      throw new Error("บันทึกข้อมูลลง Database ไม่สำเร็จ: " + insertError.message);
-                  }
-              } else {
-                  isSuccess = true; 
-              }
-          }
-
-          if (!isSuccess) {
-              throw new Error("ระบบมีผู้ใช้งานพร้อมกันจำนวนมาก ทำให้รหัส ID ชนกัน โปรดลองกดบันทึกใหม่อีกครั้ง");
-          }
-
-          document.getElementById('saveProgressText').innerHTML = "กำลังอัปเดตยอดค้างชำระ...";
-          
-          const monthKeyMap = {
-              'มกราคม': 'jan', 'กุมภาพันธ์': 'feb', 'มีนาคม': 'mar', 'เมษายน': 'apr',
-              'พฤษภาคม': 'may', 'มิถุนายน': 'jun', 'กรกฎาคม': 'jul', 'สิงหาคม': 'aug',
-              'กันยายน': 'sep', 'ตุลาคม': 'oct', 'พฤศจิกายน': 'nov', 'ธันวาคม': 'dec'
-          };
-          
-          let updatesByYear = {};
-          selectedItems.forEach(item => {
-              if (!updatesByYear[item.year]) updatesByYear[item.year] = {};
-              if (monthKeyMap[item.month]) {
-                  updatesByYear[item.year][monthKeyMap[item.month]] = 'รอตรวจสอบ';
-              }
-          });
-
-          for (const year in updatesByYear) {
-              const { error: updateError } = await supabaseClient
-                  .from('house_payments')
-                  .update(updatesByYear[year])
-                  .eq('house_numbe', name1Hidden)
-                  .eq('year', year);
-
-              if (updateError) {
-                   console.warn(`⚠️ ไม่สามารถอัปเดตตารางปี ${year} ได้:`, updateError.message);
-              }
-          }
-
-          const telegramMonthsSummary = selectedItems.map(item => `${item.month} ${item.year.substring(2)}`).join(", ");
-          
-          const firstSlip = finalSheetPayload[0];
-          const expandedTelegramMsg = `${telegramMonthsSummary}\n\n🔍 ข้อมูลสลิป (API)\n- ผู้โอน: ${firstSlip.sender_name}\n- ยอดจริง: ${firstSlip.verified_amount} บ.\n- เวลาโอน: ${firstSlip.slip_datetime}\n- อ้างอิง: ${firstSlip.trans_ref}\n- สถานะ: ${firstSlip.slip_status}`;
-
-          fetch(urlAPI, {
-              method: 'POST',
-              headers: { 'Content-Type': 'text/plain' },
-              body: JSON.stringify({ 
-                  action: "syncToSheet", 
-                  records: finalSheetPayload,
-                  telegram_months: expandedTelegramMsg 
-              }),
-              keepalive: true 
-          }).catch(e => console.log("Background sync error", e));
-
-          clearInterval(progressInterval);
-          const progressBar = document.getElementById('saveProgressBar');
-          if(progressBar) {
-              progressBar.style.width = '100%'; progressBar.innerHTML = '100%';
-              progressBar.classList.remove('bg-success', 'progress-bar-animated', 'progress-bar-striped');
-              progressBar.classList.add('bg-primary');
-              document.getElementById('saveProgressText').className = "mt-3 mb-1 fw-bold text-primary fs-5";
-              document.getElementById('saveProgressText').innerHTML = "บันทึกข้อมูลสำเร็จ!";
-              document.getElementById('saveSubText').innerHTML = "ระบบส่งข้อมูลไปอัปเดตเบื้องหลังแล้ว...";
-          }
-
-          setTimeout(async () => {
-              window.removeEventListener('beforeunload', preventCloseHandler);
-              $("#btn_2").hide(); $("#btn_1").show();
-              
-              if ($('#picdata').attr('src') && $('#picdata').attr('src').startsWith('blob:')) {
-                  URL.revokeObjectURL($('#picdata').attr('src'));
-              }
-              $('#picdata').hide(); 
-              $("#picdata").attr("src", ""); 
-              
-              document.querySelectorAll('.multi-pic-preview').forEach(img => { 
-                  if (img.src && img.src.startsWith('blob:')) {
-                      URL.revokeObjectURL(img.src);
-                  }
-                  img.src = ""; 
-                  img.style.display = 'none'; 
-              });
-              
-              document.getElementById("user_form").reset(); 
-              document.getElementsByClassName("needs-validation")[0].classList.remove("was-validated");
-
-              document.querySelectorAll('.month-check').forEach(cb => cb.checked = false);
-              document.getElementById('name1').value = "998/";
-              document.getElementById('name1_suffix').value = "";
-              
-              buildYearMonthUI(globalHousePaymentData); 
-              checkFormValidity(); 
-
-              await sendFlexMessage(uid, uname, picture, name, name1Hidden, telegramMonthsSummary, selectedItems, monthImageMap, mode);
-
-              Swal.fire({
-                title: 'ขอบคุณที่จ่ายค่าส่วนกลาง',
-                text: `บันทึกข้อมูลเรียบร้อยจำนวน ${selectedItems.length} เดือน`,
-                icon: 'success',
-                showCancelButton: false, confirmButtonColor: '#3085d6', confirmButtonText: 'ปิดหน้าต่าง'
-              }).then((result) => {
-                if (result.isConfirmed) liff.closeWindow();
-              });
-          }, 400);
-
-      } catch (err) {
-          console.error(`Error:`, err);
-          clearInterval(progressInterval);
-          window.removeEventListener('beforeunload', preventCloseHandler);
-          
-          Swal.fire({
-             title: 'ขัดข้องชั่วคราว', 
-             html: `<span class="text-danger fw-bold">ระบบไม่สามารถบันทึกข้อมูลได้</span>
-                    <div class="bg-light p-3 rounded border text-start mt-3">
-                        <span class="fw-bold text-dark"><i class='bx bx-info-circle text-primary'></i> แจ้งเตือนจากระบบ:</span>
-                        <p class="text-muted small mt-2 mb-0" style="word-break: break-all;">${err.message}</p>
-                    </div>`, 
-             icon: 'error',
-             confirmButtonColor: '#d33',
-             confirmButtonText: 'รับทราบ / ลองใหม่'
-          });
-          $("#btn_2").hide(); $("#btn_1").show();
-      }
     }
 
     function fileValidation(inputElement) {
@@ -1722,12 +1395,16 @@
 
                   scanQRFromFile(file).then(async payload => {
                       if (payload) {
+                          // ดำเนินการตรวจสอบกับธนาคาร
                           await checkSlipWithBackend(payload, expectedAmount, inputElement);
                       } else {
+                          // กรณีระบบอ่าน QR Code จากรูปไม่ได้ (รูปอาจเบลอเกินไป)
                           if(statusDiv) {
                               statusDiv.style.display = 'block';
-                              statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-info-circle'></i> ไม่พบ QR Code บนรูปภาพ *ยังบันทึกได้</span>`;
+                              statusDiv.innerHTML = `<span class="text-danger"><i class='bx bx-qr-scan'></i> สแกน QR บนรูปไม่สำเร็จ (ระบบตรวจสอบไม่ได้) *ยังบันทึกได้</span>`;
                           }
+                          globalSlipAlerts[inputElement.id] = `สแกนหา QR บนสลิปไม่ติด`;
+                          globalSlipData[inputElement.id] = { senderName: "สแกน QR ไม่สำเร็จ", transRef: "-", actualAmount: 0, statusText: "หา QR Code ไม่พบ", transferDateTime: "-" };
                       }
                       
                       delete pendingAPIRequests[inputElement.id];
@@ -1788,7 +1465,7 @@
 
       if (isAnyPending) {
           btn.disabled = true;
-          btn.innerHTML = "<span class='spinner-border spinner-border-sm me-2'></span>กำลังตรวจสอบสลิป...";
+          btn.innerHTML = "<span class='spinner-border spinner-border-sm me-2'></span>กำลังประมวลผลสลิป...";
           btn.classList.remove('btn-gradient');
           btn.classList.add('btn-secondary');
           return; 
