@@ -2273,17 +2273,40 @@
             const el = document.getElementById('exec-content');
             try {
                 const res = await fetch(`${API_BASE_URL}/api/admin/audience/executive_dashboard_summary`);
-                const d = await res.json();
+                const rawText = await res.text();
+                let d;
+                try { d = JSON.parse(rawText); }
+                catch (_) {
+                    throw new Error(res.status === 404
+                        ? 'ระบบยังไม่พร้อมใช้งาน (endpoint ไม่พบ) กรุณา deploy ระบบล่าสุดก่อน'
+                        : 'เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง (HTTP ' + res.status + ') อาจเกิดจากเครือข่ายไม่เสถียร ลองรีเฟรชอีกครั้ง');
+                }
                 if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+
+                // 🛡️ กันพัง — เติม default ให้ครบทุก field เผื่อ backend ส่งข้อมูลมาไม่ครบ
+                // (เช่น เครือข่ายสะดุดกลางทาง หรือ backend เวอร์ชันเก่ากว่าที่คาด)
+                // ไม่ว่าจะขาดตรงไหน หน้าจอจะโชว์ 0/ค่าว่าง แทนที่จะ crash ทั้งหน้า
+                d.members = d.members || {};
+                d.engagement = d.engagement || {};
+                d.engagement.complaints = d.engagement.complaints || { pending: 0, thisMonth: 0, resolved: 0 };
+                d.engagement.gallery = d.engagement.gallery || { pending: 0, thisMonth: 0, totalVotes: 0, topPhoto: null };
+                d.engagement.repairs = d.engagement.repairs || { pending: 0, thisMonth: 0, completed: 0 };
+                d.engagement.cars = d.engagement.cars || { pending: 0, thisMonth: 0 };
+                d.engagement.tenants = d.engagement.tenants || { pending: 0 };
+                d.systemHealth = d.systemHealth || {};
+                d.systemHealth.gemini = d.systemHealth.gemini || { total: 0, active: 0, cooldown: 0 };
+                d.systemHealth.notifications = d.systemHealth.notifications || { total: 0, configured: 0 };
+                d.weeklyTrend = d.weeklyTrend || [];
+                d.recentActivity = d.recentActivity || [];
 
                 const fmt = n => (n||0).toLocaleString(undefined, {maximumFractionDigits:0});
                 const lastUpdatedEl = document.getElementById('exec-last-updated');
-                if (lastUpdatedEl) lastUpdatedEl.textContent = 'อัปเดตล่าสุด ' + new Date(d.generatedAt).toLocaleTimeString('th-TH');
+                if (lastUpdatedEl) lastUpdatedEl.textContent = 'อัปเดตล่าสุด ' + new Date(d.generatedAt || Date.now()).toLocaleTimeString('th-TH');
 
                 // ─── 1) KPI หลัก — สมาชิก + ความครอบคลุม LINE ───
                 const kpiCards = [
                     { icon:'👥', label:'สมาชิกทั้งหมด', value: fmt(d.members.total), sub: fmt(d.members.totalHomes) + ' บ้าน', color:'blue', view:'userhome' },
-                    { icon:'📱', label:'ครอบคลุม LINE', value: d.members.lineCoveragePct + '%', sub: fmt(d.members.homesWithLine) + '/' + fmt(d.members.totalHomes) + ' บ้าน', color: d.members.lineCoveragePct>=70?'emerald':'amber', view:'userhome' },
+                    { icon:'📱', label:'ครอบคลุม LINE', value: (d.members.lineCoveragePct||0) + '%', sub: fmt(d.members.homesWithLine) + '/' + fmt(d.members.totalHomes) + ' บ้าน', color: (d.members.lineCoveragePct||0)>=70?'emerald':'amber', view:'userhome' },
                     { icon:'📢', label:'เรื่องร้องเรียนเดือนนี้', value: fmt(d.engagement.complaints.thisMonth), sub: '⏳ รอตรวจสอบ ' + fmt(d.engagement.complaints.pending), color: d.engagement.complaints.pending>0?'rose':'emerald', view:'complaintManagement' },
                     { icon:'🔧', label:'แจ้งซ่อมเดือนนี้', value: fmt(d.engagement.repairs.thisMonth), sub: '⏳ รอดำเนินการ ' + fmt(d.engagement.repairs.pending), color: d.engagement.repairs.pending>0?'amber':'emerald', view:'repairManagement' },
                 ];
@@ -2298,6 +2321,7 @@
                 ];
 
                 // ─── 3) กราฟกิจกรรม 7 วันล่าสุด (CSS bar chart) ───
+
                 const maxTrend = Math.max(1, ...d.weeklyTrend.map(t => t.total));
                 const trendBars = d.weeklyTrend.map(t => {
                     const heightPct = Math.round((t.total / maxTrend) * 100);
