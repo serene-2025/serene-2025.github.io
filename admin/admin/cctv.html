@@ -22,7 +22,7 @@
 <div id="root"></div>
 
 <script type="text/babel">
-    const { useState, useEffect } = React;
+    const { useState, useEffect, useRef } = React;
 
     const SUPABASE_URL = 'https://zmdywddraaeegzkvpwsw.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ';
@@ -41,6 +41,20 @@
             return ['อื่นๆ (ระบุในเหตุผล)'];
         }
     }
+
+    // ⏰ ช่วงเวลาแบบเลือกได้ — ลดการพิมพ์เอง กันพิมพ์ผิดรูปแบบ
+    const TIME_SLOTS = [
+        { value: '', label: '— ไม่ระบุช่วงเวลา (ทั้งวัน) —' },
+        { value: '00:00-03:00', label: '🌙 00:00 - 03:00 น.' },
+        { value: '03:00-06:00', label: '🌙 03:00 - 06:00 น.' },
+        { value: '06:00-09:00', label: '🌅 06:00 - 09:00 น.' },
+        { value: '09:00-12:00', label: '☀️ 09:00 - 12:00 น.' },
+        { value: '12:00-15:00', label: '☀️ 12:00 - 15:00 น.' },
+        { value: '15:00-18:00', label: '🌤️ 15:00 - 18:00 น.' },
+        { value: '18:00-21:00', label: '🌆 18:00 - 21:00 น.' },
+        { value: '21:00-00:00', label: '🌃 21:00 - 00:00 น.' },
+        { value: 'custom', label: '✏️ ระบุช่วงเวลาเอง...' },
+    ];
 
     const STATUS_LABELS = {
         pending:  { icon: '⏳', label: 'รอตรวจสอบ', color: 'amber' },
@@ -92,6 +106,82 @@
         return _liffId;
     }
 
+    // ✍️ SignaturePad — ลายเซ็นรับรองคำขอ ใช้เป็นหลักฐานทางกฎหมาย (PDPA)
+    const SignaturePad = ({ onReady }) => {
+        const canvasRef = useRef(null);
+        const [isDrawing, setIsDrawing] = useState(false);
+        const [hasDrawn, setHasDrawn] = useState(false);
+
+        useEffect(() => {
+            const canvas = canvasRef.current;
+            const ctx = canvas.getContext('2d');
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = '#1e1b4b';
+
+            onReady({
+                clear: () => { ctx.clearRect(0, 0, canvas.width, canvas.height); setHasDrawn(false); },
+                getData: () => {
+                    const blank = document.createElement('canvas');
+                    blank.width = canvas.width; blank.height = canvas.height;
+                    if (canvas.toDataURL() === blank.toDataURL()) return null;
+                    return canvas.toDataURL('image/png').split(',')[1];
+                }
+            });
+        }, []);
+
+        const getCoordinates = (e) => {
+            const canvas = canvasRef.current;
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            return { x: clientX - rect.left, y: clientY - rect.top };
+        };
+
+        const startDrawing = (e) => {
+            const { x, y } = getCoordinates(e);
+            const ctx = canvasRef.current.getContext('2d');
+            ctx.beginPath(); ctx.moveTo(x, y);
+            setIsDrawing(true); setHasDrawn(true);
+        };
+        const draw = (e) => {
+            if (!isDrawing) return;
+            e.preventDefault();
+            const { x, y } = getCoordinates(e);
+            const ctx = canvasRef.current.getContext('2d');
+            ctx.lineTo(x, y); ctx.stroke();
+        };
+        const stopDrawing = () => setIsDrawing(false);
+
+        return (
+            <div className={'relative border-2 border-dashed rounded-2xl overflow-hidden bg-slate-50 transition-colors ' + (hasDrawn ? 'border-slate-500 bg-slate-50' : 'border-gray-300')}>
+                <canvas ref={canvasRef} className="w-full h-32 cursor-crosshair touch-none"
+                    onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={stopDrawing} onMouseLeave={stopDrawing}
+                    onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={stopDrawing}></canvas>
+                {!hasDrawn && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 pointer-events-none">
+                        <span className="text-xl mb-1">✍️</span>
+                        <span className="text-xs">เซ็นชื่อรับรองลงในกรอบนี้</span>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    async function uploadSignatureToStorage(base64Png) {
+        const byteChars = atob(base64Png);
+        const byteNumbers = new Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+        const blob = new Blob([new Uint8Array(byteNumbers)], { type: 'image/png' });
+        const fileName = 'public/sig_' + Date.now() + '_' + Math.random().toString(36).substring(7) + '.png';
+        const { error } = await supabaseClient.storage.from('cctv_images').upload(fileName, blob);
+        if (error) throw error;
+        const { data } = supabaseClient.storage.from('cctv_images').getPublicUrl(fileName);
+        return data.publicUrl;
+    }
+
     const App = () => {
         const [activeTab, setActiveTab] = useState('submit');
         const [currentUid, setCurrentUid] = useState(null);
@@ -105,6 +195,9 @@
         const [zone, setZone] = useState('');
         const [reqDate, setReqDate] = useState('');
         const [timeRange, setTimeRange] = useState('');
+        const [isCustomTime, setIsCustomTime] = useState(false);
+        const [pdpaConsent, setPdpaConsent] = useState(false);
+        let signatureRef = useRef(null);
         const [reason, setReason] = useState('');
         const [submitting, setSubmitting] = useState(false);
         const [toast, setToast] = useState(null);
@@ -164,16 +257,21 @@
         const submitForm = async (e) => {
             e.preventDefault();
             if (!house.trim() || !reqDate || !reason.trim()) return showToast('กรอกบ้านเลขที่ วันที่ และเหตุผลให้ครบค่ะ', 'error');
+            if (!pdpaConsent) return showToast('กรุณาติ๊กยินยอมให้ใช้ข้อมูลตาม PDPA ก่อนส่งคำขอค่ะ', 'error');
+            const sigBase64 = signatureRef.current ? signatureRef.current.getData() : null;
+            if (!sigBase64) return showToast('กรุณาเซ็นชื่อรับรองในกรอบก่อนส่งคำขอค่ะ', 'error');
 
             setSubmitting(true);
             try {
+                const signatureUrl = await uploadSignatureToStorage(sigBase64);
+
                 const payload = {
                     uid: currentUid || null,
                     lineDisplayName: currentProfile ? currentProfile.displayName : null,
                     linePictureUrl: currentProfile ? currentProfile.pictureUrl : null,
                     houseNumber: house.trim(), phoneNumber: phone.trim() || null,
                     cameraZone: zone, requestDate: reqDate, timeRange: timeRange.trim() || null,
-                    reason: reason.trim(),
+                    reason: reason.trim(), pdpaConsent: true, signatureUrl,
                 };
 
                 const res = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/cctv_request_submit', {
@@ -197,6 +295,8 @@
 
                 showToast('🎉 ส่งคำขอดูกล้องเรียบร้อยแล้ว');
                 setHouse(''); setPhone(''); setReqDate(''); setTimeRange(''); setReason('');
+                setPdpaConsent(false);
+                if (signatureRef.current) signatureRef.current.clear();
                 setActiveTab('history');
                 if (currentUid) loadHistory(currentUid);
             } catch (err) {
@@ -266,8 +366,19 @@
                                 </div>
                                 <div>
                                     <label className="block text-sm font-bold text-gray-700 mb-1.5">ช่วงเวลา</label>
-                                    <input value={timeRange} onChange={e => setTimeRange(e.target.value)} placeholder="เช่น 14:00-15:00"
-                                        className="w-full px-4 py-3 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-slate-500 outline-none text-sm" />
+                                    <select
+                                        value={isCustomTime ? 'custom' : timeRange}
+                                        onChange={e => {
+                                            if (e.target.value === 'custom') { setIsCustomTime(true); setTimeRange(''); }
+                                            else { setIsCustomTime(false); setTimeRange(e.target.value); }
+                                        }}
+                                        className="w-full px-4 py-3 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-slate-500 outline-none text-sm">
+                                        {TIME_SLOTS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                                    </select>
+                                    {isCustomTime && (
+                                        <input value={timeRange} onChange={e => setTimeRange(e.target.value)} placeholder="เช่น 14:00-15:30" autoFocus
+                                            className="w-full mt-2 px-4 py-3 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-slate-500 outline-none text-sm" />
+                                    )}
                                 </div>
                             </div>
 
@@ -276,6 +387,28 @@
                                 <textarea value={reason} onChange={e => setReason(e.target.value)} required rows={3}
                                     placeholder="เช่น ของหายบริเวณนี้ ต้องการตรวจสอบเหตุการณ์..."
                                     className="w-full px-4 py-3 bg-gray-50 rounded-2xl border border-gray-200 focus:bg-white focus:ring-2 focus:ring-slate-500 outline-none text-sm resize-none" />
+                            </div>
+
+                            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                                <p className="text-xs text-gray-600 leading-relaxed mb-3">
+                                    📋 <b>ข้อตกลงการให้ข้อมูลส่วนบุคคล (PDPA)</b><br/>
+                                    ข้าพเจ้ายินยอมให้นิติบุคคลจัดเก็บและใช้ข้อมูลส่วนบุคคลที่ให้ไว้ข้างต้น
+                                    (ชื่อ, เบอร์โทร, LINE ID, ลายเซ็น) เพื่อวัตถุประสงค์ในการพิจารณาอนุมัติคำขอ
+                                    ดูกล้องวงจรปิด และเพื่อใช้เป็นหลักฐานประกอบการดำเนินการทางกฎหมายหากจำเป็น
+                                    ตามพระราชบัญญัติคุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562
+                                </p>
+                                <label className="flex items-start gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={pdpaConsent} onChange={e => setPdpaConsent(e.target.checked)}
+                                        className="mt-0.5 w-4 h-4 accent-slate-700 flex-shrink-0" />
+                                    <span className="text-sm font-bold text-gray-700">ข้าพเจ้ายินยอมตามข้อตกลงข้างต้น *</span>
+                                </label>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-gray-700 mb-1.5">ลายเซ็นรับรอง *</label>
+                                <SignaturePad onReady={(api) => { signatureRef.current = api; }} />
+                                <button type="button" onClick={() => signatureRef.current && signatureRef.current.clear()}
+                                    className="text-xs text-gray-400 font-bold mt-1.5">🔄 เซ็นใหม่</button>
                             </div>
 
                             <button type="submit" disabled={submitting}
