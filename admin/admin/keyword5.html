@@ -12200,7 +12200,12 @@ async function updateAllUserProfiles() {
         }
 
         async function saveSingleSetting(key, value) {
-            await supabaseClient.from('system_settings').upsert({ key, value }, { onConflict: 'key' });
+            // 🐛 แก้บั๊ก: column "value" เป็น TEXT จริง (ไม่ใช่ JSONB) — ถ้าค่าที่ส่งมา
+            // เป็น object/array (เช่น language_richmenu_map) ต้อง JSON.stringify()
+            // เองก่อนเก็บ ไม่งั้นอ่านกลับมาจะเป็น string เพี้ยนแทนที่จะเป็น object จริง
+            // (string ธรรมดาอย่าง 'true'/'admin_util_sender_key' ไม่ต้องแตะ เก็บตรงได้อยู่แล้ว)
+            const toStore = (typeof value === 'object' && value !== null) ? JSON.stringify(value) : value;
+            await supabaseClient.from('system_settings').upsert({ key, value: toStore }, { onConflict: 'key' });
         }
 
         // ─── 🌐 Rich Menu ตามภาษา — จัดการ mapping ───────────────────
@@ -12217,9 +12222,16 @@ async function updateAllUserProfiles() {
                     '<option value="' + escapeHtml(m.rich_menu_id) + '">' + escapeHtml(m.name) + '</option>'
                 ).join('') || '<option value="">— ยังไม่มี Rich Menu ในระบบ —</option>';
 
-                // โหลด mapping ปัจจุบัน
+                // โหลด mapping ปัจจุบัน — ค่าที่ได้อาจเป็น string (column เป็น TEXT)
+                // ต้อง parse ก่อนใช้เป็น object เสมอ ไม่งั้น Object.entries() จะพังเงียบๆ
                 const { data: setting } = await supabaseClient.from('system_settings').select('value').eq('key', 'language_richmenu_map').maybeSingle();
-                const map = setting?.value || {};
+                let map = {};
+                const rawVal = setting?.value;
+                if (rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)) {
+                    map = rawVal;
+                } else if (typeof rawVal === 'string' && rawVal) {
+                    try { const parsed = JSON.parse(rawVal); if (parsed && typeof parsed === 'object') map = parsed; } catch (_) { /* ไม่ใช่ JSON ปล่อย {} */ }
+                }
                 window._langRichMenuMap = map;
                 renderLanguageRichMenuList();
             } catch (e) {
