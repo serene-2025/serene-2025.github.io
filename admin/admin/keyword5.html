@@ -9737,6 +9737,11 @@ async function updateAllUserProfiles() {
         // ─── VILLAGE MAP (Layout ตามแผนผังจริง) ───────────────────
         window._mapData = {};
 
+        // ─── 🗺️ แผนผังหมู่บ้าน — แผนที่ปฏิบัติการหลายมุมมอง ──────────────
+        // เดิมดูได้แค่สถานะจ่ายเงิน ตอนนี้สลับดูข้อมูลอื่นได้บนผังเดียวกัน
+        // (layout ตามซอยจริงคงเดิม ไม่แตะ เพราะเป็นข้อมูลภูมิศาสตร์จริงของหมู่บ้าน)
+        let currentMapMode = 'payment';
+
         async function renderVillageMapView() {
             const now = new Date();
             const curYearTH = now.getFullYear() + 543;
@@ -9745,29 +9750,44 @@ async function updateAllUserProfiles() {
             const years = [...new Set((yearsData||[]).map(r=>r.year))].filter(Boolean);
             if (!years.length) years.push(curYearTH);
 
+            const MAP_MODES = [
+                { key:'payment',   icon:'💰', label:'การจ่ายเงิน' },
+                { key:'complaint', icon:'📢', label:'ร้องเรียน' },
+                { key:'repair',    icon:'🔧', label:'แจ้งซ่อม' },
+                { key:'car',       icon:'🚗', label:'ทะเบียนรถ' },
+            ];
+
             document.getElementById('content-area').innerHTML =
                 '<div class="slide-in p-2">' +
                 '<div class="mb-5 flex flex-wrap justify-between items-end gap-3">' +
                 '<div><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
                 '<span class="bg-teal-100 text-teal-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="map" class="w-8 h-8"></i></span>' +
                 'แผนผังหมู่บ้าน</h1>' +
-                '<p class="text-sm text-slate-500 mt-1 ml-1">คลิกบ้านเพื่อดูข้อมูล · ยึดถนนกลางเป็นแกน</p></div>' +
+                '<p class="text-sm text-slate-500 mt-1 ml-1">คลิกบ้านเพื่อดูข้อมูล · สลับมุมมองได้ · ยึดถนนกลางเป็นแกน</p></div>' +
                 '<div class="flex gap-2 items-center flex-wrap">' +
+                '<div class="relative">' +
+                '<input id="map-search" placeholder="🔍 ค้นบ้านเลขที่..." oninput="mapSearchHouse(this.value)" ' +
+                'class="border border-slate-200 rounded-xl pl-3 pr-3 py-2 text-sm bg-white w-36">' +
+                '</div>' +
                 '<select id="map-year" class="border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white">' +
                 years.map(y => '<option value="' + y + '"' + (y === years[0] ? ' selected' : '') + '>' + y + '</option>').join('') +
                 '</select>' +
                 '<select id="map-month" class="border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white">' +
                 TH_MONTHS.map((m,i) => '<option value="' + m.col + '"' + (i === now.getMonth() ? ' selected' : '') + '>' + m.label + '</option>').join('') +
                 '</select>' +
-                '<button onclick="loadVillageMap()" class="px-4 py-2 bg-teal-500 hover:bg-teal-600 text-white rounded-xl font-bold text-sm">โหลดแผนผัง</button>' +
+                '<button onclick="loadVillageMap()" class="px-4 py-2 bg-teal-500 hover:bg-teal-600 text-white rounded-xl font-bold text-sm shadow-sm">โหลดแผนผัง</button>' +
                 '</div></div>' +
-                '<div class="flex flex-wrap gap-x-4 gap-y-1 mb-4 text-xs font-bold">' +
-                '<span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm inline-block" style="background:#22c55e"></span>จ่ายแล้ว</span>' +
-                '<span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm inline-block" style="background:#f59e0b"></span>ล่วงหน้า</span>' +
-                '<span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm inline-block" style="background:#ef4444"></span>ค้างชำระ</span>' +
-                '<span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm inline-block" style="background:#cbd5e1"></span>ไม่มีข้อมูล</span>' +
-                '<span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full inline-block" style="background:#3b82f6"></span>มี LINE</span>' +
-                '</div>' +
+
+                // 🆕 ตัวเลือกมุมมอง — สลับดูข้อมูลอื่นบนผังเดียวกัน
+                '<div class="flex gap-1.5 mb-4">' +
+                MAP_MODES.map(m =>
+                    '<button data-mode="' + m.key + '" onclick="switchMapMode(this.dataset.mode)" ' +
+                    'class="map-mode-btn px-4 py-2 rounded-2xl text-sm font-bold transition-all flex items-center gap-1.5 ' +
+                    (m.key === 'payment' ? 'bg-teal-500 text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-500 hover:border-teal-300') + '">' +
+                    m.icon + ' ' + m.label + '</button>'
+                ).join('') + '</div>' +
+
+                '<div id="map-legend" class="flex flex-wrap gap-x-4 gap-y-1 mb-4 text-xs font-bold"></div>' +
                 '<div id="map-container" class="glass rounded-3xl p-4 overflow-auto min-h-64">' +
                 '<div class="text-center py-16 text-slate-400 text-sm">เลือกเดือนและปี แล้วกด โหลดแผนผัง</div>' +
                 '</div>' +
@@ -9775,6 +9795,42 @@ async function updateAllUserProfiles() {
                 '<div id="map-stats" class="hidden"></div>' +
                 '</div>';
             lucide.createIcons();
+            renderMapLegend('payment');
+        }
+
+        function renderMapLegend(mode) {
+            const el = document.getElementById('map-legend');
+            if (!el) return;
+            const LEGENDS = {
+                payment: [['#22c55e','จ่ายแล้ว'],['#f59e0b','ล่วงหน้า'],['#ef4444','ค้างชำระ'],['#cbd5e1','ไม่มีข้อมูล']],
+                complaint: [['#ef4444','3 เรื่องขึ้นไป'],['#f59e0b','1-2 เรื่อง'],['#cbd5e1','ไม่มีเรื่องร้องเรียน']],
+                repair: [['#f59e0b','รอดำเนินการ'],['#22c55e','เสร็จหมดแล้ว'],['#cbd5e1','ไม่เคยแจ้งซ่อม']],
+                car: [['#1d4ed8','2 คันขึ้นไป'],['#60a5fa','1 คัน'],['#cbd5e1','ไม่มีรถลงทะเบียน']],
+            };
+            el.innerHTML = (LEGENDS[mode]||[]).map(([c,l]) =>
+                '<span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm inline-block" style="background:' + c + '"></span>' + l + '</span>'
+            ).join('') + '<span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full inline-block" style="background:#3b82f6"></span>มี LINE</span>';
+        }
+
+        function switchMapMode(mode) {
+            currentMapMode = mode;
+            document.querySelectorAll('.map-mode-btn').forEach(b => {
+                const active = b.dataset.mode === mode;
+                b.className = 'map-mode-btn px-4 py-2 rounded-2xl text-sm font-bold transition-all flex items-center gap-1.5 ' +
+                    (active ? 'bg-teal-500 text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-500 hover:border-teal-300');
+            });
+            renderMapLegend(mode);
+            if (window._mapRawHomes) loadVillageMap(); // โหลดข้อมูลใหม่ตามโหมดที่เลือก
+        }
+
+        function mapSearchHouse(query) {
+            const q = (query||'').trim().toLowerCase();
+            document.querySelectorAll('[data-house-cell]').forEach(cell => {
+                const match = q && cell.dataset.houseCell.toLowerCase().includes(q);
+                cell.style.outline = match ? '3px solid #ec4899' : 'none';
+                cell.style.zIndex = match ? '10' : '0';
+                if (match) cell.scrollIntoView({ behavior:'smooth', block:'center', inline:'center' });
+            });
         }
 
         async function loadVillageMap() {
@@ -9791,6 +9847,7 @@ async function updateAllUserProfiles() {
                 supabaseClient.from('house_payments').select('house_numbe, soi, owner_name, ' + month).eq('year', year),
                 supabaseClient.from('userhome').select('uid, house_no, soi, fullname, line_name, living_status, phone, profile'),
             ]);
+            window._mapRawHomes = homes || [];
 
             if (!payments?.length) { container.innerHTML = '<div class="text-center py-12 text-slate-400">ไม่พบข้อมูลปี ' + year + '</div>'; return; }
 
@@ -9798,12 +9855,60 @@ async function updateAllUserProfiles() {
             const homeMap = {};
             (homes||[]).forEach(h => { homeMap[norm(h.house_no)] = h; });
 
+            // 🆕 ดึงข้อมูลเสริมตามโหมดที่เลือก (ร้องเรียน/แจ้งซ่อม/รถ) — นับต่อบ้าน
+            let extraByHouse = {};
+            if (currentMapMode === 'complaint') {
+                const { data } = await supabaseClient.from('complaints').select('house_no, status');
+                (data||[]).forEach(c => {
+                    const k = norm(c.house_no);
+                    extraByHouse[k] = extraByHouse[k] || { count: 0, pending: 0 };
+                    extraByHouse[k].count++;
+                    if (c.status === 'pending') extraByHouse[k].pending++;
+                });
+            } else if (currentMapMode === 'repair') {
+                const { data } = await supabaseClient.from('repair_requests').select('house_number, status');
+                (data||[]).forEach(r => {
+                    const k = norm(r.house_number);
+                    extraByHouse[k] = extraByHouse[k] || { count: 0, pending: 0 };
+                    extraByHouse[k].count++;
+                    if (r.status !== 'completed') extraByHouse[k].pending++;
+                });
+            } else if (currentMapMode === 'car') {
+                const { data } = await supabaseClient.from('car_registrations').select('house_number, status').eq('status', 'approved');
+                (data||[]).forEach(c => {
+                    const k = norm(c.house_number);
+                    extraByHouse[k] = extraByHouse[k] || { count: 0 };
+                    extraByHouse[k].count++;
+                });
+            }
+
             const PAID = ['จ่ายแล้ว','ล่วงหน้า'];
-            const getCol = st => {
-                if (st === 'จ่ายแล้ว') return { bg:'#dcfce7', bd:'#16a34a', tx:'#166534', dot:'#22c55e' };
-                if (st === 'ล่วงหน้า') return { bg:'#fef9c3', bd:'#d97706', tx:'#78350f', dot:'#f59e0b' };
-                if (!st)               return { bg:'#f1f5f9', bd:'#94a3b8', tx:'#475569', dot:'#cbd5e1' };
-                return { bg:'#fee2e2', bd:'#dc2626', tx:'#7f1d1d', dot:'#ef4444' };
+            const getCol = h => {
+                if (currentMapMode === 'payment') {
+                    if (h.status === 'จ่ายแล้ว') return { bg:'#dcfce7', bd:'#16a34a', tx:'#166534' };
+                    if (h.status === 'ล่วงหน้า') return { bg:'#fef9c3', bd:'#d97706', tx:'#78350f' };
+                    if (!h.status)               return { bg:'#f1f5f9', bd:'#94a3b8', tx:'#475569' };
+                    return { bg:'#fee2e2', bd:'#dc2626', tx:'#7f1d1d' };
+                }
+                if (currentMapMode === 'complaint') {
+                    const c = h.extra?.count || 0;
+                    if (c >= 3) return { bg:'#fee2e2', bd:'#dc2626', tx:'#7f1d1d' };
+                    if (c >= 1) return { bg:'#fef9c3', bd:'#d97706', tx:'#78350f' };
+                    return { bg:'#f1f5f9', bd:'#94a3b8', tx:'#475569' };
+                }
+                if (currentMapMode === 'repair') {
+                    const c = h.extra?.count || 0, p = h.extra?.pending || 0;
+                    if (p > 0) return { bg:'#fef9c3', bd:'#d97706', tx:'#78350f' };
+                    if (c > 0) return { bg:'#dcfce7', bd:'#16a34a', tx:'#166534' };
+                    return { bg:'#f1f5f9', bd:'#94a3b8', tx:'#475569' };
+                }
+                if (currentMapMode === 'car') {
+                    const c = h.extra?.count || 0;
+                    if (c >= 2) return { bg:'#dbeafe', bd:'#1d4ed8', tx:'#1e3a8a' };
+                    if (c >= 1) return { bg:'#eff6ff', bd:'#60a5fa', tx:'#1e40af' };
+                    return { bg:'#f1f5f9', bd:'#94a3b8', tx:'#475569' };
+                }
+                return { bg:'#f1f5f9', bd:'#94a3b8', tx:'#475569' };
             };
 
             const soiMap = {};
@@ -9815,7 +9920,8 @@ async function updateAllUserProfiles() {
                 const key = 'k' + soiMap[soi].length + '_' + soi.replace(/\W/g,'');
                 const data = { key, house_no:p.house_numbe, owner:p.owner_name||home.fullname||home.line_name||'—',
                     status, uid:home.uid||null, profile:home.profile||null,
-                    living_status:home.living_status||'', phone:home.phone||'', line_name:home.line_name||'' };
+                    living_status:home.living_status||'', phone:home.phone||'', line_name:home.line_name||'',
+                    extra: extraByHouse[norm(p.house_numbe)] || null };
                 window._mapData[key] = data;
                 soiMap[soi].push(data);
             });
@@ -9826,7 +9932,7 @@ async function updateAllUserProfiles() {
                 return na - nb;
             }));
 
-            // Layout ตามแผนผังจริง — ถนนกลางแบ่งซ้าย/ขวา
+            // Layout ตามแผนผังจริง — ถนนกลางแบ่งซ้าย/ขวา (ข้อมูลภูมิศาสตร์จริง ไม่แตะ)
             const LAYOUT = [
                 { label:'ฝั่งซ้าย (3L/3K/3J)', sois:['3L','3K','3J'], border:'right:2px solid #94a3b8' },
                 { label:'', sois:[], road:true },
@@ -9840,14 +9946,16 @@ async function updateAllUserProfiles() {
             if (others.length) LAYOUT.push({ label:'อื่นๆ', sois:others, border:'' });
 
             const makeCell = h => {
-                const c = getCol(h.status);
-                return '<div data-key="' + escapeHtml(h.key) + '" onclick="mapClickHouse(this.dataset.key)" style="' +
+                const c = getCol(h);
+                const badge = (currentMapMode !== 'payment' && h.extra?.count) ? h.extra.count : null;
+                return '<div data-key="' + escapeHtml(h.key) + '" data-house-cell="' + escapeHtml(h.house_no) + '" onclick="mapClickHouse(this.dataset.key)" style="' +
                     'background:' + c.bg + ';border:1.5px solid ' + c.bd + ';color:' + c.tx + ';' +
-                    'cursor:pointer;border-radius:6px;padding:3px 5px;margin:2px;min-width:60px;max-width:72px;' +
-                    'text-align:center;position:relative;transition:transform 0.1s,box-shadow 0.1s' +
-                    '" onmouseover="this.style.transform=\'scale(1.1)\';this.style.boxShadow=\'0 2px 8px rgba(0,0,0,0.2)\'"' +
-                    ' onmouseout="this.style.transform=\'\';this.style.boxShadow=\'\'">'+
+                    'cursor:pointer;border-radius:8px;padding:3px 5px;margin:2px;min-width:60px;max-width:72px;' +
+                    'text-align:center;position:relative;transition:transform 0.15s,box-shadow 0.15s' +
+                    '" onmouseover="this.style.transform=\'scale(1.12)\';this.style.boxShadow=\'0 3px 10px rgba(0,0,0,0.22)\';this.style.zIndex=\'5\'"' +
+                    ' onmouseout="this.style.transform=\'\';this.style.boxShadow=\'\';this.style.zIndex=\'0\'">'+
                     (h.uid ? '<span style="position:absolute;top:2px;left:2px;width:5px;height:5px;border-radius:50%;background:#3b82f6"></span>' : '') +
+                    (badge !== null ? '<span style="position:absolute;top:-4px;right:-4px;background:' + c.bd + ';color:white;font-size:8px;font-weight:700;min-width:14px;height:14px;border-radius:7px;display:flex;align-items:center;justify-content:center;padding:0 3px">' + badge + '</span>' : '') +
                     '<div style="font-size:9px;font-weight:700;line-height:1.2">' + escapeHtml(h.house_no) + '</div>' +
                     '<div style="font-size:8px;opacity:0.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml((h.owner||'').substring(0,6)) + '</div>' +
                     '</div>';
@@ -9870,21 +9978,42 @@ async function updateAllUserProfiles() {
                         col.sois.map(makeSoi).join('') + '</div>';
                 }).join('') + '</div>';
 
-            // สถิติ
+            // สถิติ — ปรับให้ตรงกับโหมดที่เลือก
             const all = Object.values(window._mapData);
             const st = document.getElementById('map-stats');
             st.className = 'grid grid-cols-4 gap-2 mt-3';
-            const nPaid   = all.filter(h => PAID.includes(h.status)).length;
-            const nUnpaid = all.filter(h => h.status && !PAID.includes(h.status)).length;
-            const nNoData = all.filter(h => !h.status).length;
-            const nLine   = all.filter(h => h.uid).length;
-            st.innerHTML = [
-                ['#dcfce7','#16a34a','check',nPaid,'จ่ายแล้ว'],
-                ['#fee2e2','#dc2626','alert-triangle',nUnpaid,'ค้างชำระ'],
-                ['#f1f5f9','#64748b','minus',nNoData,'ไม่มีข้อมูล'],
-                ['#eff6ff','#2563eb','message-circle',nLine,'มี LINE'],
-            ].map(([bg,col,icon,val,lbl]) =>
-                '<div style="background:' + bg + ';border:1px solid ' + col + ';border-radius:12px;padding:10px;text-align:center">' +
+            let statCards;
+            if (currentMapMode === 'payment') {
+                statCards = [
+                    ['#dcfce7','#16a34a','check', all.filter(h => PAID.includes(h.status)).length, 'จ่ายแล้ว'],
+                    ['#fee2e2','#dc2626','alert-triangle', all.filter(h => h.status && !PAID.includes(h.status)).length, 'ค้างชำระ'],
+                    ['#f1f5f9','#64748b','minus', all.filter(h => !h.status).length, 'ไม่มีข้อมูล'],
+                    ['#eff6ff','#2563eb','message-circle', all.filter(h => h.uid).length, 'มี LINE'],
+                ];
+            } else if (currentMapMode === 'complaint') {
+                statCards = [
+                    ['#fee2e2','#dc2626','alert-circle', all.filter(h => (h.extra?.count||0) >= 3).length, 'ร้องเรียนบ่อย (3+)'],
+                    ['#fef9c3','#d97706','message-square', all.filter(h => (h.extra?.count||0) >= 1 && (h.extra?.count||0) < 3).length, 'มีร้องเรียน'],
+                    ['#fef9c3','#d97706','clock', all.filter(h => (h.extra?.pending||0) > 0).length, 'รอตรวจสอบ'],
+                    ['#f1f5f9','#64748b','check-circle', all.filter(h => !(h.extra?.count)).length, 'ไม่เคยร้องเรียน'],
+                ];
+            } else if (currentMapMode === 'repair') {
+                statCards = [
+                    ['#fef9c3','#d97706','wrench', all.filter(h => (h.extra?.pending||0) > 0).length, 'รอดำเนินการ'],
+                    ['#dcfce7','#16a34a','check-circle', all.filter(h => (h.extra?.count||0) > 0 && !(h.extra?.pending)).length, 'เสร็จหมดแล้ว'],
+                    ['#eff6ff','#2563eb','list', all.reduce((s,h)=>s+(h.extra?.count||0),0), 'แจ้งซ่อมรวม'],
+                    ['#f1f5f9','#64748b','minus', all.filter(h => !(h.extra?.count)).length, 'ไม่เคยแจ้ง'],
+                ];
+            } else { // car
+                statCards = [
+                    ['#dbeafe','#1d4ed8','car', all.reduce((s,h)=>s+(h.extra?.count||0),0), 'รถทั้งหมด'],
+                    ['#eff6ff','#60a5fa','home', all.filter(h => (h.extra?.count||0) >= 1).length, 'บ้านที่มีรถ'],
+                    ['#dbeafe','#1d4ed8','layers', all.filter(h => (h.extra?.count||0) >= 2).length, 'บ้านมีหลายคัน'],
+                    ['#f1f5f9','#64748b','minus', all.filter(h => !(h.extra?.count)).length, 'ไม่มีรถลงทะเบียน'],
+                ];
+            }
+            st.innerHTML = statCards.map(([bg,col,icon,val,lbl]) =>
+                '<div style="background:' + bg + ';border:1px solid ' + col + ';border-radius:14px;padding:12px 10px;text-align:center">' +
                 '<i data-lucide="' + icon + '" style="width:20px;height:20px;color:' + col + ';margin:0 auto 4px"></i>' +
                 '<div style="font-size:22px;font-weight:700;color:' + col + '">' + val + '</div>' +
                 '<div style="font-size:11px;font-weight:600;color:' + col + '">' + lbl + '</div></div>'
@@ -9900,10 +10029,19 @@ async function updateAllUserProfiles() {
             if (!info) return;
             const month = document.getElementById('map-month')?.value;
             const monthLabel = TH_MONTHS.find(m => m.col === month)?.label || month;
-            const PAID = ['จ่ายแล้ว','ล่วงหน้า'];
-            const col = h.status === 'จ่ายแล้ว' ? '#16a34a' : h.status === 'ล่วงหน้า' ? '#d97706' : !h.status ? '#94a3b8' : '#dc2626';
+            const col = currentMapMode === 'payment'
+                ? (h.status === 'จ่ายแล้ว' ? '#16a34a' : h.status === 'ล่วงหน้า' ? '#d97706' : !h.status ? '#94a3b8' : '#dc2626')
+                : (h.extra?.pending > 0 ? '#d97706' : h.extra?.count > 0 ? '#16a34a' : '#94a3b8');
             info.className = 'glass rounded-3xl p-4 mt-4 border-l-4';
             info.style.borderLeftColor = col;
+
+            const modeDetailHtml = currentMapMode === 'payment'
+                ? '<div class="text-right flex-shrink-0"><div class="text-xs text-slate-400">' + monthLabel + '</div>' +
+                  '<div class="font-bold text-sm" style="color:' + col + '">' + escapeHtml(h.status || 'ยังไม่จ่าย') + '</div></div>'
+                : '<div class="text-right flex-shrink-0"><div class="text-xs text-slate-400">รวม</div>' +
+                  '<div class="font-bold text-sm" style="color:' + col + '">' + (h.extra?.count || 0) + ' รายการ' +
+                  (h.extra?.pending ? ' (' + h.extra.pending + ' ค้าง)' : '') + '</div></div>';
+
             info.innerHTML =
                 '<div class="flex items-start gap-3">' +
                 (h.profile ? '<img src="' + escapeHtml(h.profile) + '" class="w-12 h-12 rounded-full object-cover border-2 flex-shrink-0" style="border-color:' + col + '">' :
@@ -9912,15 +10050,16 @@ async function updateAllUserProfiles() {
                 '<div class="font-bold text-slate-800 text-base">' + escapeHtml(h.house_no) + '</div>' +
                 '<div class="text-sm text-slate-600">' + escapeHtml(h.owner) + '</div>' +
                 (h.living_status ? '<div class="text-xs text-slate-400">' + escapeHtml(h.living_status) + '</div>' : '') +
+                '</div>' + modeDetailHtml + '</div>' +
+                '<div class="flex items-center gap-2 mt-2 text-[10px]">' +
+                (h.uid ? '<span class="text-blue-600 font-bold">💬 มี LINE</span>' : '<span class="text-slate-400">ไม่มี LINE</span>') +
                 '</div>' +
-                '<div class="text-right flex-shrink-0">' +
-                '<div class="text-xs text-slate-400">' + monthLabel + '</div>' +
-                '<div class="font-bold text-sm" style="color:' + col + '">' + escapeHtml(h.status || 'ยังไม่จ่าย') + '</div>' +
-                (h.uid ? '<div class="text-[10px] text-blue-600 font-bold mt-1">💬 มี LINE</div>' : '<div class="text-[10px] text-slate-400 mt-1">ไม่มี LINE</div>') +
-                '</div></div>' +
                 '<div class="flex gap-2 mt-3">' +
                 (h.phone ? '<a href="tel:' + escapeHtml(h.phone) + '" class="flex-1 py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold text-center hover:bg-blue-100">📞 โทร</a>' : '') +
                 (h.uid ? '<button data-uid="' + escapeHtml(h.uid) + '" data-name="' + escapeHtml(h.owner) + '" onclick="quickPushUser(this.dataset.uid,this.dataset.name)" class="flex-1 py-2 bg-fuchsia-50 border border-indigo-200 text-indigo-700 rounded-xl text-xs font-bold hover:bg-fuchsia-100">💬 LINE</button>' : '') +
+                (currentMapMode === 'complaint' ? '<button onclick="loadView(\'complaintManagement\')" class="flex-1 py-2 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold hover:bg-rose-100">📢 ดูร้องเรียน</button>' : '') +
+                (currentMapMode === 'repair' ? '<button onclick="loadView(\'repairManagement\')" class="flex-1 py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold hover:bg-blue-100">🔧 ดูแจ้งซ่อม</button>' : '') +
+                (currentMapMode === 'car' ? '<button onclick="loadView(\'carManagement\')" class="flex-1 py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold hover:bg-blue-100">🚗 ดูทะเบียนรถ</button>' : '') +
                 '</div>';
             info.classList.remove('hidden');
             info.scrollIntoView({ behavior:'smooth', block:'nearest' });
