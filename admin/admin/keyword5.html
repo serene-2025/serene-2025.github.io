@@ -9931,17 +9931,18 @@ async function updateAllUserProfiles() {
             }));
 
             // Layout ตามแผนผังจริง — ถนนกลางแบ่งซ้าย/ขวา (ข้อมูลภูมิศาสตร์จริง ไม่แตะ)
-            const LAYOUT = [
-                { label:'ฝั่งซ้าย (3L/3K/3J)', sois:['3L','3K','3J'], side:'left' },
-                { label:'', sois:[], road:true },
-                { label:'กลาง (3H/3G/3F)', sois:['3H','3G','3F'], side:'mid' },
-                { label:'กลาง (3D/3B)', sois:['3D','3B'], side:'mid' },
-                { label:'ฝั่งขวา (3E/3C/3A)', sois:['3E','3C','3A','3'], side:'right' },
+            // 🆕 เปลี่ยนจาก "1 บล็อกรวมหลายซอย" เป็น "1 บล็อกต่อ 1 ซอย" — 12
+            // บล็อกพอดีตามจำนวนซอยจริง แต่ละซอยมีกรอบ+สีแถบบนของตัวเอง
+            // (เดิมซอย 3L/3K/3J ถูกยัดรวมไว้ในบล็อกเดียวกัน ตอนนี้แยกคนละบล็อก)
+            const LAYOUT_SOIS = [
+                { soi:'3L', side:'left' },  { soi:'3K', side:'left' },  { soi:'3J', side:'left' },
+                { soi:'3H', side:'mid' },   { soi:'3G', side:'mid' },   { soi:'3F', side:'mid' },
+                { soi:'3D', side:'mid' },   { soi:'3B', side:'mid' },
+                { soi:'3E', side:'right' }, { soi:'3C', side:'right' }, { soi:'3A', side:'right' }, { soi:'3', side:'right' },
             ];
-
-            const allLayout = LAYOUT.flatMap(l => l.sois);
-            const others = Object.keys(soiMap).filter(s => !allLayout.includes(s)).sort();
-            if (others.length) LAYOUT.push({ label:'อื่นๆ', sois:others, border:'' });
+            const knownSois = LAYOUT_SOIS.map(l => l.soi);
+            Object.keys(soiMap).filter(s => !knownSois.includes(s)).sort()
+                .forEach(s => LAYOUT_SOIS.push({ soi:s, side:'other' }));
 
             const makeCell = h => {
                 const c = getCol(h);
@@ -9959,32 +9960,24 @@ async function updateAllUserProfiles() {
                     '</div>';
             };
 
-            // 🆕 แต่ละซอยแสดงตายตัว "2 แถว" เสมอ — ใช้ CSS Grid แบบ
-            // grid-auto-flow:column (เรียงลงก่อน 2 แถว แล้วค่อยขึ้นคอลัมน์ใหม่)
-            // แทน flex-wrap เดิมที่จำนวนแถวขยับไปมาตามความกว้างจอ ไม่คงที่
-            // ถ้าซอยมีบ้านเยอะจนกว้างเกิน จะ scroll แนวนอนเฉพาะในกรอบซอยนั้น
-            // (ไม่ทำให้ทั้งหน้ากว้างเกินหรือกระทบซอยอื่น)
-            const makeSoi = soiName => {
-                const arr = soiMap[soiName] || [];
+            // แต่ละซอยเป็น "1 บล็อก" ของตัวเอง — 2 แถวตายตัวเสมอ (grid-auto-flow:
+            // column เรียงลงก่อน 2 แถว แล้วขึ้นคอลัมน์ใหม่) พร้อมสีแถบบนบอกฝั่ง
+            // เทียบถนน (ฟ้า=ซ้าย, เทา=กลาง, ส้ม=ขวา) และ scroll แนวนอนในตัวเอง
+            // ถ้าซอยนั้นมีบ้านเยอะจนกว้างเกิน ไม่กระทบซอยข้างๆ
+            const sideAccent = { left:'#3b82f6', mid:'#94a3b8', right:'#f59e0b', other:'#cbd5e1' };
+            const makeSoiBlock = ({ soi, side }) => {
+                const arr = soiMap[soi] || [];
                 if (!arr.length) return '';
-                return '<div style="margin-bottom:8px">' +
-                    '<div style="font-size:10px;font-weight:700;color:#334155;margin-bottom:2px">' + escapeHtml(soiName) + ' <span style="color:#94a3b8;font-weight:400">' + arr.length + '</span></div>' +
+                const accent = sideAccent[side] || '#cbd5e1';
+                return '<div style="padding:8px;background:#fafafa;border-radius:12px;border-top:3px solid ' + accent + '">' +
+                    '<div style="font-size:10px;font-weight:700;color:#334155;text-align:center;margin-bottom:6px;padding:2px 4px;background:#f1f5f9;border-radius:5px">' +
+                    escapeHtml(soi) + ' <span style="color:#94a3b8;font-weight:400">' + arr.length + '</span></div>' +
                     '<div style="display:grid;grid-template-rows:repeat(2,auto);grid-auto-flow:column;grid-auto-columns:min-content;gap:2px;overflow-x:auto;padding-bottom:2px">' +
                     arr.map(makeCell).join('') + '</div></div>';
             };
 
-            // 🆕 จัดผังใหม่ — เดิมเป็นแถวเดียวยาวมาก (flex + min-width:700px) ต้อง
-            // scroll แนวนอนตลอด เปลี่ยนเป็น CSS Grid แบบ auto-fit ที่ wrap ลงบรรทัด
-            // ใหม่อัตโนมัติตามความกว้างจอ — ตัดคอลัมน์ "ถนน" (กินพื้นที่ทิ้งเปล่า)
-            // ออก ใช้แถบสีบนหัวข้อแทนเพื่อสื่อความหมายฝั่งซ้าย/ขวาของถนนแทน
-            const sideAccent = { left:'#3b82f6', mid:'#94a3b8', right:'#f59e0b' };
-            container.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">' +
-                LAYOUT.filter(col => !col.road).map(col => {
-                    const accent = sideAccent[col.side] || '#cbd5e1';
-                    return '<div style="padding:8px;background:#fafafa;border-radius:12px;border-top:3px solid ' + accent + '">' +
-                        '<div style="font-size:10px;font-weight:700;color:#64748b;text-align:center;margin-bottom:6px;padding:2px 4px;background:#f1f5f9;border-radius:5px">' + col.label + '</div>' +
-                        col.sois.map(makeSoi).join('') + '</div>';
-                }).join('') + '</div>';
+            container.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">' +
+                LAYOUT_SOIS.map(makeSoiBlock).join('') + '</div>';
 
             // สถิติ — ปรับให้ตรงกับโหมดที่เลือก
             const all = Object.values(window._mapData);
