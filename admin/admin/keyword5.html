@@ -9791,7 +9791,6 @@ async function updateAllUserProfiles() {
                 '<div id="map-container" class="glass rounded-3xl p-4 overflow-auto min-h-64">' +
                 '<div class="text-center py-16 text-slate-400 text-sm">เลือกเดือนและปี แล้วกด โหลดแผนผัง</div>' +
                 '</div>' +
-                '<div id="map-info" class="hidden glass rounded-3xl p-4 mt-4 border-l-4 border-teal-400"></div>' +
                 '<div id="map-stats" class="hidden"></div>' +
                 '</div>';
             lucide.createIcons();
@@ -9839,7 +9838,6 @@ async function updateAllUserProfiles() {
             const year  = parseInt(document.getElementById('map-year')?.value || 0);
             if (!container || !month || !year) return;
             container.innerHTML = '<div class="text-center py-12 text-slate-400">กำลังโหลด...</div>';
-            document.getElementById('map-info').classList.add('hidden');
             document.getElementById('map-stats').classList.add('hidden');
             window._mapData = {};
 
@@ -9934,11 +9932,11 @@ async function updateAllUserProfiles() {
 
             // Layout ตามแผนผังจริง — ถนนกลางแบ่งซ้าย/ขวา (ข้อมูลภูมิศาสตร์จริง ไม่แตะ)
             const LAYOUT = [
-                { label:'ฝั่งซ้าย (3L/3K/3J)', sois:['3L','3K','3J'], border:'right:2px solid #94a3b8' },
+                { label:'ฝั่งซ้าย (3L/3K/3J)', sois:['3L','3K','3J'], side:'left' },
                 { label:'', sois:[], road:true },
-                { label:'กลาง (3H/3G/3F)', sois:['3H','3G','3F'], border:'right:1px dashed #cbd5e1' },
-                { label:'กลาง (3D/3B)', sois:['3D','3B'], border:'right:1px dashed #cbd5e1' },
-                { label:'ฝั่งขวา (3E/3C/3A)', sois:['3E','3C','3A','3'], border:'' },
+                { label:'กลาง (3H/3G/3F)', sois:['3H','3G','3F'], side:'mid' },
+                { label:'กลาง (3D/3B)', sois:['3D','3B'], side:'mid' },
+                { label:'ฝั่งขวา (3E/3C/3A)', sois:['3E','3C','3A','3'], side:'right' },
             ];
 
             const allLayout = LAYOUT.flatMap(l => l.sois);
@@ -9969,11 +9967,15 @@ async function updateAllUserProfiles() {
                     '<div style="display:flex;flex-wrap:wrap">' + arr.map(makeCell).join('') + '</div></div>';
             };
 
-            container.innerHTML = '<div style="display:flex;gap:0;min-width:700px">' +
-                LAYOUT.map(col => {
-                    if (col.road) return '<div style="width:24px;flex-shrink:0;display:flex;align-items:center;justify-content:center">' +
-                        '<div style="writing-mode:vertical-rl;transform:rotate(180deg);font-size:9px;font-weight:700;color:#64748b;letter-spacing:2px">ถนน</div></div>';
-                    return '<div style="flex:1;min-width:130px;padding:0 6px;border-style:solid;border-color:transparent;border-width:0;' + col.border + '">' +
+            // 🆕 จัดผังใหม่ — เดิมเป็นแถวเดียวยาวมาก (flex + min-width:700px) ต้อง
+            // scroll แนวนอนตลอด เปลี่ยนเป็น CSS Grid แบบ auto-fit ที่ wrap ลงบรรทัด
+            // ใหม่อัตโนมัติตามความกว้างจอ — ตัดคอลัมน์ "ถนน" (กินพื้นที่ทิ้งเปล่า)
+            // ออก ใช้แถบสีบนหัวข้อแทนเพื่อสื่อความหมายฝั่งซ้าย/ขวาของถนนแทน
+            const sideAccent = { left:'#3b82f6', mid:'#94a3b8', right:'#f59e0b' };
+            container.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">' +
+                LAYOUT.filter(col => !col.road).map(col => {
+                    const accent = sideAccent[col.side] || '#cbd5e1';
+                    return '<div style="padding:8px;background:#fafafa;border-radius:12px;border-top:3px solid ' + accent + '">' +
                         '<div style="font-size:10px;font-weight:700;color:#64748b;text-align:center;margin-bottom:6px;padding:2px 4px;background:#f1f5f9;border-radius:5px">' + col.label + '</div>' +
                         col.sois.map(makeSoi).join('') + '</div>';
                 }).join('') + '</div>';
@@ -10022,18 +10024,16 @@ async function updateAllUserProfiles() {
             lucide.createIcons();
         }
 
+        // 🆕 เปลี่ยนจากแผงข้อมูลด้านล่าง (ต้อง scroll ไปดู) เป็น modal แทน —
+        // เห็นทันทีตรงกลางจอ ไม่ต้องเลื่อนหา
         function mapClickHouse(key) {
             const h = window._mapData[key];
             if (!h) return;
-            const info = document.getElementById('map-info');
-            if (!info) return;
             const month = document.getElementById('map-month')?.value;
             const monthLabel = TH_MONTHS.find(m => m.col === month)?.label || month;
             const col = currentMapMode === 'payment'
                 ? (h.status === 'จ่ายแล้ว' ? '#16a34a' : h.status === 'ล่วงหน้า' ? '#d97706' : !h.status ? '#94a3b8' : '#dc2626')
                 : (h.extra?.pending > 0 ? '#d97706' : h.extra?.count > 0 ? '#16a34a' : '#94a3b8');
-            info.className = 'glass rounded-3xl p-4 mt-4 border-l-4';
-            info.style.borderLeftColor = col;
 
             const modeDetailHtml = currentMapMode === 'payment'
                 ? '<div class="text-right flex-shrink-0"><div class="text-xs text-slate-400">' + monthLabel + '</div>' +
@@ -10042,27 +10042,30 @@ async function updateAllUserProfiles() {
                   '<div class="font-bold text-sm" style="color:' + col + '">' + (h.extra?.count || 0) + ' รายการ' +
                   (h.extra?.pending ? ' (' + h.extra.pending + ' ค้าง)' : '') + '</div></div>';
 
-            info.innerHTML =
+            const bodyHtml =
+                '<div class="text-left">' +
                 '<div class="flex items-start gap-3">' +
-                (h.profile ? '<img src="' + escapeHtml(h.profile) + '" class="w-12 h-12 rounded-full object-cover border-2 flex-shrink-0" style="border-color:' + col + '">' :
-                             '<div class="w-12 h-12 rounded-full flex items-center justify-center text-xl flex-shrink-0" style="background:' + col + '20;color:' + col + '">🏠</div>') +
+                (h.profile ? '<img src="' + escapeHtml(h.profile) + '" class="w-14 h-14 rounded-full object-cover border-2 flex-shrink-0" style="border-color:' + col + '">' :
+                             '<div class="w-14 h-14 rounded-full flex items-center justify-center text-2xl flex-shrink-0" style="background:' + col + '20;color:' + col + '">🏠</div>') +
                 '<div class="flex-1 min-w-0">' +
-                '<div class="font-bold text-slate-800 text-base">' + escapeHtml(h.house_no) + '</div>' +
+                '<div class="font-bold text-slate-800 text-lg">' + escapeHtml(h.house_no) + '</div>' +
                 '<div class="text-sm text-slate-600">' + escapeHtml(h.owner) + '</div>' +
                 (h.living_status ? '<div class="text-xs text-slate-400">' + escapeHtml(h.living_status) + '</div>' : '') +
                 '</div>' + modeDetailHtml + '</div>' +
-                '<div class="flex items-center gap-2 mt-2 text-[10px]">' +
+                '<div class="flex items-center gap-2 mt-3 text-xs">' +
                 (h.uid ? '<span class="text-blue-600 font-bold">💬 มี LINE</span>' : '<span class="text-slate-400">ไม่มี LINE</span>') +
                 '</div>' +
-                '<div class="flex gap-2 mt-3">' +
-                (h.phone ? '<a href="tel:' + escapeHtml(h.phone) + '" class="flex-1 py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold text-center hover:bg-blue-100">📞 โทร</a>' : '') +
-                (h.uid ? '<button data-uid="' + escapeHtml(h.uid) + '" data-name="' + escapeHtml(h.owner) + '" onclick="quickPushUser(this.dataset.uid,this.dataset.name)" class="flex-1 py-2 bg-fuchsia-50 border border-indigo-200 text-indigo-700 rounded-xl text-xs font-bold hover:bg-fuchsia-100">💬 LINE</button>' : '') +
-                (currentMapMode === 'complaint' ? '<button onclick="loadView(\'complaintManagement\')" class="flex-1 py-2 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold hover:bg-rose-100">📢 ดูร้องเรียน</button>' : '') +
-                (currentMapMode === 'repair' ? '<button onclick="loadView(\'repairManagement\')" class="flex-1 py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold hover:bg-blue-100">🔧 ดูแจ้งซ่อม</button>' : '') +
-                (currentMapMode === 'car' ? '<button onclick="loadView(\'carManagement\')" class="flex-1 py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold hover:bg-blue-100">🚗 ดูทะเบียนรถ</button>' : '') +
+                '<div class="flex gap-2 mt-4">' +
+                (h.phone ? '<a href="tel:' + escapeHtml(h.phone) + '" class="flex-1 py-2.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold text-center hover:bg-blue-100">📞 โทร</a>' : '') +
+                (h.uid ? '<button data-uid="' + escapeHtml(h.uid) + '" data-name="' + escapeHtml(h.owner) + '" onclick="quickPushUser(this.dataset.uid,this.dataset.name)" class="flex-1 py-2.5 bg-fuchsia-50 border border-indigo-200 text-indigo-700 rounded-xl text-xs font-bold hover:bg-fuchsia-100">💬 LINE</button>' : '') +
+                (currentMapMode === 'complaint' ? '<button onclick="closeModal();loadView(\'complaintManagement\')" class="flex-1 py-2.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold hover:bg-rose-100">📢 ดูร้องเรียน</button>' : '') +
+                (currentMapMode === 'repair' ? '<button onclick="closeModal();loadView(\'repairManagement\')" class="flex-1 py-2.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold hover:bg-blue-100">🔧 ดูแจ้งซ่อม</button>' : '') +
+                (currentMapMode === 'car' ? '<button onclick="closeModal();loadView(\'carManagement\')" class="flex-1 py-2.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold hover:bg-blue-100">🚗 ดูทะเบียนรถ</button>' : '') +
+                '</div>' +
+                '<button onclick="closeModal()" class="w-full mt-2 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-bold text-slate-500">ปิด</button>' +
                 '</div>';
-            info.classList.remove('hidden');
-            info.scrollIntoView({ behavior:'smooth', block:'nearest' });
+
+            showModal('ข้อมูลบ้าน', bodyHtml);
         }
 
 
