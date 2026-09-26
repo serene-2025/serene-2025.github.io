@@ -967,7 +967,7 @@
 
         if (data && data.length > 0) {
             const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-            const thaiMonths = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+            const thaiMonths = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 
             data.forEach(row => {
                 const yearStr = row.year ? String(row.year).trim() : '';
@@ -1091,10 +1091,18 @@
         let actualAmount = slipDetails.actualAmount || 0;
         let slipStatus = slipDetails.statusText || "-";
         let transferTime = slipDetails.transferDateTime || "-";
-        let statusColor = slipStatus.includes("ผ่าน") || slipStatus.includes("ถูกต้อง") ? "#198754" : "#dc3545";
+        
+        // ปรับสีสถานะตามข้อความใหม่
+        let statusColor = "#dc3545"; // สีแดงเป็นค่าเริ่มต้น
+        if (slipStatus.includes("ผ่าน") || slipStatus.includes("ถูกต้อง")) {
+            statusColor = "#198754"; // สีเขียว
+        } else if (slipStatus.includes("ยังไม่ได้") || slipStatus.includes("ไม่มีข้อมูล") || slipStatus.includes("ล่าช้า")) {
+            statusColor = "#F09F2D"; // สีส้ม (เตือนให้รอตรวจ)
+        }
 
         return {
           "type": "bubble",
+          "size": "giga", // เพิ่มความกว้างของ Flex Message ให้ยาวสุด
           "hero": { 
               "type": "image", 
               "url": imageUrl, 
@@ -1242,13 +1250,12 @@
                     resolve(null);
                 });
             } catch (err) {
-                // เผื่อกรณีที่ Library ไม่โหลด ป้องกันสคริปต์พังทั้งระบบ
                 resolve(null); 
             }
         });
     }
 
-    // ฟังก์ชันมีการเพิ่มระบบ Loop ตรวจสอบซ้ำ (Auto-Retry) เพื่อกันปัญหาธนาคารตอบช้า
+    // ฟังก์ชันนี้ตั้งค่า Auto-Retry = 4 รอบ และหน่วงเวลารอบละ 3 วินาที (3000ms)
     async function checkSlipWithBackend(payload, expectedAmount, inputElement) {
         const THUNDER_API_KEY = '3f953560-a56a-4391-bb07-521218f964fe';
         let statusDivId = inputElement.id === 'file_image' ? 'slip_status_single' : inputElement.id.replace('file_', 'status_');
@@ -1266,7 +1273,7 @@
             statusDiv.innerHTML = `<span class="text-primary"><i class='bx bx-loader-alt bx-spin'></i> กำลังตรวจสอบกับธนาคาร...</span>`;
         }
 
-        let maxRetries = 2; // ยอมให้เช็คซ้ำสูงสุด 2 รอบ (รวมรอบแรกเป็น 3 รอบ)
+        let maxRetries = 4; // ยอมให้เช็คซ้ำสูงสุด 4 รอบ (รวมรอบแรกเป็น 5 รอบ)
         let apiResult = null;
 
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -1281,22 +1288,21 @@
                 
                 if (result.success) {
                     apiResult = result;
-                    break; // ถ้าเจอข้อมูลแล้วให้หลุดลูปทันที
+                    break; 
                 } else {
-                    // ถ้าเช็คแล้วไม่เจอ (อาจเพราะเพิ่งโอนมาใหม่ๆ ข้อมูลยังไม่เข้าระบบ ITMX)
                     if (attempt < maxRetries) {
                         if(statusDiv) statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-loader-alt bx-spin'></i> ข้อมูลธนาคารมาช้า... กำลังดึงข้อมูลซ้ำรอบที่ ${attempt + 2}</span>`;
-                        await new Promise(r => setTimeout(r, 2500)); // หน่วงเวลา 2.5 วินาทีแล้วลองใหม่
+                        await new Promise(r => setTimeout(r, 3000)); // หน่วงเวลา 3 วินาทีแล้วลองใหม่
                     } else {
-                        apiResult = result; // หมดโควตาลองใหม่ ให้เก็บค่า error ไว้แสดงผล
+                        apiResult = result; 
                     }
                 }
             } catch (error) {
                 if (attempt < maxRetries) {
                     if(statusDiv) statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-loader-alt bx-spin'></i> เชื่อมต่อขัดข้อง... กำลังลองใหม่รอบที่ ${attempt + 2}</span>`;
-                    await new Promise(r => setTimeout(r, 2000));
+                    await new Promise(r => setTimeout(r, 3000));
                 } else {
-                    apiResult = null; // Error ระบบพังจริงๆ
+                    apiResult = null; 
                 }
             }
         }
@@ -1384,10 +1390,10 @@
             };
 
         } else if (apiResult) {
-            // ถ้าพยายามวนลูปจนหมดแล้วยังไม่เจอข้อมูลจริงๆ
-            if(statusDiv) statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-info-circle'></i> ไม่พบข้อมูลสลิปนี้ หรือสลิปเก่าเกินไป *ยังบันทึกได้</span>`;
-            globalSlipAlerts[inputElement.id] = `ตรวจไม่พบสลิป/สลิปหมดอายุ/สลิปปลอม`;
-            globalSlipData[inputElement.id] = { senderName: "ตรวจสอบไม่พบ", transRef: "-", actualAmount: 0, statusText: "สลิปเก่า/สลิปปลอม", transferDateTime: "-" };
+            // ปรับข้อความให้ซอฟต์ลง เมื่อหาไม่เจอจริงๆ
+            if(statusDiv) statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-info-circle'></i> ตรวจสอบยังไม่ได้ (ข้อมูลธนาคารอาจล่าช้า) *บันทึกได้ปกติ</span>`;
+            globalSlipAlerts[inputElement.id] = `ข้อมูลธนาคารล่าช้า/ตรวจสอบยังไม่ได้`;
+            globalSlipData[inputElement.id] = { senderName: "ยังไม่มีข้อมูล", transRef: "-", actualAmount: 0, statusText: "ตรวจสอบยังไม่ได้", transferDateTime: "-" };
             
             if (verifiedText && verifiedCurrency && inputElement.id === 'file_image') {
                 verifiedText.innerText = '-';
@@ -1395,7 +1401,7 @@
                 if(verifiedBox) {
                     verifiedBox.classList.remove('blink-red-box');
                     verifiedText.classList.remove('text-danger');
-                    verifiedText.classList.add('text-success');
+                    verifiedText.classList.add('text-warning');
                 }
             }
         } else {
@@ -1591,7 +1597,7 @@
 
                   let currentFileInputId = (mode === 'single') ? 'file_image' : `file_slip_box_${item.year}_${item.idx}`;
                   let alertNote = globalSlipAlerts[currentFileInputId];
-                  let slipDetails = globalSlipData[currentFileInputId] || { senderName: "ไม่ได้ตรวจผ่าน API", transRef: "-", actualAmount: 0, statusText: "ไม่พบข้อมูลสแกน", transferDateTime: "-" };
+                  let slipDetails = globalSlipData[currentFileInputId] || { senderName: "ไม่ได้ตรวจผ่าน API", transRef: "-", actualAmount: 0, statusText: "ตรวจสอบยังไม่ได้", transferDateTime: "-" };
                   
                   let finalRemark = note;
                   if (alertNote) {
@@ -1860,7 +1866,6 @@
                   pendingAPIRequests[inputElement.id] = true;
                   checkFormValidity(); 
 
-                  // ครอบ Try-Catch เพื่อให้มั่นใจว่าไม่ว่าเกิดอะไรขึ้น ปุ่มจะต้องปลดล็อคเสมอ
                   scanQRFromFile(file).then(async payload => {
                       try {
                           if (payload) {
@@ -1868,10 +1873,11 @@
                           } else {
                               if(statusDiv) {
                                   statusDiv.style.display = 'block';
-                                  statusDiv.innerHTML = `<span class="text-danger"><i class='bx bx-qr-scan'></i> สแกน QR บนรูปไม่สำเร็จ (ระบบตรวจสอบไม่ได้) *ยังบันทึกได้</span>`;
+                                  statusDiv.innerHTML = `<span class="text-danger"><i class='bx bx-qr-scan'></i> สแกน QR บนรูปไม่สำเร็จ *บันทึกได้ปกติ</span>`;
                               }
-                              globalSlipAlerts[inputElement.id] = `สแกนหา QR บนสลิปไม่ติด`;
-                              globalSlipData[inputElement.id] = { senderName: "สแกน QR ไม่สำเร็จ", transRef: "-", actualAmount: 0, statusText: "หา QR Code ไม่พบ", transferDateTime: "-" };
+                              globalSlipAlerts[inputElement.id] = `สแกนหา QR ไม่ติด`;
+                              // ปรับข้อความกรณีสแกนไม่ติด ให้เป็น ตรวจสอบยังไม่ได้ แทน
+                              globalSlipData[inputElement.id] = { senderName: "สแกน QR ไม่สำเร็จ", transRef: "-", actualAmount: 0, statusText: "ตรวจสอบยังไม่ได้", transferDateTime: "-" };
                           }
                       } catch (error) {
                           console.error("เกิดข้อผิดพลาดในการตรวจสอบ:", error);
