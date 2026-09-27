@@ -198,6 +198,8 @@
                 <option value="ซอย 8">ซอย 8</option>
                 <option value="ซอย 9">ซอย 9</option>
                 <option value="ซอย 10">ซอย 10</option>
+                <option value="ซอย 11">ซอย 11</option>
+                <option value="ซอย 12">ซอย 12</option>
               </select>
             </div>
           </div>
@@ -209,8 +211,10 @@
             <select name="living_status" required>
               <option value="">-- เลือก --</option>
               <option value="เจ้าของบ้าน">เจ้าของบ้าน</option>
+              <option value="เจ้าของร่วม">เจ้าของร่วม</option>
+              <option value="ผู้อาศัย">ผู้อาศัย</option>
               <option value="ผู้เช่า">ผู้เช่า</option>
-              <option value="ญาติ">ญาติ / ผู้พักอาศัย</option>
+              <option value="อื่นๆ">อื่นๆ</option>
             </select>
           </div>
         </div>
@@ -240,7 +244,7 @@
 
         <div class="field">
           <label>เบอร์โทรศัพท์ <span>*</span></label>
-          <input type="tel" name="phone" placeholder="0xx-xxx-xxxx" required maxlength="15" pattern="[0-9\-]{9,15}">
+          <input type="tel" name="phone" placeholder="0xx-xxx-xxxx" required maxlength="15" pattern="0[0-9]{1,2}-?[0-9]{3}-?[0-9]{4}" title="กรอกเบอร์โทรศัพท์ 9-10 หลัก เช่น 0812345678">
         </div>
 
         <div class="field">
@@ -264,7 +268,7 @@
           <button type="submit" class="btn btn-primary" id="submit-btn" disabled>
             ✅ ยืนยันลงทะเบียน
           </button>
-          <button type="button" class="btn btn-outline btn-sm" onclick="showScreen('notfound')">ยกเลิก</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="cancelRegister()">ยกเลิก</button>
         </div>
       </form>
     </div>
@@ -343,6 +347,7 @@ const SUPABASE_KEY    = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ';
 const WEBHOOK_URL     = `${SUPABASE_URL}/functions/v1/line-webhook`;
 const DEFAULT_LIFF_ID      = '2000143615-Mp3la3EK';
 const DEFAULT_MEMBER_RM    = 'richmenu-6dbab648fe7753fd311142e0c706ae1f';
+const OA_ADD_FRIEND_URL    = 'https://line.me/R/ti/p/@serene'; // ⚠️ แก้ @serene เป็น username OA จริงถ้าเปลี่ยน
 let   LIFF_ID              = DEFAULT_LIFF_ID;
 let   MEMBER_RICHMENU      = DEFAULT_MEMBER_RM;
 
@@ -362,14 +367,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     // ── โหลด config จาก system_settings (LIFF ID + Rich Menu IDs)
+    // 🐛 แก้บั๊ก: เดิมอ่านจาก key 'liff_id' แต่หน้า Admin Panel บันทึกด้วย
+    // key 'liff_crm_id' (ระบุชัดว่าใช้กับ liff_register.html) ทำให้แอดมิน
+    // เปลี่ยน LIFF ID ในหน้าตั้งค่าไม่มีผลกับไฟล์นี้เลยมาตลอด
     try {
       const { data: settings } = await db
         .from('system_settings')
         .select('key, value')
-        .in('key', ['liff_id', 'member_richmenu', 'default_richmenu']);
+        .in('key', ['liff_crm_id', 'member_richmenu', 'default_richmenu']);
       const cfg = {};
       (settings || []).forEach(r => { cfg[r.key] = r.value; });
-      if (cfg.liff_id)        LIFF_ID         = cfg.liff_id;
+      if (cfg.liff_crm_id)     LIFF_ID         = cfg.liff_crm_id;
       if (cfg.member_richmenu) MEMBER_RICHMENU = cfg.member_richmenu;
     } catch (_) { /* ใช้ค่า default */ }
 
@@ -386,7 +394,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const friendship = await liff.getFriendship();
       if (!friendship.friendFlag) {
         showToast('กรุณาเพิ่มเพื่อน LINE OA ก่อนใช้งาน', 'error');
-        setTimeout(() => { window.location = 'https://line.me/R/ti/p/@serene'; }, 2000);
+        setTimeout(() => { window.location = OA_ADD_FRIEND_URL; }, 2000);
         return;
       }
     } catch (_) {}
@@ -451,6 +459,13 @@ async function checkMember() {
 // ══════════════════════════════════════════════════════
 // REGISTER FORM SUBMIT
 // ══════════════════════════════════════════════════════
+function cancelRegister() {
+  const form = document.getElementById('reg-form');
+  const hasData = form && Array.from(form.elements).some(el => el.value && el.type !== 'submit' && el.type !== 'button');
+  if (hasData && !confirm('ข้อมูลที่กรอกไว้จะหายไป ต้องการยกเลิกจริงหรือไม่?')) return;
+  showScreen('notfound');
+}
+
 async function handleSubmit(e) {
   e.preventDefault();
   const btn = document.getElementById('submit-btn');
@@ -487,6 +502,18 @@ async function handleSubmit(e) {
       btn.disabled = false; btn.innerHTML = '✅ ยืนยันลงทะเบียน'; return;
     }
   }
+
+  // 🆕 เช็คว่าบ้านเลขที่+ชื่อนี้มี uid อื่นลงทะเบียนไปแล้วหรือยัง (กันเผลอมี
+  // LINE 2 บัญชีอ้างว่าเป็นคนเดียวกัน) — แค่เตือน ไม่บล็อก เพราะอาจเป็นเคส
+  // ถูกต้องจริง (เช่น สมาชิกในบ้านเดียวกันชื่อคล้ายกัน)
+  try {
+    const { data: dup } = await db.from('userhome')
+      .select('uid').eq('house_no', payload.house_no).eq('fullname', payload.fullname)
+      .neq('uid', liffProfile.userId).maybeSingle();
+    if (dup && !confirm('พบว่ามีชื่อ "' + payload.fullname + '" บ้านเลขที่ ' + payload.house_no + ' ลงทะเบียนไว้แล้วจาก LINE บัญชีอื่น ต้องการลงทะเบียนต่อหรือไม่?')) {
+      btn.disabled = false; btn.innerHTML = '✅ ยืนยันลงทะเบียน'; return;
+    }
+  } catch (_) { /* เช็คไม่ได้ก็ปล่อยผ่าน ไม่บล็อกการลงทะเบียน */ }
 
   try {
     // UPSERT ลง Supabase
