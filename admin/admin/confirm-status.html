@@ -88,15 +88,18 @@
 
                     setMyRecord(checkData.profile);
 
+                    // 🆕 ดึงรายชื่อสมาชิกบ้านเดียวกันเสมอ (ทั้งกรณียืนยันแล้ว/ยังไม่
+                    // ยืนยัน) เพื่อให้เจ้าของบ้านเห็นว่าใครอยู่บ้าง แม้ยืนยันไปแล้ว
+                    const membersRes = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/house_members_status?house_no=' + encodeURIComponent(checkData.profile.house_no));
+                    const membersData = await membersRes.json();
+                    setHouseMembers(membersData.members || []);
+
                     if (checkData.profile.status_confirmed) {
                         setPhase('already-confirmed');
                         return;
                     }
 
                     setSelectedStatus(checkData.profile.living_status || '');
-                    const membersRes = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/house_members_status?house_no=' + encodeURIComponent(checkData.profile.house_no));
-                    const membersData = await membersRes.json();
-                    setHouseMembers(membersData.members || []);
                     setPhase('form');
                 } catch (e) {
                     console.error(e);
@@ -124,6 +127,64 @@
                 setSubmitting(false);
             }
         };
+
+        // 🗑️ แจ้งขอลบสมาชิก — เผื่อคนย้ายออกไปแล้ว ไม่ได้อยู่จริง (แค่ส่งแจ้ง
+        // เตือนแอดมินไปตรวจสอบ+ลบเอง ไม่ได้ลบทันทีอัตโนมัติ กันแกล้งกดลบคนอื่น)
+        const [removalTarget, setRemovalTarget] = useState(null);
+        const [removalReason, setRemovalReason] = useState('');
+        const [removalSending, setRemovalSending] = useState(false);
+
+        const submitRemoval = async () => {
+            if (!removalTarget) return;
+            setRemovalSending(true);
+            try {
+                const res = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/report_member_removal', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        requesterUid: currentUid, requesterName: myRecord ? (myRecord.fullname || myRecord.line_name) : null,
+                        targetUid: removalTarget.uid, targetName: removalTarget.fullname || removalTarget.line_name,
+                        houseNumber: myRecord ? myRecord.house_no : null, reason: removalReason.trim() || null,
+                    }),
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ส่งคำขอไม่สำเร็จ');
+                showToast('✅ แจ้งนิติบุคคลแล้ว รอตรวจสอบและดำเนินการค่ะ');
+                setRemovalTarget(null); setRemovalReason('');
+            } catch (e) {
+                showToast(e.message, 'error');
+            } finally {
+                setRemovalSending(false);
+            }
+        };
+
+        // 👨‍👩‍👧‍👦 รายชื่อสมาชิกบ้านเดียวกัน — ใช้ร่วมกันทั้ง 2 phase (form และ
+        // already-confirmed) ให้เห็นว่าใครอยู่บ้าง พร้อมปุ่มแจ้งลบต่อคน
+        const MemberList = () => (
+            <div className="bg-white rounded-3xl shadow-sm p-4 border border-gray-100">
+                <p className="text-xs font-bold text-slate-600 mb-3">👨‍👩‍👧‍👦 สมาชิกที่ลงทะเบียนบ้านนี้ทั้งหมด</p>
+                <div className="space-y-2.5">
+                    {houseMembers.map((m, i) => (
+                        <div key={i} className="flex items-center gap-2.5">
+                            {m.profile
+                                ? <img src={m.profile} className="w-9 h-9 rounded-full object-cover border border-slate-200 flex-shrink-0" />
+                                : <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0 text-slate-400 text-xs flex-shrink-0">👤</div>}
+                            <div className="flex-1 min-w-0">
+                                <div className="text-xs font-bold text-slate-700 truncate">{m.fullname || m.line_name || 'ไม่ระบุชื่อ'}</div>
+                                <div className="text-[10px] text-slate-400">
+                                    {m.living_status || 'ยังไม่ระบุ'} {m.status_confirmed ? '🔒 ยืนยันแล้ว' : '(ยังไม่ยืนยัน)'}
+                                </div>
+                            </div>
+                            {m.uid !== currentUid && (
+                                <button onClick={() => setRemovalTarget(m)}
+                                    className="text-[10px] font-bold text-rose-500 bg-rose-50 hover:bg-rose-100 px-2.5 py-1.5 rounded-lg flex-shrink-0">
+                                    🗑️ แจ้งลบ
+                                </button>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
 
         return (
             <div className="max-w-md mx-auto min-h-screen bg-gray-50 flex flex-col shadow-xl relative">
@@ -164,16 +225,19 @@
                     )}
 
                     {phase === 'already-confirmed' && myRecord && (
-                        <div className="bg-white rounded-3xl shadow-lg p-6 text-center animate-slide-up">
-                            <span className="text-5xl block mb-3">✅</span>
-                            <p className="font-bold text-slate-800 text-lg mb-1">ยืนยันสถานะแล้ว</p>
-                            <p className="text-sm text-slate-500 mb-4">บ้านเลขที่ {myRecord.house_no}</p>
-                            <div className="inline-block px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-2xl">
-                                <span className="text-sm font-bold text-emerald-700">{myRecord.living_status}</span>
+                        <div className="animate-slide-up space-y-4">
+                            <div className="bg-white rounded-3xl shadow-lg p-6 text-center">
+                                <span className="text-5xl block mb-3">✅</span>
+                                <p className="font-bold text-slate-800 text-lg mb-1">ยืนยันสถานะแล้ว</p>
+                                <p className="text-sm text-slate-500 mb-4">บ้านเลขที่ {myRecord.house_no}</p>
+                                <div className="inline-block px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-2xl">
+                                    <span className="text-sm font-bold text-emerald-700">{myRecord.living_status}</span>
+                                </div>
+                                <p className="text-[11px] text-slate-400 mt-5">
+                                    หากต้องการเปลี่ยนแปลงสถานะ กรุณาติดต่อนิติบุคคลหมู่บ้านโดยตรง
+                                </p>
                             </div>
-                            <p className="text-[11px] text-slate-400 mt-5">
-                                หากต้องการเปลี่ยนแปลงสถานะ กรุณาติดต่อนิติบุคคลหมู่บ้านโดยตรง
-                            </p>
+                            {houseMembers.length > 0 && <MemberList />}
                         </div>
                     )}
 
@@ -186,21 +250,7 @@
                                 <p className="text-sm font-bold text-slate-700">{myRecord.fullname || myRecord.line_name || '—'}</p>
                             </div>
 
-                            {houseMembers.length > 0 && (
-                                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5">
-                                    <p className="text-xs font-bold text-amber-700 mb-2">👨‍👩‍👧‍👦 สมาชิกที่ลงทะเบียนบ้านนี้ทั้งหมด</p>
-                                    <div className="space-y-1.5">
-                                        {houseMembers.map((m, i) => (
-                                            <div key={i} className="flex items-center justify-between text-xs">
-                                                <span className="text-slate-600">{m.fullname || m.line_name || 'ไม่ระบุชื่อ'}</span>
-                                                <span className={'font-bold px-2 py-0.5 rounded-full ' + (m.status_confirmed ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400')}>
-                                                    {m.living_status || 'ยังไม่ระบุ'} {m.status_confirmed ? '🔒' : '(ยังไม่ยืนยัน)'}
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
+                            {houseMembers.length > 0 && <MemberList />}
 
                             <div className="bg-white rounded-3xl shadow-lg p-5 border border-gray-100">
                                 <p className="text-sm font-bold text-slate-700 mb-3">กรุณาเลือกสถานะของท่าน *</p>
@@ -232,6 +282,28 @@
                     )}
 
                 </div>
+
+                {/* 🗑️ Modal ยืนยันแจ้งลบสมาชิก */}
+                {removalTarget && (
+                    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-5" onClick={() => setRemovalTarget(null)}>
+                        <div className="bg-white rounded-3xl p-5 w-full max-w-xs animate-slide-up" onClick={e => e.stopPropagation()}>
+                            <p className="font-bold text-slate-800 mb-1">🗑️ แจ้งขอลบสมาชิก</p>
+                            <p className="text-sm text-slate-500 mb-4">
+                                แจ้งนิติบุคคลให้ตรวจสอบและลบ <b>{removalTarget.fullname || removalTarget.line_name}</b> ออกจากทะเบียนบ้านนี้ — ใช้เมื่อสมาชิกย้ายออกไปแล้วจริง
+                            </p>
+                            <textarea value={removalReason} onChange={e => setRemovalReason(e.target.value)} rows={2}
+                                placeholder="เหตุผล (ไม่บังคับ) เช่น ย้ายออกไปแล้ว..."
+                                className="w-full px-3 py-2.5 bg-gray-50 rounded-2xl border border-gray-200 text-sm outline-none resize-none mb-4" />
+                            <div className="flex gap-2">
+                                <button onClick={submitRemoval} disabled={removalSending}
+                                    className="flex-1 py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold text-sm disabled:opacity-50">
+                                    {removalSending ? '⏳ กำลังส่ง...' : 'ยืนยันแจ้งลบ'}
+                                </button>
+                                <button onClick={() => setRemovalTarget(null)} className="px-5 py-2.5 bg-gray-100 rounded-2xl font-bold text-sm text-slate-500">ยกเลิก</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {toast && (
                     <div className={'fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-2xl shadow-lg text-white text-sm font-bold z-50 max-w-[90%] text-center ' + (toast.type === 'error' ? 'bg-rose-500' : 'bg-emerald-500')}>
