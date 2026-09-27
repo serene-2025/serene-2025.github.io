@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ยืนยันสิทธิ์เจ้าของบ้าน</title>
+
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+    body { font-family: 'Sarabun', sans-serif; background: #F8F9FB; }
+    @keyframes slideUp { from { opacity:0; transform: translateY(15px); } to { opacity:1; transform: translateY(0); } }
+    .animate-slide-up { animation: slideUp 0.35s ease-out; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .animate-spin { animation: spin 1s linear infinite; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const SUPABASE_URL = 'https://zmdywddraaeegzkvpwsw.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ';
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const EDGE_FUNCTION_URL = SUPABASE_URL + '/functions/v1/line-webhook';
+
+    const STATUS_OPTIONS = [
+        { value:'เจ้าของบ้าน', icon:'🏠', desc:'เป็นเจ้าของกรรมสิทธิ์บ้านหลังนี้แต่เพียงผู้เดียว' },
+        { value:'เจ้าของร่วม', icon:'👥', desc:'เป็นเจ้าของร่วมกับคนอื่น (เช่น สามี-ภรรยา, พี่น้อง)' },
+        { value:'ผู้อาศัย',    icon:'🧑', desc:'พักอาศัยอยู่ แต่ไม่ใช่เจ้าของกรรมสิทธิ์' },
+        { value:'ผู้เช่า',      icon:'🔑', desc:'เช่าบ้านหลังนี้อยู่' },
+    ];
+
+    async function getSetting(key) {
+        const { data } = await supabaseClient.from('system_settings').select('value').eq('key', key).maybeSingle();
+        return (data && data.value && !String(data.value).startsWith('YOUR_')) ? data.value : '';
+    }
+
+    const App = () => {
+        const [phase, setPhase] = useState('loading');
+        const [liffStatus, setLiffStatus] = useState('⏳ กำลังเชื่อมต่อ LINE...');
+        const [currentUid, setCurrentUid] = useState(null);
+        const [myRecord, setMyRecord] = useState(null);
+        const [houseMembers, setHouseMembers] = useState([]);
+        const [selectedStatus, setSelectedStatus] = useState('');
+        const [submitting, setSubmitting] = useState(false);
+        const [errorMsg, setErrorMsg] = useState('');
+        const [toast, setToast] = useState(null);
+
+        const showToast = (msg, type) => { setToast({ msg, type: type || 'success' }); setTimeout(() => setToast(null), 3000); };
+
+        useEffect(() => {
+            (async () => {
+                try {
+                    const liffId = await getSetting('confirm_status_liff_id');
+                    if (!liffId) { setPhase('error'); setErrorMsg('ระบบยังไม่ได้ตั้งค่า LIFF — กรุณาติดต่อผู้ดูแลระบบ'); return; }
+
+                    await liff.init({ liffId: liffId });
+                    if (!liff.isLoggedIn()) { liff.login({ redirectUri: window.location.href }); return; }
+
+                    const profile = await liff.getProfile();
+                    setCurrentUid(profile.userId);
+                    setLiffStatus('✅ ' + (profile.displayName || ''));
+
+                    const checkRes = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/check_registration?uid=' + profile.userId);
+                    const checkData = await checkRes.json();
+                    if (!checkRes.ok) throw new Error(checkData.error || 'ตรวจสอบไม่สำเร็จ');
+
+                    if (!checkData.registered) {
+                        setPhase('redirecting');
+                        const registerLiffId = await getSetting('liff_crm_id');
+                        setTimeout(() => {
+                            if (registerLiffId) {
+                                window.location.href = 'https://liff.line.me/' + registerLiffId;
+                            } else {
+                                setPhase('error'); setErrorMsg('ยังไม่พบข้อมูลการลงทะเบียน และระบบยังไม่ได้ตั้งค่าหน้าลงทะเบียนไว้');
+                            }
+                        }, 1800);
+                        return;
+                    }
+
+                    setMyRecord(checkData.profile);
+
+                    if (checkData.profile.status_confirmed) {
+                        setPhase('already-confirmed');
+                        return;
+                    }
+
+                    setSelectedStatus(checkData.profile.living_status || '');
+                    const membersRes = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/house_members_status?house_no=' + encodeURIComponent(checkData.profile.house_no));
+                    const membersData = await membersRes.json();
+                    setHouseMembers(membersData.members || []);
+                    setPhase('form');
+                } catch (e) {
+                    console.error(e);
+                    setPhase('error'); setErrorMsg(e.message || 'เกิดข้อผิดพลาด');
+                }
+            })();
+        }, []);
+
+        const submitConfirm = async () => {
+            if (!selectedStatus) return showToast('กรุณาเลือกสถานะของท่านก่อนค่ะ', 'error');
+            setSubmitting(true);
+            try {
+                const res = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/confirm_ownership_status', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ uid: currentUid, livingStatus: selectedStatus }),
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ยืนยันไม่สำเร็จ');
+                showToast('🎉 ยืนยันสถานะเรียบร้อยแล้ว');
+                setMyRecord(prev => Object.assign({}, prev, { living_status: selectedStatus, status_confirmed: true }));
+                setTimeout(() => setPhase('already-confirmed'), 1200);
+            } catch (e) {
+                showToast(e.message, 'error');
+            } finally {
+                setSubmitting(false);
+            }
+        };
+
+        return (
+            <div className="max-w-md mx-auto min-h-screen bg-gray-50 flex flex-col shadow-xl relative">
+                <header className="px-5 py-5 shadow-md flex items-center justify-between rounded-b-2xl mb-1 bg-gradient-to-r from-teal-600 to-emerald-500">
+                    <div className="flex items-center text-white">
+                        <span className="text-3xl mr-3">🔐</span>
+                        <div>
+                            <h1 className="text-lg font-extrabold tracking-wide">ยืนยันสิทธิ์เจ้าของบ้าน</h1>
+                            <p className="text-xs text-white/90 font-medium mt-0.5">โกลเด้นแลนด์ ซีรีน</p>
+                        </div>
+                    </div>
+                </header>
+                <p className="text-[11px] text-slate-400 text-center mb-3">{liffStatus}</p>
+
+                <div className="px-5 pb-8 flex-1">
+
+                    {phase === 'loading' && (
+                        <div className="text-center py-20">
+                            <div className="w-10 h-10 border-4 border-teal-200 border-t-teal-500 rounded-full animate-spin mx-auto mb-4"></div>
+                            <p className="text-sm text-slate-400">กำลังตรวจสอบข้อมูล...</p>
+                        </div>
+                    )}
+
+                    {phase === 'redirecting' && (
+                        <div className="text-center py-20 animate-slide-up">
+                            <span className="text-5xl block mb-4">📝</span>
+                            <p className="text-sm font-bold text-slate-700 mb-1">ยังไม่พบข้อมูลการลงทะเบียนของท่าน</p>
+                            <p className="text-xs text-slate-400">กำลังพาไปหน้าลงทะเบียนก่อน...</p>
+                        </div>
+                    )}
+
+                    {phase === 'error' && (
+                        <div className="text-center py-20 animate-slide-up">
+                            <span className="text-5xl block mb-4">⚠️</span>
+                            <p className="text-sm font-bold text-rose-600 mb-1">เกิดข้อผิดพลาด</p>
+                            <p className="text-xs text-slate-400">{errorMsg}</p>
+                        </div>
+                    )}
+
+                    {phase === 'already-confirmed' && myRecord && (
+                        <div className="bg-white rounded-3xl shadow-lg p-6 text-center animate-slide-up">
+                            <span className="text-5xl block mb-3">✅</span>
+                            <p className="font-bold text-slate-800 text-lg mb-1">ยืนยันสถานะแล้ว</p>
+                            <p className="text-sm text-slate-500 mb-4">บ้านเลขที่ {myRecord.house_no}</p>
+                            <div className="inline-block px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-2xl">
+                                <span className="text-sm font-bold text-emerald-700">{myRecord.living_status}</span>
+                            </div>
+                            <p className="text-[11px] text-slate-400 mt-5">
+                                หากต้องการเปลี่ยนแปลงสถานะ กรุณาติดต่อนิติบุคคลหมู่บ้านโดยตรง
+                            </p>
+                        </div>
+                    )}
+
+                    {phase === 'form' && myRecord && (
+                        <div className="animate-slide-up space-y-4">
+                            <div className="bg-white rounded-3xl shadow-sm p-4 border border-gray-100">
+                                <p className="text-xs text-slate-400 mb-1">บ้านเลขที่</p>
+                                <p className="font-bold text-slate-800 text-lg mb-3">{myRecord.house_no}</p>
+                                <p className="text-xs text-slate-400">ชื่อที่ลงทะเบียนไว้</p>
+                                <p className="text-sm font-bold text-slate-700">{myRecord.fullname || myRecord.line_name || '—'}</p>
+                            </div>
+
+                            {houseMembers.length > 0 && (
+                                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5">
+                                    <p className="text-xs font-bold text-amber-700 mb-2">👨‍👩‍👧‍👦 สมาชิกที่ลงทะเบียนบ้านนี้ทั้งหมด</p>
+                                    <div className="space-y-1.5">
+                                        {houseMembers.map((m, i) => (
+                                            <div key={i} className="flex items-center justify-between text-xs">
+                                                <span className="text-slate-600">{m.fullname || m.line_name || 'ไม่ระบุชื่อ'}</span>
+                                                <span className={'font-bold px-2 py-0.5 rounded-full ' + (m.status_confirmed ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400')}>
+                                                    {m.living_status || 'ยังไม่ระบุ'} {m.status_confirmed ? '🔒' : '(ยังไม่ยืนยัน)'}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="bg-white rounded-3xl shadow-lg p-5 border border-gray-100">
+                                <p className="text-sm font-bold text-slate-700 mb-3">กรุณาเลือกสถานะของท่าน *</p>
+                                <div className="space-y-2">
+                                    {STATUS_OPTIONS.map(opt => (
+                                        <button key={opt.value} type="button" onClick={() => setSelectedStatus(opt.value)}
+                                            className={'w-full text-left p-3.5 rounded-2xl border-2 transition-all flex items-start gap-3 ' +
+                                                (selectedStatus === opt.value ? 'border-teal-500 bg-teal-50' : 'border-gray-200 bg-gray-50')}>
+                                            <span className="text-xl flex-shrink-0">{opt.icon}</span>
+                                            <div className="flex-1">
+                                                <div className={'text-sm font-bold ' + (selectedStatus === opt.value ? 'text-teal-700' : 'text-slate-700')}>{opt.value}</div>
+                                                <div className="text-[11px] text-slate-400 mt-0.5">{opt.desc}</div>
+                                            </div>
+                                            {selectedStatus === opt.value && <span className="text-teal-500 text-lg flex-shrink-0">✓</span>}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3 text-[11px] text-rose-600">
+                                ⚠️ <b>ยืนยันได้เพียงครั้งเดียว</b> กรุณาเลือกให้ถูกต้อง หากต้องการเปลี่ยนแปลงภายหลัง ต้องติดต่อนิติบุคคลหมู่บ้านเท่านั้น
+                            </div>
+
+                            <button onClick={submitConfirm} disabled={submitting || !selectedStatus}
+                                className="w-full py-3.5 bg-gradient-to-r from-teal-600 to-emerald-500 text-white rounded-2xl font-bold shadow-lg disabled:opacity-50">
+                                {submitting ? '⏳ กำลังยืนยัน...' : '✅ ยืนยันสถานะ'}
+                            </button>
+                        </div>
+                    )}
+
+                </div>
+
+                {toast && (
+                    <div className={'fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-2xl shadow-lg text-white text-sm font-bold z-50 max-w-[90%] text-center ' + (toast.type === 'error' ? 'bg-rose-500' : 'bg-emerald-500')}>
+                        {toast.msg}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
