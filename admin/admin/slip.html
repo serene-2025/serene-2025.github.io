@@ -608,6 +608,12 @@
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     const EDGE_FUNCTION_URL = SUPABASE_URL + '/functions/v1/line-webhook';
 
+    // 🔌 เปิด/ปิดการตรวจสอบสลิปผ่าน API — ตั้งค่าได้จากหน้า Admin
+    // ค่าเริ่มต้น true (เปิด) เผื่อโหลดค่าจาก DB ไม่ทัน/ไม่สำเร็จ ให้ทำงาน
+    // เหมือนเดิมไว้ก่อน ไม่ใช่ปิดเงียบๆ โดยไม่ตั้งใจ — ค่าจริงถูกดึงพร้อม
+    // LIFF ID ใน IIFE ตอน $(document).ready() ด้านล่าง
+    let SLIP_VERIFY_ENABLED = true;
+
     // Global variables
     let uid = ""; 
     let uname = ""; 
@@ -788,14 +794,22 @@
       // 🔧 ดึง LIFF ID จาก system_settings แบบ dynamic — เหมือนทุกระบบใน
       // เครือข่ายนี้ (car.html, complaint.html, gallery.html ฯลฯ) ไม่ hardcode
       // ในไฟล์อีกต่อไป แก้ได้จากหน้า Admin โดยไม่ต้อง deploy โค้ดใหม่
+      // ดึง slip_verify_enabled คู่กันไปเลย (Promise.all) จะได้พร้อมใช้งาน
+      // ก่อนที่ user จะมีโอกาสแนบไฟล์สลิปจริง (กัน race condition)
       (async () => {
           let liffId = "2000143615-yk0LA09G"; // ค่า fallback เดิม เผื่อดึงจาก DB ไม่สำเร็จ
           try {
-              const { data: cfg } = await supabaseClient
-                  .from('system_settings').select('value').eq('key', 'slip_liff_id').maybeSingle();
+              const [{ data: cfg }, { data: verifyCfg }] = await Promise.all([
+                  supabaseClient.from('system_settings').select('value').eq('key', 'slip_liff_id').maybeSingle(),
+                  supabaseClient.from('system_settings').select('value').eq('key', 'slip_verify_enabled').maybeSingle(),
+              ]);
               if (cfg && cfg.value && cfg.value !== 'YOUR_SLIP_LIFF_ID_HERE') liffId = cfg.value;
+              // column เก็บเป็น TEXT จริง ค่าที่ได้จึงเป็น string "true"/"false" ไม่ใช่ boolean
+              if (verifyCfg && verifyCfg.value !== null && verifyCfg.value !== undefined) {
+                  SLIP_VERIFY_ENABLED = String(verifyCfg.value).trim().toLowerCase() !== 'false';
+              }
           } catch (e) {
-              console.warn('ดึง LIFF ID จาก settings ไม่สำเร็จ ใช้ค่า fallback แทน', e);
+              console.warn('ดึงค่า settings ไม่สำเร็จ ใช้ค่า fallback แทน (LIFF ปกติ, เปิดตรวจสอบสลิป)', e);
           }
           initializeLiff(liffId);
       })();
@@ -1921,6 +1935,21 @@
                   // ล็อคปุ่มป้องกันคนกดไว
                   pendingAPIRequests[inputElement.id] = true;
                   checkFormValidity(); 
+
+                  // 🔌 ถ้าแอดมินปิดการตรวจสอบสลิปไว้ — ข้าม QR scan + Thunder
+                  // ไปเลย ไม่เสียเวลาสแกน/เรียก API แต่ทุกอย่างอื่นทำงานปกติ
+                  // (อัปโหลดรูป, บันทึกข้อมูล, อัปเดตสถานะ "รอตรวจสอบ" ตามเดิม)
+                  if (!SLIP_VERIFY_ENABLED) {
+                      delete globalSlipAlerts[inputElement.id];
+                      globalSlipData[inputElement.id] = { senderName: "-", transRef: "-", actualAmount: 0, statusText: "ปิดการตรวจสอบอัตโนมัติ", transferDateTime: "-" };
+                      if (statusDiv) {
+                          statusDiv.style.display = 'block';
+                          statusDiv.innerHTML = `<span class="text-muted"><i class='bx bx-info-circle'></i> ปิดการตรวจสอบสลิปอัตโนมัติชั่วคราว — บันทึกได้ตามปกติ แอดมินจะตรวจสอบให้</span>`;
+                      }
+                      delete pendingAPIRequests[inputElement.id];
+                      checkFormValidity();
+                      return;
+                  }
 
                   scanQRFromFile(file).then(async payload => {
                       try {
