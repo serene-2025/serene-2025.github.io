@@ -5628,15 +5628,47 @@ async function fetchAllData() {
     }
 }
 
+// รีเฟรชข้อมูลเฉพาะบ้านที่ระบุ แทนที่จะโหลดทั้งระบบใหม่ทั้งหมดแบบ fetchAllData()
+// ใช้ตอนที่รู้แน่ชัดว่ามีการแก้ไขแค่บ้าน/รายการเดียว (หรือกลุ่มเล็กๆ) เช่น อนุมัติสลิป 1 ใบ, แก้ข้อมูลบ้าน 1 หลัง
+// รับได้ทั้ง string เดี่ยวหรือ array — ถ้าไม่รู้ว่าบ้านไหนเปลี่ยน (undefined/ว่าง) จะ fallback ไปโหลดทั้งหมดแทน
+// เพื่อไม่ให้พลาดอัปเดตข้อมูลไปเฉยๆ (ปลอดภัยไว้ก่อนดีกว่าข้อมูลค้าง)
+async function refetchHousesData(houseNumbers) {
+    const list = [...new Set((Array.isArray(houseNumbers) ? houseNumbers : [houseNumbers]).filter(Boolean))];
+    if (!list.length) { await fetchAllData(); return; }
+
+    const [newHouseRows, newFeeRows] = await Promise.all([
+        fetchSupabaseHouses(list),
+        fetchSupabaseCommonFees(list)
+    ]);
+
+    // แทนที่เฉพาะแถวของบ้านกลุ่มนี้ในข้อมูลเดิม — บ้านอื่นที่ไม่เกี่ยวข้องไม่ถูกแตะต้องเลย
+    const listSet = new Set(list);
+    allData = allData.filter(h => !listSet.has(h.house_numbe)).concat(newHouseRows);
+    allTransactions = allTransactions.filter(t => !listSet.has(t.house_number)).concat(newFeeRows);
+    pendingFees = allTransactions.filter(t => t.status && t.status.includes('รอ') && !t.status.includes('แล้ว'));
+
+    // เผื่อบ้านนี้มีปีใหม่ที่ dropdown ยังไม่มี (เช่น เพิ่งเพิ่มรายการปีใหม่ให้บ้านนี้)
+    const years = [...new Set(allData.map(d => d.year))].sort((a, b) => b - a);
+    const yearFilter = document.getElementById('yearFilter');
+    if (yearFilter) yearFilter.innerHTML = '<option value="all">ทุกปี</option>' + years.map(y => `<option value="${y}">${y}</option>`).join('');
+
+    renderDashboard();
+    renderHome();
+    updatePendingBadge();
+    updateLastRefreshTime();
+    try { acItems = acBuildItems(); acUpdateNavBadge(); } catch (e) { console.debug('AC badge หลัง refetch เฉพาะบ้าน:', e.message); }
+}
+
 // ดึง common_fees จาก Supabase ตรง
-async function fetchSupabaseCommonFees() {
+async function fetchSupabaseCommonFees(houseNumbers) {
     let all = [];
     let page = 0; const pageSize = 1000; let hasMore = true;
     while (hasMore) {
-        const { data, error } = await sb
-            .from('common_fees').select('*')
+        let q = sb.from('common_fees').select('*')
             .order('reported_at', { ascending: false })
             .range(page * pageSize, (page + 1) * pageSize - 1);
+        if (houseNumbers && houseNumbers.length) q = q.in('house_number', houseNumbers);
+        const { data, error } = await q;
         if (error) throw error;
         if (data && data.length > 0) {
             all = all.concat(data);
@@ -5670,15 +5702,16 @@ async function fetchSupabaseCommonFees() {
     }));
 }
 
-async function fetchSupabaseHouses() {
+async function fetchSupabaseHouses(houseNumbers) {
     let allHouseData = [];
     let page = 0; const pageSize = 1000; let hasMore = true;
     while (hasMore) {
-        const { data, error } = await sb
-            .from('house_payments').select('*')
+        let q = sb.from('house_payments').select('*')
             .order('house_numbe', { ascending: true })
             .order('year', { ascending: false })
             .range(page * pageSize, (page + 1) * pageSize - 1);
+        if (houseNumbers && houseNumbers.length) q = q.in('house_numbe', houseNumbers);
+        const { data, error } = await q;
         if (error) throw error;
         if (data && data.length > 0) {
             allHouseData = allHouseData.concat(data);
@@ -6151,7 +6184,7 @@ async function approvePending(id) {
         } else {
             Swal.fire('สำเร็จ', 'อนุมัติและสร้างใบเสร็จเรียบร้อย', 'success');
         }
-        await fetchAllData();
+        await refetchHousesData(fee?.house_number); // อนุมัติแค่รายการเดียว ดึงใหม่เฉพาะบ้านนี้พอ ไม่ต้องโหลดทั้งระบบ
         renderPending();
     } catch (err) {
         Swal.fire('ผิดพลาด', err.message, 'error');
@@ -6345,7 +6378,7 @@ async function confirmRejectSlip() {
             Swal.fire('ปฏิเสธเรียบร้อย', `บ้าน ${fee.house_number} - ${fee.month}`, 'success');
         }
 
-        await fetchAllData();
+        await refetchHousesData(fee?.house_number); // ปฏิเสธแค่รายการเดียว ดึงใหม่เฉพาะบ้านนี้พอ
         renderPending();
     } catch (err) {
         Swal.fire('ผิดพลาด', err.message, 'error');
@@ -6753,6 +6786,7 @@ async function approveAllPending() {
     if (!result.isConfirmed) return;
 
     const ids = pendingFees.map(f => f.id);
+    const affectedHouses = [...new Set(pendingFees.map(f => f.house_number))]; // เก็บรายชื่อบ้านไว้ก่อนเริ่ม เพื่อรีเฟรชเฉพาะกลุ่มนี้ทีหลัง
     let totalSuccess = 0, totalFailed = 0, allErrors = [];
     const BATCH_SIZE = 15;
     const totalBatches = Math.ceil(ids.length / BATCH_SIZE);
@@ -6811,7 +6845,7 @@ async function approveAllPending() {
             html: `<div class="text-start text-sm">สำเร็จ: ${totalSuccess} | ไม่สำเร็จ: ${totalFailed}<br><br><div class="bg-red-50 p-2 rounded max-h-40 overflow-y-auto text-xs">${allErrors.join('<br>')}</div></div>`
         });
     }
-    await fetchAllData();
+    await refetchHousesData(affectedHouses); // อนุมัติหลายรายการ แต่ดึงใหม่เฉพาะกลุ่มบ้านที่เกี่ยวข้องพอ ไม่ใช่ทั้งระบบ
     renderPending();
 }
 
@@ -6911,6 +6945,8 @@ function clearTxFilters() {
 async function runSelectedPDFs() {
     const ids = Array.from(document.querySelectorAll('.tx-row-check:checked')).map(c => c.value);
     if (ids.length === 0) return Swal.fire('เลือกข้อมูล', 'กรุณาเลือกรายการ', 'info');
+    // เก็บรายชื่อบ้านของรายการที่เลือกไว้ก่อนเริ่ม (จาก allTransactions ปัจจุบัน) เพื่อรีเฟรชเฉพาะกลุ่มนี้ทีหลัง
+    const affectedHouses = [...new Set(ids.map(id => allTransactions.find(t => t.id == id)?.house_number).filter(Boolean))];
 
     let totalSuccess = 0, totalFailed = 0, allErrors = [];
     const BATCH_SIZE = 15; 
@@ -6970,7 +7006,7 @@ async function runSelectedPDFs() {
             html: `<div class="text-start text-sm">สำเร็จ: ${totalSuccess} | ไม่สำเร็จ: ${totalFailed}<br><br><div class="bg-red-50 p-2 rounded max-h-40 overflow-y-auto">${allErrors.join('<br>')}</div></div>`
         });
     }
-    await fetchAllData();
+    await refetchHousesData(affectedHouses); // ออกใบเสร็จหลายรายการ แต่ดึงใหม่เฉพาะกลุ่มบ้านที่เกี่ยวข้องพอ
     renderTransactions();
 }
 
@@ -6987,8 +7023,10 @@ async function deleteSelected() {
     Swal.fire({ title: 'กำลังลบ...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
     try {
         let sheetOk = 0, sheetFail = 0, sheetUnsupported = false;
+        const affectedHouses = new Set(); // เก็บรายชื่อบ้านระหว่างลูป (row ถูกดึงมาอยู่แล้วในนี้) ไว้รีเฟรชเฉพาะกลุ่มนี้ทีหลัง
         for (const id of ids) {
             const row = allTransactions.find(t => t.id == id);
+            if (row?.house_number) affectedHouses.add(row.house_number);
             const gasResult = await callGas('delRecord', { record: id, oldfile: row ? row.image_url : '', actor_id: currentUser.id });
             if (gasResult?.sheetResult) {
                 gasResult.sheetResult.deleted ? sheetOk++ : sheetFail++;
@@ -7002,7 +7040,7 @@ async function deleteSelected() {
                 📄 Google Sheet: ลบสำเร็จ ${sheetOk} / ไม่พบ ${sheetFail} รายการ
                </div>`;
         Swal.fire({ title: 'ลบเรียบร้อย', html: sheetHtml, icon: 'success' });
-        await fetchAllData();
+        await refetchHousesData([...affectedHouses]); // ลบหลายรายการ แต่ดึงใหม่เฉพาะกลุ่มบ้านที่เกี่ยวข้องพอ
         renderTransactions();
     } catch (err) {
         Swal.fire('ผิดพลาด', err.message, 'error');
@@ -7030,7 +7068,7 @@ async function deleteTx(id) {
             : `<div class="text-xs mt-2 p-2 rounded bg-slate-50 text-slate-500">📄 GAS ยังไม่รองรับการลบ Sheet (ใช้โค้ดเวอร์ชันเก่า)</div>`;
 
         Swal.fire({ title: 'ลบเรียบร้อย', html: sheetHtml, icon: 'success' });
-        await fetchAllData();
+        await refetchHousesData(row?.house_number); // ลบแค่รายการเดียว ดึงใหม่เฉพาะบ้านนี้พอ
         renderTransactions();
     } catch (err) {
         Swal.fire('ผิดพลาด', err.message, 'error');
@@ -7113,7 +7151,7 @@ async function submitTxForm(e) {
         await callGas(action, { form: obj });
         closeTxModal();
         Swal.fire('สำเร็จ', 'บันทึกข้อมูลเรียบร้อย', 'success');
-        await fetchAllData();
+        await refetchHousesData(obj.datastud2); // เพิ่ม/แก้แค่บ้านเดียว ดึงใหม่เฉพาะบ้านนี้พอ
         renderTransactions();
     } catch (err) {
         Swal.fire('ผิดพลาด', err.message, 'error');
@@ -11164,7 +11202,7 @@ async function saveHouseEdit() {
         await writeAuditLog('update_house', `land_registry:${houseNo}`,
             `แก้ไขข้อมูลบ้าน ${houseNo}${ownerChanged ? ` (ย้ายเจ้าของ ${oldOwner} → ${newOwner})` : ''}`);
 
-        await fetchAllData();
+        await refetchHousesData(houseNo); // แก้แค่บ้านเดียว ดึงใหม่เฉพาะบ้านนี้พอ (land_registry/house_payments ทุกปีของบ้านนี้)
         closeEditHouseModal();
         loadHouseManagement();
         Swal.fire('บันทึกสำเร็จ', `อัปเดตข้อมูลบ้าน ${houseNo} ใน land_registry แล้ว`, 'success');
