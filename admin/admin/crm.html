@@ -292,6 +292,15 @@
                         <span class="text-xs font-bold text-slate-700">ขอดูกล้อง</span>
                         <span v-if="myCctvRequests.filter(c => c.status === 'pending').length > 0" class="absolute top-2 right-2 min-w-[20px] h-5 px-1 rounded-full bg-slate-600 text-white text-[10px] font-bold flex items-center justify-center">{{ myCctvRequests.filter(c => c.status === 'pending').length }}</span>
                     </button>
+                    <button @click="currentTab = 'gallery'" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95">
+                        <div class="w-12 h-12 rounded-full bg-pink-100 text-pink-600 flex items-center justify-center text-lg"><i class="fa-solid fa-images"></i></div>
+                        <span class="text-xs font-bold text-slate-700">แกลเลอรี่</span>
+                    </button>
+                    <button @click="currentTab = 'ownership'" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 relative">
+                        <div class="w-12 h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-lg"><i class="fa-solid fa-file-signature"></i></div>
+                        <span class="text-xs font-bold text-slate-700">ยืนยันสิทธิ์</span>
+                        <span v-if="myOwnershipRequests.filter(o => o.status === 'pending').length > 0" class="absolute top-2 right-2 min-w-[20px] h-5 px-1 rounded-full bg-indigo-500 text-white text-[10px] font-bold flex items-center justify-center">{{ myOwnershipRequests.filter(o => o.status === 'pending').length }}</span>
+                    </button>
                 </div>
 
                 <div v-if="currentTierBenefits.length > 0" class="glass-card p-5 mb-6">
@@ -1504,6 +1513,255 @@
             <iframe v-if="slipFrameOpen" src="slip.html" @load="slipFrameLoading = false" class="flex-1 w-full border-0"></iframe>
         </div>
 
+        <!-- ═══════ Gallery Tab (แกลเลอรี่ภาพหมู่บ้าน) ═══════ -->
+        <div v-if="currentTab === 'gallery' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-pink-50/30 overflow-y-auto z-20">
+            <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
+                <div class="mb-5 flex items-center gap-3">
+                    <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="flex-1">
+                        <h2 class="text-2xl font-extrabold text-slate-800">แกลเลอรี่หมู่บ้าน</h2>
+                        <p class="text-xs text-slate-500">ภาพเดือนนี้ · โหวตภาพที่ชอบได้</p>
+                    </div>
+                    <button @click="openGalleryUpload" class="px-4 py-2 bg-pink-500 rounded-2xl text-white text-sm font-bold flex items-center gap-2 shadow-md flex-shrink-0">
+                        <i class="fa-solid fa-camera"></i> ส่งภาพ
+                    </button>
+                </div>
+
+                <div v-if="galleryLoading" class="bg-white rounded-3xl p-12 text-center shadow-sm">
+                    <div class="w-10 h-10 mx-auto mb-3 border-4 border-pink-200 border-t-pink-500 rounded-full animate-spin"></div>
+                    <p class="text-sm text-slate-500 font-bold">กำลังโหลด...</p>
+                </div>
+
+                <div v-else-if="galleryPhotos.length === 0" class="bg-white rounded-3xl p-10 text-center shadow-sm">
+                    <div class="text-6xl mb-3">📸</div>
+                    <p class="font-bold text-slate-700 mb-1">ยังไม่มีภาพเดือนนี้</p>
+                    <p class="text-xs text-slate-400 mb-4">เป็นคนแรกที่ส่งภาพเข้าแกลเลอรี่!</p>
+                    <button @click="openGalleryUpload" class="px-6 py-2.5 bg-pink-500 text-white rounded-2xl font-bold text-sm">+ ส่งภาพ</button>
+                </div>
+
+                <div v-else class="space-y-4">
+                    <div v-for="p in galleryPhotos" :key="p.id" class="rounded-3xl shadow-md overflow-hidden bg-white">
+                        <div class="flex items-center gap-2.5 p-3">
+                            <img v-if="p.line_picture_url" :src="p.line_picture_url" class="w-9 h-9 rounded-full object-cover border border-slate-200">
+                            <div v-else class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">👤</div>
+                            <div class="flex-1 min-w-0">
+                                <div class="text-xs font-bold text-slate-700 truncate">{{ p.line_display_name || 'ไม่ระบุชื่อ' }}</div>
+                                <div class="text-[10px] text-slate-400">{{ p.house_no }} · {{ formatThaiDate(p.created_at) }}</div>
+                            </div>
+                        </div>
+                        <img :src="isValidImageUrl(p.image_url)" class="w-full aspect-square object-cover" @error="$event.target.style.display='none'">
+                        <div class="p-3">
+                            <p v-if="p.caption" class="text-sm text-slate-700 mb-2">{{ p.caption }}</p>
+                            <div class="flex items-center gap-4">
+                                <button @click="voteGalleryPhoto(p)" :disabled="p.hasVoted" class="flex items-center gap-1.5 text-sm font-bold"
+                                        :class="p.hasVoted ? 'text-rose-500' : 'text-slate-400'">
+                                    <i :class="p.hasVoted ? 'fa-solid fa-heart' : 'fa-regular fa-heart'"></i> {{ p.vote_count || 0 }}
+                                </button>
+                                <button @click="openGalleryComments(p)" class="flex items-center gap-1.5 text-sm font-bold text-slate-400">
+                                    <i class="fa-regular fa-comment"></i> {{ p.commentCount || 0 }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════ Gallery Upload Modal ═══════ -->
+        <div v-if="galleryUploadModal && !loading" @click.self="galleryUploadModal = false" class="fixed inset-0 modal-bg z-50 flex items-end md:items-center justify-center p-3">
+            <div class="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl slide-up max-h-[90vh] overflow-y-auto">
+                <div class="flex items-center gap-2 mb-4">
+                    <div class="text-2xl">📸</div>
+                    <h3 class="text-lg font-extrabold text-slate-800">ส่งภาพเข้าแกลเลอรี่</h3>
+                </div>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">เลือกภาพ *</label>
+                        <input type="file" accept="image/*" @change="onGalleryImageChange" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                        <div v-if="galleryUploadForm.preview" class="mt-2">
+                            <img :src="galleryUploadForm.preview" class="w-full h-48 object-cover rounded-xl border">
+                        </div>
+                        <div v-if="galleryImageUploading" class="mt-1 text-xs text-pink-500 flex items-center gap-1">
+                            <i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลด...
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">คำบรรยาย (ไม่บังคับ)</label>
+                        <textarea v-model="galleryUploadForm.caption" rows="2" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-pink-400 outline-none resize-none" placeholder="เล่าเกี่ยวกับภาพนี้..."></textarea>
+                    </div>
+                    <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-[11px] text-amber-700">
+                        ⏳ ภาพจะแสดงในแกลเลอรี่หลังผ่านการตรวจสอบจากนิติบุคคลแล้วเท่านั้น
+                    </div>
+                </div>
+                <div class="flex gap-2 mt-5">
+                    <button @click="galleryUploadModal = false" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold">ยกเลิก</button>
+                    <button @click="submitGalleryUpload" :disabled="gallerySaving || galleryImageUploading" class="flex-1 py-3 bg-pink-500 hover:bg-pink-600 disabled:bg-slate-300 text-white rounded-2xl font-bold flex items-center justify-center gap-2">
+                        <i v-if="gallerySaving" class="fa-solid fa-spinner fa-spin"></i>
+                        <i v-else class="fa-solid fa-paper-plane"></i>
+                        ส่งภาพ
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════ Gallery Comments Modal ═══════ -->
+        <div v-if="galleryCommentModal && !loading" @click.self="galleryCommentModal = null" class="fixed inset-0 modal-bg z-50 flex items-end justify-center">
+            <div class="bg-white rounded-t-3xl w-full max-w-lg max-h-[75vh] flex flex-col slide-up">
+                <div class="p-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
+                    <h3 class="font-bold text-slate-800">ความคิดเห็น</h3>
+                    <button @click="galleryCommentModal = null" class="text-slate-400"><i class="fa-solid fa-xmark text-lg"></i></button>
+                </div>
+                <div class="flex-1 overflow-y-auto p-4 space-y-3">
+                    <div v-if="galleryCommentsLoading" class="text-center text-slate-400 py-6">
+                        <i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลด...
+                    </div>
+                    <div v-else-if="galleryComments.length === 0" class="text-center text-slate-400 py-6 text-sm">ยังไม่มีความคิดเห็น เป็นคนแรกเลย!</div>
+                    <div v-for="c in galleryComments" :key="c.id" class="flex items-start gap-2.5">
+                        <img v-if="c.line_picture_url" :src="c.line_picture_url" class="w-8 h-8 rounded-full object-cover flex-shrink-0">
+                        <div v-else class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 flex-shrink-0 text-xs">👤</div>
+                        <div class="bg-slate-50 rounded-2xl px-3 py-2 flex-1">
+                            <div class="text-xs font-bold text-slate-700">{{ c.line_display_name || 'ไม่ระบุชื่อ' }}</div>
+                            <div class="text-sm text-slate-600">{{ c.comment_text }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="p-3 border-t border-slate-100 flex gap-2 flex-shrink-0 pb-safe">
+                    <input v-model="newCommentText" @keyup.enter="submitGalleryComment" type="text" placeholder="แสดงความคิดเห็น..."
+                           class="flex-1 rounded-2xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-pink-400 outline-none">
+                    <button @click="submitGalleryComment" :disabled="!newCommentText?.trim() || commentSaving" class="w-11 h-11 rounded-full bg-pink-500 hover:bg-pink-600 disabled:bg-slate-300 text-white flex items-center justify-center flex-shrink-0">
+                        <i class="fa-solid fa-paper-plane text-sm"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════ Ownership Tab (ยืนยันสิทธิ์เจ้าของบ้าน) ═══════ -->
+        <div v-if="currentTab === 'ownership' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-indigo-50/30 overflow-y-auto z-20">
+            <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
+                <div class="mb-5 flex items-center gap-3">
+                    <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="flex-1">
+                        <h2 class="text-2xl font-extrabold text-slate-800">ยืนยันสิทธิ์เจ้าของบ้าน</h2>
+                        <p class="text-xs text-slate-500">ยืนยันกรรมสิทธิ์ด้วยโฉนด + บัตรประชาชน</p>
+                    </div>
+                    <button @click="openOwnershipForm" class="px-4 py-2 bg-indigo-500 rounded-2xl text-white text-sm font-bold flex items-center gap-2 shadow-md flex-shrink-0">
+                        <i class="fa-solid fa-plus"></i> ยื่น
+                    </button>
+                </div>
+
+                <div v-if="ownershipLoading" class="bg-white rounded-3xl p-12 text-center shadow-sm">
+                    <div class="w-10 h-10 mx-auto mb-3 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin"></div>
+                    <p class="text-sm text-slate-500 font-bold">กำลังโหลด...</p>
+                </div>
+
+                <div v-else-if="myOwnershipRequests.length === 0" class="bg-white rounded-3xl p-10 text-center shadow-sm">
+                    <div class="text-6xl mb-3">🏠</div>
+                    <p class="font-bold text-slate-700 mb-1">ยังไม่เคยยื่นคำขอ</p>
+                    <p class="text-xs text-slate-400 mb-4">ใช้สำหรับยืนยันว่าท่านเป็นเจ้าของกรรมสิทธิ์ตัวจริง</p>
+                    <button @click="openOwnershipForm" class="px-6 py-2.5 bg-indigo-500 text-white rounded-2xl font-bold text-sm">+ ยื่นคำขอ</button>
+                </div>
+
+                <div v-else class="space-y-4">
+                    <div v-for="o in myOwnershipRequests" :key="o.id" class="rounded-3xl shadow-md overflow-hidden border-2 bg-white"
+                         :class="{ 'border-emerald-400': o.status === 'verified', 'border-amber-400': o.status === 'pending', 'border-rose-400': o.status === 'rejected' }">
+                        <div class="px-4 py-2 flex items-center justify-between text-xs font-bold"
+                             :class="{ 'bg-emerald-500 text-white': o.status === 'verified', 'bg-amber-500 text-white': o.status === 'pending', 'bg-rose-500 text-white': o.status === 'rejected' }">
+                            <span>{{ { pending:'⏳ รอตรวจสอบ', verified:'✅ ยืนยันแล้ว', rejected:'❌ ไม่ผ่าน' }[o.status] || o.status }}</span>
+                            <span>{{ formatThaiDate(o.created_at) }}</span>
+                        </div>
+                        <div class="p-4">
+                            <div class="font-bold text-slate-800 text-sm mb-1">{{ o.full_name }}</div>
+                            <div class="text-xs text-slate-500 mb-2">🏠 {{ o.house_number }} · {{ o.claim_type === 'joint' ? '👥 เจ้าของร่วม' + (o.ownership_share ? ' (' + o.ownership_share + ')' : '') : '👤 เจ้าของคนเดียว' }}</div>
+                            <div v-if="o.admin_remark" class="bg-indigo-50 rounded-xl p-3 text-xs text-indigo-700">
+                                <div class="font-bold mb-0.5">💬 หมายเหตุจากนิติบุคคล</div>
+                                {{ o.admin_remark }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════ Ownership Form Modal ═══════ -->
+        <div v-if="ownershipFormModal && !loading" @click.self="ownershipFormModal = false" class="fixed inset-0 modal-bg z-50 flex items-end md:items-center justify-center p-3">
+            <div class="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl slide-up max-h-[90vh] overflow-y-auto">
+                <div class="flex items-center gap-2 mb-4">
+                    <div class="text-2xl">🏠</div>
+                    <h3 class="text-lg font-extrabold text-slate-800">ยืนยันสิทธิ์เจ้าของบ้าน</h3>
+                </div>
+                <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-[11px] text-amber-700 mb-3">
+                    📌 ใช้สำหรับยืนยันว่าท่านเป็นเจ้าของกรรมสิทธิ์ตัวจริงตามโฉนดที่ดิน กรุณาเตรียมรูปโฉนดและบัตรประชาชนให้พร้อม
+                </div>
+                <div class="space-y-3">
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">บ้านเลขที่ *</label>
+                            <input v-model="ownershipForm.house_number" type="text" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">เบอร์โทร</label>
+                            <input v-model="ownershipForm.phone" type="tel" maxlength="10" inputmode="numeric"
+                                   @input="ownershipForm.phone = ownershipForm.phone.replace(/[^0-9]/g,'').replace(/^0*/,'0')"
+                                   class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">ชื่อ-สกุล (ตามโฉนด/บัตรประชาชน) *</label>
+                        <input v-model="ownershipForm.full_name" type="text" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">ประเภทกรรมสิทธิ์</label>
+                        <div class="flex gap-2">
+                            <button type="button" @click="ownershipForm.claim_type = 'sole'" class="flex-1 py-2.5 rounded-2xl text-sm font-bold border-2" :class="ownershipForm.claim_type === 'sole' ? 'bg-indigo-500 border-indigo-500 text-white' : 'bg-slate-50 border-slate-200 text-slate-500'">👤 คนเดียว</button>
+                            <button type="button" @click="ownershipForm.claim_type = 'joint'" class="flex-1 py-2.5 rounded-2xl text-sm font-bold border-2" :class="ownershipForm.claim_type === 'joint' ? 'bg-indigo-500 border-indigo-500 text-white' : 'bg-slate-50 border-slate-200 text-slate-500'">👥 เจ้าของร่วม</button>
+                        </div>
+                    </div>
+                    <div v-if="ownershipForm.claim_type === 'joint'">
+                        <label class="block text-xs font-bold text-slate-700 mb-1">สัดส่วนกรรมสิทธิ์</label>
+                        <input v-model="ownershipForm.ownership_share" type="text" placeholder="เช่น 1/2, 50%" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">รูปโฉนดที่ดิน *</label>
+                        <input type="file" accept="image/*" @change="onOwnershipFileChange($event, 'deed')" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                        <img v-if="ownershipForm.deed_image_url" :src="isValidImageUrl(ownershipForm.deed_image_url)" class="h-24 w-full object-cover rounded-xl border mt-2">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">รูปบัตรประชาชน *</label>
+                        <input type="file" accept="image/*" @change="onOwnershipFileChange($event, 'idcard')" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                        <img v-if="ownershipForm.id_card_image_url" :src="isValidImageUrl(ownershipForm.id_card_image_url)" class="h-24 w-full object-cover rounded-xl border mt-2">
+                    </div>
+                    <div v-if="ownershipImageUploading" class="text-xs text-indigo-500 flex items-center gap-1">
+                        <i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลด...
+                    </div>
+
+                    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3">
+                        <label class="flex items-start gap-2.5 cursor-pointer">
+                            <input type="checkbox" v-model="ownershipForm.consent" class="mt-0.5 w-4 h-4 accent-indigo-500 flex-shrink-0">
+                            <span class="text-[11px] text-slate-600 leading-relaxed">
+                                ข้าพเจ้ายินยอมให้นิติบุคคลหมู่บ้านเก็บรวบรวมและใช้ข้อมูลส่วนบุคคล เอกสารโฉนดที่ดิน และบัตรประชาชนที่แนบมา เพื่อวัตถุประสงค์ในการยืนยันสิทธิ์ความเป็นเจ้าของกรรมสิทธิ์เท่านั้น ตาม PDPA
+                            </span>
+                        </label>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">ลายเซ็นยืนยัน *</label>
+                        <canvas ref="ownershipSigCanvas" class="w-full border-2 border-dashed border-slate-300 rounded-2xl bg-white touch-none" style="height:120px"
+                                @mousedown="ownershipSigStart" @mousemove="ownershipSigMove" @mouseup="ownershipSigEnd" @mouseleave="ownershipSigEnd"
+                                @touchstart.prevent="ownershipSigStart" @touchmove.prevent="ownershipSigMove" @touchend.prevent="ownershipSigEnd"></canvas>
+                        <button type="button" @click="ownershipSigClear" class="text-xs text-slate-400 mt-1 underline">ล้างลายเซ็น</button>
+                    </div>
+                </div>
+                <div class="flex gap-2 mt-5">
+                    <button @click="ownershipFormModal = false" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold">ยกเลิก</button>
+                    <button @click="submitOwnershipRequest" :disabled="ownershipSaving || ownershipImageUploading" class="flex-1 py-3 bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-300 text-white rounded-2xl font-bold flex items-center justify-center gap-2">
+                        <i v-if="ownershipSaving" class="fa-solid fa-spinner fa-spin"></i>
+                        <i v-else class="fa-solid fa-paper-plane"></i>
+                        ส่งคำขอ
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- ═══════ Car Form Modal ═══════ -->
         <div v-if="carFormModal && !loading" @click.self="carFormModal = false" class="fixed inset-0 modal-bg z-50 flex items-end md:items-center justify-center p-3">
             <div class="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl slide-up max-h-[90vh] overflow-y-auto">
@@ -1668,6 +1926,25 @@
                                 <div class="text-[11px] text-slate-500">ประวัติ · {{ myCctvRequests.length }} รายการ</div>
                             </div>
                             <span v-if="myCctvRequests.filter(c => c.status === 'pending').length > 0" class="text-[10px] font-bold bg-slate-600 text-white px-2 py-0.5 rounded-full">⏳{{ myCctvRequests.filter(c => c.status === 'pending').length }}</span>
+                            <i class="fa-solid fa-chevron-right text-slate-300 text-xs ml-1"></i>
+                        </button>
+
+                        <button @click="showSettings = false; currentTab = 'gallery'" class="w-full p-3 flex items-center gap-3 rounded-xl hover:bg-slate-50 active:bg-slate-100 text-left">
+                            <div class="w-10 h-10 rounded-xl bg-pink-100 text-pink-600 flex items-center justify-center"><i class="fa-solid fa-images"></i></div>
+                            <div class="flex-1">
+                                <div class="font-bold text-sm text-slate-800">แกลเลอรี่ภาพหมู่บ้าน</div>
+                                <div class="text-[11px] text-slate-500">ดู โหวต คอมเมนต์ภาพของเดือนนี้</div>
+                            </div>
+                            <i class="fa-solid fa-chevron-right text-slate-300 text-xs ml-1"></i>
+                        </button>
+
+                        <button @click="showSettings = false; currentTab = 'ownership'" class="w-full p-3 flex items-center gap-3 rounded-xl hover:bg-slate-50 active:bg-slate-100 text-left">
+                            <div class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center"><i class="fa-solid fa-file-signature"></i></div>
+                            <div class="flex-1">
+                                <div class="font-bold text-sm text-slate-800">ยืนยันสิทธิ์เจ้าของบ้าน</div>
+                                <div class="text-[11px] text-slate-500">ประวัติ · {{ myOwnershipRequests.length }} รายการ</div>
+                            </div>
+                            <span v-if="myOwnershipRequests.filter(o => o.status === 'pending').length > 0" class="text-[10px] font-bold bg-indigo-500 text-white px-2 py-0.5 rounded-full">⏳{{ myOwnershipRequests.filter(o => o.status === 'pending').length }}</span>
                             <i class="fa-solid fa-chevron-right text-slate-300 text-xs ml-1"></i>
                         </button>
 
@@ -1905,6 +2182,20 @@
                     cctvFormModal: false,
                     cctvForm: { house_number: '', phone: '', camera_zone: '', camera_zone_custom: '', request_date: '', time_range: '', reason: '', consent: false },
                     cctvSaving: false, cctvSigDrawing: false, cctvSigHasDrawn: false,
+
+                    // ─── Gallery (แกลเลอรี่ภาพหมู่บ้าน) ───
+                    galleryPhotos: [], galleryLoading: false,
+                    galleryUploadModal: false, galleryUploadForm: { file: null, preview: null, caption: '' },
+                    galleryImageUploading: false, gallerySaving: false,
+                    galleryCommentModal: null, galleryComments: [], galleryCommentsLoading: false,
+                    newCommentText: '', commentSaving: false,
+
+                    // ─── Ownership Verification (ยืนยันสิทธิ์เจ้าของบ้าน) ───
+                    myOwnershipRequests: [], ownershipLoading: false,
+                    ownershipFormModal: false,
+                    ownershipForm: { house_number: '', phone: '', full_name: '', claim_type: 'sole', ownership_share: '', deed_image_url: '', id_card_image_url: '', consent: false },
+                    ownershipImageUploading: false, ownershipSaving: false,
+                    ownershipSigDrawing: false, ownershipSigHasDrawn: false,
                     cardConfirmModal: null, cardConfirmIsEdit: false, cardConfirmRole: 'สมาชิกในบ้าน',
                     cardPhotoPreview: null, cardCapturedPhoto: null, cardPhotoError: null,
                     cardConfirmSaving: false,
@@ -2127,6 +2418,8 @@
                     if (newVal === 'repairs' && this.myRepairs.length === 0) this.loadMyRepairs();
                     if (newVal === 'profile' && !this.statusCheckResult) this.checkMyStatus();
                     if (newVal === 'cctv' && this.myCctvRequests.length === 0) this.loadMyCctvRequests();
+                    if (newVal === 'gallery' && this.galleryPhotos.length === 0) this.loadGalleryPhotos();
+                    if (newVal === 'ownership' && this.myOwnershipRequests.length === 0) this.loadMyOwnershipRequests();
                     if (newVal === 'news' && this.announcements.length === 0) this.loadAnnouncements();
                 },
                 showFullCard(v) { if (v) this.$nextTick(() => this.renderMemberBarcode('fs-member-barcode')); },
@@ -3557,6 +3850,254 @@
                         Swal.fire('ไม่สำเร็จ', err.message, 'error');
                     } finally {
                         this.cctvSaving = false;
+                    }
+                },
+
+                // ════════════════════════════════════════════════════════════
+                // 📸 GALLERY (แกลเลอรี่ภาพหมู่บ้าน) — เรียก endpoint ที่เปิด
+                // สาธารณะอยู่แล้ว (gallery_list/vote/comment_*) ตรงๆ จาก admin/audience
+                // ════════════════════════════════════════════════════════════
+                async loadGalleryPhotos() {
+                    this.galleryLoading = true;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/gallery_list?uid=${this.userProfile.userId}`);
+                        const d = await res.json();
+                        this.galleryPhotos = d.items || [];
+                    } catch (e) { console.error('loadGalleryPhotos', e); }
+                    finally { this.galleryLoading = false; }
+                },
+
+                async voteGalleryPhoto(p) {
+                    if (p.hasVoted) return;
+                    // อัปเดต UI ทันที (optimistic) แล้วค่อยยิง API จริง
+                    p.hasVoted = true; p.vote_count = (p.vote_count || 0) + 1;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/gallery_vote`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ photoId: p.id, voterUid: this.userProfile.userId })
+                        });
+                        const d = await res.json();
+                        if (!res.ok) { p.hasVoted = false; p.vote_count = Math.max(0, (p.vote_count || 1) - 1); return; }
+                        p.vote_count = d.voteCount;
+                    } catch (e) { p.hasVoted = false; p.vote_count = Math.max(0, (p.vote_count || 1) - 1); }
+                },
+
+                openGalleryUpload() {
+                    this.galleryUploadForm = { file: null, preview: null, caption: '' };
+                    this.galleryUploadModal = true;
+                },
+
+                onGalleryImageChange(e) {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    this.galleryUploadForm.file = file;
+                    this.galleryUploadForm.preview = URL.createObjectURL(file);
+                },
+
+                async submitGalleryUpload() {
+                    if (!this.galleryUploadForm.file) return Swal.fire('', 'กรุณาเลือกภาพ', 'warning');
+                    this.gallerySaving = true;
+                    try {
+                        this.galleryImageUploading = true;
+                        const fd = new FormData();
+                        fd.append('file', this.galleryUploadForm.file, `gallery_${Date.now()}.jpg`);
+                        const upRes = await fetch(`${EDGE_FUNCTION_URL}/api/crm/upload_gallery_image`, { method: 'POST', body: fd });
+                        const upD = await upRes.json();
+                        if (!upRes.ok) throw new Error(upD.error || 'อัปโหลดรูปไม่สำเร็จ');
+                        this.galleryImageUploading = false;
+
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/gallery_upload`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                uid: this.userProfile.userId, lineDisplayName: this.userProfile.displayName,
+                                linePictureUrl: this.userProfile.pictureUrl,
+                                houseNo: this.repairHouseNumber || this.carHouseNumber || this.complaintHouseNumber || null,
+                                imageUrl: upD.url, caption: this.galleryUploadForm.caption || null,
+                            })
+                        });
+                        const d = await res.json();
+                        if (!res.ok) throw new Error(d.error || 'ส่งภาพไม่สำเร็จ');
+
+                        Swal.fire({ icon: 'success', title: '📸 ส่งภาพแล้ว', html: '<small>รอการตรวจสอบก่อนแสดงในแกลเลอรี่</small>', timer: 2200, showConfirmButton: false });
+                        this.galleryUploadModal = false;
+                    } catch (err) {
+                        Swal.fire('ไม่สำเร็จ', err.message, 'error');
+                    } finally {
+                        this.gallerySaving = false; this.galleryImageUploading = false;
+                    }
+                },
+
+                async openGalleryComments(p) {
+                    this.galleryCommentModal = p;
+                    this.galleryComments = []; this.newCommentText = '';
+                    this.galleryCommentsLoading = true;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/gallery_comment_list?photoId=${p.id}`);
+                        const d = await res.json();
+                        this.galleryComments = d.comments || [];
+                    } catch (e) { console.warn('openGalleryComments', e); }
+                    finally { this.galleryCommentsLoading = false; }
+                },
+
+                async submitGalleryComment() {
+                    if (!this.newCommentText?.trim() || !this.galleryCommentModal) return;
+                    this.commentSaving = true;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/gallery_comment_add`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                photoId: this.galleryCommentModal.id, uid: this.userProfile.userId,
+                                lineDisplayName: this.userProfile.displayName, linePictureUrl: this.userProfile.pictureUrl,
+                                commentText: this.newCommentText,
+                            })
+                        });
+                        const d = await res.json();
+                        if (!res.ok) throw new Error(d.error || 'ส่งความคิดเห็นไม่สำเร็จ');
+                        this.galleryComments.push(d.comment);
+                        this.galleryCommentModal.commentCount = (this.galleryCommentModal.commentCount || 0) + 1;
+                        this.newCommentText = '';
+                    } catch (err) {
+                        Swal.fire('ไม่สำเร็จ', err.message, 'error');
+                    } finally {
+                        this.commentSaving = false;
+                    }
+                },
+
+                // ════════════════════════════════════════════════════════════
+                // 🏠 OWNERSHIP VERIFICATION (ยืนยันสิทธิ์เจ้าของบ้าน) — เรียก
+                // endpoint /api/admin/audience/ ตรงๆ เหมือน CCTV (เปิดสาธารณะอยู่แล้ว)
+                // ════════════════════════════════════════════════════════════
+                async loadMyOwnershipRequests() {
+                    this.ownershipLoading = true;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/ownership_verify_list_mine?uid=${this.userProfile.userId}`);
+                        const d = await res.json();
+                        this.myOwnershipRequests = d.items || [];
+                    } catch (e) { console.error('loadMyOwnershipRequests', e); }
+                    finally { this.ownershipLoading = false; }
+                },
+
+                openOwnershipForm() {
+                    this.ownershipForm = {
+                        house_number: this.repairHouseNumber || this.carHouseNumber || this.complaintHouseNumber || '',
+                        phone: this.ownershipForm.phone || this.memberData?.phone || '',
+                        full_name: this.memberData?.fullname || this.userProfile?.displayName || '',
+                        claim_type: 'sole', ownership_share: '', deed_image_url: '', id_card_image_url: '', consent: false,
+                    };
+                    this.ownershipFormModal = true;
+                    this.$nextTick(() => this.ownershipSigSetupCanvas());
+                },
+
+                async onOwnershipFileChange(e, kind) {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    this.ownershipImageUploading = true;
+                    try {
+                        const canvas = document.createElement('canvas');
+                        const img = await new Promise((res, rej) => {
+                            const i = new Image();
+                            i.onload = () => res(i);
+                            i.onerror = rej;
+                            i.src = URL.createObjectURL(file);
+                        });
+                        const maxW = 1280;
+                        const scale = Math.min(1, maxW / img.width);
+                        canvas.width = img.width * scale;
+                        canvas.height = img.height * scale;
+                        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                        const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.8));
+
+                        const fd = new FormData();
+                        fd.append('file', blob, `${kind}_${Date.now()}.jpg`);
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/upload_complaint_image`, { method: 'POST', body: fd });
+                        const d = await res.json();
+                        if (!res.ok) throw new Error(d.error || 'อัปโหลดไม่สำเร็จ');
+                        if (kind === 'deed') this.ownershipForm.deed_image_url = d.url;
+                        else this.ownershipForm.id_card_image_url = d.url;
+                    } catch (err) {
+                        Swal.fire('อัปโหลดไม่สำเร็จ', err.message, 'error');
+                    } finally {
+                        this.ownershipImageUploading = false;
+                    }
+                },
+
+                // ลายเซ็นยืนยันสิทธิ์เจ้าของบ้าน — canvas แยกคนละตัวจากร้องเรียน/CCTV
+                ownershipSigSetupCanvas() {
+                    const canvas = this.$refs.ownershipSigCanvas;
+                    if (!canvas) return;
+                    const ratio = window.devicePixelRatio || 1;
+                    const rect = canvas.getBoundingClientRect();
+                    canvas.width = rect.width * ratio;
+                    canvas.height = rect.height * ratio;
+                    const ctx = canvas.getContext('2d');
+                    ctx.scale(ratio, ratio);
+                    ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.strokeStyle = '#1e293b';
+                    this.ownershipSigHasDrawn = false;
+                },
+                ownershipSigPos(e) {
+                    const canvas = this.$refs.ownershipSigCanvas;
+                    const rect = canvas.getBoundingClientRect();
+                    const t = e.touches ? e.touches[0] : e;
+                    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+                },
+                ownershipSigStart(e) { this.ownershipSigDrawing = true; this._ownershipSigLast = this.ownershipSigPos(e); },
+                ownershipSigMove(e) {
+                    if (!this.ownershipSigDrawing) return;
+                    const canvas = this.$refs.ownershipSigCanvas;
+                    const ctx = canvas.getContext('2d');
+                    const p = this.ownershipSigPos(e);
+                    ctx.beginPath(); ctx.moveTo(this._ownershipSigLast.x, this._ownershipSigLast.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+                    this._ownershipSigLast = p; this.ownershipSigHasDrawn = true;
+                },
+                ownershipSigEnd() { this.ownershipSigDrawing = false; },
+                ownershipSigClear() {
+                    const canvas = this.$refs.ownershipSigCanvas;
+                    if (!canvas) return;
+                    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+                    this.ownershipSigHasDrawn = false;
+                },
+
+                async submitOwnershipRequest() {
+                    if (!this.ownershipForm.house_number?.trim()) return Swal.fire('', 'กรุณากรอกบ้านเลขที่', 'warning');
+                    if (!this.ownershipForm.full_name?.trim()) return Swal.fire('', 'กรุณากรอกชื่อ-สกุล', 'warning');
+                    if (!this.ownershipForm.deed_image_url) return Swal.fire('', 'กรุณาแนบรูปโฉนดที่ดิน', 'warning');
+                    if (!this.ownershipForm.id_card_image_url) return Swal.fire('', 'กรุณาแนบรูปบัตรประชาชน', 'warning');
+                    if (!this.ownershipForm.consent) return Swal.fire('', 'กรุณายินยอมให้ตรวจสอบข้อมูลก่อน', 'warning');
+                    if (!this.ownershipSigHasDrawn) return Swal.fire('', 'กรุณาเซ็นชื่อยืนยันก่อนส่งคำขอ', 'warning');
+
+                    this.ownershipSaving = true;
+                    try {
+                        const canvas = this.$refs.ownershipSigCanvas;
+                        const sigBlob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+                        const sigFd = new FormData();
+                        sigFd.append('file', sigBlob, `ownership_sig_${Date.now()}.png`);
+                        const sigRes = await fetch(`${EDGE_FUNCTION_URL}/api/crm/upload_complaint_image`, { method: 'POST', body: sigFd });
+                        const sigD = await sigRes.json();
+                        if (!sigRes.ok) throw new Error(sigD.error || 'อัปโหลดลายเซ็นไม่สำเร็จ');
+
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/ownership_verify_submit`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                uid: this.userProfile.userId, lineDisplayName: this.userProfile.displayName,
+                                linePictureUrl: this.userProfile.pictureUrl,
+                                houseNumber: this.ownershipForm.house_number, fullName: this.ownershipForm.full_name,
+                                phoneNumber: this.ownershipForm.phone || null,
+                                claimType: this.ownershipForm.claim_type,
+                                ownershipShare: this.ownershipForm.claim_type === 'joint' ? this.ownershipForm.ownership_share : null,
+                                deedImageUrl: this.ownershipForm.deed_image_url, idCardImageUrl: this.ownershipForm.id_card_image_url,
+                                consentGiven: true, signatureUrl: sigD.url,
+                            })
+                        });
+                        const d = await res.json();
+                        if (!res.ok) throw new Error(d.error || 'ส่งคำขอไม่สำเร็จ');
+
+                        Swal.fire({ icon: 'success', title: '🏠 ส่งคำขอแล้ว', html: '<small>รอการตรวจสอบจากนิติบุคคล</small>', timer: 2200, showConfirmButton: false });
+                        this.ownershipFormModal = false;
+                        await this.loadMyOwnershipRequests();
+                    } catch (err) {
+                        Swal.fire('ไม่สำเร็จ', err.message, 'error');
+                    } finally {
+                        this.ownershipSaving = false;
                     }
                 },
 
