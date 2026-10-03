@@ -632,7 +632,28 @@
         // CONFIG
         const supabaseUrl = 'https://zmdywddraaeegzkvpwsw.supabase.co';
         const supabaseKey = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ';
+
+        // 🔔 Telegram Notification Config
+        // กรอกค่าจากไฟล์ .env บนเครื่องเซิร์ฟเวอร์ (ตัวแปร TELEGRAM_TOKEN / TELEGRAM_CHAT_ID ตัวเดียวกัน)
+        const TELEGRAM_BOT_TOKEN = '8064168284:AAFDzyATjQ0fJhsCNQRDulL1FlpU3CykFAs';
+        const TELEGRAM_CHAT_ID   = '-4574041962';
         const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+        // 🔔 ส่งข้อความแจ้งเตือนไป Telegram (เงียบๆ ถ้าส่งไม่สำเร็จ ไม่ให้ไปขัดขวางการทำงานหลัก)
+        async function sendTelegramNotify(text) {
+            if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN') return; // ยังไม่ได้ตั้งค่า
+            try {
+                await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'Markdown' })
+                });
+            } catch (err) {
+                console.warn('⚠️ ส่ง Telegram แจ้งเตือนไม่สำเร็จ:', err.message);
+            }
+        }
+        // escape อักขระพิเศษของ Markdown กันข้อความ parse พังเหมือนที่เคยเจอฝั่ง server.js
+        function escapeTgMarkdown(text) { return String(text ?? '-').replace(/([_*`[])/g, '\\$1'); }
 
         // สร้าง UUID v4 เอง ไม่พึ่ง crypto.randomUUID() เพราะฟังก์ชันนั้นใช้ได้เฉพาะ secure context
         // (HTTPS หรือ localhost) เท่านั้น — หน้านี้เปิดผ่าน http:// ธรรมดาบน LAN จึงต้องมีตัวสำรองนี้
@@ -1584,6 +1605,14 @@
                 });
                 refreshCurrentView();
 
+                sendTelegramNotify(
+                    `✅ *อนุมัติรถใหม่*\n\n` +
+                    `🚗 ทะเบียน: *${escapeTgMarkdown(req.plate_number)}*\n` +
+                    `🏠 บ้านเลขที่: ${escapeTgMarkdown(req.house_number)}\n` +
+                    `${isRenewal ? '🔁 (คำขอต่ออายุ)\n' : ''}` +
+                    `📅 หมดอายุ: ${new Date(endDate).toLocaleDateString('th-TH', {year:'numeric',month:'long',day:'numeric'})}`
+                );
+
             } catch(err) {
                 Swal.fire('Error', err.message, 'error');
             }
@@ -2286,6 +2315,14 @@
                 }
 
                 closeModal(); Swal.fire('สำเร็จ', 'บันทึกเรียบร้อย ระบบกำลังส่งข้อมูลไปที่กล้อง...', 'success'); refreshCurrentView();
+
+                const isEdit = !!editIdInput.value;
+                const actionLabel = payload.list_type === 'blocklist' ? '🚫 ระงับ/บล็อกรถ' : (isEdit ? '✏️ แก้ไขข้อมูลรถ' : '➕ เพิ่มรถใหม่');
+                sendTelegramNotify(
+                    `${actionLabel}\n\n` +
+                    `🚗 ทะเบียน: *${escapeTgMarkdown(plate)}*\n` +
+                    `🏠 บ้านเลขที่: ${escapeTgMarkdown(payload.house_number)}`
+                );
             } catch (err) {
                 console.error('❌ saveData error:', err);
                 Swal.fire('บันทึกไม่สำเร็จ', err.message || 'เกิดข้อผิดพลาดในการเขียนข้อมูล (อาจเป็นเพราะสิทธิ์การเข้าถึง/RLS)', 'error');
@@ -2308,6 +2345,12 @@
                     if (errUpd) throw errUpd;
                     Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'สั่งลบแล้ว ระบบกำลังส่งไปที่กล้อง...', showConfirmButton: false, timer: 2500 });
                     refreshCurrentView();
+
+                    sendTelegramNotify(
+                        `🗑️ *ลบข้อมูลรถ*\n\n` +
+                        `🚗 ทะเบียน: *${escapeTgMarkdown(plate)}*\n` +
+                        `🏠 บ้านเลขที่: ${escapeTgMarkdown(data?.house_number)}`
+                    );
                 } catch (err) {
                     console.error('❌ handleDelete error:', err);
                     Swal.fire('ลบไม่สำเร็จ', err.message || 'เกิดข้อผิดพลาดในการเขียนข้อมูล (อาจเป็นเพราะสิทธิ์การเข้าถึง/RLS)', 'error');
