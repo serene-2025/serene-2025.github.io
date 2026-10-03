@@ -1056,11 +1056,11 @@
         async function fetchCars() {
             // 🟢 ถ้าเคยดึงมาแล้ว และไม่ได้กด Refresh จะข้ามการต่อ Supabase
             if ((currentView === 'active' || currentView === 'house_stats') && isLoaded.active) {
-                if (currentView === 'house_stats') renderHouseStats(allCarsData); else handleSearch();
+                if (currentView === 'house_stats') renderHouseStats(allCarsData); else performSearch();
                 return;
             }
-            if (currentView === 'deleted' && isLoaded.deleted) return handleSearch();
-            if (currentView === 'visitor_history' && isLoaded.visitor_history) return handleSearch();
+            if (currentView === 'deleted' && isLoaded.deleted) return performSearch();
+            if (currentView === 'visitor_history' && isLoaded.visitor_history) return performSearch();
 
             try {
                 let query;
@@ -1084,7 +1084,15 @@
                 if (currentView === 'deleted') isLoaded.deleted = true;
                 if (currentView === 'visitor_history') isLoaded.visitor_history = true;
 
-                if (currentView === 'house_stats') renderHouseStats(data); else handleSearch();
+                if (currentView === 'house_stats') { renderHouseStats(data); return; }
+                performSearch();
+
+                // 🟢 ตัวเลข "รายการทั้งหมด" ต้องเป็นจำนวนจริงในระบบ ไม่ใช่แค่ขนาดของชุดที่โหลดมาแสดง
+                // (ซึ่งถูก .limit() ไว้เพื่อความเร็ว) ยิง count query แยกแบบเบา (head:true ไม่โหลดข้อมูลจริง)
+                if (currentView === 'active' && !document.getElementById('searchInput').value.trim()) {
+                    const { count } = await supabaseClient.from('allowed_cars').select('id', { count: 'exact', head: true }).neq('status', 'pending_delete');
+                    if (count !== null && count !== undefined) totalCountEl.textContent = count;
+                }
             } catch (err) { console.warn(err); }
         }
 
@@ -1151,20 +1159,84 @@
             });
         }
 
+        // 🟢 ค้นหาแบบ debounce (รอพิมพ์หยุดสักครู่ค่อยยิง query กันเปลืองและกันกระพริบ)
+        let _searchDebounceTimer = null;
         function handleSearch() {
-            if (currentView === 'house_stats' || currentView === 'permission_check') return;
-            const q = document.getElementById('searchInput').value.toLowerCase().trim();
-            let filtered;
+            clearTimeout(_searchDebounceTimer);
+            _searchDebounceTimer = setTimeout(performSearch, 350);
+        }
 
-            if (currentView === 'members') {
-                filtered = q ? allCarsData.filter(m => (m.fullname||'').toLowerCase().includes(q) || (m.house_no||'').toLowerCase().includes(q) || (m.line_name||'').toLowerCase().includes(q)) : allCarsData;
-                renderMembers(filtered);
-            } else if (currentView === 'all_registrations') {
-                filtered = q ? allRegistrationsData.filter(r => (r.plate_number||'').toLowerCase().includes(q) || (r.house_number||'').toLowerCase().includes(q) || (r.fullname||'').toLowerCase().includes(q) || (r.phone||'').toLowerCase().includes(q)) : allRegistrationsData;
-                renderAllRegistrationsList(filtered);
-            } else {
-                filtered = q ? allCarsData.filter(c => (c.plate_number||'').toLowerCase().includes(q) || (c.house_number||'').toLowerCase().includes(q)) : allCarsData;
-                renderList(filtered);
+        // PostgREST .or() filter ใช้ , และ () เป็นตัวแบ่งเงื่อนไข ต้องตัดออกจากคำค้นหาก่อน กันพัง
+        function sanitizeSearchTerm(q) { return q.replace(/[,()%]/g, ''); }
+
+        async function performSearch() {
+            if (currentView === 'house_stats' || currentView === 'permission_check') return;
+            const qRaw = document.getElementById('searchInput').value.trim();
+            const q = qRaw.toLowerCase();
+
+            // ไม่มีคำค้นหา → แสดงชุดข้อมูลที่โหลด/แคชไว้ตามปกติ (เร็ว ไม่ต้องยิง Supabase ใหม่)
+            if (!q) {
+                if (currentView === 'members') renderMembers(allCarsData);
+                else if (currentView === 'all_registrations') renderAllRegistrationsList(allRegistrationsData);
+                else renderList(allCarsData);
+                return;
+            }
+
+            // มีคำค้นหา → ยิง query ค้นหาตรงไปที่ Supabase ทั้งตาราง ไม่ผูกกับจำนวนที่โหลดมาแสดงผลปกติ
+            // (ข้อมูลที่โหลดมาแสดง "เรียกดู" ปกติถูกจำกัดจำนวนไว้เพื่อความเร็ว แต่การค้นหาต้องหาได้ทั้งหมด)
+            const qSafe = sanitizeSearchTerm(qRaw);
+            if (!qSafe) return; // เหลือแต่อักขระพิเศษล้วนๆ ข้ามไป กันยิง query เปล่า
+
+            try {
+                if (currentView === 'members') {
+                    const { data, error } = await supabaseClient.from('userhome')
+                        .select('uid, fullname, line_name, house_no, check_mode')
+                        .or(`fullname.ilike.%${qSafe}%,house_no.ilike.%${qSafe}%,line_name.ilike.%${qSafe}%`)
+                        .limit(200);
+                    if (error) throw error;
+                    renderMembers(data || []);
+
+                } else if (currentView === 'all_registrations') {
+                    const { data, error } = await supabaseClient.from('car_registrations')
+                        .select('id, created_at, plate_number, province, house_number, fullname, phone, car_type, status, renewal_note, image_url')
+                        .or(`plate_number.ilike.%${qSafe}%,house_number.ilike.%${qSafe}%,fullname.ilike.%${qSafe}%,phone.ilike.%${qSafe}%`)
+                        .order('created_at', { ascending: false })
+                        .limit(200);
+                    if (error) throw error;
+                    renderAllRegistrationsList(data || []);
+
+                } else if (currentView === 'deleted') {
+                    const { data, error } = await supabaseClient.from('deleted_cars')
+                        .select('*')
+                        .or(`plate_number.ilike.%${qSafe}%,house_number.ilike.%${qSafe}%`)
+                        .order('deleted_at', { ascending: false })
+                        .limit(200);
+                    if (error) throw error;
+                    renderList(data || []);
+
+                } else if (currentView === 'visitor_history') {
+                    const { data, error } = await supabaseClient.from('visitor_history')
+                        .select('*')
+                        .or(`plate_number.ilike.%${qSafe}%,house_number.ilike.%${qSafe}%`)
+                        .order('archived_at', { ascending: false })
+                        .limit(200);
+                    if (error) throw error;
+                    renderList(data || []);
+
+                } else {
+                    // active view (ค่าเริ่มต้น)
+                    const { data, error } = await supabaseClient.from('allowed_cars')
+                        .select('id, plate_number, province, house_number, list_type, start_date, end_date, status')
+                        .neq('status', 'pending_delete')
+                        .or(`plate_number.ilike.%${qSafe}%,house_number.ilike.%${qSafe}%`)
+                        .order('created_at', { ascending: false })
+                        .limit(200);
+                    if (error) throw error;
+                    renderList(data || []);
+                }
+            } catch (err) {
+                console.error('❌ search error:', err);
+                Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'ค้นหาไม่สำเร็จ: ' + err.message, showConfirmButton: false, timer: 2500 });
             }
         }
 
@@ -1518,21 +1590,19 @@
         // ==========================================
         async function fetchAllRegistrations() {
             // 🟢 Caching
-            if (isLoaded.all_registrations) return handleSearch();
+            if (isLoaded.all_registrations) return performSearch();
 
             try {
-                // 🟢 ลบ image_url ออกเพื่อไม่ให้โหลดรูปหนักๆ ซ้ำซ้อน แต่คงคอลัมน์อื่นๆ ไว้เหมือนเดิม
-// ค้นหาบรรทัดที่มี .select('id, created_at, ...') แล้วแก้เป็น:
-const { data, error } = await supabaseClient
-    .from('car_registrations')
-    .select('id, created_at, plate_number, province, house_number, fullname, phone, car_type, status, renewal_note, image_url') 
-    .order('created_at', { ascending: false })
-    .limit(300);
-                    
+                const { data, error } = await supabaseClient
+                    .from('car_registrations')
+                    .select('id, created_at, plate_number, province, house_number, fullname, phone, car_type, status, renewal_note, image_url')
+                    .order('created_at', { ascending: false })
+                    .limit(300);
+
                 if (error) throw error;
                 allRegistrationsData = data || [];
                 isLoaded.all_registrations = true;
-                handleSearch();
+                performSearch();
             } catch (err) {
                 console.warn('❌ fetchAllRegistrations:', err);
                 carList.innerHTML = `<div class="text-center py-20 text-rose-400">โหลดข้อมูลไม่สำเร็จ: ${err.message}</div>`;
@@ -1680,7 +1750,7 @@ const { data, error } = await supabaseClient
 
         async function fetchMembers() {
              // 🟢 Caching
-             if (isLoaded.members) return handleSearch();
+             if (isLoaded.members) return performSearch();
 
              try {
                 const { data, error } = await supabaseClient
@@ -1692,7 +1762,7 @@ const { data, error } = await supabaseClient
                 if (error) return;
                 allCarsData = data; 
                 isLoaded.members = true;
-                handleSearch();
+                performSearch();
              } catch (err) { console.warn(err); }
         }
 
@@ -2016,7 +2086,12 @@ const { data, error } = await supabaseClient
                     for (let i = 0; i < carsToDelete.length; i++) {
                         const car = carsToDelete[i];
                         try {
-                            const backupCar = { ...car, list_type: 'duplicate_removed' };
+                            // 🟢 ระบุเฉพาะคอลัมน์ที่ deleted_cars มีจริง (เหตุผลเดียวกับ handleDelete ด้านบน)
+                            const backupCar = {
+                                plate_number: car.plate_number, province: car.province, house_number: car.house_number,
+                                list_type: 'duplicate_removed', start_date: car.start_date, end_date: car.end_date,
+                                line_user_id: car.line_user_id, line_display_name: car.line_display_name, line_picture_url: car.line_picture_url
+                            };
                             await supabaseClient.from('deleted_cars').insert([backupCar]);
                             await supabaseClient.from('allowed_cars').delete().eq('id', car.id);
                             successCount++;
@@ -2202,7 +2277,14 @@ const { data, error } = await supabaseClient
                     const {data, error: errSel} = await supabaseClient.from('allowed_cars').select('*').eq('id', id).single();
                     if (errSel) throw errSel;
                     if(data) {
-                        const { error: errIns } = await supabaseClient.from('deleted_cars').insert([{...data}]);
+                        // 🟢 ระบุเฉพาะคอลัมน์ที่ตาราง deleted_cars มีจริง (ห้ามสเปรดทั้งแถวดิบ เพราะ
+                        // allowed_cars มีคอลัมน์ created_at ซึ่ง deleted_cars ไม่มี จะทำให้ insert ล้มเหลว)
+                        const backupPayload = {
+                            plate_number: data.plate_number, province: data.province, house_number: data.house_number,
+                            list_type: data.list_type, start_date: data.start_date, end_date: data.end_date,
+                            line_user_id: data.line_user_id, line_display_name: data.line_display_name, line_picture_url: data.line_picture_url
+                        };
+                        const { error: errIns } = await supabaseClient.from('deleted_cars').insert([backupPayload]);
                         if (errIns) throw errIns;
                     }
                     const { error: errUpd } = await supabaseClient.from('allowed_cars').update({status:'pending_delete'}).eq('id', id);
