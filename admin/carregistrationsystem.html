@@ -634,6 +634,35 @@
         const supabaseKey = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ';
         const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
 
+        // สร้าง UUID v4 เอง ไม่พึ่ง crypto.randomUUID() เพราะฟังก์ชันนั้นใช้ได้เฉพาะ secure context
+        // (HTTPS หรือ localhost) เท่านั้น — หน้านี้เปิดผ่าน http:// ธรรมดาบน LAN จึงต้องมีตัวสำรองนี้
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+                const r = Math.random() * 16 | 0;
+                const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        // 🟢 ตาราง deleted_cars รองรับเฉพาะคอลัมน์เหล่านี้เท่านั้น (ไม่มี created_at, ไม่มี status)
+        // และต้องการ id แบบระบุเอง (ไม่มีค่า default อัตโนมัติ) — ใช้ฟังก์ชันนี้สร้าง payload
+        // ทุกครั้งที่จะ insert เข้า deleted_cars กันปัญหาคอลัมน์ไม่ตรงกับ allowed_cars/car_registrations
+        function buildDeletedCarsPayload(source, overrides = {}) {
+            return {
+                id: source.id || generateUUID(),
+                plate_number: source.plate_number,
+                province: source.province,
+                house_number: source.house_number,
+                list_type: source.list_type,
+                start_date: source.start_date,
+                end_date: source.end_date,
+                line_user_id: source.line_user_id,
+                line_display_name: source.line_display_name,
+                line_picture_url: source.line_picture_url,
+                ...overrides
+            };
+        }
+
         // GLOBAL STATE
         let currentView = 'active'; 
         let allCarsData = [];
@@ -790,12 +819,8 @@
                     const car = carsToBlock[i];
                     try {
                         const isMoto = car.province && car.province.includes('(มอไซค์)');
-                        const payload = {
-                            plate_number: car.plate_number, province: car.province, house_number: car.house_number,
-                            list_type: 'blocklist', start_date: car.start_date, end_date: car.end_date,
-                            line_user_id: car.line_user_id, line_display_name: car.line_display_name, line_picture_url: car.line_picture_url
-                        };
-                        
+                        const payload = buildDeletedCarsPayload(car, { list_type: 'blocklist' });
+
                         await supabaseClient.from('deleted_cars').insert([payload]);
                         if (isMoto) await supabaseClient.from('allowed_cars').delete().eq('id', car.id);
                         else await supabaseClient.from('allowed_cars').update({ status: 'pending_delete' }).eq('id', car.id);
@@ -2088,8 +2113,7 @@
                         try {
                             // 🟢 ระบุเฉพาะคอลัมน์ที่ deleted_cars มีจริง (เหตุผลเดียวกับ handleDelete ด้านบน)
                             // 🟢 คงค่า id เดิมไว้ (deleted_cars ต้องการ id แบบระบุเอง) ตัดออกแค่ created_at
-                            const backupCar = { ...car, list_type: 'duplicate_removed' };
-                            delete backupCar.created_at;
+                            const backupCar = buildDeletedCarsPayload(car, { list_type: 'duplicate_removed' });
                             await supabaseClient.from('deleted_cars').insert([backupCar]);
                             await supabaseClient.from('allowed_cars').delete().eq('id', car.id);
                             successCount++;
@@ -2228,7 +2252,9 @@
                     const {value:pin} = await Swal.fire({title:'ยืนยันระงับ', input:'password', showCancelButton:true});
                     if(pin!=='9999') return;
 
-                    const { error: errDel } = await supabaseClient.from('deleted_cars').insert([payload]);
+                    // 🟢 สร้าง payload แยกสำหรับ deleted_cars (ไม่มีแถวต้นทางให้ยืม id เพราะมาจากฟอร์มโดยตรง
+                    // buildDeletedCarsPayload จะสร้าง id ใหม่ให้อัตโนมัติเมื่อไม่มี source.id)
+                    const { error: errDel } = await supabaseClient.from('deleted_cars').insert([buildDeletedCarsPayload(payload)]);
                     if (errDel) throw errDel;
 
                     if(editIdInput.value) {
@@ -2275,13 +2301,7 @@
                     const {data, error: errSel} = await supabaseClient.from('allowed_cars').select('*').eq('id', id).single();
                     if (errSel) throw errSel;
                     if(data) {
-                        // 🟢 ระบุเฉพาะคอลัมน์ที่ตาราง deleted_cars มีจริง (ห้ามสเปรดทั้งแถวดิบ เพราะ
-                        // allowed_cars มีคอลัมน์ created_at ซึ่ง deleted_cars ไม่มี จะทำให้ insert ล้มเหลว)
-                        // 🟢 คงค่า id เดิมไว้ (deleted_cars ต้องการ id แบบระบุเอง ไม่มีค่า default อัตโนมัติ)
-                        // ตัดออกแค่ created_at ซึ่งเป็นคอลัมน์เดียวที่ deleted_cars ไม่มี
-                        const backupPayload = { ...data };
-                        delete backupPayload.created_at;
-                        const { error: errIns } = await supabaseClient.from('deleted_cars').insert([backupPayload]);
+                        const { error: errIns } = await supabaseClient.from('deleted_cars').insert([buildDeletedCarsPayload(data)]);
                         if (errIns) throw errIns;
                     }
                     const { error: errUpd } = await supabaseClient.from('allowed_cars').update({status:'pending_delete'}).eq('id', id);
