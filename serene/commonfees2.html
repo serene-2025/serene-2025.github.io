@@ -9068,7 +9068,7 @@ function initAnnualReport() {
     const sel = document.getElementById('annualYear');
     if (!sel) return;
     const years = [...new Set(allData.map(d => d.year))].sort((a,b) => b - a);
-    sel.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
+    sel.innerHTML = '<option value="all">📊 ทุกปี (ภาพรวมทั้งหมด)</option>' + years.map(y => `<option value="${y}">${y}</option>`).join('');
     generateAnnualReport();
 }
 
@@ -9134,11 +9134,74 @@ function getAnnualData(year) {
     return { year, totalHouses, monthlyStats, soiStats, topPayers, overdueList, totalPaid, totalUnpaid, totalPending, grandTotal, collectRate };
 }
 
+// ภาพรวมทั้งหมดทุกปี — ใช้ชื่อ field เดิม (monthlyStats) แม้เนื้อหาจริงเป็น "รายปี" ไม่ใช่ "รายเดือน"
+// เพื่อให้โค้ด render กราฟ/ตารางเดิมใช้ซ้ำได้ทั้งหมดโดยไม่ต้องเขียนซ้ำ — สลับแค่ label/หัวข้อตามโหมดใน generateAnnualReport()
+function getAllYearsAnnualData() {
+    const rate = RATE_PER_MONTH;
+    const distinctHouses = [...new Set(allData.map(d => d.house_numbe))];
+    const totalHouses = distinctHouses.length;
+    const years = [...new Set(allData.map(d => d.year))].sort((a, b) => a - b);
+
+    let totalPaid = 0, totalUnpaid = 0, totalPending = 0, houseYearCount = 0;
+    const monthlyStats = years.map(y => {
+        const yearHouses = allData.filter(d => d.year === y);
+        houseYearCount += yearHouses.length; // สะสมจำนวน "บ้าน×ปี" จริง กันปีที่บ้านยังไม่ครบทุกหลัง (เพิ่งเพิ่มเข้าระบบทีหลัง) ทำให้เป้าหมายรวมคลาดเคลื่อน
+        let paid = 0, unpaid = 0, pending = 0;
+        yearHouses.forEach(h => {
+            months.forEach(m => {
+                const s = h[m.key] || '';
+                if (s.includes('จ่ายแล้ว') || s.includes('ชำระแล้ว') || s.includes('ล่วงหน้า')) paid++;
+                else if (s.includes('รอตรวจสอบ') || s.includes('รอข้อมูล')) pending++;
+                else if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) unpaid++;
+            });
+        });
+        totalPaid += paid * rate; totalUnpaid += unpaid * rate; totalPending += pending * rate;
+        return { label: `ปี ${y}`, labelShort: String(y), paid, unpaid, pending, total: yearHouses.length };
+    });
+
+    // แยกรายซอย — รวมทุกปี
+    const soiMap = {};
+    allData.forEach(h => {
+        const soi = (h.soi || 'ไม่ระบุ').trim();
+        if (!soiMap[soi]) soiMap[soi] = { paid: 0, unpaid: 0, pending: 0, total: 0 };
+        soiMap[soi].total++;
+        months.forEach(m => {
+            const s = h[m.key] || '';
+            if (s.includes('จ่ายแล้ว') || s.includes('ชำระแล้ว') || s.includes('ล่วงหน้า')) soiMap[soi].paid++;
+            else if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) soiMap[soi].unpaid++;
+            else if (s.includes('รอตรวจสอบ')) soiMap[soi].pending++;
+        });
+    });
+    const soiStats = Object.entries(soiMap).map(([name, d]) => ({
+        name, ...d,
+        paidAmt: d.paid * rate,
+        unpaidAmt: d.unpaid * rate,
+        rate: d.total > 0 ? Math.round((d.paid / (d.total * 12)) * 100) : 0
+    })).sort((a, b) => a.name.localeCompare(b.name, 'th', { numeric: true }));
+
+    // บ้านที่ไม่เคยค้างเลยสักเดือนในทุกปีที่มีข้อมูล (ใช้ค้างสะสมแบบเดียวกับหน้าคีย์การ์ด/ศูนย์งานค้าง)
+    const topPayers = distinctHouses.filter(h => getOverdueMonthsForHouse(h) === 0).sort();
+
+    // บ้านที่ค้างสะสมมากสุด ข้ามทุกปี (ไม่ใช่แค่ปีใดปีหนึ่ง)
+    const overdueList = distinctHouses.map(houseNo => {
+        const cnt = getOverdueMonthsForHouse(houseNo);
+        const rows = allData.filter(d => d.house_numbe === houseNo);
+        const latest = rows.reduce((a, b) => ((b.year || 0) > (a.year || 0) ? b : a), rows[0]);
+        return { houseNo, soi: latest?.soi || '-', owner: latest?.owner_name || '-', months: cnt, amount: cnt * rate };
+    }).filter(h => h.months > 0).sort((a, b) => b.months - a.months).slice(0, 20);
+
+    const grandTotal = houseYearCount * 12 * rate;
+    const collectRate = grandTotal > 0 ? Math.round((totalPaid / grandTotal) * 100) : 0;
+
+    return { year: 'all', years, totalHouses, monthlyStats, soiStats, topPayers, overdueList, totalPaid, totalUnpaid, totalPending, grandTotal, collectRate };
+}
+
 function generateAnnualReport() {
     const year = document.getElementById('annualYear')?.value;
     if (!year || allData.length === 0) return;
 
-    const d = getAnnualData(year);
+    const isAllYears = year === 'all';
+    const d = isAllYears ? getAllYearsAnnualData() : getAnnualData(year);
     const today = new Date().toLocaleDateString('th-TH', { day:'numeric', month:'long', year:'numeric' });
     const invS = getInvoiceSettings();
     const LOGO = invS.logoUrl;
@@ -9164,7 +9227,7 @@ function generateAnnualReport() {
     <div class="ann-header">
         <img src="${LOGO}" alt="โลโก้" class="ann-logo">
         <div class="ann-header-text">
-            <div class="ann-title">รายงานสรุปประจำปี ${year}</div>
+            <div class="ann-title">${isAllYears ? 'รายงานสรุปภาพรวมทั้งหมด' : `รายงานสรุปประจำปี ${year}`}</div>
             <div class="ann-subtitle">${invS.orgName}</div>
             <div class="ann-meta">จัดทำ ณ วันที่ ${today} &nbsp;|&nbsp; จำนวนบ้านทั้งหมด ${d.totalHouses} หลัง</div>
         </div>
@@ -9189,7 +9252,7 @@ function generateAnnualReport() {
             <div class="ann-kpi-sub">รอการอนุมัติ</div>
         </div>
         <div class="ann-kpi ann-kpi-blue">
-            <div class="ann-kpi-label">เป้าหมายรวมทั้งปี</div>
+            <div class="ann-kpi-label">${isAllYears ? 'เป้าหมายรวมทุกปี' : 'เป้าหมายรวมทั้งปี'}</div>
             <div class="ann-kpi-val">฿${d.grandTotal.toLocaleString()}</div>
             <div class="ann-kpi-sub">${d.totalHouses} หลัง × 12 เดือน × ฿${RATE_PER_MONTH}</div>
         </div>
@@ -9197,7 +9260,7 @@ function generateAnnualReport() {
 
     <!-- ░░ MONTHLY BAR CHART ░░ -->
     <div class="ann-section">
-        <div class="ann-section-title">📊 ยอดจัดเก็บรายเดือน ปี ${year}</div>
+        <div class="ann-section-title">📊 ${isAllYears ? 'ยอดจัดเก็บรายปี (ทุกปีที่มีข้อมูล)' : `ยอดจัดเก็บรายเดือน ปี ${year}`}</div>
         <div class="ann-chart-wrap">
             <div class="ann-bar-chart">${monthChart}</div>
             <div class="ann-chart-legend">
@@ -9209,11 +9272,11 @@ function generateAnnualReport() {
 
     <!-- ░░ MONTHLY TABLE ░░ -->
     <div class="ann-section">
-        <div class="ann-section-title">📋 ตารางสรุปรายเดือน</div>
+        <div class="ann-section-title">📋 ${isAllYears ? 'ตารางสรุปรายปี' : 'ตารางสรุปรายเดือน'}</div>
         <table class="ann-table">
             <thead>
                 <tr>
-                    <th>เดือน</th>
+                    <th>${isAllYears ? 'ปี' : 'เดือน'}</th>
                     <th class="text-right">จ่ายแล้ว (หลัง)</th>
                     <th class="text-right">ยอดจัดเก็บ</th>
                     <th class="text-right">ค้างชำระ (หลัง)</th>
@@ -9239,7 +9302,7 @@ function generateAnnualReport() {
                     </tr>`;
                 }).join('')}
                 <tr class="ann-total-row">
-                    <td><strong>รวมทั้งปี</strong></td>
+                    <td><strong>${isAllYears ? 'รวมทั้งหมด' : 'รวมทั้งปี'}</strong></td>
                     <td class="text-right"><strong>${d.monthlyStats.reduce((s,m)=>s+m.paid,0).toLocaleString()}</strong></td>
                     <td class="text-right text-green-700 font-bold">฿${d.totalPaid.toLocaleString()}</td>
                     <td class="text-right"><strong>${d.monthlyStats.reduce((s,m)=>s+m.unpaid,0).toLocaleString()}</strong></td>
@@ -9433,6 +9496,7 @@ function exportAnnualReportPDF() {
 }
 
 function _openAnnualPrintWindow(htmlContent, year) {
+    const yearLabel = year === 'all' ? 'ภาพรวมทั้งหมด' : year;
     const invS = getInvoiceSettings();
     const win = window.open('', '_blank', 'width=960,height=820');
     if (!win) {
@@ -9443,7 +9507,7 @@ function _openAnnualPrintWindow(htmlContent, year) {
 <html lang="th">
 <head>
 <meta charset="UTF-8">
-<title>รายงานประจำปี ${year} — ${invS.orgName}</title>
+<title>รายงานประจำปี ${yearLabel} — ${invS.orgName}</title>
 <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;600;700;900&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
@@ -9572,7 +9636,7 @@ body { font-family:'Kanit',sans-serif; background:#64748b; color:#111; }
 </head>
 <body>
 <div class="print-toolbar no-print">
-    <span style="font-weight:700;">📊 รายงานประจำปี ${year} — ${invS.orgName}</span>
+    <span style="font-weight:700;">📊 รายงานประจำปี ${yearLabel} — ${invS.orgName}</span>
     <button class="btn-print" onclick="window.print()">🖨️ พิมพ์ / บันทึก PDF</button>
     <button class="btn-close" onclick="window.close()">✕ ปิด</button>
 </div>
