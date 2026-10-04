@@ -210,20 +210,6 @@
                 <span class="font-bold">โหลดข้อมูลล่าสุด</span>
             </button>
         </div>
-        
-        <!-- Permission Check Tool -->
-        <div id="permissionTool" class="hidden w-full bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm animate-fade-in-up">
-            <div class="flex flex-col sm:flex-row gap-3 items-end">
-                <div class="w-full">
-                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">บ้านเลขที่ หรือ UserID</label>
-                    <div class="flex gap-2">
-                        <input type="text" id="permCheckInput" placeholder="เช่น 998/123 หรือ U123..." class="flex-1 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-sm focus:ring-2 focus:ring-indigo-500">
-                        <button onclick="checkPermissionManual()" class="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg shadow-sm transition-colors">ตรวจสอบ</button>
-                    </div>
-                </div>
-            </div>
-            <div id="permResult" class="mt-4 hidden p-4 rounded-xl border text-sm shadow-inner transition-all"></div>
-        </div>
 
         <!-- Admin Auth Container -->
         <div id="adminAuthContainer" class="hidden w-full flex flex-col items-center justify-center py-8 animate-fade-in-up">
@@ -355,8 +341,8 @@
                 <button onclick="switchView('house_stats')" id="tabHouseStats" class="flex-shrink-0 flex-1 px-4 py-2 rounded-lg text-sm font-bold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-all whitespace-nowrap">
                     ตรวจสอบจำนวนรถ
                 </button>
-                <button onclick="switchView('permission_check')" id="tabPermissionCheck" class="flex-shrink-0 flex-1 px-4 py-2 rounded-lg text-sm font-bold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-all whitespace-nowrap">
-                    เช็คสิทธิ์
+                <button onclick="switchView('expiring_soon')" id="tabExpiringSoon" class="flex-shrink-0 flex-1 px-4 py-2 rounded-lg text-sm font-bold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-all whitespace-nowrap">
+                    ⏰ ใกล้หมดอายุ
                 </button>
                 <button onclick="switchView('visitor_history')" id="tabVisitorHistory" class="flex-shrink-0 flex-1 px-4 py-2 rounded-lg text-sm font-bold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-all whitespace-nowrap">
                     ประวัติผู้มาติดต่อ
@@ -635,8 +621,8 @@
 
         // 🔔 Telegram Notification Config
         // กรอกค่าจากไฟล์ .env บนเครื่องเซิร์ฟเวอร์ (ตัวแปร TELEGRAM_TOKEN / TELEGRAM_CHAT_ID ตัวเดียวกัน)
-        const TELEGRAM_BOT_TOKEN = '8064168284:AAFDzyATjQ0fJhsCNQRDulL1FlpU3CykFAs';
-        const TELEGRAM_CHAT_ID   = '-4574041962';
+        const TELEGRAM_BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN';
+        const TELEGRAM_CHAT_ID   = 'YOUR_TELEGRAM_CHAT_ID';
         const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
 
         // 🔔 ส่งข้อความแจ้งเตือนไป Telegram (เงียบๆ ถ้าส่งไม่สำเร็จ ไม่ให้ไปขัดขวางการทำงานหลัก)
@@ -690,7 +676,7 @@
         let pendingRequestsData = [];
         let allRegistrationsData = [];
         // 🟢 Caching เพื่อลดแบนด์วิดท์
-        let isLoaded = { active: false, members: false, pending_requests: false, all_registrations: false, deleted: false, visitor_history: false };
+        let isLoaded = { active: false, members: false, pending_requests: false, all_registrations: false, deleted: false, visitor_history: false, expiring_soon: false };
         
         // DOM ELEMENTS
         const carList = document.getElementById('carList');
@@ -702,16 +688,15 @@
         const allowCountEl = document.getElementById('allowCount');
         const blockCountEl = document.getElementById('blockCount');
         const searchContainer = document.getElementById('searchContainer');
-        const permissionTool = document.getElementById('permissionTool');
-        const permResult = document.getElementById('permResult');
+
         const adminAuthContainer = document.getElementById('adminAuthContainer');
         const adminTools = document.getElementById('adminTools');
         
         const tabActive = document.getElementById('tabActive');
         const tabDeleted = document.getElementById('tabDeleted');
         const tabHouseStats = document.getElementById('tabHouseStats');
+        const tabExpiringSoon = document.getElementById('tabExpiringSoon');
         const tabVisitorHistory = document.getElementById('tabVisitorHistory');
-        const tabPermissionCheck = document.getElementById('tabPermissionCheck');
         const tabMembers = document.getElementById('tabMembers'); 
         const tabPendingRequests = document.getElementById('tabPendingRequests');
         const tabAllRegistrations = document.getElementById('tabAllRegistrations');
@@ -1020,14 +1005,20 @@
             else fetchCars();
         }
 
+        // 🟢 ป้องกันบั๊ก: สลับแท็บเร็วๆ แล้วข้อมูลจากแท็บเก่า (ที่ fetch ยังไม่เสร็จ) มาทับแท็บใหม่
+        // ทุกครั้งที่สลับแท็บ เลขรุ่น (generation) จะขยับ ฟังก์ชัน fetch ที่เริ่มไปก่อนหน้าจะเช็คว่า
+        // ตัวเองยังเป็นรุ่นล่าสุดอยู่ไหมก่อน render ถ้าไม่ใช่ (มีการสลับแท็บไปแล้ว) จะทิ้งผลลัพธ์นั้นไปเงียบๆ
+        let viewGeneration = 0;
+
         function switchView(view) {
+            viewGeneration++;
             currentView = view;
-            const tabs = [tabActive, tabDeleted, tabHouseStats, tabVisitorHistory, tabPermissionCheck, tabMembers, tabPendingRequests, tabAllRegistrations];
+            const tabs = [tabActive, tabDeleted, tabHouseStats, tabExpiringSoon, tabVisitorHistory, tabMembers, tabPendingRequests, tabAllRegistrations];
             tabs.forEach(t => { if(t) t.className = "flex-shrink-0 flex-1 px-4 py-2 rounded-lg text-sm font-bold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-all whitespace-nowrap relative" });
-            const activeTabMap = { 'active': tabActive, 'deleted': tabDeleted, 'house_stats': tabHouseStats, 'visitor_history': tabVisitorHistory, 'permission_check': tabPermissionCheck, 'members': tabMembers, 'pending_requests': tabPendingRequests, 'all_registrations': tabAllRegistrations };
+            const activeTabMap = { 'active': tabActive, 'deleted': tabDeleted, 'house_stats': tabHouseStats, 'expiring_soon': tabExpiringSoon, 'visitor_history': tabVisitorHistory, 'members': tabMembers, 'pending_requests': tabPendingRequests, 'all_registrations': tabAllRegistrations };
             if(activeTabMap[view]) activeTabMap[view].className = "flex-shrink-0 flex-1 px-4 py-2 rounded-lg text-sm font-bold transition-all shadow-sm bg-white dark:bg-slate-700 text-indigo-600 dark:text-white whitespace-nowrap relative";
 
-            searchContainer.classList.add('hidden'); permissionTool.classList.add('hidden'); adminTools.classList.add('hidden'); adminAuthContainer.classList.add('hidden'); carList.innerHTML = ''; permResult.innerHTML = ''; permResult.classList.add('hidden');
+            searchContainer.classList.add('hidden'); adminTools.classList.add('hidden'); adminAuthContainer.classList.add('hidden'); carList.innerHTML = '';
             dashboardStatsGrid.classList.add('hidden');
 
             if (view === 'active') {
@@ -1047,13 +1038,14 @@
                 updateDashboardStyle('from-blue-600', 'to-cyan-600', 'ประวัติผู้มาติดต่อ', 'รายการที่หมดอายุและเข้าชมแล้ว', false);
                 fabContainer.classList.add('translate-y-24', 'opacity-0'); searchContainer.classList.remove('hidden');
                 fetchCars();
+            } else if (view === 'expiring_soon') {
+                updateDashboardStyle('from-amber-500', 'to-orange-600', '⏰ รถใกล้หมดอายุ', `หมดอายุภายใน ${EXPIRING_SOON_DAYS} วัน เรียงจากใกล้สุดก่อน`, false);
+                fabContainer.classList.add('translate-y-24', 'opacity-0'); searchContainer.classList.remove('hidden');
+                fetchCars();
             } else if (view === 'house_stats') {
                 updateDashboardStyle('from-emerald-600', 'to-teal-700', 'ตรวจสอบจำนวนรถ', 'บ้านที่มีรถมากกว่า 1 คัน', false);
                 fabContainer.classList.add('translate-y-24', 'opacity-0');
                 fetchCars();
-            } else if (view === 'permission_check') {
-                updateDashboardStyle('from-amber-500', 'to-orange-600', 'ตรวจสอบสิทธิ์', 'เช็คสถานะลูกบ้านและยอดค้างชำระ', false);
-                fabContainer.classList.add('translate-y-24', 'opacity-0'); permissionTool.classList.remove('hidden'); return;
             } else if (view === 'members') {
                 updateDashboardStyle('from-pink-500', 'to-rose-500', 'รายชื่อสมาชิก', 'จัดการโหมดตรวจสอบสิทธิ์ลูกบ้าน', false);
                 fabContainer.classList.add('translate-y-24', 'opacity-0'); searchContainer.classList.remove('hidden');
@@ -1098,6 +1090,9 @@
             }
         }
 
+        // 🟢 จำนวนวันล่วงหน้าที่ถือว่า "ใกล้หมดอายุ" ปรับได้ตามต้องการ
+        const EXPIRING_SOON_DAYS = 30;
+
         // --- FETCH & RENDER ---
         async function fetchCars() {
             // 🟢 ถ้าเคยดึงมาแล้ว และไม่ได้กด Refresh จะข้ามการต่อ Supabase
@@ -1107,6 +1102,10 @@
             }
             if (currentView === 'deleted' && isLoaded.deleted) return performSearch();
             if (currentView === 'visitor_history' && isLoaded.visitor_history) return performSearch();
+            if (currentView === 'expiring_soon' && isLoaded.expiring_soon) return performSearch();
+
+            const myGen = viewGeneration; // 🟢 จำรุ่นปัจจุบันไว้ก่อนเริ่ม fetch (ของ fetchCars นี้)
+            const myView = currentView;   // 🟢 จำว่า fetch นี้เริ่มต้นมาเพื่อแท็บไหน
 
             try {
                 let query;
@@ -1120,15 +1119,34 @@
                 else if (currentView === 'deleted') {
                     query = supabaseClient.from('deleted_cars').select('*').order('deleted_at', { ascending: false }).limit(200);
                 }
+                else if (currentView === 'expiring_soon') {
+                    const cutoff = new Date();
+                    cutoff.setDate(cutoff.getDate() + EXPIRING_SOON_DAYS);
+                    const cutoffStr = cutoff.toISOString().slice(0, 10);
+                    query = supabaseClient.from('allowed_cars')
+                        .select('id, plate_number, province, house_number, list_type, start_date, end_date, status')
+                        .eq('list_type', 'allowlist')
+                        .neq('status', 'pending_delete')
+                        .not('end_date', 'is', null)
+                        .lte('end_date', cutoffStr)
+                        .order('end_date', { ascending: true })
+                        .limit(300);
+                }
                 else return;
 
                 const { data, error } = await query;
                 if (error) throw error;
+
+                // 🟢 ถ้าระหว่างรอ Supabase ตอบ ผู้ใช้สลับแท็บไปแล้ว ให้ทิ้งผลลัพธ์นี้ไปเงียบๆ
+                // ไม่เอามาเขียนทับ allCarsData ของแท็บปัจจุบัน (กัน undefined/ข้อมูลผิดหน้า)
+                if (myGen !== viewGeneration || myView !== currentView) return;
+
                 allCarsData = data;
                 
                 if (currentView === 'active' || currentView === 'house_stats') isLoaded.active = true;
                 if (currentView === 'deleted') isLoaded.deleted = true;
                 if (currentView === 'visitor_history') isLoaded.visitor_history = true;
+                if (currentView === 'expiring_soon') isLoaded.expiring_soon = true;
 
                 if (currentView === 'house_stats') { renderHouseStats(data); return; }
                 performSearch();
@@ -1137,7 +1155,7 @@
                 // (ซึ่งถูก .limit() ไว้เพื่อความเร็ว) ยิง count query แยกแบบเบา (head:true ไม่โหลดข้อมูลจริง)
                 if (currentView === 'active' && !document.getElementById('searchInput').value.trim()) {
                     const { count } = await supabaseClient.from('allowed_cars').select('id', { count: 'exact', head: true }).neq('status', 'pending_delete');
-                    if (count !== null && count !== undefined) totalCountEl.textContent = count;
+                    if (count !== null && count !== undefined && myGen === viewGeneration && myView === currentView) totalCountEl.textContent = count;
                 }
             } catch (err) { console.warn(err); }
         }
@@ -1216,7 +1234,7 @@
         function sanitizeSearchTerm(q) { return q.replace(/[,()%]/g, ''); }
 
         async function performSearch() {
-            if (currentView === 'house_stats' || currentView === 'permission_check') return;
+            if (currentView === 'house_stats') return;
             const qRaw = document.getElementById('searchInput').value.trim();
             const q = qRaw.toLowerCase();
 
@@ -1233,6 +1251,11 @@
             const qSafe = sanitizeSearchTerm(qRaw);
             if (!qSafe) return; // เหลือแต่อักขระพิเศษล้วนๆ ข้ามไป กันยิง query เปล่า
 
+            const myGen = viewGeneration;
+            const myView = currentView;
+            // 🟢 ระหว่างรอผลค้นหา ถ้าสลับแท็บไปแล้ว (รุ่น/แท็บไม่ตรงกับตอนเริ่มยิง query) ให้ทิ้งผลลัพธ์นี้
+            const stillValid = () => myGen === viewGeneration && myView === currentView;
+
             try {
                 if (currentView === 'members') {
                     const { data, error } = await supabaseClient.from('userhome')
@@ -1240,7 +1263,7 @@
                         .or(`fullname.ilike.%${qSafe}%,house_no.ilike.%${qSafe}%,line_name.ilike.%${qSafe}%`)
                         .limit(200);
                     if (error) throw error;
-                    renderMembers(data || []);
+                    if (stillValid()) renderMembers(data || []);
 
                 } else if (currentView === 'all_registrations') {
                     const { data, error } = await supabaseClient.from('car_registrations')
@@ -1249,7 +1272,7 @@
                         .order('created_at', { ascending: false })
                         .limit(200);
                     if (error) throw error;
-                    renderAllRegistrationsList(data || []);
+                    if (stillValid()) renderAllRegistrationsList(data || []);
 
                 } else if (currentView === 'deleted') {
                     const { data, error } = await supabaseClient.from('deleted_cars')
@@ -1258,7 +1281,7 @@
                         .order('deleted_at', { ascending: false })
                         .limit(200);
                     if (error) throw error;
-                    renderList(data || []);
+                    if (stillValid()) renderList(data || []);
 
                 } else if (currentView === 'visitor_history') {
                     const { data, error } = await supabaseClient.from('visitor_history')
@@ -1267,7 +1290,23 @@
                         .order('archived_at', { ascending: false })
                         .limit(200);
                     if (error) throw error;
-                    renderList(data || []);
+                    if (stillValid()) renderList(data || []);
+
+                } else if (currentView === 'expiring_soon') {
+                    const cutoff = new Date();
+                    cutoff.setDate(cutoff.getDate() + EXPIRING_SOON_DAYS);
+                    const cutoffStr = cutoff.toISOString().slice(0, 10);
+                    const { data, error } = await supabaseClient.from('allowed_cars')
+                        .select('id, plate_number, province, house_number, list_type, start_date, end_date, status')
+                        .eq('list_type', 'allowlist')
+                        .neq('status', 'pending_delete')
+                        .not('end_date', 'is', null)
+                        .lte('end_date', cutoffStr)
+                        .or(`plate_number.ilike.%${qSafe}%,house_number.ilike.%${qSafe}%`)
+                        .order('end_date', { ascending: true })
+                        .limit(200);
+                    if (error) throw error;
+                    if (stillValid()) renderList(data || []);
 
                 } else {
                     // active view (ค่าเริ่มต้น)
@@ -1278,7 +1317,7 @@
                         .order('created_at', { ascending: false })
                         .limit(200);
                     if (error) throw error;
-                    renderList(data || []);
+                    if (stillValid()) renderList(data || []);
                 }
             } catch (err) {
                 console.error('❌ search error:', err);
@@ -1405,6 +1444,8 @@
                 return;
             }
 
+            const myGen = viewGeneration;
+
             try {
                 const { data, error } = await supabaseClient
                     .from('car_registrations')
@@ -1414,6 +1455,7 @@
                     .limit(100); 
 
                 if (error) throw error;
+                if (myGen !== viewGeneration) return; // 🟢 สลับแท็บไปแล้ว ทิ้งผลลัพธ์นี้ (กัน badge/รายการผิดจังหวะ)
                 pendingRequestsData = data;
                 isLoaded.pending_requests = true; // บันทึกสถานะว่าโหลดแล้ว
                 
@@ -1646,6 +1688,9 @@
             // 🟢 Caching
             if (isLoaded.all_registrations) return performSearch();
 
+            const myGen = viewGeneration;
+            const myView = currentView;
+
             try {
                 const { data, error } = await supabaseClient
                     .from('car_registrations')
@@ -1654,6 +1699,7 @@
                     .limit(300);
 
                 if (error) throw error;
+                if (myGen !== viewGeneration || myView !== currentView) return; // 🟢 สลับแท็บไปแล้ว ทิ้งผลลัพธ์นี้
                 allRegistrationsData = data || [];
                 isLoaded.all_registrations = true;
                 performSearch();
@@ -1806,6 +1852,9 @@
              // 🟢 Caching
              if (isLoaded.members) return performSearch();
 
+             const myGen = viewGeneration;
+             const myView = currentView;
+
              try {
                 const { data, error } = await supabaseClient
                     .from('userhome')
@@ -1814,6 +1863,7 @@
                     .limit(500);
 
                 if (error) return;
+                if (myGen !== viewGeneration || myView !== currentView) return; // 🟢 สลับแท็บไปแล้ว ทิ้งผลลัพธ์นี้
                 allCarsData = data; 
                 isLoaded.members = true;
                 performSearch();
@@ -2156,85 +2206,6 @@
 
             } catch (err) { console.error(err); Swal.fire('เกิดข้อผิดพลาด', err.message, 'error'); }
         };
-
-        async function checkPermissionManual() {
-            const input = document.getElementById('permCheckInput').value.trim();
-            if(!input) return;
-            
-            permResult.className = 'mt-4 p-4 rounded-xl border text-sm shadow-inner transition-all';
-            permResult.innerHTML = '<div class="text-center py-2"><i data-lucide="loader-2" class="w-5 h-5 animate-spin mx-auto text-indigo-500"></i></div>';
-            permResult.classList.remove('hidden');
-            lucide.createIcons();
-
-            try {
-                let houseNumber = input;
-                if (input.length > 10) {
-                    const { data: user } = await supabaseClient.from('userhome').select('house_no').eq('uid', input).maybeSingle();
-                    if (user && user.house_no) houseNumber = user.house_no.trim();
-                    else throw new Error('ไม่พบ UID นี้ในระบบ');
-                }
-
-                const { data: payments, error } = await supabaseClient.from('house_payments').select('*').eq('house_numbe', houseNumber);
-                if (error) throw error;
-
-                let unpaidCount = 0;
-                let details = '';
-
-                if(payments && payments.length > 0) {
-                    payments.sort((a, b) => b.year - a.year);
-                    const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-                    const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
-
-                    payments.forEach(p => {
-                        months.forEach((m, index) => {
-                            if(p[m] && p[m].trim() === 'ยังไม่จ่าย') {
-                                unpaidCount++;
-                                details += `<span class="inline-block bg-rose-100 text-rose-700 px-2 py-1 rounded-md text-xs font-bold mr-1 mb-1 border border-rose-200">${thaiMonths[index]} ${p.year}</span>`;
-                            }
-                        });
-                    });
-
-                    if (unpaidCount >= 3) {
-                        permResult.classList.add('bg-rose-50', 'border-rose-200');
-                        permResult.innerHTML = `
-                            <div class="flex items-start gap-3">
-                                <div class="bg-rose-100 p-2 rounded-xl text-rose-600 mt-0.5"><i data-lucide="x-circle" class="w-6 h-6"></i></div>
-                                <div>
-                                    <h4 class="font-bold text-rose-800 text-base">ไม่ผ่านสิทธิ์: บ้าน ${houseNumber}</h4>
-                                    <p class="text-sm text-rose-600 mt-0.5">มียอดค้างชำระรวม <b>${unpaidCount}</b> งวด ได้แก่:</p>
-                                    <div class="mt-2.5 flex flex-wrap gap-0.5">${details}</div>
-                                </div>
-                            </div>`;
-                    } else {
-                        permResult.classList.add('bg-emerald-50', 'border-emerald-200');
-                        permResult.innerHTML = `
-                            <div class="flex items-start gap-3">
-                                <div class="bg-emerald-100 p-2 rounded-xl text-emerald-600 mt-0.5"><i data-lucide="check-circle" class="w-6 h-6"></i></div>
-                                <div>
-                                    <h4 class="font-bold text-emerald-800 text-base">ผ่านสิทธิ์: บ้าน ${houseNumber}</h4>
-                                    <p class="text-sm text-emerald-600 mt-0.5">สถานะปกติ (มียอดค้าง ${unpaidCount} งวด)</p>
-                                    ${unpaidCount > 0 ? `<div class="mt-2.5 flex flex-wrap gap-0.5">${details}</div>` : ''}
-                                </div>
-                            </div>`;
-                    }
-                } else {
-                     permResult.classList.add('bg-slate-50', 'border-slate-200');
-                     permResult.innerHTML = `
-                        <div class="flex items-center gap-3 text-slate-600">
-                            <div class="bg-slate-200 p-2 rounded-xl text-slate-500"><i data-lucide="info" class="w-5 h-5"></i></div>
-                            <span>ไม่พบข้อมูลบัญชีของบ้าน <b>${houseNumber}</b> ในระบบ หรือพิมพ์บ้านเลขที่ผิด</span>
-                        </div>`;
-                }
-            } catch (err) {
-                permResult.classList.add('bg-rose-50', 'border-rose-200');
-                permResult.innerHTML = `
-                    <div class="text-rose-600 text-sm flex items-center gap-2">
-                        <i data-lucide="alert-triangle" class="w-4 h-4"></i>
-                        ${err.message || 'เกิดข้อผิดพลาดในการดึงข้อมูลจากระบบ'}
-                    </div>`;
-            }
-            lucide.createIcons();
-        }
 
         // CRUD
         function openModal(isEdit=false, data=null, isRestore=false) {
