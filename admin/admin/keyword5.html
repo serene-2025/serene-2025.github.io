@@ -14662,8 +14662,8 @@ async function savePaymentSettings(btn) {
    // ============================================================================
 // 🚗 จัดการทะเบียนรถ (Car Management)
 // ============================================================================
-const CAR_STATUS_COLOR = { pending: 'amber', approved: 'emerald', rejected: 'rose' };
-const CAR_STATUS_LABEL = { pending: 'รอตรวจ', approved: 'อนุมัติ', rejected: 'ไม่อนุมัติ' };
+const CAR_STATUS_COLOR = { pending: 'amber', approved: 'emerald', rejected: 'rose', renewal_pending: 'sky' };
+const CAR_STATUS_LABEL = { pending: 'รอตรวจ', approved: 'อนุมัติ', rejected: 'ไม่อนุมัติ', renewal_pending: '🔁 รอต่ออายุ' };
 let carData = [], carFiltered = [], carPage = 1;
 const CAR_PER_PAGE = 30;
 
@@ -15759,6 +15759,7 @@ async function renderCarManagementView() {
                     <option value="pending">รอตรวจ</option>
                     <option value="approved">อนุมัติ</option>
                     <option value="rejected">ไม่อนุมัติ</option>
+                        <option value="renewal_pending">🔁 รอต่ออายุ</option>
                 </select>
                 <select id="car-type-filter" onchange="applyCarFilters()" class="rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
                     <option value="">ทุกประเภท</option>
@@ -15802,7 +15803,7 @@ async function loadCarData() {
         carData = data || [];
         // Stats
         document.getElementById('car-stat-total').innerText = carData.length;
-        document.getElementById('car-stat-pending').innerText = carData.filter(r => r.status === 'pending').length;
+        document.getElementById('car-stat-pending').innerText = carData.filter(r => r.status === 'pending' || r.status === 'renewal_pending').length;
         document.getElementById('car-stat-approved').innerText = carData.filter(r => r.status === 'approved').length;
         document.getElementById('car-stat-rejected').innerText = carData.filter(r => r.status === 'rejected').length;
         applyCarFilters();
@@ -15877,7 +15878,7 @@ function renderCarTable() {
             </td>
             <td class="p-3 text-center">
                 <div class="flex gap-1 justify-center flex-wrap">
-                    ${r.status !== 'approved' ? `<button onclick="updateCarStatus('${r.id}', 'approved')" class="px-2 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[11px] font-bold">✅ อนุมัติ</button>` : ''}
+                    ${r.status !== 'approved' ? `<button onclick="updateCarStatus('${r.id}', 'approved')" class="px-2 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[11px] font-bold">✅ ${r.status === 'renewal_pending' ? 'อนุมัติต่ออายุ' : 'อนุมัติ'}</button>` : ''}
                     ${r.status !== 'rejected' ? `<button onclick="updateCarStatus('${r.id}', 'rejected')" class="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-bold">❌ ปฏิเสธ</button>` : ''}
                     <button onclick="deleteCarAdmin('${r.id}', '${escapeHtml(r.plate_number).replace(/'/g,"&apos;")}')" class="px-2 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg text-[11px] font-bold">🗑</button>
                 </div>
@@ -15939,12 +15940,100 @@ async function setCarExpiry(carId, plate, houseNo, currentEndDate = '') {
     } catch (e) { showToast(e.message, 'error'); }
 }
 
+// ─── 🔁 อนุมัติ "ต่ออายุ" — ตั้งวันหมดอายุใหม่ใน allowed_cars (master) แล้วซิงก์กลับ car_registrations ───
+// (ทำเหมือนแอปแอดมินรถเดิม carregistrationsystem.html: ถามวันที่ → upsert allowed_cars
+//  สถานะ pending_update ให้ตัวซิงก์เข้ากล้อง LPR ทำงานต่อ / มอเตอร์ไซค์ = ignore_sync ไม่ส่งเข้ากล้อง)
+async function approveCarRenewal(car) {
+    const { data: ac } = await supabaseClient.from('allowed_cars')
+        .select('id, start_date, end_date')
+        .eq('plate_number', car.plate_number).eq('house_number', car.house_number).maybeSingle();
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    // ยังไม่หมด → ต่อจากวันหมดอายุเดิม / หมดแล้ว → นับจากวันนี้ — ค่าเริ่มต้น +1 ปี แก้ได้ในกล่อง
+    const base = (ac && ac.end_date && String(ac.end_date).slice(0, 10) > todayStr) ? new Date(ac.end_date) : new Date();
+    base.setFullYear(base.getFullYear() + 1);
+    const defaultEnd = base.toISOString().slice(0, 10);
+
+    const { value: dates, isConfirmed } = await Swal.fire({
+        title: '🔁 อนุมัติต่ออายุ',
+        html: `<div style="text-align:left;font-size:13px">
+                 <div style="margin-bottom:8px">ทะเบียน <b>${escapeHtml(car.plate_number)}</b> · บ้าน ${escapeHtml(car.house_number)}</div>
+                 ${car.renewal_note ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:6px 8px;margin-bottom:8px;font-size:12px;color:#92400e">${escapeHtml(car.renewal_note)}</div>` : ''}
+                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                   <div><label style="font-size:12px;font-weight:700;display:block;margin-bottom:2px">วันเริ่มใช้งาน</label>
+                        <input type="date" id="swal-start" value="${(ac && ac.start_date) || todayStr}" style="width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:6px 8px;font-size:13px;box-sizing:border-box"></div>
+                   <div><label style="font-size:12px;font-weight:700;display:block;margin-bottom:2px">วันหมดอายุใหม่</label>
+                        <input type="date" id="swal-end" value="${defaultEnd}" style="width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:6px 8px;font-size:13px;box-sizing:border-box"></div>
+                 </div>
+               </div>`,
+        showCancelButton: true, confirmButtonText: 'อนุมัติต่ออายุ', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#10b981',
+        preConfirm: () => ({
+            start: document.getElementById('swal-start').value,
+            end: document.getElementById('swal-end').value
+        })
+    });
+    if (!isConfirmed || !dates || !dates.end) return;
+
+    try {
+        const startDate = dates.start || todayStr;
+        const syncStatus = car.car_type === 'รถจักรยานยนต์' ? 'ignore_sync' : 'pending_update';
+        let allowedId = ac ? ac.id : null;
+
+        if (ac) {
+            const { error } = await supabaseClient.from('allowed_cars')
+                .update({ start_date: startDate, end_date: dates.end, status: syncStatus }).eq('id', ac.id);
+            if (error) throw error;
+        } else {
+            const { data: newAc, error } = await supabaseClient.from('allowed_cars').insert({
+                plate_number: car.plate_number, house_number: car.house_number, province: car.province || null,
+                list_type: 'allowlist', status: syncStatus, start_date: startDate, end_date: dates.end
+            }).select().maybeSingle();
+            if (error) throw error;
+            allowedId = newAc ? newAc.id : null;
+        }
+
+        const { error: crErr } = await supabaseClient.from('car_registrations').update({
+            status: 'approved', start_date: startDate, end_date: dates.end,
+            allowed_car_id: allowedId ? String(allowedId) : (car.allowed_car_id || null),
+            renewal_note: null   // เคลียร์หลังอนุมัติ (usage_confirmed_* เก็บไว้เป็นหลักฐานล่าสุด)
+        }).eq('id', car.id);
+        if (crErr) throw crErr;
+
+        showToast('✅ ต่ออายุแล้ว + ส่งคำสั่งซิงก์กล้อง', 'success');
+        loadCarData();
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ─── ปฏิเสธคำขอต่ออายุ — รถกลับเป็น "อนุมัติ" (วันหมดอายุเดิม) ไม่ใช่ "ไม่อนุมัติ" เพราะตัวรถยังลงทะเบียนอยู่ ───
+async function rejectCarRenewal(car) {
+    const { isConfirmed } = await Swal.fire({
+        title: 'ปฏิเสธคำขอต่ออายุ?',
+        html: `<div style="font-size:13px">ทะเบียน <b>${escapeHtml(car.plate_number)}</b><br><span style="color:#64748b">รถจะกลับเป็นสถานะเดิม (อนุมัติแล้วแต่ยังหมดอายุ) ไม่ถูกลบออกจากทะเบียน</span></div>`,
+        icon: 'warning', showCancelButton: true, confirmButtonText: 'ปฏิเสธคำขอ', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#ef4444'
+    });
+    if (!isConfirmed) return;
+    try {
+        const { error } = await supabaseClient.from('car_registrations')
+            .update({ status: 'approved', renewal_note: null }).eq('id', car.id);
+        if (error) throw error;
+        showToast('ปฏิเสธคำขอต่ออายุแล้ว', 'success');
+        loadCarData();
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
 async function updateCarStatus(carId, status) {
     try {
         // ดึงข้อมูลรถก่อน update
         const { data: car, error: fetchErr } = await supabaseClient
             .from('car_registrations').select('*').eq('id', carId).maybeSingle();
         if (fetchErr) throw fetchErr;
+
+        // 🔁 คำขอต่ออายุ (สมาชิกกดยืนยันการใช้งานต่อจาก CRM) — ห้ามใช้ flow อนุมัติปกติ:
+        // flow นั้น "ไม่เปลี่ยน end_date ถ้ามีอยู่แล้ว" แปลว่าอนุมัติแล้วรถก็ยังหมดอายุเหมือนเดิม
+        if (car && car.status === 'renewal_pending') {
+            if (status === 'approved') return await approveCarRenewal(car);
+            if (status === 'rejected') return await rejectCarRenewal(car);
+        }
 
         // Update status ใน car_registrations
         const { error } = await supabaseClient
