@@ -1139,6 +1139,19 @@
                     </button>
                 </div>
 
+                <!-- 🆕 สรุป: มีรถกี่คันที่ต้องยืนยันสิทธิ์การใช้งานต่อ (ใกล้หมด/หมดอายุ) -->
+                <div v-if="!carLoading && myCars.some(c => c.can_confirm_usage)"
+                     class="mb-4 rounded-2xl p-3 border-2 flex items-start gap-2.5"
+                     :class="myCars.some(c => c.can_confirm_usage && c.days_left < 0) ? 'bg-rose-50 border-rose-300' : 'bg-amber-50 border-amber-300'">
+                    <div class="text-xl leading-none mt-0.5">{{ myCars.some(c => c.can_confirm_usage && c.days_left < 0) ? '❌' : '⚠️' }}</div>
+                    <div class="flex-1 text-xs">
+                        <div class="font-bold" :class="myCars.some(c => c.can_confirm_usage && c.days_left < 0) ? 'text-rose-700' : 'text-amber-700'">
+                            มีรถ {{ myCars.filter(c => c.can_confirm_usage).length }} คันที่ต้องยืนยันการใช้งานต่อ
+                        </div>
+                        <div class="text-slate-500 mt-0.5">กดปุ่ม "ยืนยันการใช้งานต่อ" ที่การ์ดรถด้านล่าง เพื่อให้นิติบุคคลต่ออายุสิทธิ์การเข้า-ออก</div>
+                    </div>
+                </div>
+
                 <!-- Loading -->
                 <div v-if="carLoading" class="bg-white rounded-3xl p-12 text-center shadow-sm">
                     <div class="w-10 h-10 mx-auto mb-3 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin"></div>
@@ -1183,9 +1196,10 @@
                                     rejected: '🚫 ไม่อนุมัติ'
                                 }[car.display_status] || car.display_status }}
                             </span>
-                            <span v-if="car.days_left !== null && car.display_status !== 'expired'">
+                            <span v-if="car.days_left !== null && car.days_left >= 0 && car.display_status !== 'expired'">
                                 เหลือ {{ car.days_left }} วัน
                             </span>
+                            <span v-else-if="car.days_left !== null && car.days_left < 0">หมดอายุแล้ว {{ Math.abs(car.days_left) }} วัน</span>
                             <span v-else-if="car.display_status === 'expired'">หมดอายุแล้ว</span>
                         </div>
 
@@ -1228,17 +1242,39 @@
                                 </div>
                             </div>
 
+                            <!-- 🆕 ยืนยันสิทธิ์การใช้ทะเบียน (คล้าย confirm-status แต่ทีละคัน)
+                                 สถานะดูจากวันหมดอายุ: ใกล้หมด/หมดแล้ว → ให้สมาชิกกดยืนยันใช้งานต่อ -->
+                            <div v-if="car.can_confirm_usage" class="rounded-2xl p-3 mb-3 border-2"
+                                 :class="car.days_left < 0 ? 'bg-rose-100/70 border-rose-300' : 'bg-amber-100/70 border-amber-300'">
+                                <div class="text-xs font-bold mb-1" :class="car.days_left < 0 ? 'text-rose-700' : 'text-amber-700'">
+                                    {{ car.days_left < 0 ? '❌ ทะเบียนนี้หมดอายุแล้ว ' + Math.abs(car.days_left) + ' วัน' : (car.days_left === 0 ? '⚠️ ทะเบียนนี้หมดอายุวันนี้' : '⚠️ ทะเบียนนี้จะหมดอายุในอีก ' + car.days_left + ' วัน') }}
+                                </div>
+                                <p class="text-[11px] text-slate-600 mb-2">
+                                    {{ car.days_left < 0 ? 'ยังใช้รถคันนี้อยู่ใช่ไหม? กดยืนยันการใช้งานต่อ เพื่อให้นิติบุคคลต่ออายุสิทธิ์ให้' : 'กดยืนยันการใช้งานต่อล่วงหน้าได้เลย เพื่อให้นิติบุคคลต่ออายุสิทธิ์ก่อนหมดอายุ' }}
+                                </p>
+                                <button @click="confirmCarUsage(car)"
+                                        class="w-full py-2.5 rounded-2xl text-xs font-bold text-white flex items-center justify-center gap-1.5"
+                                        :class="car.days_left < 0 ? 'bg-rose-500 hover:bg-rose-600' : 'bg-amber-500 hover:bg-amber-600'">
+                                    <i class="fa-solid fa-circle-check"></i> ยืนยันการใช้งานต่อ
+                                </button>
+                            </div>
+                            <!-- ยืนยันแล้ว รอแอดมินต่ออายุ -->
+                            <div v-else-if="car.display_status === 'renewal_pending'" class="rounded-2xl p-3 mb-3 bg-sky-50 border border-sky-200">
+                                <div class="text-xs font-bold text-sky-700 mb-0.5">🔁 ยืนยันการใช้งานแล้ว — รอนิติบุคคลต่ออายุสิทธิ์</div>
+                                <div v-if="car.usage_confirmed_at" class="text-[11px] text-slate-500">
+                                    ยืนยันเมื่อ {{ formatThaiDate(car.usage_confirmed_at) }}<span v-if="car.usage_confirmed_name"> โดย {{ car.usage_confirmed_name }}</span>
+                                </div>
+                            </div>
+                            <!-- ต่ออายุเรียบร้อยแล้ว (เคยยืนยัน) — โชว์หลักฐานล่าสุด -->
+                            <div v-else-if="car.usage_confirmed_at && car.display_status === 'active'" class="text-[10px] text-slate-400 mb-2">
+                                ✅ ยืนยันการใช้งานล่าสุด {{ formatThaiDate(car.usage_confirmed_at) }}
+                            </div>
+
                             <!-- Photo -->
                             <img v-if="car.image_url" :src="isValidImageUrl(car.image_url)" class="w-full h-32 object-cover rounded-2xl border border-white/80 mb-3" @error="$event.target.style.display='none'">
 
                             <!-- Actions -->
                             <div class="flex gap-2 pt-2 border-t border-white/60">
-                                <!-- ต่ออายุ (ถ้าใกล้หมด/หมดแล้ว) -->
-                                <button v-if="car.display_status === 'expiring_soon' || car.display_status === 'expired'"
-                                        @click="renewCar(car)"
-                                        class="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5">
-                                    <i class="fa-solid fa-rotate-right"></i> ต่ออายุ
-                                </button>
                                 <!-- แก้ไข + ลบ -->
                                 <button @click="openCarForm(car)"
                                         class="flex-1 py-2.5 bg-white/80 hover:bg-white text-slate-700 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 border border-slate-200">
@@ -3417,38 +3453,61 @@
                     } catch { return dateStr; }
                 },
 
-                async renewCar(car) {
-                    const { value: note, isConfirmed } = await Swal.fire({
-                        title: '🔁 ต่ออายุทะเบียนรถ',
-                        html: `<div style="text-align:left;font-size:13px;color:#64748b;margin-bottom:8px">ทะเบียน <b>${car.plate_number}</b></div>`,
-                        input: 'textarea',
-                        inputPlaceholder: 'หมายเหตุ (ถ้ามี)...',
-                        inputAttributes: { rows: 2 },
+                // ════════════════════════════════════════════════════════════
+                // 🚗 ยืนยันสิทธิ์การใช้ทะเบียนรถ — สมาชิกกดยืนยัน "ใช้งานต่อ" เมื่อทะเบียน
+                // ใกล้หมด/หมดอายุ → รถเข้าสถานะ "รอต่ออายุ" + แจ้งแอดมิน (backend ตรวจสิทธิ์ซ้ำ
+                // ทุกข้อ: เป็นสมาชิกบ้านเดียวกัน / อยู่ในช่วงยืนยันจริง / กันกดซ้ำ)
+                // ════════════════════════════════════════════════════════════
+                async confirmCarUsage(car) {
+                    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+                    const expired = car.days_left !== null && car.days_left < 0;
+                    const { value: form, isConfirmed } = await Swal.fire({
+                        title: expired ? '❌ หมดอายุแล้ว — ยืนยันการใช้งานต่อ' : '⚠️ ใกล้หมดอายุ — ยืนยันการใช้งานต่อ',
+                        html: `
+                          <div style="text-align:left;font-size:13px;color:#475569">
+                            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:10px;margin-bottom:10px">
+                              <div style="font-weight:800;font-size:16px;color:#1e293b;letter-spacing:1px">${esc(car.plate_number)} <span style="font-weight:500;font-size:12px;color:#64748b">${esc(car.province)}</span></div>
+                              <div style="font-size:12px;margin-top:2px">บ้าน ${esc(car.house_number)} · หมดอายุ ${esc(this.formatThaiDate(car.end_date))}</div>
+                            </div>
+                            <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;margin-bottom:10px">
+                              <input type="checkbox" id="cu-agree" style="margin-top:3px;width:16px;height:16px;flex-shrink:0">
+                              <span style="font-size:12px;line-height:1.5">ข้าพเจ้ายืนยันว่ารถทะเบียนนี้ยังเป็นรถของบ้านเลขที่ ${esc(car.house_number)} และยังใช้งานอยู่จริง ขอให้นิติบุคคลต่ออายุสิทธิ์การใช้งาน</span>
+                            </label>
+                            <textarea id="cu-note" rows="2" placeholder="หมายเหตุถึงนิติบุคคล (ถ้ามี)..." style="width:100%;border:1px solid #e2e8f0;border-radius:10px;padding:8px;font-size:13px;resize:none;box-sizing:border-box"></textarea>
+                          </div>`,
                         showCancelButton: true,
-                        confirmButtonText: 'ส่งคำขอต่ออายุ',
+                        confirmButtonText: 'ยืนยันการใช้งานต่อ',
                         cancelButtonText: 'ยกเลิก',
-                        confirmButtonColor: '#f59e0b',
+                        confirmButtonColor: expired ? '#e11d48' : '#f59e0b',
+                        focusConfirm: false,
+                        preConfirm: () => {
+                            if (!document.getElementById('cu-agree').checked) {
+                                Swal.showValidationMessage('กรุณาติ๊กรับรองข้อมูลก่อนยืนยัน');
+                                return false;
+                            }
+                            return { note: document.getElementById('cu-note').value.trim() };
+                        }
                     });
-                    if (!isConfirmed) return;
+                    if (!isConfirmed || !form) return;
 
                     try {
-                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/renew_car`, {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/confirm_car_usage`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
                                 userId: this.userProfile.userId,
                                 displayName: this.userProfile.displayName,
                                 carId: car.id,
-                                renewalNote: note || null
+                                note: form.note || null
                             })
                         });
                         const d = await res.json();
-                        if (!res.ok) throw new Error(d.error);
-                        Swal.fire({ icon: 'success', title: '🔁 ส่งคำขอต่ออายุแล้ว', html: '<small>รอ admin อนุมัติ</small>', timer: 2000, showConfirmButton: false });
-                        await this.loadMyCars();
+                        if (!res.ok) throw new Error(d.error || 'ส่งไม่สำเร็จ');
+                        Swal.fire({ icon: 'success', title: '✅ ยืนยันการใช้งานแล้ว', html: '<small>แจ้งนิติบุคคลเรียบร้อย — รอต่ออายุสิทธิ์</small>', timer: 2400, showConfirmButton: false });
                     } catch (e) {
                         Swal.fire('ไม่สำเร็จ', e.message, 'error');
                     }
+                    await this.loadMyCars(); // รีเฟรชทุกกรณี (ถ้าสถานะเปลี่ยนไปแล้วจะได้เห็นของจริง)
                 },
 
                 // ════════════════════════════════════════════════════════════
