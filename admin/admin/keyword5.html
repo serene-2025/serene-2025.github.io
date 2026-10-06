@@ -774,7 +774,7 @@
                         </div>
 
                         <div class="absolute top-3 right-3 z-30 flex items-center gap-2">
-                            <button onclick="toggleBrowserNotifications()" id="gs-notif-btn" title="เปิด/ปิดแจ้งเตือนเบราว์เซอร์"
+                            <button onclick="checkAdminAlertsNow()" id="gs-notif-btn" title="ตรวจรายการรอดำเนินการ (กดเพื่อเช็ค)"
                                 class="relative w-8 h-8 rounded-full bg-white/90 backdrop-blur border border-slate-200 shadow-sm flex items-center justify-center text-slate-400 hover:text-amber-500 hover:border-amber-300 hover:shadow-md transition-all">
                                 <i data-lucide="bell" class="w-4 h-4"></i>
                                 <span id="gs-notif-badge" class="hidden absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white text-[9px] font-bold rounded-full items-center justify-center"></span>
@@ -930,76 +930,40 @@
             loadView(view);
         }
 
-        // ─── 🔔 BROWSER NOTIFICATIONS (Polling-based) ─────────────────
-        let gsNotifPollInterval = null;
-        let gsLastAlertTotal = null;
-
-        function toggleBrowserNotifications() {
-            const isOn = localStorage.getItem('gs_notif_enabled') === 'true';
-            if (isOn) {
-                localStorage.setItem('gs_notif_enabled', 'false');
-                stopBrowserNotificationPolling();
-                showToast('🔕 ปิดแจ้งเตือนเบราว์เซอร์แล้ว', 'info');
-                updateNotifBellUI(false);
-            } else {
-                if (!('Notification' in window)) return showToast('เบราว์เซอร์นี้ไม่รองรับ Notification', 'warning');
-                Notification.requestPermission().then(perm => {
-                    if (perm === 'granted') {
-                        localStorage.setItem('gs_notif_enabled', 'true');
-                        startBrowserNotificationPolling();
-                        showToast('🔔 เปิดแจ้งเตือนแล้ว — จะเด้งเตือนเมื่อมีสลิป/แจ้งซ่อมใหม่', 'success');
-                        updateNotifBellUI(true);
-                    } else {
-                        showToast('กรุณาอนุญาต Notification ในเบราว์เซอร์ก่อน', 'warning');
-                    }
-                });
-            }
-        }
-
-        function updateNotifBellUI(on) {
+        // ─── 🔔 รายการรอดำเนินการ (กดกระดิ่งเช็คเอง — ไม่มี polling) ────────
+        // เดิม poll ทุก 30 วินาทีตลอดเวลาที่เปิดแท็บ (Edge invocation + 3 query ต่อรอบ กินโควต้า
+        // Supabase หนักมาก แม้ไม่มีใครใช้งาน) → ตอนนี้ยิง 1 ครั้งเฉพาะตอนแอดมินกดกระดิ่งเอง
+        // แจ้งเตือนของจริงยังไปทาง Telegram/LINE ตามช่องทางที่ตั้งไว้เหมือนเดิม
+        async function checkAdminAlerts(manual = false) {
             const btn = document.getElementById('gs-notif-btn');
-            if (btn) btn.classList.toggle('text-amber-500', on);
-        }
-
-        function startBrowserNotificationPolling() {
-            stopBrowserNotificationPolling();
-            checkAdminAlerts(); // เช็คทันทีครั้งแรก
-            gsNotifPollInterval = setInterval(checkAdminAlerts, 30000); // ทุก 30 วินาที
-        }
-
-        function stopBrowserNotificationPolling() {
-            if (gsNotifPollInterval) { clearInterval(gsNotifPollInterval); gsNotifPollInterval = null; }
-        }
-
-        async function checkAdminAlerts() {
+            if (btn) btn.classList.add('animate-pulse');
             try {
                 const res = await fetch(`${API_BASE_URL}/api/admin/audience/admin_alerts_count`);
                 const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดไม่สำเร็จ');
                 const badge = document.getElementById('gs-notif-badge');
                 if (badge) {
                     if (d.total > 0) { badge.textContent = d.total > 99 ? '99+' : d.total; badge.classList.remove('hidden'); badge.classList.add('flex'); }
                     else { badge.classList.add('hidden'); badge.classList.remove('flex'); }
                 }
-                if (gsLastAlertTotal !== null && d.total > gsLastAlertTotal) {
-                    const diff = d.total - gsLastAlertTotal;
+                if (manual) {
                     const parts = [];
                     if (d.pendingSlips > 0) parts.push(d.pendingSlips + ' สลิปรอตรวจ');
                     if (d.pendingRepairs > 0) parts.push(d.pendingRepairs + ' แจ้งซ่อมรอ');
                     if (d.pendingCars > 0) parts.push(d.pendingCars + ' รถรออนุมัติ');
-                    new Notification('🔔 มีรายการใหม่ในระบบ', {
-                        body: parts.join(' · ') || (diff + ' รายการใหม่'),
-                        icon: 'https://cdn-icons-png.flaticon.com/128/15267/15267807.png',
-                    });
+                    showToast(parts.length ? '🔔 ' + parts.join(' · ') : '✅ ไม่มีรายการรอดำเนินการ', parts.length ? 'warning' : 'success');
                 }
-                gsLastAlertTotal = d.total;
-            } catch(e) { console.warn('checkAdminAlerts', e); }
+            } catch (e) {
+                console.warn('checkAdminAlerts', e);
+                if (manual) showToast('เช็ครายการรอดำเนินการไม่สำเร็จ', 'error');
+            } finally {
+                if (btn) btn.classList.remove('animate-pulse');
+            }
         }
+        function checkAdminAlertsNow() { return checkAdminAlerts(true); }
 
-        // เปิด polling อัตโนมัติถ้าเคยเปิดไว้
-        if (localStorage.getItem('gs_notif_enabled') === 'true' && Notification?.permission === 'granted') {
-            startBrowserNotificationPolling();
-            updateNotifBellUI(true);
-        }
+        // ล้างค่าเก่าที่เคยเปิด "แจ้งเตือนเบราว์เซอร์" (polling) ไว้ — ไม่มีการเริ่ม polling อัตโนมัติอีกแล้ว
+        try { localStorage.removeItem('gs_notif_enabled'); } catch (_) { }
 
         // ─── 🗑️ TRASH BIN (Recycle Bin) ─────────────────────────────
         // ─── 🏘️ LAND REGISTRY (ฐานข้อมูลกลาง) ───────────────────────
@@ -2338,7 +2302,7 @@
         }
 
         // ─── 🎯 EXECUTIVE LIVE DASHBOARD ─────────────────────────────
-        let execDashboardPoll = null;
+        let _execLoading = false;
         async function renderExecDashboardView() {
             document.getElementById('content-area').innerHTML =
                 '<div class="slide-in p-2">' +
@@ -2346,15 +2310,27 @@
                 '<div><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
                 '<span class="bg-violet-100 text-violet-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="gauge" class="w-8 h-8"></i></span>' +
                 'Executive Dashboard</h1>' +
-                '<p class="text-sm text-slate-500 mt-2 ml-1">ภาพรวมทั้งระบบในหน้าเดียว · อัปเดตอัตโนมัติทุก 30 วินาที</p></div>' +
-                '<div class="flex items-center gap-2 text-xs text-slate-400"><span id="exec-last-updated"></span><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i></div>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">ภาพรวมทั้งระบบในหน้าเดียว · กดปุ่มรีเฟรชเพื่ออัปเดตข้อมูล</p></div>' +
+                '<div class="flex items-center gap-2 text-xs text-slate-400"><span id="exec-last-updated"></span><button id="exec-refresh-btn" onclick="refreshExecDashboard()" title="รีเฟรชข้อมูล" class="p-2 rounded-full bg-white border border-slate-200 text-slate-500 hover:text-violet-600 shadow-sm"><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i></button></div>' +
                 '</div>' +
                 '<div id="exec-content"><div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div></div>' +
                 '</div>';
             lucide.createIcons();
-            await loadExecDashboard();
-            if (execDashboardPoll) clearInterval(execDashboardPoll);
-            execDashboardPoll = setInterval(loadExecDashboard, 30000);
+            await loadExecDashboard();   // โหลดครั้งเดียวตอนเปิดหน้า — ไม่มี auto-refresh (กดปุ่มรีเฟรชเอง)
+        }
+
+        // รีเฟรชด้วยมือ — กันกดรัวระหว่างกำลังโหลด (1 กด = 1 ชุดคำสั่ง ~20 query)
+        async function refreshExecDashboard() {
+            if (_execLoading) return;
+            _execLoading = true;
+            const btn = document.getElementById('exec-refresh-btn');
+            if (btn) { btn.disabled = true; btn.classList.add('animate-pulse'); }
+            try { await loadExecDashboard(); }
+            finally {
+                _execLoading = false;
+                const b2 = document.getElementById('exec-refresh-btn');
+                if (b2) { b2.disabled = false; b2.classList.remove('animate-pulse'); }
+            }
         }
 
         async function loadExecDashboard() {
@@ -7055,8 +7031,6 @@ async function updateAllUserProfiles() {
 
         let chatMemoryState = {};
         let activeChatUserId = null;
-        let currentChatInterval = null;
-        let globalChatUsersInterval = null;
 
         let allUniqueChatUsers = [];
         let chatUsersPage = 1;
@@ -7370,8 +7344,7 @@ async function updateAllUserProfiles() {
             fetchChatQuota();
             fetchInitialChatUsers();
 
-            if (globalChatUsersInterval) clearInterval(globalChatUsersInterval);
-            globalChatUsersInterval = setInterval(silentUpdateUserList, 8000);
+            // ไม่มี auto-refresh รายชื่อ — ใช้ปุ่มรีเฟรชในหัวรายชื่อ (ดึงใหม่เฉพาะตอนกด)
 
             setInterval(() => {
                 document.querySelectorAll('.unread-timer').forEach(el => {
@@ -7489,10 +7462,7 @@ async function updateAllUserProfiles() {
                 if (timer) timer.remove();
             }
 
-            await fetchChatMessages();
-
-            if (currentChatInterval) clearInterval(currentChatInterval);
-            currentChatInterval = setInterval(fetchChatMessages, 5000);
+            await fetchChatMessages();   // ดึงครั้งเดียวตอนเปิดห้อง — ข้อความใหม่กดปุ่มรีเฟรชในหัวห้องแชท (ส่งข้อความ/ไฟล์แล้วรีเฟรชให้เอง)
         }
 
         function closeChatMobile() {
@@ -7502,8 +7472,6 @@ async function updateAllUserProfiles() {
             if (window.innerWidth >= 768) {
                 document.getElementById('chat-empty-state').style.display = 'flex';
             }
-            clearInterval(currentChatInterval);
-            currentChatInterval = null;
         }
 
         async function renameChatUser() {
@@ -8449,8 +8417,7 @@ async function updateAllUserProfiles() {
                 }
             } catch (err) { }
         }
-        // ตรวจสอบแจ้งเตือนทุกๆ 20 วินาที
-        setInterval(checkNotifications, 20000);
+        // ไม่มี auto-check แล้ว (เดิมทุก 20 วินาที ดึง chat_meta_% ของทุกคน) — กดกระดิ่งในแถบข้างเพื่อเช็คเอง
 
         // 3. 📥 Import / Export Data AI (CSV)
         async function exportDataAiCsv() {
