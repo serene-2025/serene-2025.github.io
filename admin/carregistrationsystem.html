@@ -430,7 +430,7 @@
                                     <div class="relative">
                                         <select id="carTypeInput" class="block w-full rounded-xl border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 py-3 pl-4 pr-10 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all appearance-none font-medium text-slate-800 dark:text-white">
                                             <option value="car">🚗 รถยนต์ (ซิงค์กล้อง)</option>
-                                            <option value="motorcycle">🏍️ มอเตอร์ไซค์ (ไม่ซิงค์)</option>
+                                            <option value="motorcycle">🏍️️ มอเตอร์ไซค์ (ไม่ซิงค์)</option>
                                         </select>
                                         <i data-lucide="chevron-down" class="absolute right-3 top-3.5 w-4 h-4 text-slate-400 pointer-events-none"></i>
                                     </div>
@@ -995,9 +995,87 @@
             }
         };
 
+        // 🟢 ฟังก์ชันซิงค์ข้อมูลจากฐานข้อมูลดิบ (car_registrations) ไปยัง allowed_cars
+        window.syncApprovedToAllowed = async () => {
+            const { value: confirm } = await Swal.fire({
+                title: 'ซิงค์ข้อมูลไประบบกล้อง?',
+                html: 'ระบบจะดึงรายการที่ <b>"อนุมัติแล้ว"</b> ทั้งหมดจากฐานข้อมูลรถ(ดิบ)<br>ไปอัปเดตหรือเพิ่มในระบบกล้อง (allowed_cars) <br><span class="text-xs text-slate-500">เพื่อแก้ปัญหาข้อมูลกล้องหายหรือตกหล่น</span>',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#4f46e5',
+                confirmButtonText: 'เริ่มซิงค์ข้อมูล'
+            });
+
+            if (!confirm) return;
+
+            Swal.fire({ title: 'กำลังดึงข้อมูล...', html: 'กรุณารอสักครู่...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+
+            try {
+                // 1. ดึงข้อมูลที่อนุมัติแล้วทั้งหมดจาก car_registrations
+                const { data: approvedCars, error: err1 } = await supabaseClient
+                    .from('car_registrations')
+                    .select('*')
+                    .eq('status', 'approved');
+                
+                if (err1) throw err1;
+
+                if (!approvedCars || approvedCars.length === 0) {
+                    return Swal.fire('ข้อมูลว่างเปล่า', 'ไม่มีรายการรถที่อนุมัติแล้วให้ซิงค์', 'info');
+                }
+
+                let successCount = 0;
+                
+                // 2. วนลูปเพื่อนำไปใส่ใน allowed_cars
+                for (let i = 0; i < approvedCars.length; i++) {
+                    const req = approvedCars[i];
+                    const isMoto = req.car_type === 'รถจักรยานยนต์';
+                    let syncStatus = isMoto ? 'ignore_sync' : 'pending_update';
+                    let finalProvince = isMoto ? 
+                        (req.province.includes('(มอไซค์)') ? req.province : req.province + ' (มอไซค์)') 
+                        : req.province;
+
+                    const payload = {
+                        plate_number: req.plate_number,
+                        province: finalProvince,
+                        house_number: req.house_number,
+                        list_type: 'allowlist',
+                        start_date: req.start_date || getThaiYMD(),
+                        end_date: req.end_date || '2030-12-31',
+                        status: syncStatus,
+                        line_display_name: req.fullname,
+                        line_picture_url: req.image_url
+                    };
+
+                    // เช็คว่ามีทะเบียนนี้อยู่แล้วหรือไม่
+                    const { data: existing } = await supabaseClient
+                        .from('allowed_cars')
+                        .select('id')
+                        .eq('plate_number', req.plate_number)
+                        .maybeSingle();
+
+                    if (existing) {
+                        await supabaseClient.from('allowed_cars').update(payload).eq('id', existing.id);
+                    } else {
+                        payload.status = isMoto ? 'ignore_sync' : 'pending';
+                        await supabaseClient.from('allowed_cars').insert([payload]);
+                    }
+
+                    successCount++;
+                    Swal.update({ html: `ดำเนินการอัปเดตไปแล้ว <b>${successCount}</b> / ${approvedCars.length} รายการ` });
+                }
+
+                Swal.fire('สำเร็จ', `ซิงค์ข้อมูลจากฐานข้อมูลดิบสำเร็จ <b>${successCount}</b> รายการ<br><span class="text-sm text-slate-500">ระบบคิวจะเริ่มส่งข้อมูลไปยังกล้อง LPR ต่อไป</span>`, 'success');
+                refreshCurrentView();
+
+            } catch (err) {
+                console.error(err);
+                Swal.fire('เกิดข้อผิดพลาดในการซิงค์', err.message, 'error');
+            }
+        };
+
         function refreshCurrentView() {
             // 🟢 รีเซ็ตสถานะทุกครั้งที่กดปุ่ม "โหลดข้อมูลล่าสุด" เพื่อบังคับดึงข้อมูลใหม่
-            isLoaded = { active: false, members: false, pending_requests: false, all_registrations: false, deleted: false, visitor_history: false };
+            isLoaded = { active: false, members: false, pending_requests: false, all_registrations: false, deleted: false, visitor_history: false, expiring_soon: false };
             
             if (currentView === 'members') fetchMembers();
             else if (currentView === 'pending_requests') fetchPendingRequests();
@@ -1709,12 +1787,106 @@
             }
         }
 
+        // 🟢 ฟังก์ชันซิงค์ข้อมูลอนุมัติกลับไปยัง allowed_cars
+        window.syncApprovedToAllowed = async () => {
+            const { value: confirm } = await Swal.fire({
+                title: 'ซิงค์ข้อมูลไประบบกล้อง?',
+                html: 'ระบบจะนำรายการที่ <b>"อนุมัติแล้ว"</b> ทั้งหมดจากฐานข้อมูลดิบ<br>ไปอัปเดตหรือเพิ่มใน <b>allowed_cars</b> เพื่อเตรียมส่งเข้ากล้อง<br><span class="text-xs text-rose-500">ใช้สำหรับแก้ปัญหาเวลาข้อมูลในกล้องสูญหาย</span>',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#4f46e5',
+                confirmButtonText: 'เริ่มซิงค์ข้อมูล'
+            });
+
+            if (!confirm) return;
+
+            Swal.fire({ title: 'กำลังซิงค์ข้อมูล...', html: 'กรุณารอสักครู่...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+
+            try {
+                // ดึงข้อมูลที่อนุมัติแล้วทั้งหมดจาก car_registrations
+                const { data: approvedCars, error: err1 } = await supabaseClient
+                    .from('car_registrations')
+                    .select('*')
+                    .eq('status', 'approved');
+                
+                if (err1) throw err1;
+
+                if (!approvedCars || approvedCars.length === 0) {
+                    return Swal.fire('ข้อมูลว่างเปล่า', 'ไม่มีรายการรถที่อนุมัติแล้วให้ซิงค์', 'info');
+                }
+
+                let successCount = 0;
+                
+                // วนลูปเพื่อนำไปใส่ใน allowed_cars
+                for (let i = 0; i < approvedCars.length; i++) {
+                    const req = approvedCars[i];
+                    const isMoto = req.car_type === 'รถจักรยานยนต์';
+                    let syncStatus = isMoto ? 'ignore_sync' : 'pending_update';
+                    let finalProvince = isMoto ? 
+                        (req.province.includes('(มอไซค์)') ? req.province : req.province + ' (มอไซค์)') 
+                        : req.province;
+
+                    const payload = {
+                        plate_number: req.plate_number,
+                        province: finalProvince,
+                        house_number: req.house_number,
+                        list_type: 'allowlist',
+                        start_date: req.start_date || getThaiYMD(),
+                        end_date: req.end_date || '2030-12-31',
+                        status: syncStatus
+                    };
+
+                    // เช็คว่ามีทะเบียนนี้อยู่แล้วหรือไม่
+                    const { data: existing } = await supabaseClient
+                        .from('allowed_cars')
+                        .select('id')
+                        .eq('plate_number', req.plate_number)
+                        .maybeSingle();
+
+                    if (existing) {
+                        await supabaseClient.from('allowed_cars').update(payload).eq('id', existing.id);
+                    } else {
+                        payload.status = isMoto ? 'ignore_sync' : 'pending';
+                        await supabaseClient.from('allowed_cars').insert([payload]);
+                    }
+
+                    successCount++;
+                    Swal.update({ html: `ดำเนินการไปแล้ว <b>${successCount}</b> / ${approvedCars.length}` });
+                }
+
+                Swal.fire('สำเร็จ', `ซิงค์ข้อมูลจากฐานข้อมูลดิบสำเร็จ <b>${successCount}</b> รายการ<br><span class="text-sm text-slate-500">สถานะเปลี่ยนเป็นรอเข้าคิวอัปเดตกล้องแล้ว</span>`, 'success');
+                refreshCurrentView();
+
+            } catch (err) {
+                console.error(err);
+                Swal.fire('เกิดข้อผิดพลาด', err.message, 'error');
+            }
+        };
+
         function renderAllRegistrationsList(list) {
             totalCountEl.textContent = list.length;
             carList.innerHTML = '';
 
+            // 🟢 เพิ่ม Control Panel สำหรับปุ่ม Sync ข้อมูลดิบไป allowed_cars
+            const controlPanel = document.createElement('div');
+            controlPanel.className = "glass-panel rounded-2xl p-4 shadow-sm mb-4 flex flex-col sm:flex-row justify-between items-center gap-3 border-l-4 border-l-fuchsia-500 animate-fade-in-up";
+            controlPanel.innerHTML = `
+                <div class="flex items-center gap-2">
+                    <div class="bg-fuchsia-100 dark:bg-fuchsia-900/50 p-1.5 rounded-lg text-fuchsia-600 dark:text-fuchsia-400">
+                        <i data-lucide="database-zap" class="w-4 h-4"></i>
+                    </div>
+                    <span class="font-bold text-slate-700 dark:text-slate-200">ฐานข้อมูลรถดิบ (${list.length})</span>
+                </div>
+                <div class="flex gap-2 w-full sm:w-auto">
+                    <button onclick="syncApprovedToAllowed()" class="w-full sm:w-auto px-4 py-2 bg-indigo-600 text-white border border-transparent rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all shadow-sm shadow-indigo-500/30 flex items-center justify-center gap-2 click-scale">
+                        <i data-lucide="refresh-ccw" class="w-4 h-4"></i>
+                        ซิงค์รายการที่อนุมัติแล้วไประบบกล้อง
+                    </button>
+                </div>`;
+            carList.appendChild(controlPanel);
+
             if (!list.length) {
-                carList.innerHTML = `<div class="text-center py-20 text-slate-400">ไม่พบข้อมูล</div>`;
+                carList.innerHTML += `<div class="text-center py-20 text-slate-400">ไม่พบข้อมูล</div>`;
                 return;
             }
 
