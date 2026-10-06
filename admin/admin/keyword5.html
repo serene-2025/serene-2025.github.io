@@ -15737,9 +15737,14 @@ async function renderCarManagementView() {
                     </h1>
                     <p class="text-sm text-slate-500 mt-2 ml-1">รถที่ลงทะเบียนในหมู่บ้าน · อนุมัติ / ปฏิเสธ</p>
                 </div>
-                <button onclick="loadCarData()" class="px-4 py-2.5 bg-fuchsia-500 hover:bg-indigo-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2 shadow-md">
-                    <i data-lucide="refresh-cw" class="w-4 h-4"></i> รีเฟรช
-                </button>
+                <div class="flex flex-wrap gap-2">
+                    <button onclick="bulkSetCarExpiry()" class="px-4 py-2.5 bg-white hover:bg-fuchsia-50 text-fuchsia-700 border-2 border-fuchsia-200 rounded-2xl font-bold text-sm flex items-center gap-2 shadow-sm">
+                        <i data-lucide="calendar" class="w-4 h-4"></i> ตั้งวันหมดอายุทั้งหมด
+                    </button>
+                    <button onclick="loadCarData()" class="px-4 py-2.5 bg-fuchsia-500 hover:bg-indigo-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2 shadow-md">
+                        <i data-lucide="refresh-cw" class="w-4 h-4"></i> รีเฟรช
+                    </button>
+                </div>
             </div>
 
             <!-- Stats -->
@@ -16002,6 +16007,121 @@ async function approveCarRenewal(car) {
         showToast('✅ ต่ออายุแล้ว + ส่งคำสั่งซิงก์กล้อง', 'success');
         loadCarData();
     } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ─── 📅 ตั้งวันหมดอายุทะเบียนรถ "ทั้งหมด" พร้อมกัน (เช่น ให้สมาชิกทุกคนยืนยันการใช้งานใหม่) ───
+// flow 3 ขั้น: เลือกวัน → ดูตัวอย่าง (backend นับให้ ยังไม่เขียนอะไร) → ยืนยัน
+// ⚠️ วันหมดอายุคือค่าที่ซิงก์เข้ากล้อง LPR — ถ้าตั้งย้อนหลัง/ใกล้มาก ต้องพิมพ์ "ยืนยัน" เพิ่มอีกชั้น
+async function callCarBulkExpiry(payload) {
+    const res = await fetch(`${API_BASE_URL}/api/admin/audience/car_bulk_set_expiry`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    const d = await res.json().catch(() => ({}));
+    return { ok: res.ok, d };
+}
+
+async function bulkSetCarExpiry() {
+    const addDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+    const fmt = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    // ขั้น 1 — เลือกวันที่
+    const { value: opts, isConfirmed } = await Swal.fire({
+        title: '📅 ตั้งวันหมดอายุทะเบียนรถทั้งหมด',
+        width: 520,
+        html: `<div style="text-align:left;font-size:13px;color:#475569">
+            <p style="margin:0 0 10px">ใช้กับรถที่ <b>อนุมัติแล้ว</b> ทุกคัน — เช่นตั้งวันใกล้ๆ เพื่อให้สมาชิกทุกคนกดยืนยันการใช้งานใหม่</p>
+            <label style="font-weight:700;font-size:12px;display:block;margin-bottom:3px">วันหมดอายุใหม่ (ค.ศ.)</label>
+            <input type="date" id="bulk-end" value="${addDays(30)}" style="width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:8px;font-size:14px;box-sizing:border-box">
+            <div style="display:flex;gap:6px;margin:8px 0 12px;flex-wrap:wrap">
+              ${[30, 60, 90].map(n => `<button type="button" class="bulk-q" data-d="${addDays(n)}" style="border:1px solid #e9d5ff;background:#faf5ff;color:#7e22ce;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;cursor:pointer">+${n} วัน</button>`).join('')}
+            </div>
+            <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:12px">
+              <input type="checkbox" id="bulk-wl" style="margin-top:2px">
+              <span>รวมรถที่แอดมินเพิ่มตรงใน Whitelist (ไม่มีในทะเบียนสมาชิก)</span>
+            </label>
+            <p style="margin:10px 0 0;font-size:11px;color:#94a3b8">ข้าม: รอตรวจ / ไม่อนุมัติ / รอต่ออายุ / Blocklist — ทุกครั้งจะแสดงตัวอย่างจำนวนก่อน ยังไม่บันทึกจนกว่าจะยืนยัน</p>
+        </div>`,
+        didOpen: () => { document.querySelectorAll('.bulk-q').forEach(b => { b.onclick = () => { document.getElementById('bulk-end').value = b.dataset.d; }; }); },
+        showCancelButton: true, confirmButtonText: 'ดูตัวอย่างก่อนบันทึก', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#a21caf',
+        preConfirm: () => {
+            const endDate = document.getElementById('bulk-end').value;
+            if (!endDate) { Swal.showValidationMessage('กรุณาเลือกวันที่'); return false; }
+            return { endDate, includeWhitelistOnly: document.getElementById('bulk-wl').checked };
+        }
+    });
+    if (!isConfirmed || !opts) return;
+
+    // ขั้น 2 — ดูตัวอย่าง (ไม่เขียนข้อมูล)
+    Swal.fire({ title: 'กำลังคำนวณ...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    const pv = await callCarBulkExpiry({ ...opts, apply: false });
+    if (!pv.ok) return Swal.fire('ไม่สำเร็จ', pv.d.error || 'เกิดข้อผิดพลาด', 'error');
+    const p = pv.d;
+    if (p.toWrite === 0) {
+        return Swal.fire({ icon: 'info', title: 'ไม่มีรถที่ต้องเปลี่ยน', text: 'รถที่เข้าเงื่อนไขทั้งหมดมีวันหมดอายุตรงกับวันที่เลือกอยู่แล้ว' });
+    }
+
+    const needTyped = p.expiredNow || p.daysFromToday <= 0;
+    const warns = [];
+    if (p.expiredNow) warns.push(`<b>วันที่นี้ผ่านมาแล้ว</b> — รถ ${p.toWrite} คันจะ <b>หมดอายุทันที</b> กล้อง LPR อาจไม่ให้ผ่านจนกว่าสมาชิกยืนยันและแอดมินต่ออายุให้`);
+    else if (p.daysFromToday <= 7) warns.push(`เหลือเพียง ${p.daysFromToday} วัน — รถ ${p.toWrite} คันจะหมดอายุเร็วมาก`);
+    if (p.change.shorten > 0) warns.push(`ย่นวันหมดอายุ ${p.change.shorten} คัน (วันเดิมไกลกว่าวันที่ตั้งใหม่)`);
+
+    const row = (label, val, color) => `<tr><td style="padding:3px 0;color:#64748b">${label}</td><td style="padding:3px 0;text-align:right;font-weight:700;color:${color || '#1e293b'}">${val}</td></tr>`;
+    const sk = p.skipped;
+    const html = `<div style="text-align:left;font-size:13px">
+        <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:12px;padding:10px;margin-bottom:10px">
+          <div style="font-size:12px;color:#7e22ce">วันหมดอายุใหม่</div>
+          <div style="font-size:18px;font-weight:800;color:#6b21a8">${fmt(p.endDate)}</div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          ${row('รถในทะเบียนสมาชิกที่เข้าเงื่อนไข', `${p.cars.regs} คัน`)}
+          ${p.includeWhitelistOnly ? row('รถใน Whitelist อย่างเดียว', `${p.cars.orphans} คัน`) : ''}
+          ${row('<b>จะเปลี่ยนจริง</b>', `<b>${p.toWrite} คัน</b>`, '#a21caf')}
+          ${row('  ├ ย่นวันหมดอายุ', `${p.change.shorten}`)}
+          ${row('  ├ ขยายวันหมดอายุ', `${p.change.extend}`)}
+          ${row('  └ ตั้งครั้งแรก (เดิมไม่มีวัน)', `${p.change.firstSet}`)}
+          ${row('วันเท่าเดิมอยู่แล้ว (ไม่แตะ)', `${p.change.unchanged}`)}
+          ${row('ส่งซิงก์กล้อง LPR ใหม่', `${p.syncToCamera} คัน`)}
+        </table>
+        <div style="margin-top:8px;font-size:11px;color:#94a3b8">
+          ข้าม: รอต่ออายุ ${sk.renewalPending} · รอตรวจ ${sk.pending} · ไม่อนุมัติ ${sk.rejected} · ไม่อยู่ใน Whitelist ${sk.noWhitelist} · Blocklist ${sk.notAllowlist}
+          ${(!p.includeWhitelistOnly && p.whitelistOnlyAvailable > 0) ? `<br>มีรถใน Whitelist ที่ไม่อยู่ในทะเบียนสมาชิกอีก ${p.whitelistOnlyAvailable} คัน (ไม่ได้เลือกรวม)` : ''}
+        </div>
+        <div style="margin-top:10px;font-size:12px;padding:8px 10px;border-radius:10px;background:${p.confirmOpenNow ? '#ecfdf5' : '#fffbeb'};color:${p.confirmOpenNow ? '#047857' : '#92400e'}">
+          ${p.confirmOpenNow
+            ? '✅ สมาชิกจะเห็นปุ่ม "ยืนยันการใช้งานต่อ" <b>ทันที</b>'
+            : `⏳ สมาชิกจะเริ่มเห็นปุ่มยืนยันตั้งแต่ <b>${fmt(p.confirmOpensOn)}</b> (30 วันก่อนหมดอายุ) — ถ้าต้องการให้ยืนยันตอนนี้ ให้เลือกวันที่ภายใน 30 วัน`}
+        </div>
+        ${warns.length ? `<div style="margin-top:10px;font-size:12px;padding:8px 10px;border-radius:10px;background:#fef2f2;color:#b91c1c">${warns.map(w => '⚠️ ' + w).join('<br>')}</div>` : ''}
+      </div>`;
+
+    // ขั้น 3 — ยืนยันจริง (ถ้าวันที่ย้อนหลัง/วันนี้ ต้องพิมพ์ "ยืนยัน" เพิ่ม)
+    const cfg = {
+        title: `ตั้งวันหมดอายุ ${p.toWrite} คัน?`, html, width: 520,
+        icon: needTyped ? 'warning' : 'question',
+        showCancelButton: true, cancelButtonText: 'ยกเลิก',
+        confirmButtonText: `ตั้งวันหมดอายุ ${p.toWrite} คัน`, confirmButtonColor: needTyped ? '#e11d48' : '#a21caf'
+    };
+    if (needTyped) {
+        cfg.input = 'text';
+        cfg.inputPlaceholder = 'พิมพ์คำว่า ยืนยัน เพื่อดำเนินการ';
+        cfg.inputValidator = (v) => ((v || '').trim() === 'ยืนยัน' ? undefined : 'พิมพ์คำว่า "ยืนยัน" ให้ถูกต้องก่อน');
+    }
+    const { isConfirmed: go } = await Swal.fire(cfg);
+    if (!go) return;
+
+    // บันทึกจริง — ส่ง expectedTotal กลับไปให้ server เทียบ (กันข้อมูลเปลี่ยนระหว่างรอกดยืนยัน)
+    Swal.fire({ title: 'กำลังบันทึก...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    const out = await callCarBulkExpiry({ ...opts, apply: true, expectedTotal: p.toWrite });
+    const r = out.d || {};
+    if (r.success) {
+        await Swal.fire({ icon: 'success', title: `ตั้งวันหมดอายุแล้ว ${r.updated} คัน`,
+            html: `<div style="font-size:13px;color:#475569">${r.confirmOpenNow ? 'สมาชิกกดยืนยันการใช้งานต่อได้ทันที' : `สมาชิกเริ่มยืนยันได้ตั้งแต่ ${fmt(r.confirmOpensOn)}`}<br><span style="font-size:11px;color:#94a3b8">แจ้งเตือนทีมแอดมินและบันทึก Audit Log แล้ว</span></div>` });
+    } else {
+        await Swal.fire({ icon: 'error', title: r.applied ? `บันทึกไม่ครบ (สำเร็จ ${r.updated || 0} / ล้มเหลว ${r.failed || 0})` : 'ไม่สำเร็จ',
+            text: r.error || (r.errors && r.errors[0]) || 'เกิดข้อผิดพลาด' });
+    }
+    loadCarData();
 }
 
 // ─── ปฏิเสธคำขอต่ออายุ — รถกลับเป็น "อนุมัติ" (วันหมดอายุเดิม) ไม่ใช่ "ไม่อนุมัติ" เพราะตัวรถยังลงทะเบียนอยู่ ───
