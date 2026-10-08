@@ -2915,13 +2915,14 @@
                         </h2>
                         <p class="text-xs text-slate-500 mb-4">รายการแจ้งทะเบียนรถจากลูกบ้านที่แจ้งเข้ามาผ่าน LINE พร้อมรูปรถ/ป้ายทะเบียน — ใช้ตรวจสอบรถแปลกหน้าที่จอดในหมู่บ้าน</p>
 
-                        <details class="mb-4" id="carBackupDetails">
+                        <details class="mb-4" id="carBackupDetails" ontoggle="if (this.open) cbCheckServer()">
                             <summary class="cursor-pointer text-sm font-bold text-cyan-600 select-none">☁️ สำรองรูปทะเบียนรถไป Google Drive (คลิกเพื่อเปิด)</summary>
                             <div class="mt-3 p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
                                 <p class="text-xs text-slate-500">คัดลอกรูปทะเบียนรถจากที่เก็บเดิมไปไว้ในโฟลเดอร์ Google Drive ที่กำหนด แล้วแทนที่ลิงก์ในฐานข้อมูลเมื่อคัดลอกสำเร็จ — <b>ไม่ลบไฟล์ต้นฉบับ</b> รันซ้ำได้ปลอดภัย (รูปที่เป็นลิงก์ Google อยู่แล้วจะถูกข้าม)</p>
                                 <div id="cbStatus" class="text-sm"></div>
+                                <div id="cbServerInfo"></div>
 
-                                <div>
+                                <div id="cbFolderControls">
                                     <label class="block text-xs font-bold text-slate-600 mb-1">โฟลเดอร์ปลายทางใน Google Drive (วางรหัสโฟลเดอร์ หรือลิงก์โฟลเดอร์ก็ได้)</label>
                                     <div class="flex flex-wrap gap-2">
                                         <input type="text" id="cbFolderInput" placeholder="เช่น https://drive.google.com/drive/folders/1AbC..." class="flex-1 min-w-56 px-3 py-2 rounded-lg border border-slate-300 text-sm font-mono">
@@ -18479,11 +18480,19 @@ window.kcSendNotifNow = kcSendNotifNow;
 
 
 // ================================================================
-// ☁️ สำรองรูปทะเบียนรถไป Google Drive — โฟลเดอร์ตั้งค่าได้/สร้างใหม่ได้ (เก็บใน org_settings.carBackupSettings)
+// ☁️ สำรองรูปทะเบียนรถไป Google Drive
+// โฟลเดอร์ปลายทางมี 2 แหล่ง: (1) ตั้งในโค้ด GAS ที่ CAR_IMAGE_FOLDER_ID เหมือน IMAGE_FOLDER_ID ของสลิป — ชนะเสมอ
+//                          (2) ตั้งจากหน้าเว็บ (เก็บใน org_settings.carBackupSettings) — ใช้เมื่อในโค้ดเว้นว่าง
 // ================================================================
 const CAR_BACKUP_BATCH = 10;
 const CAR_BACKUP_MAX_ROUNDS = 500; // กันลูปหลุดมือในกรณีผิดปกติ (10 รูป/รอบ → สูงสุด 5,000 รูป)
 let carBackupRunning = false;
+
+// สถานะโฟลเดอร์/การเชื่อมต่อฝั่ง GAS: unknown | checking | code (ตั้งในโค้ด) | web (ตั้งจากหน้าเว็บ) | notset | error
+let cbServerState = 'unknown';
+let cbServerInfo = null;
+let cbServerError = '';
+let cbServerPromise = null;
 
 function getCarBackupSettings() {
     const c = orgSettingsCache.carBackupSettings || {};
@@ -18493,7 +18502,23 @@ async function saveCarBackupSettings(folderId, folderName) {
     await saveOrgSettings({ carBackupSettings: { folderId: folderId || '', folderName: folderName || '' } });
 }
 
-// รับได้ทั้งรหัสล้วนและลิงก์เต็มของโฟลเดอร์ — คืนค่าว่างถ้ารูปแบบไม่ถูกต้อง
+// ถาม GAS ว่าโฟลเดอร์ที่จะถูกใช้จริงคืออะไร (ตรวจค่าในโค้ดก่อน แล้วค่อยค่าจากหน้าเว็บ) — ใช้เป็นตัวบอกสถานะการเชื่อมต่อ GAS บนแผงด้วย
+// เรียกครั้งเดียวต่อการเปิดหน้า (จำผลไว้) ยกเว้นกด "ตรวจสอบอีกครั้ง"
+function cbCheckServer(force) {
+    if (cbServerPromise && !force) return cbServerPromise;
+    cbServerState = 'checking'; cbServerError = ''; cbRenderPanel();
+    cbServerPromise = (async () => {
+        try {
+            const res = await callGas('drive_folder_verify', { folder_id: getCarBackupSettings().folderId || '' });
+            if (res && res.not_set) { cbServerState = 'notset'; cbServerInfo = null; }
+            else if (res && res.ok) { cbServerState = res.source === 'code' ? 'code' : 'web'; cbServerInfo = res; }
+            else { cbServerState = 'error'; cbServerError = 'GAS ตอบกลับในรูปแบบที่ไม่คาดคิด'; }
+        } catch (e) { cbServerState = 'error'; cbServerError = e.message; }
+        cbRenderPanel();
+    })();
+    return cbServerPromise;
+}
+
 function cbExtractFolderId(raw) {
     let s = String(raw || '').trim();
     const m = s.match(/\/folders\/([A-Za-z0-9_-]+)/);
@@ -18501,7 +18526,6 @@ function cbExtractFolderId(raw) {
     return /^[A-Za-z0-9_-]{10,}$/.test(s) ? s : '';
 }
 
-// รูปที่ "ยังต้องสำรอง" = มี image_url และยังไม่ใช่ลิงก์ Google (เกณฑ์เดียวกับที่ฝั่ง GAS ใช้คัดแถว)
 function cbCountImages() {
     const withImg = (carRegistrations || []).filter(r => r.image_url && String(r.image_url).trim());
     const pending = withImg.filter(r => !String(r.image_url).includes('google'));
@@ -18514,13 +18538,24 @@ function cbRenderPanel() {
     const cnt = cbCountImages();
     st.innerHTML = `รูปทะเบียนรถทั้งหมด <b>${cnt.total}</b> รูป • สำรองแล้ว <b class="text-green-600">${cnt.done}</b> • ยังไม่ได้สำรอง <b class="${cnt.pending ? 'text-amber-600' : 'text-slate-500'}">${cnt.pending}</b>`;
 
+    const sv = document.getElementById('cbServerInfo');
+    if (sv) {
+        if (cbServerState === 'checking') sv.innerHTML = '<span class="text-xs text-slate-400">กำลังตรวจสอบโฟลเดอร์/การเชื่อมต่อ GAS...</span>';
+        else if (cbServerState === 'code') sv.innerHTML = `<div class="bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-xs text-green-800">✅ ใช้โฟลเดอร์ที่ตั้งไว้ใน<b>โค้ด GAS</b> (<code>CAR_IMAGE_FOLDER_ID</code>): 📁 <b>${nsEsc(cbServerInfo?.folder_name || '')}</b> — <a class="underline" target="_blank" rel="noopener" href="${nsEsc(cbServerInfo?.url || '#')}">เปิดใน Google Drive</a><br><span class="text-green-700">ค่าในโค้ดมีผลเหนือการตั้งจากหน้าเว็บ — ถ้าจะเปลี่ยนโฟลเดอร์ ให้แก้ค่านี้ใน Code.gs แล้ว Deploy เวอร์ชันใหม่</span></div>`;
+        else if (cbServerState === 'error') sv.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700">❌ ตรวจโฟลเดอร์/การเชื่อมต่อ GAS ไม่ผ่าน: ${nsEsc(cbServerError)} <button onclick="cbCheckServer(true)" class="underline font-bold ml-1">ตรวจสอบอีกครั้ง</button></div>`;
+        else sv.innerHTML = '';
+    }
+    // ตั้งในโค้ดแล้ว → ซ่อนช่องกรอกโฟลเดอร์ (ค่าจากหน้าเว็บไม่มีผลอยู่แล้ว กันสับสนว่ากรอกแล้วทำไมไม่เปลี่ยน)
+    const ctl = document.getElementById('cbFolderControls');
+    if (ctl) ctl.classList.toggle('hidden', cbServerState === 'code');
+
     const input = document.getElementById('cbFolderInput');
     if (input && document.activeElement !== input) input.value = s.folderId;
     const info = document.getElementById('cbFolderInfo');
     if (info) {
         info.innerHTML = s.folderId
             ? `📁 <b>${nsEsc(s.folderName || 'โฟลเดอร์ที่ตั้งไว้')}</b> — <a class="text-cyan-600 underline" target="_blank" rel="noopener" href="https://drive.google.com/drive/folders/${encodeURIComponent(s.folderId)}">เปิดใน Google Drive</a>`
-            : '<span class="text-amber-600">ยังไม่ได้ตั้งโฟลเดอร์ปลายทาง — วางรหัส/ลิงก์โฟลเดอร์ หรือกด "สร้างโฟลเดอร์ใหม่"</span>';
+            : '<span class="text-amber-600">ยังไม่ได้ตั้งโฟลเดอร์ปลายทาง — วางรหัส/ลิงก์โฟลเดอร์ หรือกด "สร้างโฟลเดอร์ใหม่" (หรือใส่ CAR_IMAGE_FOLDER_ID ในโค้ด GAS)</span>';
     }
     const btn = document.getElementById('cbStartBtn');
     if (btn && !carBackupRunning) { btn.disabled = false; btn.classList.remove('opacity-50'); }
@@ -18542,6 +18577,7 @@ async function cbSaveFolder() {
         const res = await callGas('drive_folder_verify', { folder_id: id });
         await saveCarBackupSettings(res.folder_id, res.folder_name);
         writeAuditLog('set_car_backup_folder', `car_backup:${res.folder_id}`, `ตั้งโฟลเดอร์สำรองรูปทะเบียนรถ "${res.folder_name}" — โดย ${currentUser?.name || '-'}`).catch(() => {});
+        cbServerState = 'web'; cbServerInfo = res; cbServerPromise = Promise.resolve();
         Swal.close(); cbRenderPanel();
         showToast('success', `ตั้งโฟลเดอร์ "${res.folder_name}" แล้ว`);
     } catch (e) { Swal.fire('ตั้งโฟลเดอร์ไม่สำเร็จ', e.message, 'error'); }
@@ -18555,6 +18591,7 @@ async function cbCreateFolder() {
         const res = await callGas('drive_folder_create', { name: r.value });
         await saveCarBackupSettings(res.folder_id, res.folder_name);
         writeAuditLog('create_car_backup_folder', `car_backup:${res.folder_id}`, `สร้างโฟลเดอร์สำรองรูปทะเบียนรถ "${res.folder_name}" — โดย ${currentUser?.name || '-'}`).catch(() => {});
+        cbServerState = 'web'; cbServerInfo = res; cbServerPromise = Promise.resolve();
         Swal.close(); cbRenderPanel();
         Swal.fire('สร้างโฟลเดอร์แล้ว', `"${res.folder_name}" อยู่ใน My Drive ของบัญชีที่รัน GAS และถูกตั้งเป็นโฟลเดอร์ปลายทางแล้ว`, 'success');
     } catch (e) { Swal.fire('สร้างโฟลเดอร์ไม่สำเร็จ', e.message, 'error'); }
@@ -18568,12 +18605,16 @@ function cbStopBackup() { carBackupRunning = false; }
 
 async function cbStartBackup() {
     if (carBackupRunning) return;
+    await cbCheckServer(cbServerState === 'error');   // รู้ก่อนว่าโฟลเดอร์ตั้งในโค้ดหรือไม่ (เช็คไปแล้วจะไม่ยิงซ้ำ ยกเว้นรอบก่อนพัง)
+    const codeMode = cbServerState === 'code';
     const s = getCarBackupSettings();
-    if (!s.folderId) { Swal.fire('ยังไม่ได้ตั้งโฟลเดอร์ปลายทาง', 'วางรหัส/ลิงก์โฟลเดอร์ แล้วกด "ตรวจสอบและบันทึก" หรือกด "สร้างโฟลเดอร์ใหม่" ก่อน', 'warning'); return; }
+    if (cbServerState === 'error') { Swal.fire('ตรวจโฟลเดอร์/การเชื่อมต่อ GAS ไม่ผ่าน', cbServerError, 'error'); return; }
+    if (!codeMode && !s.folderId) { Swal.fire('ยังไม่ได้ตั้งโฟลเดอร์ปลายทาง', 'ใส่ CAR_IMAGE_FOLDER_ID ในโค้ด GAS (เหมือน IMAGE_FOLDER_ID ของสลิป) หรือวางรหัส/ลิงก์โฟลเดอร์ในช่องแล้วกด "ตรวจสอบและบันทึก" ก่อน', 'warning'); return; }
+    const folderLabel = codeMode ? (cbServerInfo?.folder_name || 'โฟลเดอร์ในโค้ด GAS') : (s.folderName || s.folderId);
     const cnt = cbCountImages();
     if (cnt.pending === 0) { Swal.fire('ไม่มีรูปที่ต้องสำรอง', 'รูปทะเบียนรถทั้งหมดเป็นลิงก์ Google แล้ว (หรือยังไม่มีรูป)', 'info'); return; }
 
-    const ok = await Swal.fire({ title: `สำรองรูปทะเบียนรถ ${cnt.pending} รูป?`, html: `คัดลอกไปที่โฟลเดอร์ <b>${nsEsc(s.folderName || s.folderId)}</b> ทีละ ${CAR_BACKUP_BATCH} รูป<br>แล้วแทนที่ลิงก์ในฐานข้อมูลเมื่อคัดลอกสำเร็จ (ไม่ลบไฟล์ต้นฉบับ)<br><span class="text-xs text-slate-500">ระหว่างรัน ห้ามปิดหน้านี้ — กด "หยุด" ได้ทุกเมื่อ แล้วค่อยกดเริ่มต่อภายหลัง</span>`, icon: 'question', showCancelButton: true, confirmButtonText: 'เริ่มเลย', cancelButtonText: 'ยกเลิก' });
+    const ok = await Swal.fire({ title: `สำรองรูปทะเบียนรถ ${cnt.pending} รูป?`, html: `คัดลอกไปที่โฟลเดอร์ <b>${nsEsc(folderLabel)}</b> ทีละ ${CAR_BACKUP_BATCH} รูป<br>แล้วแทนที่ลิงก์ในฐานข้อมูลเมื่อคัดลอกสำเร็จ (ไม่ลบไฟล์ต้นฉบับ)<br><span class="text-xs text-slate-500">ระหว่างรัน ห้ามปิดหน้านี้ — กด "หยุด" ได้ทุกเมื่อ แล้วค่อยกดเริ่มต่อภายหลัง</span>`, icon: 'question', showCancelButton: true, confirmButtonText: 'เริ่มเลย', cancelButtonText: 'ยกเลิก' });
     if (!ok.isConfirmed) return;
 
     carBackupRunning = true;
@@ -18586,7 +18627,7 @@ async function cbStartBackup() {
         while (carBackupRunning) {
             if (++round > CAR_BACKUP_MAX_ROUNDS) { stoppedBy = 'ครบจำนวนรอบสูงสุดที่กำหนดไว้'; break; }
             prog.textContent = `กำลังประมวลผลรอบที่ ${round}... (สำเร็จ ${totalS} / ล้มเหลว ${totalF})`;
-            const res = await callGas('backup_car_images_to_drive', { batchSize: CAR_BACKUP_BATCH, folder_id: s.folderId, after_id: afterId });
+            const res = await callGas('backup_car_images_to_drive', { batchSize: CAR_BACKUP_BATCH, folder_id: codeMode ? '' : s.folderId, after_id: afterId });
             if (res.done) { _cbLog(`<div class="text-green-600 font-bold">✅ ${nsEsc(res.message)}</div>`); break; }
             totalS += res.success; totalF += res.failed;
             _cbLog(`<div>รอบ ${round}: สำเร็จ <b class="text-green-600">${res.success}</b> / ล้มเหลว <b class="text-red-600">${res.failed}</b> (จาก ${res.processed} รูป)</div>`);
@@ -18616,6 +18657,7 @@ window.cbSaveFolder = cbSaveFolder;
 window.cbCreateFolder = cbCreateFolder;
 window.cbStartBackup = cbStartBackup;
 window.cbStopBackup = cbStopBackup;
+window.cbCheckServer = cbCheckServer;
 
 
 window.openReceiptFromInvoice = openReceiptFromInvoice;
