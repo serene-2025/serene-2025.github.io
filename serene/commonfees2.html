@@ -4510,8 +4510,32 @@
                                 <select id="houseSoiFilter" class="px-3 py-2 rounded-lg border border-slate-300 text-sm" onchange="renderHouseTable()">
                                     <option value="">ทุกซอย</option>
                                 </select>
+                                <button onclick="lrExportCsv()" data-perm="edit" class="perm-restricted px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-bold flex items-center gap-1.5" title="ดาวน์โหลดข้อมูลทะเบียนบ้านทั้งตารางเป็น CSV (สิทธิ์ staff ขึ้นไป)">
+                                    <i data-lucide="download" class="w-4 h-4"></i>Export CSV
+                                </button>
+                                <button onclick="lrPickImportFile()" data-perm="delete" class="perm-restricted px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold flex items-center gap-1.5" title="นำเข้า CSV เพื่ออัปเดตข้อมูลหลายแถว — มีตัวอย่างให้ตรวจก่อนบันทึก (สิทธิ์ admin ขึ้นไป)">
+                                    <i data-lucide="upload" class="w-4 h-4"></i>Import CSV
+                                </button>
+                                <input type="file" id="lrImportFile" accept=".csv,.txt,text/csv" class="hidden" onchange="lrHandleImportFile(event)">
                             </div>
                         </div>
+                        <details class="mb-4 text-sm">
+                            <summary class="cursor-pointer font-bold text-indigo-600 select-none">📘 วิธีแก้ข้อมูลทะเบียนบ้านทั้งชุดด้วย CSV (คลิกเพื่ออ่าน)</summary>
+                            <div class="mt-2 p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs text-slate-600">
+                                <ol class="list-decimal ml-5 space-y-1">
+                                    <li>กด <b>Export CSV</b> — ได้ไฟล์ข้อมูลปัจจุบันทั้งตาราง (มีคอลัมน์ <code>id</code> ไว้ระบุแถว)</li>
+                                    <li>เปิดแก้ใน Excel / Google Sheets เช่น แก้ <code>title_deed_number</code> ให้ตรงบ้านเลขที่ — <b>ห้ามแก้คอลัมน์ <code>id</code> และ <code>house_no</code></b></li>
+                                    <li>บันทึกเป็น <b>CSV UTF-8</b> (ถ้า Excel บันทึกเป็น Windows-874 ระบบอ่านให้เองได้)</li>
+                                    <li>กด <b>Import CSV</b> — ระบบแสดง <b>ตัวอย่างค่าเดิม → ค่าใหม่</b> ให้ตรวจก่อน ยังไม่บันทึกอะไรจนกว่าจะกดยืนยัน และจะดาวน์โหลดไฟล์สำรองให้อัตโนมัติก่อนเขียนจริง</li>
+                                </ol>
+                                <ul class="list-disc ml-5 space-y-1 text-slate-500">
+                                    <li>ถ้าไฟล์ไม่มีคอลัมน์ <code>id</code> ระบบจับคู่ด้วย <b>บ้านเลขที่</b> (ไฟล์จากแหล่งอื่นที่มีแค่ บ้านเลขที่ + เลขโฉนด ก็นำเข้าได้)</li>
+                                    <li>ช่องว่างในไฟล์ = ไม่แก้ค่าเดิม (มีตัวเลือกให้ล้างค่าในหน้าตัวอย่าง) • ไม่มีการลบแถว • ไม่เปลี่ยนบ้านเลขที่ • ไม่แตะตาราง house_payments</li>
+                                    <li>เลขบ้านแบบ <code>12/3</code> Export จะห่อเป็น <code>="12/3"</code> กัน Excel แปลงเป็นวันที่ — เป็นเรื่องปกติ ระบบถอดให้ตอนนำเข้า</li>
+                                </ul>
+                            </div>
+                        </details>
+
                         <div class="overflow-x-auto">
                             <table class="w-full text-sm">
                                 <thead class="bg-slate-100">
@@ -4531,6 +4555,35 @@
                         <div class="mt-3 text-xs text-slate-400 text-right" id="houseTableCount"></div>
                     </div>
                 </section>
+
+                <!-- Modal: ตรวจสอบก่อนนำเข้า CSV (land_registry) -->
+                <div id="lrImportModal" class="fixed inset-0 bg-black/50 z-[998] hidden items-center justify-center p-4">
+                    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col">
+                        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+                            <h3 class="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="upload" class="w-4 h-4 text-indigo-600"></i>ตรวจสอบก่อนนำเข้า CSV <span class="text-xs font-normal text-slate-400">(ยังไม่ได้บันทึกลงฐานข้อมูล)</span></h3>
+                            <button onclick="lrCloseImportModal()" class="text-slate-400 hover:text-red-500 text-2xl font-bold leading-none">×</button>
+                        </div>
+                        <div class="px-6 py-4 overflow-y-auto space-y-4">
+                            <div id="lrImportMeta" class="text-xs text-slate-500"></div>
+                            <div id="lrImportSummary" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+                            <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm bg-slate-50 rounded-lg px-3 py-2">
+                                <label class="flex items-start gap-2 cursor-pointer"><input type="checkbox" id="lrOptClear" onchange="lrToggleImportOption('clearBlank', this.checked)" class="mt-0.5"><span>ช่องว่างในไฟล์ = <b>ล้างค่าเดิม</b> ในฐานข้อมูล <span class="text-slate-400 text-xs">(ปกติช่องว่างจะถูกเมิน ไม่แก้อะไร)</span></span></label>
+                                <label class="flex items-start gap-2 cursor-pointer"><input type="checkbox" id="lrOptInsert" onchange="lrToggleImportOption('insertNew', this.checked)" class="mt-0.5"><span>เพิ่มบ้านเลขที่ที่<b>ไม่พบ</b>ในระบบเป็นแถวใหม่ <span class="text-slate-400 text-xs">(ปกติจะข้ามและแจ้งเป็นแถวผิดพลาด)</span></span></label>
+                            </div>
+                            <div id="lrImportDetails" class="space-y-4"></div>
+                        </div>
+                        <div class="px-6 py-4 border-t border-slate-100">
+                            <div id="lrImportProgress" class="hidden mb-3">
+                                <div class="h-2.5 bg-slate-100 rounded-full overflow-hidden"><div id="lrProgressBar" class="h-full bg-indigo-500 rounded-full" style="width:0%"></div></div>
+                                <div id="lrProgressText" class="text-xs text-slate-500 mt-1"></div>
+                            </div>
+                            <div class="flex gap-3">
+                                <button id="lrConfirmBtn" onclick="lrConfirmImport()" class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm">ยืนยันนำเข้า</button>
+                                <button onclick="lrCloseImportModal()" class="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm">ยกเลิก</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- Modal: แก้ไขข้อมูลบ้าน -->
                 <div id="editHouseModal" class="fixed inset-0 bg-black/50 z-[998] hidden items-center justify-center p-4">
@@ -18659,6 +18712,385 @@ window.cbStartBackup = cbStartBackup;
 window.cbStopBackup = cbStopBackup;
 window.cbCheckServer = cbCheckServer;
 
+
+// ================================================================
+// 📤📥 Export / Import CSV — ตาราง land_registry (ทะเบียนบ้าน/โฉนด)
+// หลักการ: Export อ่านสดจาก DB ทั้งตาราง • Import "ไม่เขียนทันที" — เทียบกับ DB แล้วแสดงตัวอย่างก่อน
+//          ดาวน์โหลดไฟล์สำรองอัตโนมัติก่อนเขียนจริง • ไม่มีการลบแถว • ไม่เปลี่ยน house_no • ไม่แตะ house_payments
+// ================================================================
+const LR_EXPORT_COLUMNS = ['id', 'house_no', 'soi', 'full_name', 'house_type', 'title_deed_number', 'land_parcel_number', 'convert_no', 'map_sheet', 'explore_page', 'transfer_date', 'status', 'no', 'created_at', 'updated_at'];
+const LR_INT_FIELDS = ['title_deed_number', 'land_parcel_number', 'explore_page'];                       // ชนิด int8 ใน DB
+const LR_TEXT_FIELDS = ['soi', 'full_name', 'house_type', 'convert_no', 'map_sheet', 'transfer_date', 'status', 'no'];
+const LR_IMPORT_FIELDS = LR_TEXT_FIELDS.concat(LR_INT_FIELDS);                                          // house_no = คีย์จับคู่ ไม่ใช่ฟิลด์ที่แก้
+const LR_LIMITS = { maxBytes: 3 * 1024 * 1024, maxRows: 5000, maxText: 300, maxPreviewChanges: 300, maxPreviewErrors: 200 };
+const LR_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LR_DATEISH = /^\d{1,2}[-\/ ](?:ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i;
+
+// หัวคอลัมน์ที่รู้จัก (หลังตัดช่องว่าง/ขีด/จุด และแปลงเป็นตัวพิมพ์เล็ก) — ชื่อไทยเฉพาะที่ความหมายไม่กำกวม
+const LR_ALIAS_MAP = (() => {
+    const src = {
+        id: ['id'], house_no: ['houseno', 'บ้านเลขที่', 'เลขที่บ้าน', 'เลขบ้าน'], soi: ['soi', 'ซอย'],
+        full_name: ['fullname', 'ชื่อสกุล', 'ชื่อนามสกุล', 'ชื่อเจ้าของ', 'ชื่อ'], house_type: ['housetype', 'ประเภทบ้าน', 'ประเภท'],
+        title_deed_number: ['titledeednumber', 'เลขโฉนด', 'โฉนดเลขที่', 'เลขที่โฉนด', 'โฉนด'], land_parcel_number: ['landparcelnumber', 'เลขที่ดิน', 'ที่ดินเลขที่'],
+        convert_no: ['convertno'], map_sheet: ['mapsheet', 'ระวาง'], explore_page: ['explorepage', 'หน้าสำรวจ'],
+        transfer_date: ['transferdate', 'วันที่โอน', 'วันโอน'], status: ['status', 'สถานะ'], no: ['no', 'ลำดับ'],
+        created_at: ['createdat'], updated_at: ['updatedat']
+    };
+    const m = {};
+    Object.keys(src).forEach(f => src[f].forEach(a => { m[a] = f; }));
+    return m;
+})();
+function lrNormHeader(s) { return String(s ?? '').replace(/^\uFEFF/, '').trim().toLowerCase().replace(/[\s_\-.]+/g, ''); }
+
+// ---------------- ถอดรหัสไฟล์: UTF-8 → (ถ้าไม่ใช่) Windows-874 ที่ Excel ภาษาไทยมักบันทึก; รองรับ UTF-16 ----------------
+function lrDecodeBytes(buf) {
+    const u8 = new Uint8Array(buf);
+    if (u8[0] === 0xFF && u8[1] === 0xFE) return { text: new TextDecoder('utf-16le').decode(u8.subarray(2)), encoding: 'UTF-16 LE' };
+    if (u8[0] === 0xFE && u8[1] === 0xFF) return { text: new TextDecoder('utf-16be').decode(u8.subarray(2)), encoding: 'UTF-16 BE' };
+    try { return { text: new TextDecoder('utf-8', { fatal: true }).decode(u8), encoding: 'UTF-8' }; } catch (e) { /* ไม่ใช่ UTF-8 → ลองตัวถัดไป */ }
+    try { return { text: new TextDecoder('windows-874').decode(u8), encoding: 'Windows-874 (Excel ภาษาไทย)' }; } catch (e) { /* ข้าม */ }
+    throw new Error('อ่านรหัสตัวอักษรของไฟล์ไม่ได้ — บันทึกไฟล์เป็น "CSV UTF-8" แล้วลองใหม่');
+}
+
+// ---------------- ตัวอ่าน CSV มาตรฐาน RFC4180: เครื่องหมายคำพูด, ขึ้นบรรทัดใหม่ในช่อง, ตัวคั่น , ; แท็บ ----------------
+function lrParseCsv(text) {
+    text = String(text).replace(/^\uFEFF/, '');
+    const cnt = { ',': 0, ';': 0, '\t': 0 };
+    { let q = false; for (let i = 0; i < text.length; i++) { const ch = text[i]; if (ch === '"') q = !q; else if (!q) { if (ch === '\n' || ch === '\r') break; if (ch in cnt) cnt[ch]++; } } }
+    let delim = ','; Object.keys(cnt).forEach(k => { if (cnt[k] > cnt[delim]) delim = k; });
+
+    const rows = []; let row = [], field = '', inQ = false, i = 0; const n = text.length;
+    while (i < n) {
+        const ch = text[i];
+        if (inQ) {
+            if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i += 2; continue; } inQ = false; i++; continue; }
+            field += ch; i++; continue;
+        }
+        if (ch === '"' && field === '') { inQ = true; i++; continue; }          // เปิดเครื่องหมายคำพูดได้เฉพาะต้นช่อง
+        if (ch === delim) { row.push(field); field = ''; i++; continue; }
+        if (ch === '\r' || ch === '\n') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(field); field = ''; rows.push(row); row = []; i++; continue; }
+        field += ch; i++;
+    }
+    if (inQ) throw new Error('รูปแบบ CSV ไม่ถูกต้อง: เครื่องหมายคำพูด " เปิดแล้วไม่ปิด');
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    // ถอดตัวห่อ ="..." (ที่ Export ใส่ไว้กัน Excel แปลง 12/3 เป็นวันที่) และตัดแถวว่าง
+    const unwrap = (v) => { const m = /^="([\s\S]*)"$/.exec(v); return m ? m[1].replace(/""/g, '"') : v; };
+    const cleaned = rows.map(r => r.map(unwrap)).filter(r => r.some(c => String(c).trim() !== ''));
+    return { rows: cleaned, delimiter: delim };
+}
+
+// ---------------- ตัวเขียน CSV ----------------
+function lrCsvCell(col, v) {
+    if (v === null || v === undefined) return '';
+    let s = String(v);
+    if (col === 'house_no' || LR_TEXT_FIELDS.indexOf(col) >= 0) {
+        // ค่าที่ Excel/Sheets จะ "แปลงให้เอง" (12/3 → วันที่, 001 → 1) หรือตีความเป็นสูตร → ห่อเป็น ="..." ให้คงเป็นข้อความ
+        const risky = /^[0-9\/\-.\s:,]+$/.test(s) || /^[=+@]/.test(s);
+        if (s !== '' && risky) s = '="' + s.replace(/"/g, '""') + '"';
+    }
+    if (/[",\r\n]/.test(s) || /^\s|\s$/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+    return s;
+}
+function lrBuildCsv(rows) {
+    const sorted = rows.slice().sort((a, b) => String(a.house_no ?? '').localeCompare(String(b.house_no ?? ''), 'th', { numeric: true }) || String(a.id).localeCompare(String(b.id)));
+    const lines = [LR_EXPORT_COLUMNS.join(',')];
+    sorted.forEach(r => lines.push(LR_EXPORT_COLUMNS.map(c => lrCsvCell(c, r[c])).join(',')));
+    return '\uFEFF' + lines.join('\r\n') + '\r\n';       // BOM ให้ Excel อ่านภาษาไทยถูก
+}
+function lrStamp() { const d = new Date(), p = (x) => String(x).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; }
+function lrDownload(text, filename) {
+    const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+// ---------------- อ่านทั้งตารางจาก DB (ไม่พึ่ง cache ที่จำกัด 1,000 แถวและยุบบ้านเลขที่ซ้ำ) ----------------
+// อ่านต่อจนกว่าหน้าจะว่าง (ไม่ใช้ "ได้น้อยกว่าขนาดหน้า = หน้าสุดท้าย") เพราะเซิร์ฟเวอร์อาจตั้งเพดานแถวต่อคำขอต่ำกว่าที่ขอ
+async function lrFetchAll() {
+    const all = [];
+    for (let guard = 0; guard < 100; guard++) {
+        const rows = await callSupabaseRest(`land_registry?select=*&order=house_no.asc,id.asc&limit=1000&offset=${all.length}`);
+        if (!rows || !rows.length) break;
+        all.push(...rows);
+    }
+    return all;
+}
+
+function lrParseInt(raw) {
+    const s = String(raw).replace(/[๐-๙]/g, d => '๐๑๒๓๔๕๖๗๘๙'.indexOf(d)).replace(/[,\s]/g, '');
+    if (!/^\d+(\.0+)?$/.test(s)) return { ok: false };
+    const n = Number(s.replace(/\.0+$/, ''));
+    return Number.isSafeInteger(n) ? { ok: true, value: n } : { ok: false };
+}
+
+// ---------------- วิเคราะห์ไฟล์เทียบกับ DB (ฟังก์ชันล้วน ไม่เขียนอะไร) ----------------
+function lrAnalyzeImport(rows, dbRows, opts) {
+    opts = opts || {};
+    const out = { totalRows: 0, updates: [], inserts: [], unchanged: 0, errors: [], ignoredColumns: [], dbDuplicates: [], fatal: null };
+    if (!rows || rows.length < 2) { out.fatal = 'ไฟล์ไม่มีข้อมูล (ต้องมีแถวหัวคอลัมน์ + อย่างน้อย 1 แถวข้อมูล)'; return out; }
+
+    const seen = {};                                     // field → ตำแหน่งคอลัมน์
+    rows[0].forEach((h, idx) => {
+        const f = LR_ALIAS_MAP[lrNormHeader(h)];
+        if (!f) { if (String(h).trim()) out.ignoredColumns.push(String(h).trim()); return; }
+        if (seen[f] !== undefined && !out.fatal) out.fatal = `มีหัวคอลัมน์ซ้ำกันสำหรับ "${f}" (คอลัมน์ที่ ${seen[f] + 1} และ ${idx + 1}) — เหลือคอลัมน์เดียว`;
+        seen[f] = idx;
+    });
+    if (out.fatal) return out;
+    const hasId = seen.id !== undefined, hasHouse = seen.house_no !== undefined;
+    if (!hasId && !hasHouse) { out.fatal = 'ไม่พบคอลัมน์ id หรือ house_no (บ้านเลขที่) ในไฟล์ — ต้องมีอย่างน้อยหนึ่งอย่างเพื่อใช้จับคู่แถว'; return out; }
+    const importCols = Object.keys(seen).filter(f => LR_IMPORT_FIELDS.indexOf(f) >= 0);
+    if (!importCols.length) { out.fatal = 'ไม่พบคอลัมน์ข้อมูลที่แก้ได้ในไฟล์ (เช่น title_deed_number, full_name, soi)'; return out; }
+
+    const byId = new Map(), byHouse = new Map();
+    dbRows.forEach(r => {
+        byId.set(String(r.id).toLowerCase(), r);
+        const k = String(r.house_no ?? '').trim();
+        if (k) { if (!byHouse.has(k)) byHouse.set(k, []); byHouse.get(k).push(r); }
+    });
+    byHouse.forEach((arr, k) => { if (arr.length > 1) out.dbDuplicates.push({ house_no: k, count: arr.length }); });
+
+    const cell = (cells, f) => seen[f] === undefined ? '' : String(cells[seen[f]] ?? '').trim();
+    const items = rows.slice(1).map((cells, i) => ({ line: i + 2, cells, id: cell(cells, 'id'), house: cell(cells, 'house_no') }));
+    out.totalRows = items.length;
+
+    // 1) หาแถวปลายทางในฐานข้อมูลของแต่ละบรรทัด
+    for (const it of items) {
+        if (hasId && it.id) {
+            if (!LR_UUID.test(it.id)) { it.error = 'คอลัมน์ id ไม่ใช่รูปแบบ UUID'; continue; }
+            const t = byId.get(it.id.toLowerCase());
+            if (!t) { it.error = 'ไม่พบ id นี้ในฐานข้อมูล (ถูกลบไปแล้ว หรือมาจากตารางอื่น)'; continue; }
+            if (hasHouse && it.house && it.house !== String(t.house_no ?? '').trim()) { it.error = `ห้ามเปลี่ยนบ้านเลขที่ผ่านการนำเข้า (ฐานข้อมูล: "${t.house_no}", ไฟล์: "${it.house}") — ตารางอื่นอ้างอิงด้วยบ้านเลขที่`; continue; }
+            it.target = t; continue;
+        }
+        if (!hasHouse || !it.house) { it.error = 'แถวนี้ไม่มี id และไม่มีบ้านเลขที่ จึงจับคู่ไม่ได้'; continue; }
+        const c = byHouse.get(it.house) || [];
+        if (c.length === 1) it.target = c[0];
+        else if (c.length > 1) it.error = `บ้านเลขที่ซ้ำในฐานข้อมูล ${c.length} แถว — ใส่คอลัมน์ id เพื่อระบุแถวที่ต้องการ`;
+        else {
+            it.newHouse = it.house;
+            // เลขบ้านที่หน้าตาเหมือนวันที่ (6-Oct) = Excel แปลง 6/10 มาให้ — ห้ามสร้างเป็นแถวใหม่แม้เปิดตัวเลือก "เพิ่มบ้านใหม่" (กันแถวขยะ)
+            if (LR_DATEISH.test(it.house)) it.error = 'ไม่พบบ้านเลขที่นี้ และดูเหมือน Excel แปลงเลขบ้านเป็นวันที่ (เช่น 6/10 → 6-Oct) — แก้เลขบ้านในไฟล์ให้ถูก (ตั้งคอลัมน์เป็น Text ก่อนพิมพ์) แล้วนำเข้าใหม่ ระบบไม่เพิ่มเป็นบ้านใหม่ให้แม้เปิดตัวเลือก "เพิ่มบ้านใหม่"';
+            else if (!opts.insertNew) it.error = 'ไม่พบบ้านเลขที่นี้ในฐานข้อมูล — เปิดตัวเลือก "เพิ่มบ้านใหม่" ถ้าต้องการสร้างแถวใหม่';
+        }
+    }
+    // 2) แถวเดียวกันซ้ำในไฟล์ → ไม่รู้ว่าค่าไหนถูก ไม่นำเข้าทั้งหมด
+    const tkey = (it) => it.target ? 'id:' + it.target.id : 'new:' + it.newHouse;
+    const counts = new Map();
+    items.forEach(it => { if (!it.error) counts.set(tkey(it), (counts.get(tkey(it)) || 0) + 1); });
+    items.forEach(it => { if (!it.error && counts.get(tkey(it)) > 1) it.error = 'บ้านเดียวกันปรากฏซ้ำในไฟล์หลายบรรทัด — ไม่รู้ว่าค่าไหนถูก ให้เหลือบรรทัดเดียว'; });
+
+    // 3) ตรวจค่ารายฟิลด์และสร้างรายการที่ต้องเปลี่ยน
+    for (const it of items) {
+        const label = it.house || (it.target && it.target.house_no) || '';
+        if (it.error) { out.errors.push({ line: it.line, house_no: label, msg: it.error }); continue; }
+        const base = it.target || null, changes = [], patch = {}, ferrs = [];
+        for (const f of importCols) {
+            const raw = cell(it.cells, f);
+            let nv;
+            if (raw === '') { if (it.newHouse || opts.clearBlank) nv = null; else continue; }      // ช่องว่าง: ปกติเมิน
+            else if (LR_INT_FIELDS.indexOf(f) >= 0) {
+                const p = lrParseInt(raw);
+                if (!p.ok) { ferrs.push(`${f}: "${raw}" ไม่ใช่ตัวเลขจำนวนเต็ม`); continue; }
+                nv = p.value;
+            } else {
+                if (raw.length > LR_LIMITS.maxText) { ferrs.push(`${f}: ยาวเกิน ${LR_LIMITS.maxText} ตัวอักษร`); continue; }
+                nv = raw;
+            }
+            if (it.newHouse) { patch[f] = nv; if (nv !== null) changes.push({ field: f, old: null, new: nv }); continue; }
+            const ov = base[f];
+            const same = LR_INT_FIELDS.indexOf(f) >= 0 ? ((ov === null || ov === undefined) ? nv === null : Number(ov) === nv) : (String(ov ?? '').trim() === String(nv ?? ''));
+            if (!same) { patch[f] = nv; changes.push({ field: f, old: ov ?? null, new: nv }); }
+        }
+        if (ferrs.length) { out.errors.push({ line: it.line, house_no: label, msg: ferrs.join(' | ') }); continue; }
+        if (it.newHouse) out.inserts.push({ line: it.line, house_no: it.newHouse, data: patch, changes });
+        else if (changes.length) out.updates.push({ line: it.line, id: base.id, house_no: base.house_no, changes, patch });
+        else out.unchanged++;
+    }
+    return out;
+}
+
+// ---------------- เขียนลง DB ตามแผน (หลังผู้ใช้ยืนยันแล้วเท่านั้น) ----------------
+async function lrApplyPlan(plan, onProgress) {
+    const now = new Date().toISOString();
+    const res = { updated: 0, inserted: 0, failed: [] };
+    const total = plan.updates.length + plan.inserts.length; let done = 0;
+    const tick = (k) => { done += k; if (onProgress) onProgress(done, total); };
+
+    const queue = plan.updates.slice();
+    const worker = async () => {
+        while (queue.length) {
+            const u = queue.shift();
+            try {
+                // ส่งเฉพาะฟิลด์ที่เปลี่ยน + updated_at; ขอ id กลับมาเพื่อรู้ว่าแถวนั้นยังอยู่จริง (PATCH แถวที่ไม่มีจะตอบสำเร็จแต่ไม่แก้อะไร)
+                const r = await callSupabaseRest(`land_registry?id=eq.${encodeURIComponent(u.id)}&select=id`, {
+                    method: 'PATCH', headers: { 'Prefer': 'return=representation' }, body: JSON.stringify({ ...u.patch, updated_at: now })
+                });
+                if (Array.isArray(r) && r.length === 1) res.updated++;
+                else res.failed.push({ line: u.line, house_no: u.house_no, msg: 'ไม่พบแถวนี้แล้ว (ถูกลบระหว่างตรวจสอบ?)' });
+            } catch (e) { res.failed.push({ line: u.line, house_no: u.house_no, msg: String(e.message).slice(0, 200) }); }
+            tick(1);
+        }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);     // ขนาน 4 คำขอ
+
+    for (let i = 0; i < plan.inserts.length; i += 100) {
+        const chunk = plan.inserts.slice(i, i + 100);
+        // PostgREST ต้องการคีย์เท่ากันทุกแถวในชุดเดียว + created_at/updated_at ใน DB ไม่มีค่าเริ่มต้น จึงใส่เอง
+        const body = chunk.map(x => { const o = { house_no: x.house_no, created_at: now, updated_at: now }; LR_IMPORT_FIELDS.forEach(f => { o[f] = x.data[f] === undefined ? null : x.data[f]; }); return o; });
+        try { await callSupabaseRest('land_registry', { method: 'POST', headers: { 'Prefer': 'return=minimal' }, body: JSON.stringify(body) }); res.inserted += chunk.length; }
+        catch (e) { chunk.forEach(x => res.failed.push({ line: x.line, house_no: x.house_no, msg: 'เพิ่มแถวใหม่ไม่สำเร็จ: ' + String(e.message).slice(0, 150) })); }
+        tick(chunk.length);
+    }
+    return res;
+}
+
+function lrAuditDetail(fileName, plan, res) {
+    const sample = plan.updates.slice(0, 8).map(u => `${u.house_no}: ` + u.changes.map(c => `${c.field} ${c.old ?? '∅'}→${c.new ?? '∅'}`).join(', ')).join(' | ');
+    return (`นำเข้า CSV "${fileName}" — อัปเดต ${res.updated}/${plan.updates.length}, เพิ่มใหม่ ${res.inserted}/${plan.inserts.length}, ล้มเหลว ${res.failed.length}, ข้ามจากไฟล์ ${plan.errors.length} — โดย ${currentUser?.name || '-'}` + (sample ? ' | ตัวอย่าง: ' + sample : '')).slice(0, 1800);
+}
+
+// ================================================================
+// ส่วนหน้าจอ
+// ================================================================
+let lrImportState = null;     // { fileName, encoding, delimiter, table, dbRows, opts, plan, busy }
+
+async function lrExportCsv() {
+    if (!hasPermission(currentUser?.role, 'edit')) { Swal.fire('ไม่มีสิทธิ์', 'การส่งออกข้อมูลทะเบียนบ้านต้องใช้สิทธิ์ staff ขึ้นไป', 'warning'); return; }
+    Swal.fire({ title: 'กำลังดึงข้อมูลจากฐานข้อมูล...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    try {
+        const rows = await lrFetchAll();
+        lrDownload(lrBuildCsv(rows), `land_registry_${lrStamp()}.csv`);
+        writeAuditLog('export_land_registry', 'land_registry', `ส่งออก CSV ${rows.length} แถว — โดย ${currentUser?.name || '-'}`).catch(() => {});
+        Swal.close();
+        showToast('success', `ส่งออก ${rows.length} แถวแล้ว`);
+    } catch (e) { Swal.fire('ส่งออกไม่สำเร็จ', e.message, 'error'); }
+}
+
+function lrPickImportFile() {
+    if (!hasPermission(currentUser?.role, 'delete')) { Swal.fire('ไม่มีสิทธิ์', 'การนำเข้า CSV (เขียนทับข้อมูลหลายแถว) ต้องใช้สิทธิ์ admin ขึ้นไป', 'warning'); return; }
+    document.getElementById('lrImportFile').click();
+}
+
+async function lrHandleImportFile(event) {
+    const file = event.target.files && event.target.files[0];
+    event.target.value = '';                                     // เลือกไฟล์เดิมซ้ำได้
+    if (!file) return;
+    if (!hasPermission(currentUser?.role, 'delete')) { Swal.fire('ไม่มีสิทธิ์', 'การนำเข้า CSV ต้องใช้สิทธิ์ admin ขึ้นไป', 'warning'); return; }
+    if (file.size > LR_LIMITS.maxBytes) { Swal.fire('ไฟล์ใหญ่เกินไป', `ไฟล์ต้องไม่เกิน ${LR_LIMITS.maxBytes / 1024 / 1024} MB`, 'warning'); return; }
+    Swal.fire({ title: 'กำลังอ่านไฟล์และเทียบกับฐานข้อมูล...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    try {
+        const { text, encoding } = lrDecodeBytes(await file.arrayBuffer());
+        const table = lrParseCsv(text);
+        if (table.rows.length - 1 > LR_LIMITS.maxRows) throw new Error(`ไฟล์มีมากกว่า ${LR_LIMITS.maxRows} แถว — แบ่งไฟล์แล้วนำเข้าทีละส่วน`);
+        const dbRows = await lrFetchAll();
+        lrImportState = { fileName: file.name, encoding, delimiter: table.delimiter, table, dbRows, opts: { clearBlank: false, insertNew: false }, plan: null, busy: false };
+        document.getElementById('lrOptClear').checked = false;
+        document.getElementById('lrOptInsert').checked = false;
+        lrReanalyze();
+        Swal.close();
+        const m = document.getElementById('lrImportModal'); m.classList.remove('hidden'); m.classList.add('flex');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    } catch (e) { Swal.fire('นำเข้าไม่ได้', e.message, 'error'); }
+}
+
+function lrReanalyze() { const s = lrImportState; s.plan = lrAnalyzeImport(s.table.rows, s.dbRows, s.opts); lrRenderImportPreview(); }
+function lrToggleImportOption(key, checked) { if (!lrImportState || lrImportState.busy) return; lrImportState.opts[key] = !!checked; lrReanalyze(); }
+function lrCloseImportModal() {
+    if (lrImportState && lrImportState.busy) return;             // ระหว่างเขียนห้ามปิด
+    const m = document.getElementById('lrImportModal'); m.classList.add('hidden'); m.classList.remove('flex');
+    lrImportState = null;
+}
+function lrDelimName(d) { return d === ';' ? 'เซมิโคลอน ( ; )' : d === '\t' ? 'แท็บ' : 'คอมมา ( , )'; }
+
+function lrRenderImportPreview() {
+    const s = lrImportState; if (!s) return;
+    const p = s.plan, E = nsEsc;
+    const card = (label, n, cls) => `<div class="rounded-xl border p-3 text-center ${cls}"><div class="text-xs font-bold">${label}</div><div class="text-2xl font-black mt-1">${n}</div></div>`;
+    const box = (cls, html) => `<div class="rounded-lg border px-3 py-2 text-xs ${cls}">${html}</div>`;
+    document.getElementById('lrImportMeta').innerHTML = `ไฟล์ <b>${E(s.fileName)}</b> • รหัสตัวอักษร ${E(s.encoding)} • ตัวคั่น ${E(lrDelimName(s.delimiter))} • ${p.totalRows} แถวข้อมูล • ฐานข้อมูลปัจจุบัน ${s.dbRows.length} แถว`;
+    const btn = document.getElementById('lrConfirmBtn');
+
+    if (p.fatal) {
+        document.getElementById('lrImportSummary').innerHTML = '';
+        document.getElementById('lrImportDetails').innerHTML = box('bg-red-50 border-red-200 text-red-700', '❌ ' + E(p.fatal));
+        btn.disabled = true; btn.classList.add('opacity-50'); btn.textContent = 'นำเข้าไม่ได้';
+        return;
+    }
+    document.getElementById('lrImportSummary').innerHTML =
+        card('✏️ จะอัปเดต', p.updates.length, 'bg-indigo-50 border-indigo-200 text-indigo-700') + card('➕ จะเพิ่มใหม่', p.inserts.length, 'bg-green-50 border-green-200 text-green-700') +
+        card('⏸ ไม่มีอะไรเปลี่ยน', p.unchanged, 'bg-slate-50 border-slate-200 text-slate-600') + card('⚠️ ข้าม (ผิดพลาด)', p.errors.length, p.errors.length ? 'bg-red-50 border-red-200 text-red-700' : 'bg-slate-50 border-slate-200 text-slate-400');
+
+    let html = '';
+    if (p.dbDuplicates.length) html += box('bg-amber-50 border-amber-200 text-amber-800', `⚠️ พบบ้านเลขที่ที่มี<b>หลายแถว</b>ใน land_registry ${p.dbDuplicates.length} บ้าน: ${p.dbDuplicates.slice(0, 15).map(d => E(d.house_no) + ' (' + d.count + ')').join(', ')}${p.dbDuplicates.length > 15 ? ' …' : ''}<br>ควรตรวจสอบ — หน้า "จัดการข้อมูลบ้าน" จะเห็นแค่แถวสุดท้ายของแต่ละบ้านเลขที่ และการนำเข้าแบบไม่มีคอลัมน์ id จะข้ามบ้านเหล่านี้`);
+    if (p.ignoredColumns.length) html += box('bg-slate-50 border-slate-200 text-slate-600', `คอลัมน์ที่ระบบไม่รู้จัก (ถูกเมิน): ${p.ignoredColumns.map(E).join(', ')}`);
+    html += box('bg-slate-50 border-slate-200 text-slate-500', 'การนำเข้านี้แก้เฉพาะตาราง <b>land_registry</b> — ไม่แตะ house_payments (ถ้าแก้ชื่อเจ้าของ หน้านี้จะขึ้น "ชื่อไม่ตรง" จนกว่าจะแก้ในตารางชำระด้วย) • ไม่ลบแถว • ไม่เปลี่ยนบ้านเลขที่');
+
+    if (p.updates.length || p.inserts.length) {
+        const rowsHtml = []; let shown = 0, total = 0;
+        p.updates.forEach(u => u.changes.forEach(c => { total++; if (shown < LR_LIMITS.maxPreviewChanges) { shown++; rowsHtml.push(`<tr class="border-t"><td class="px-2 py-1 text-slate-400">${u.line}</td><td class="px-2 py-1 font-bold">${E(u.house_no)}</td><td class="px-2 py-1 font-mono">${E(c.field)}</td><td class="px-2 py-1 text-red-600 line-through">${c.old === null || c.old === '' ? '<span class="text-slate-300 no-underline">(ว่าง)</span>' : E(c.old)}</td><td class="px-2 py-1 text-green-700 font-bold">${c.new === null ? '<span class="text-amber-600">(ล้างค่า)</span>' : E(c.new)}</td></tr>`); } }));
+        p.inserts.forEach(x => { total++; if (shown < LR_LIMITS.maxPreviewChanges) { shown++; rowsHtml.push(`<tr class="border-t bg-green-50/50"><td class="px-2 py-1 text-slate-400">${x.line}</td><td class="px-2 py-1 font-bold">${E(x.house_no)}</td><td class="px-2 py-1 text-green-700 font-bold" colspan="3">➕ แถวใหม่: ${x.changes.map(c => E(c.field) + '=' + E(c.new)).join(', ') || '(เฉพาะบ้านเลขที่)'}</td></tr>`); } });
+        html += `<div><div class="text-sm font-bold text-slate-700 mb-1">รายการที่จะเปลี่ยน ${total > shown ? `(แสดง ${shown} จาก ${total})` : `(${total})`}</div><div class="overflow-x-auto max-h-72 overflow-y-auto border rounded-lg"><table class="w-full text-xs"><thead class="bg-slate-100 sticky top-0"><tr><th class="px-2 py-1 text-left">บรรทัด</th><th class="px-2 py-1 text-left">บ้านเลขที่</th><th class="px-2 py-1 text-left">ฟิลด์</th><th class="px-2 py-1 text-left">ค่าเดิม</th><th class="px-2 py-1 text-left">ค่าใหม่</th></tr></thead><tbody>${rowsHtml.join('')}</tbody></table></div></div>`;
+    }
+    if (p.errors.length) {
+        const er = p.errors.slice(0, LR_LIMITS.maxPreviewErrors).map(e => `<tr class="border-t"><td class="px-2 py-1 text-slate-400">${e.line}</td><td class="px-2 py-1 font-bold">${E(e.house_no)}</td><td class="px-2 py-1 text-red-700">${E(e.msg)}</td></tr>`).join('');
+        html += `<div><div class="text-sm font-bold text-red-700 mb-1">แถวที่ถูกข้าม ${p.errors.length > LR_LIMITS.maxPreviewErrors ? `(แสดง ${LR_LIMITS.maxPreviewErrors} จาก ${p.errors.length})` : `(${p.errors.length})`} — ไม่ถูกนำเข้า แก้ไฟล์แล้วนำเข้าใหม่ได้</div><div class="overflow-x-auto max-h-60 overflow-y-auto border border-red-200 rounded-lg"><table class="w-full text-xs"><tbody>${er}</tbody></table></div></div>`;
+    }
+    document.getElementById('lrImportDetails').innerHTML = html;
+    const n = p.updates.length + p.inserts.length;
+    btn.disabled = n === 0; btn.classList.toggle('opacity-50', n === 0);
+    btn.textContent = n === 0 ? 'ไม่มีอะไรให้นำเข้า' : `ยืนยันนำเข้า (${p.updates.length} อัปเดต${p.inserts.length ? ' + ' + p.inserts.length + ' เพิ่มใหม่' : ''})`;
+}
+
+function lrSetProgress(done, total) {
+    const pct = total ? Math.round(done * 100 / total) : 100;
+    document.getElementById('lrProgressBar').style.width = pct + '%';
+    document.getElementById('lrProgressText').textContent = `กำลังเขียนลงฐานข้อมูล ${done} / ${total}`;
+}
+
+async function lrConfirmImport() {
+    const s = lrImportState;
+    if (!s || s.busy || !s.plan || s.plan.fatal) return;
+    if (!hasPermission(currentUser?.role, 'delete')) { Swal.fire('ไม่มีสิทธิ์', 'ต้องใช้สิทธิ์ admin ขึ้นไป', 'warning'); return; }
+    const p = s.plan, n = p.updates.length, m = p.inserts.length;
+    if (!n && !m) return;
+    s.busy = true;                                   // ล็อกตั้งแต่ก่อนขึ้นหน้าต่างยืนยัน — กดซ้อนสองครั้งจะไม่เขียนซ้ำ (และปิดหน้าต่าง/เปลี่ยนตัวเลือกไม่ได้ระหว่างนี้)
+    let c;
+    try { c = await Swal.fire({
+        title: 'ยืนยันนำเข้าลงฐานข้อมูล?',
+        html: `<div style="text-align:left;font-size:14px">อัปเดต <b>${n}</b> แถว${m ? ` • เพิ่มใหม่ <b>${m}</b> แถว` : ''}${p.errors.length ? ` • ข้าม <b>${p.errors.length}</b> แถว` : ''}<br><br>ระบบจะ<b>ดาวน์โหลดไฟล์สำรอง</b>ของข้อมูลปัจจุบันให้ก่อนเขียน (ใช้ Import กลับเพื่อย้อนค่าได้)</div>`,
+        icon: 'question', showCancelButton: true, confirmButtonText: 'นำเข้าเลย', cancelButtonText: 'ยกเลิก'
+    }); } catch (e) { s.busy = false; throw e; }
+    if (!c.isConfirmed) { s.busy = false; return; }
+
+    const btn = document.getElementById('lrConfirmBtn'); btn.disabled = true; btn.classList.add('opacity-50');
+    document.getElementById('lrImportProgress').classList.remove('hidden'); lrSetProgress(0, n + m);
+    try {
+        lrDownload(lrBuildCsv(s.dbRows), `land_registry_backup_${lrStamp()}.csv`);            // สำรองก่อนเขียนเสมอ
+        const res = await lrApplyPlan(p, lrSetProgress);
+        writeAuditLog('import_land_registry', 'land_registry', lrAuditDetail(s.fileName, p, res)).catch(() => {});
+        await fetchLandRegistry();                                                              // รีเฟรช cache ที่หน้านี้ใช้แสดงผล
+        s.busy = false; lrCloseImportModal();
+        loadHouseManagement();
+        const fail = res.failed.length;
+        Swal.fire({
+            icon: fail ? 'warning' : 'success', title: fail ? 'นำเข้าเสร็จ (มีบางแถวไม่สำเร็จ)' : 'นำเข้าสำเร็จ',
+            html: `<div style="text-align:left;font-size:14px">อัปเดตสำเร็จ <b>${res.updated}</b> • เพิ่มใหม่ <b>${res.inserted}</b>${fail ? ` • <span style="color:#dc2626">ล้มเหลว ${fail}</span>` : ''}${p.errors.length ? ` • ข้ามจากไฟล์ ${p.errors.length}` : ''}${fail ? '<br><br><div style="font-size:12px;max-height:160px;overflow:auto">' + res.failed.slice(0, 10).map(f => `บ้าน ${nsEsc(f.house_no)}: ${nsEsc(f.msg)}`).join('<br>') + '</div><br>แก้แล้วนำเข้าไฟล์เดิมซ้ำได้ — แถวที่สำเร็จแล้วจะไม่ถูกเขียนซ้ำ' : ''}</div>`
+        });
+    } catch (e) {
+        s.busy = false; btn.disabled = false; btn.classList.remove('opacity-50');
+        document.getElementById('lrImportProgress').classList.add('hidden');
+        Swal.fire('นำเข้าไม่สำเร็จ', e.message, 'error');
+    }
+}
+
+window.lrExportCsv = lrExportCsv;
+window.lrPickImportFile = lrPickImportFile;
+window.lrHandleImportFile = lrHandleImportFile;
+window.lrCloseImportModal = lrCloseImportModal;
+window.lrConfirmImport = lrConfirmImport;
+window.lrToggleImportOption = lrToggleImportOption;
 
 window.openReceiptFromInvoice = openReceiptFromInvoice;
 window.closeReceiptFromInvoiceModal = closeReceiptFromInvoiceModal;
