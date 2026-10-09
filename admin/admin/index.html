@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<script src="config.js" charset="utf-8"></script>
+<script src="config-core.js" charset="utf-8"></script>
+<script>if(!window.appCfg){window.appCfg=function(k,d){return d};window.appCfgIn=function(k,s,d){return d};}</script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="robots" content="noindex">
+<title>กำลังเปิดหน้า…</title>
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Sarabun', system-ui, -apple-system, 'Segoe UI', sans-serif; background: #F5F7FA; color: #1A2332;
+         min-height: 100vh; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; }
+  .spin { width: 40px; height: 40px; border: 4px solid #E0F2F1; border-top-color: #00897B; border-radius: 50%;
+          animation: s 0.8s linear infinite; margin: 0 auto 16px; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  #err { display: none; max-width: 320px; }
+  #err b { display: block; margin-bottom: 8px; color: #E53935; }
+  #err button { margin-top: 16px; padding: 10px 22px; border: 0; border-radius: 12px; background: #00897B; color: #fff; font-size: 15px; }
+</style>
+</head>
+<body>
+<!--
+  ตัวกระจายหน้า (router) สำหรับ LIFF Mini App ID เดียว
+  ─────────────────────────────────────────────────────
+  • ตั้ง "Endpoint URL" ของ Mini App ที่ LINE Developers = โฟลเดอร์ที่ไฟล์นี้อยู่ (ลงท้ายด้วย /)
+      เช่น https://<user>.github.io/<repo>/
+  • ลิงก์ทุกหน้า = https://liff.line.me/<MINI_APP_ID>/<ชื่อไฟล์>.html[?พารามิเตอร์]
+      LINE จะเปิดไฟล์นี้ก่อน (liff.init) แล้วพาไปหน้าปลายทางให้เอง
+  • ลิงก์เก่าแบบไม่มีชื่อหน้า (เช่น liff.line.me/<ID>?tab=cars) จะถูกส่งไป DEFAULT_PAGE
+  • ถ้า repo นี้มี index.html อยู่แล้ว ให้รวมสคริปต์ด้านล่างเข้าไป หรือสลับชื่อไฟล์เดิม
+-->
+<div id="load"><div class="spin"></div><div>กำลังเปิดหน้า…</div></div>
+<div id="err"><b id="errTitle">เปิดหน้าไม่สำเร็จ</b><div id="errMsg"></div><button onclick="location.reload()">ลองใหม่</button></div>
+
+<script>
+// ───────── ตั้งค่า (ค่าหลักอยู่ใน config.js) ─────────
+const MINI_APP_ID  = appCfg('MINI_APP_ID', '');   // LIFF Mini App ID (ตั้งใน config.js) — เว้นว่าง = อ่านจาก system_settings.liff_mini_app_id
+const SUPABASE_URL = appCfg('SUPABASE_URL', 'https://zmdywddraaeegzkvpwsw.supabase.co');          // ใช้อ่าน liff_mini_app_id เมื่อ MINI_APP_ID ว่าง
+const SUPABASE_KEY = appCfg('SUPABASE_KEY', 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ');    // anon/publishable key (ค่าเดียวกับหน้าอื่น)
+const DEFAULT_PAGE = appCfg('DEFAULT_PAGE', 'crm.html');                                           // หน้าที่เปิดเมื่อไม่ระบุหน้า
+// ─────────────────────────────────────────
+
+const ID_RE = /^[0-9]{6,12}-[A-Za-z0-9]{6,12}$/;
+const STATE_RE = /^(?:\/?([A-Za-z0-9_-]+\.html))?(\?[^#]*)?(#.*)?$/;   // อนุญาตเฉพาะไฟล์ .html ในโฟลเดอร์เดียวกัน (กัน open redirect)
+
+function fail(msg) {
+  document.getElementById('load').style.display = 'none';
+  document.getElementById('errMsg').textContent = msg;
+  document.getElementById('err').style.display = 'block';
+}
+
+// liff.state = พาธ+พารามิเตอร์ที่ต่อท้ายลิงก์ LIFF → แปลงเป็น URL ปลายทางที่ปลอดภัย
+function resolveTarget(state) {
+  let page = DEFAULT_PAGE, query = '', hash = '';
+  if (state) {
+    const m = STATE_RE.exec(state);
+    if (m) { if (m[1]) page = m[1]; query = m[2] || ''; hash = m[3] || ''; }
+  }
+  return page + query + hash;
+}
+
+async function getMiniAppId() {
+  if (MINI_APP_ID) return MINI_APP_ID.trim();
+  if (!SUPABASE_URL || !SUPABASE_KEY) return '';
+  try {
+    const r = await fetch(SUPABASE_URL + '/rest/v1/system_settings?select=value&key=eq.liff_mini_app_id',
+      { headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY } });
+    if (!r.ok) return '';
+    const rows = await r.json();
+    let v = rows && rows[0] ? rows[0].value : '';
+    if (typeof v === 'string') { try { const j = JSON.parse(v); if (typeof j === 'string') v = j; } catch (_) {} }
+    return String(v == null ? '' : v).trim();
+  } catch (_) { return ''; }
+}
+
+(async function () {
+  const state = new URLSearchParams(location.search).get('liff.state') || '';
+  const id = await getMiniAppId();
+  if (!ID_RE.test(id)) { fail('ยังไม่ได้ตั้งค่า LIFF Mini App ID — แจ้งผู้ดูแลระบบ'); return; }
+  try {
+    // liff.init จะพาไปหน้าปลายทางตาม liff.state เอง (secondary redirect)
+    await liff.init({ liffId: id });
+  } catch (e) {
+    console.warn('liff.init:', e && e.message);
+  }
+  // ถ้ายังอยู่ที่นี่ = SDK ไม่ได้ redirect (เปิดจากเบราว์เซอร์ / ไม่มี liff.state) → พาไปเอง
+  setTimeout(function () { location.replace(resolveTarget(state)); }, 500);
+})();
+</script>
+</body>
+</html>
