@@ -296,11 +296,6 @@
                         <div class="w-12 h-12 rounded-full bg-pink-100 text-pink-600 flex items-center justify-center text-lg"><i class="fa-solid fa-images"></i></div>
                         <span class="text-xs font-bold text-slate-700">แกลเลอรี่</span>
                     </button>
-                    <button @click="currentTab = 'ownership'" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 relative">
-                        <div class="w-12 h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-lg"><i class="fa-solid fa-file-signature"></i></div>
-                        <span class="text-xs font-bold text-slate-700">ยืนยันสิทธิ์</span>
-                        <span v-if="myOwnershipRequests.filter(o => o.status === 'pending').length > 0" class="absolute top-2 right-2 min-w-[20px] h-5 px-1 rounded-full bg-indigo-500 text-white text-[10px] font-bold flex items-center justify-center">{{ myOwnershipRequests.filter(o => o.status === 'pending').length }}</span>
-                    </button>
                 </div>
 
                 <div v-if="currentTierBenefits.length > 0" class="glass-card p-5 mb-6">
@@ -431,8 +426,47 @@
                         <div class="font-bold text-emerald-700 text-sm">ยืนยันแล้ว: {{ statusCheckResult.profile.living_status }}</div>
                         <div class="text-[10px] text-slate-400 mt-1">เปลี่ยนแปลงภายหลัง กรุณาติดต่อนิติบุคคลโดยตรง</div>
                     </div>
+                    <div v-if="statusCheckResult.profile?.status_confirmed && claimBanner" class="mt-3 border rounded-2xl p-3 text-xs font-bold" :class="claimBanner.cls">{{ claimBanner.text }}</div>
+
+                    <!-- 📜 สมาชิกที่ล็อกสถานะเจ้าของไปแล้ว แต่ยังไม่เคยตรวจชื่อ/โฉนด หรือแอดมินขอให้ตรวจอีกครั้ง -->
+                    <div v-if="lockedNeedsCheck" class="mt-3 space-y-2.5">
+                        <div class="bg-indigo-50 border border-indigo-200 rounded-2xl p-3 text-xs text-indigo-700">
+                            📜 นิติบุคคลขอให้ท่านตรวจสอบชื่อเจ้าของและเลขโฉนดของบ้านนี้ <b>(สถานะที่ยืนยันไว้ไม่เปลี่ยนแปลง)</b>
+                        </div>
+                        <div v-if="ownerList.length === 0" class="bg-amber-50 border border-amber-200 rounded-2xl p-3 space-y-2">
+                            <p class="text-sm font-bold text-amber-700">📜 ยังไม่พบข้อมูลโฉนดของบ้านเลขที่ {{ ownerInfo.house_no }}</p>
+                            <p class="text-[11px] text-slate-500">กรอกชื่อ-สกุลเจ้าของตามโฉนดที่ถูกต้อง นิติบุคคลจะตรวจสอบให้</p>
+                            <input v-model="correctName" type="text" maxlength="150" placeholder="ชื่อ-สกุลเจ้าของตามโฉนด"
+                                   class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm bg-white focus:ring-2 focus:ring-teal-400 outline-none">
+                        </div>
+                        <div v-else class="border border-teal-200 bg-white rounded-2xl p-3 space-y-2.5">
+                            <p class="text-sm font-bold text-slate-700">📜 ตรวจสอบข้อมูลตามทะเบียนที่ดิน *</p>
+                            <div v-for="(o, i) in ownerList" :key="o.id || i" class="bg-teal-50 border border-teal-100 rounded-xl p-3">
+                                <div class="text-[10px] text-slate-400">ชื่อเจ้าของตามโฉนด</div>
+                                <div class="text-sm font-bold text-slate-800 break-words">{{ o.full_name || '—' }}</div>
+                                <div class="text-[10px] text-slate-400 mt-1.5">เลขที่โฉนด</div>
+                                <div class="text-sm font-bold text-teal-700">{{ o.title_deed_number || '—' }}</div>
+                            </div>
+                            <button type="button" @click="nameChoice = 'correct'" class="w-full text-left p-3 rounded-xl border-2 text-sm font-bold"
+                                    :class="nameChoice === 'correct' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-600'">✅ ถูกต้อง</button>
+                            <button type="button" @click="nameChoice = 'wrong'" class="w-full text-left p-3 rounded-xl border-2 text-sm font-bold"
+                                    :class="nameChoice === 'wrong' ? 'border-rose-500 bg-rose-50 text-rose-700' : 'border-slate-200 bg-slate-50 text-slate-600'">✏️ ชื่อไม่ถูกต้อง / ไม่มีชื่อของฉัน</button>
+                            <div v-if="nameChoice === 'wrong'" class="space-y-2">
+                                <input v-model="correctName" type="text" maxlength="150" placeholder="ชื่อ-สกุลที่ถูกต้อง เช่น นายสมชาย ใจดี"
+                                       class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-300 outline-none">
+                                <textarea v-model="nameNote" rows="2" maxlength="500" placeholder="หมายเหตุเพิ่มเติม (ไม่บังคับ)"
+                                          class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-rose-300 outline-none"></textarea>
+                            </div>
+                        </div>
+                        <button @click="submitNameCheck" :disabled="!lockedCheckReady || statusConfirming"
+                                class="w-full py-3 bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-300 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2">
+                            <i v-if="statusConfirming" class="fa-solid fa-spinner fa-spin"></i>
+                            <i v-else class="fa-solid fa-paper-plane"></i> ส่งผลตรวจสอบ
+                        </button>
+                    </div>
 
                     <div v-else>
+                        <div v-if="claimBanner" class="mb-3 border rounded-2xl p-3 text-xs font-bold" :class="claimBanner.cls">{{ claimBanner.text }}</div>
                         <p class="text-xs text-slate-500 mb-3">กรุณายืนยันว่าท่านเป็นเจ้าของ/ผู้อาศัยประเภทใด (ยืนยันได้ครั้งเดียว)</p>
                         <div class="space-y-2 mb-3">
                             <button v-for="opt in statusOptions" :key="opt.value" type="button" @click="selectedStatus = opt.value"
@@ -443,7 +477,50 @@
                                 <i v-if="selectedStatus === opt.value" class="fa-solid fa-circle-check text-teal-500 ml-auto"></i>
                             </button>
                         </div>
-                        <button @click="confirmMyStatus" :disabled="!selectedStatus || statusConfirming"
+                        <!-- 🏘️ ตรวจชื่อเจ้าของ + เลขโฉนด -->
+                        <div v-if="isOwnerStatusSel" class="mb-3">
+                            <div v-if="ownerInfoError" class="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs text-amber-700">
+                                ⚠️ โหลดข้อมูลโฉนดของบ้านไม่สำเร็จ <button type="button" @click="loadOwnerInfo" class="ml-1 font-bold underline">โหลดใหม่</button>
+                            </div>
+                            <div v-else-if="ownerInfo && ownerList.length === 0" class="bg-amber-50 border border-amber-200 rounded-2xl p-3 space-y-2">
+                                <p class="text-sm font-bold text-amber-700">📜 ยังไม่พบข้อมูลโฉนดของบ้านเลขที่ {{ statusCheckResult.profile?.house_no }}</p>
+                                <p class="text-[11px] text-slate-500">นิติบุคคลจะตรวจสอบสิทธิ์ของท่านเพิ่มเติม หากทราบชื่อเจ้าของตามโฉนด กรอกไว้ได้ (ไม่บังคับ)</p>
+                                <input v-model="correctName" type="text" maxlength="150" placeholder="ชื่อ-สกุลเจ้าของตามโฉนด (ถ้าทราบ)"
+                                       class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm bg-white focus:ring-2 focus:ring-teal-400 outline-none">
+                            </div>
+                            <div v-else-if="ownerInfo" class="border border-teal-200 bg-white rounded-2xl p-3 space-y-2.5">
+                                <p class="text-sm font-bold text-slate-700">📜 ตรวจสอบข้อมูลตามทะเบียนที่ดิน *</p>
+                                <p class="text-[11px] text-slate-500">ระบบพบข้อมูลของบ้านเลขที่ <b>{{ ownerInfo.house_no }}</b> กรุณาตรวจว่าชื่อเจ้าของและเลขโฉนดถูกต้องหรือไม่</p>
+                                <div v-for="(o, i) in ownerList" :key="o.id || i" class="bg-teal-50 border border-teal-100 rounded-xl p-3">
+                                    <div class="text-[10px] text-slate-400">ชื่อเจ้าของตามโฉนด</div>
+                                    <div class="text-sm font-bold text-slate-800 break-words">{{ o.full_name || '—' }}</div>
+                                    <div class="text-[10px] text-slate-400 mt-1.5">เลขที่โฉนด</div>
+                                    <div class="text-sm font-bold text-teal-700">{{ o.title_deed_number || '—' }}</div>
+                                </div>
+                                <button type="button" @click="nameChoice = 'correct'" class="w-full text-left p-3 rounded-xl border-2 text-sm font-bold"
+                                        :class="nameChoice === 'correct' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-600'">
+                                    ✅ ถูกต้อง
+                                    <span class="block text-[11px] font-normal text-slate-400 mt-0.5">ชื่อและเลขโฉนดตรงกับความเป็นจริง และท่านเป็นเจ้าของ/เจ้าของร่วมตามรายการนี้</span>
+                                </button>
+                                <button type="button" @click="nameChoice = 'wrong'" class="w-full text-left p-3 rounded-xl border-2 text-sm font-bold"
+                                        :class="nameChoice === 'wrong' ? 'border-rose-500 bg-rose-50 text-rose-700' : 'border-slate-200 bg-slate-50 text-slate-600'">
+                                    ✏️ ชื่อไม่ถูกต้อง / ไม่มีชื่อของฉัน
+                                    <span class="block text-[11px] font-normal text-slate-400 mt-0.5">แจ้งชื่อที่ถูกต้อง ให้นิติบุคคลตรวจสอบและแก้ไขทะเบียน</span>
+                                </button>
+                                <div v-if="nameChoice === 'wrong'" class="space-y-2">
+                                    <label class="block text-xs font-bold text-slate-600">ชื่อ-สกุลที่ถูกต้อง *</label>
+                                    <input v-model="correctName" type="text" maxlength="150" placeholder="เช่น นายสมชาย ใจดี"
+                                           class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-300 outline-none">
+                                    <textarea v-model="nameNote" rows="2" maxlength="500" placeholder="หมายเหตุเพิ่มเติม (ไม่บังคับ) เช่น เปลี่ยนชื่อ-สกุล, ซื้อต่อจากเจ้าของเดิม"
+                                              class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-rose-300 outline-none"></textarea>
+                                    <p class="text-[11px] text-slate-400">ระบบจะบันทึกและแจ้งแอดมินให้ตรวจสอบ ท่านยังยืนยันสถานะต่อได้เลย</p>
+                                </div>
+                                <div v-if="nameChoice === 'correct' && ownerNoneMatch" class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-700">
+                                    ℹ️ ชื่อที่ท่านลงทะเบียนไว้ ({{ ownerInfo.member_fullname || '—' }}) ไม่ตรงกับชื่อในโฉนด นิติบุคคลจะตรวจสอบเพิ่มเติมก่อนอนุมัติ
+                                </div>
+                            </div>
+                        </div>
+                        <button @click="confirmMyStatus" :disabled="!selectedStatus || statusConfirming || !nameCheckReady"
                                 class="w-full py-3 bg-teal-500 hover:bg-teal-600 disabled:bg-slate-300 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2">
                             <i v-if="statusConfirming" class="fa-solid fa-spinner fa-spin"></i>
                             <i v-else class="fa-solid fa-check"></i> ยืนยันสถานะ
@@ -1651,133 +1728,6 @@
             </div>
         </div>
 
-        <!-- ═══════ Ownership Tab (ยืนยันสิทธิ์เจ้าของบ้าน) ═══════ -->
-        <div v-if="currentTab === 'ownership' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-indigo-50/30 overflow-y-auto z-20">
-            <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
-                <div class="mb-5 flex items-center gap-3">
-                    <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500"><i class="fa-solid fa-arrow-left"></i></button>
-                    <div class="flex-1">
-                        <h2 class="text-2xl font-extrabold text-slate-800">ยืนยันสิทธิ์เจ้าของบ้าน</h2>
-                        <p class="text-xs text-slate-500">ยืนยันกรรมสิทธิ์ด้วยโฉนด + บัตรประชาชน</p>
-                    </div>
-                    <button @click="openOwnershipForm" class="px-4 py-2 bg-indigo-500 rounded-2xl text-white text-sm font-bold flex items-center gap-2 shadow-md flex-shrink-0">
-                        <i class="fa-solid fa-plus"></i> ยื่น
-                    </button>
-                </div>
-
-                <div v-if="ownershipLoading" class="bg-white rounded-3xl p-12 text-center shadow-sm">
-                    <div class="w-10 h-10 mx-auto mb-3 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin"></div>
-                    <p class="text-sm text-slate-500 font-bold">กำลังโหลด...</p>
-                </div>
-
-                <div v-else-if="myOwnershipRequests.length === 0" class="bg-white rounded-3xl p-10 text-center shadow-sm">
-                    <div class="text-6xl mb-3">🏠</div>
-                    <p class="font-bold text-slate-700 mb-1">ยังไม่เคยยื่นคำขอ</p>
-                    <p class="text-xs text-slate-400 mb-4">ใช้สำหรับยืนยันว่าท่านเป็นเจ้าของกรรมสิทธิ์ตัวจริง</p>
-                    <button @click="openOwnershipForm" class="px-6 py-2.5 bg-indigo-500 text-white rounded-2xl font-bold text-sm">+ ยื่นคำขอ</button>
-                </div>
-
-                <div v-else class="space-y-4">
-                    <div v-for="o in myOwnershipRequests" :key="o.id" class="rounded-3xl shadow-md overflow-hidden border-2 bg-white"
-                         :class="{ 'border-emerald-400': o.status === 'verified', 'border-amber-400': o.status === 'pending', 'border-rose-400': o.status === 'rejected' }">
-                        <div class="px-4 py-2 flex items-center justify-between text-xs font-bold"
-                             :class="{ 'bg-emerald-500 text-white': o.status === 'verified', 'bg-amber-500 text-white': o.status === 'pending', 'bg-rose-500 text-white': o.status === 'rejected' }">
-                            <span>{{ { pending:'⏳ รอตรวจสอบ', verified:'✅ ยืนยันแล้ว', rejected:'❌ ไม่ผ่าน' }[o.status] || o.status }}</span>
-                            <span>{{ formatThaiDate(o.created_at) }}</span>
-                        </div>
-                        <div class="p-4">
-                            <div class="font-bold text-slate-800 text-sm mb-1">{{ o.full_name }}</div>
-                            <div class="text-xs text-slate-500 mb-2">🏠 {{ o.house_number }} · {{ o.claim_type === 'joint' ? '👥 เจ้าของร่วม' + (o.ownership_share ? ' (' + o.ownership_share + ')' : '') : '👤 เจ้าของคนเดียว' }}</div>
-                            <div v-if="o.admin_remark" class="bg-indigo-50 rounded-xl p-3 text-xs text-indigo-700">
-                                <div class="font-bold mb-0.5">💬 หมายเหตุจากนิติบุคคล</div>
-                                {{ o.admin_remark }}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- ═══════ Ownership Form Modal ═══════ -->
-        <div v-if="ownershipFormModal && !loading" @click.self="ownershipFormModal = false" class="fixed inset-0 modal-bg z-50 flex items-end md:items-center justify-center p-3">
-            <div class="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl slide-up max-h-[90vh] overflow-y-auto">
-                <div class="flex items-center gap-2 mb-4">
-                    <div class="text-2xl">🏠</div>
-                    <h3 class="text-lg font-extrabold text-slate-800">ยืนยันสิทธิ์เจ้าของบ้าน</h3>
-                </div>
-                <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-[11px] text-amber-700 mb-3">
-                    📌 ใช้สำหรับยืนยันว่าท่านเป็นเจ้าของกรรมสิทธิ์ตัวจริงตามโฉนดที่ดิน กรุณาเตรียมรูปโฉนดและบัตรประชาชนให้พร้อม
-                </div>
-                <div class="space-y-3">
-                    <div class="grid grid-cols-2 gap-2">
-                        <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">บ้านเลขที่ *</label>
-                            <input v-model="ownershipForm.house_number" type="text" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">เบอร์โทร</label>
-                            <input v-model="ownershipForm.phone" type="tel" maxlength="10" inputmode="numeric"
-                                   @input="ownershipForm.phone = ownershipForm.phone.replace(/[^0-9]/g,'').replace(/^0*/,'0')"
-                                   class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
-                        </div>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">ชื่อ-สกุล (ตามโฉนด/บัตรประชาชน) *</label>
-                        <input v-model="ownershipForm.full_name" type="text" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">ประเภทกรรมสิทธิ์</label>
-                        <div class="flex gap-2">
-                            <button type="button" @click="ownershipForm.claim_type = 'sole'" class="flex-1 py-2.5 rounded-2xl text-sm font-bold border-2" :class="ownershipForm.claim_type === 'sole' ? 'bg-indigo-500 border-indigo-500 text-white' : 'bg-slate-50 border-slate-200 text-slate-500'">👤 คนเดียว</button>
-                            <button type="button" @click="ownershipForm.claim_type = 'joint'" class="flex-1 py-2.5 rounded-2xl text-sm font-bold border-2" :class="ownershipForm.claim_type === 'joint' ? 'bg-indigo-500 border-indigo-500 text-white' : 'bg-slate-50 border-slate-200 text-slate-500'">👥 เจ้าของร่วม</button>
-                        </div>
-                    </div>
-                    <div v-if="ownershipForm.claim_type === 'joint'">
-                        <label class="block text-xs font-bold text-slate-700 mb-1">สัดส่วนกรรมสิทธิ์</label>
-                        <input v-model="ownershipForm.ownership_share" type="text" placeholder="เช่น 1/2, 50%" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">รูปโฉนดที่ดิน *</label>
-                        <input type="file" accept="image/*" @change="onOwnershipFileChange($event, 'deed')" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                        <img v-if="ownershipForm.deed_image_url" :src="isValidImageUrl(ownershipForm.deed_image_url)" class="h-24 w-full object-cover rounded-xl border mt-2">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">รูปบัตรประชาชน *</label>
-                        <input type="file" accept="image/*" @change="onOwnershipFileChange($event, 'idcard')" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                        <img v-if="ownershipForm.id_card_image_url" :src="isValidImageUrl(ownershipForm.id_card_image_url)" class="h-24 w-full object-cover rounded-xl border mt-2">
-                    </div>
-                    <div v-if="ownershipImageUploading" class="text-xs text-indigo-500 flex items-center gap-1">
-                        <i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลด...
-                    </div>
-
-                    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3">
-                        <label class="flex items-start gap-2.5 cursor-pointer">
-                            <input type="checkbox" v-model="ownershipForm.consent" class="mt-0.5 w-4 h-4 accent-indigo-500 flex-shrink-0">
-                            <span class="text-[11px] text-slate-600 leading-relaxed">
-                                ข้าพเจ้ายินยอมให้นิติบุคคลหมู่บ้านเก็บรวบรวมและใช้ข้อมูลส่วนบุคคล เอกสารโฉนดที่ดิน และบัตรประชาชนที่แนบมา เพื่อวัตถุประสงค์ในการยืนยันสิทธิ์ความเป็นเจ้าของกรรมสิทธิ์เท่านั้น ตาม PDPA
-                            </span>
-                        </label>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">ลายเซ็นยืนยัน *</label>
-                        <canvas ref="ownershipSigCanvas" class="w-full border-2 border-dashed border-slate-300 rounded-2xl bg-white touch-none" style="height:120px"
-                                @mousedown="ownershipSigStart" @mousemove="ownershipSigMove" @mouseup="ownershipSigEnd" @mouseleave="ownershipSigEnd"
-                                @touchstart.prevent="ownershipSigStart" @touchmove.prevent="ownershipSigMove" @touchend.prevent="ownershipSigEnd"></canvas>
-                        <button type="button" @click="ownershipSigClear" class="text-xs text-slate-400 mt-1 underline">ล้างลายเซ็น</button>
-                    </div>
-                </div>
-                <div class="flex gap-2 mt-5">
-                    <button @click="ownershipFormModal = false" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold">ยกเลิก</button>
-                    <button @click="submitOwnershipRequest" :disabled="ownershipSaving || ownershipImageUploading" class="flex-1 py-3 bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-300 text-white rounded-2xl font-bold flex items-center justify-center gap-2">
-                        <i v-if="ownershipSaving" class="fa-solid fa-spinner fa-spin"></i>
-                        <i v-else class="fa-solid fa-paper-plane"></i>
-                        ส่งคำขอ
-                    </button>
-                </div>
-            </div>
-        </div>
-
         <!-- ═══════ CCTV Tab (ขอดูกล้องวงจรปิด) ═══════ -->
         <div v-if="currentTab === 'cctv' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-slate-100/50 overflow-y-auto z-20">
             <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
@@ -2084,16 +2034,6 @@
                             <i class="fa-solid fa-chevron-right text-slate-300 text-xs ml-1"></i>
                         </button>
 
-                        <button @click="showSettings = false; currentTab = 'ownership'" class="w-full p-3 flex items-center gap-3 rounded-xl hover:bg-slate-50 active:bg-slate-100 text-left">
-                            <div class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center"><i class="fa-solid fa-file-signature"></i></div>
-                            <div class="flex-1">
-                                <div class="font-bold text-sm text-slate-800">ยืนยันสิทธิ์เจ้าของบ้าน</div>
-                                <div class="text-[11px] text-slate-500">ประวัติ · {{ myOwnershipRequests.length }} รายการ</div>
-                            </div>
-                            <span v-if="myOwnershipRequests.filter(o => o.status === 'pending').length > 0" class="text-[10px] font-bold bg-indigo-500 text-white px-2 py-0.5 rounded-full">⏳{{ myOwnershipRequests.filter(o => o.status === 'pending').length }}</span>
-                            <i class="fa-solid fa-chevron-right text-slate-300 text-xs ml-1"></i>
-                        </button>
-
                         <div class="pt-3 mt-3 border-t border-slate-100">
                             <button @click="logout" class="w-full p-3 flex items-center gap-3 rounded-xl hover:bg-rose-50 active:bg-rose-100 text-left">
                                 <div class="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center"><i class="fa-solid fa-right-from-bracket"></i></div>
@@ -2319,6 +2259,9 @@
                     // ─── ยืนยันสถานะการอยู่อาศัย (ใน tab profile) ───
                     statusCheckLoading: false, statusCheckResult: null,
                     selectedStatus: '', statusConfirming: false,
+                    // 🏘️ ตรวจชื่อเจ้าของ/เลขโฉนดจากทะเบียนที่ดิน (เฉพาะเจ้าของบ้าน/เจ้าของร่วม)
+                    ownerInfo: null, ownerInfoError: false,
+                    nameChoice: '', correctName: '', nameNote: '',
                     statusOptions: [
                         { value: 'เจ้าของบ้าน', icon: '🏠' }, { value: 'เจ้าของร่วม', icon: '👥' },
                         { value: 'ผู้อาศัย', icon: '🧑' }, { value: 'ผู้เช่า', icon: '🔑' }, { value: 'อื่นๆ', icon: '📋' },
@@ -2337,12 +2280,6 @@
                     galleryCommentModal: null, galleryComments: [], galleryCommentsLoading: false,
                     newCommentText: '', commentSaving: false,
 
-                    // ─── Ownership Verification (ยืนยันสิทธิ์เจ้าของบ้าน) ───
-                    myOwnershipRequests: [], ownershipLoading: false,
-                    ownershipFormModal: false,
-                    ownershipForm: { house_number: '', phone: '', full_name: '', claim_type: 'sole', ownership_share: '', deed_image_url: '', id_card_image_url: '', consent: false },
-                    ownershipImageUploading: false, ownershipSaving: false,
-                    ownershipSigDrawing: false, ownershipSigHasDrawn: false,
                     cardConfirmModal: null, cardConfirmIsEdit: false, cardConfirmRole: 'สมาชิกในบ้าน',
                     cardPhotoPreview: null, cardCapturedPhoto: null, cardPhotoError: null,
                     cardConfirmSaving: false,
@@ -2357,6 +2294,29 @@
                 }
             },
             computed: {
+                isOwnerStatusSel() { return this.selectedStatus === 'เจ้าของบ้าน' || this.selectedStatus === 'เจ้าของร่วม'; },
+                ownerList() { return (this.ownerInfo && this.ownerInfo.owners) || []; },
+                ownerNoneMatch() { return this.ownerList.length > 0 && this.ownerList.every(o => !o.member_matches); },
+                lockedNeedsCheck() { return !!(this.statusCheckResult?.profile?.status_confirmed && this.ownerInfo && this.ownerInfo.needs_name_check); },
+                lockedCheckReady() {
+                    if (this.ownerList.length > 0) return this.nameChoice === 'correct' || (this.nameChoice === 'wrong' && this.correctName.trim().length >= 3);
+                    return this.correctName.trim().length >= 3;
+                },
+                nameCheckReady() {
+                    if (!this.isOwnerStatusSel || this.ownerInfoError || this.ownerList.length === 0) return true;
+                    return this.nameChoice === 'correct' || (this.nameChoice === 'wrong' && this.correctName.trim().length >= 3);
+                },
+                claimBanner() {
+                    const c = this.ownerInfo && this.ownerInfo.latest_claim;
+                    if (!c) return null;
+                    const map = {
+                        matched:  { cls: 'bg-emerald-50 border-emerald-200 text-emerald-700', text: '✅ ชื่อตรงกับข้อมูลโฉนดในทะเบียน' },
+                        pending:  { cls: 'bg-amber-50 border-amber-200 text-amber-700', text: '⏳ นิติบุคคลกำลังตรวจสอบชื่อเจ้าของที่ท่านแจ้ง' + (c.correct_name ? ' (' + c.correct_name + ')' : '') },
+                        approved: { cls: 'bg-emerald-50 border-emerald-200 text-emerald-700', text: '✅ นิติบุคคลตรวจสอบข้อมูลเจ้าของเรียบร้อยแล้ว' },
+                        rejected: { cls: 'bg-rose-50 border-rose-200 text-rose-700', text: '❌ ข้อมูลที่แจ้งยังไม่ผ่านการตรวจสอบ' + (c.admin_remark ? ' — ' + c.admin_remark : '') },
+                    };
+                    return map[c.status] || null;
+                },
                 filteredRewards() {
                     if (!this.rewardCategory) return this.rewards;
                     return this.rewards.filter(r => r.category === this.rewardCategory);
@@ -2566,7 +2526,6 @@
                     if (newVal === 'profile' && !this.statusCheckResult) this.checkMyStatus();
                     if (newVal === 'cctv' && this.myCctvRequests.length === 0) this.loadMyCctvRequests();
                     if (newVal === 'gallery' && this.galleryPhotos.length === 0) this.loadGalleryPhotos();
-                    if (newVal === 'ownership' && this.myOwnershipRequests.length === 0) this.loadMyOwnershipRequests();
                     if (newVal === 'news' && this.announcements.length === 0) this.loadAnnouncements();
                 },
                 showFullCard(v) { if (v) this.$nextTick(() => this.renderMemberBarcode('fs-member-barcode')); },
@@ -3881,21 +3840,76 @@
                         const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/check_registration?uid=${this.userProfile.userId}`);
                         const d = await res.json();
                         this.statusCheckResult = d;
+                        if (d && d.registered) await this.loadOwnerInfo();
                     } catch (e) { console.warn('checkMyStatus', e); }
                     finally { this.statusCheckLoading = false; }
                 },
 
+                // 📨 ส่งผลตรวจชื่อ/โฉนด ของสมาชิกที่ล็อกสถานะไปแล้ว (ไม่เปลี่ยนสถานะที่ยืนยันไว้)
+                async submitNameCheck() {
+                    if (!this.lockedCheckReady) return Swal.fire('', 'กรุณาตรวจสอบชื่อเจ้าของและเลขโฉนดก่อน', 'warning');
+                    const nameCheck = this.ownerList.length > 0
+                        ? { registryId: this.ownerList[0].id, isCorrect: this.nameChoice === 'correct',
+                            correctName: this.nameChoice === 'wrong' ? this.correctName.trim() : '', note: this.nameChoice === 'wrong' ? this.nameNote.trim() : '' }
+                        : { isCorrect: false, correctName: this.correctName.trim(), note: this.nameNote.trim() };
+                    this.statusConfirming = true;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/owner_name_check_submit`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ uid: this.userProfile.userId, nameCheck })
+                        });
+                        const d = await res.json();
+                        if (!res.ok) throw new Error(d.error || 'ส่งไม่สำเร็จ');
+                        Swal.fire({ icon: 'success', title: d.nameClaimStatus === 'pending' ? '✅ ส่งให้นิติบุคคลตรวจสอบแล้ว' : '✅ ขอบคุณที่ตรวจสอบข้อมูล', timer: 2200, showConfirmButton: false });
+                        this.nameChoice = ''; this.nameNote = ''; this.correctName = '';
+                        await this.loadOwnerInfo();
+                    } catch (err) {
+                        Swal.fire('ไม่สำเร็จ', err.message, 'error');
+                    } finally {
+                        this.statusConfirming = false;
+                    }
+                },
+
+                // 🏘️ ชื่อเจ้าของ + เลขโฉนดตามทะเบียนที่ดิน (server หาบ้านจาก uid เอง)
+                async loadOwnerInfo() {
+                    if (!this.userProfile) return;
+                    this.ownerInfoError = false;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/owner_registry_info?uid=${encodeURIComponent(this.userProfile.userId)}`);
+                        const d = await res.json();
+                        if (!res.ok) throw new Error(d.error || 'โหลดข้อมูลโฉนดไม่สำเร็จ');
+                        this.ownerInfo = d;
+                    } catch (e) {
+                        console.warn('loadOwnerInfo', e);
+                        this.ownerInfo = null; this.ownerInfoError = true;
+                    }
+                },
+
                 async confirmMyStatus() {
                     if (!this.selectedStatus) return;
+                    if (this.isOwnerStatusSel && this.ownerInfoError) return Swal.fire('', 'ยังโหลดข้อมูลโฉนดไม่ได้ กรุณากดโหลดใหม่ก่อน', 'warning');
+                    if (!this.nameCheckReady) return Swal.fire('', 'กรุณาตรวจสอบชื่อเจ้าของและเลขโฉนดก่อน', 'warning');
+                    // ส่งผลการตรวจชื่อเฉพาะเจ้าของบ้าน/เจ้าของร่วมเท่านั้น
+                    let nameCheck;
+                    if (this.isOwnerStatusSel) {
+                        if (this.ownerList.length > 0) {
+                            const wrong = this.nameChoice === 'wrong';
+                            nameCheck = { registryId: this.ownerList[0].id, isCorrect: this.nameChoice === 'correct',
+                                          correctName: wrong ? this.correctName.trim() : '', note: wrong ? this.nameNote.trim() : '' };
+                        } else if (this.correctName.trim()) {
+                            nameCheck = { isCorrect: false, correctName: this.correctName.trim(), note: this.nameNote.trim() };
+                        }
+                    }
                     this.statusConfirming = true;
                     try {
                         const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/confirm_ownership_status`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ uid: this.userProfile.userId, livingStatus: this.selectedStatus })
+                            body: JSON.stringify({ uid: this.userProfile.userId, livingStatus: this.selectedStatus, nameCheck })
                         });
                         const d = await res.json();
                         if (!res.ok) throw new Error(d.error || 'ยืนยันไม่สำเร็จ');
-                        Swal.fire({ icon: 'success', title: '✅ ยืนยันสถานะแล้ว', timer: 2000, showConfirmButton: false });
+                        Swal.fire({ icon: 'success', title: d.nameClaimStatus === 'pending' ? '✅ ยืนยันแล้ว · ส่งให้นิติบุคคลตรวจสอบชื่อแล้ว' : '✅ ยืนยันสถานะแล้ว', timer: 2200, showConfirmButton: false });
+                        this.nameChoice = ''; this.nameNote = '';
                         await this.checkMyStatus();
                     } catch (err) {
                         Swal.fire('ไม่สำเร็จ', err.message, 'error');
@@ -4130,144 +4144,6 @@
                         Swal.fire('ไม่สำเร็จ', err.message, 'error');
                     } finally {
                         this.commentSaving = false;
-                    }
-                },
-
-                // ════════════════════════════════════════════════════════════
-                // 🏠 OWNERSHIP VERIFICATION (ยืนยันสิทธิ์เจ้าของบ้าน) — เรียก
-                // endpoint /api/admin/audience/ ตรงๆ เหมือน CCTV (เปิดสาธารณะอยู่แล้ว)
-                // ════════════════════════════════════════════════════════════
-                async loadMyOwnershipRequests() {
-                    this.ownershipLoading = true;
-                    try {
-                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/ownership_verify_list_mine?uid=${this.userProfile.userId}`);
-                        const d = await res.json();
-                        this.myOwnershipRequests = d.items || [];
-                    } catch (e) { console.error('loadMyOwnershipRequests', e); }
-                    finally { this.ownershipLoading = false; }
-                },
-
-                openOwnershipForm() {
-                    this.ownershipForm = {
-                        house_number: this.repairHouseNumber || this.carHouseNumber || this.complaintHouseNumber || '',
-                        phone: this.ownershipForm.phone || this.memberData?.phone || '',
-                        full_name: this.memberData?.fullname || this.userProfile?.displayName || '',
-                        claim_type: 'sole', ownership_share: '', deed_image_url: '', id_card_image_url: '', consent: false,
-                    };
-                    this.ownershipFormModal = true;
-                    this.$nextTick(() => this.ownershipSigSetupCanvas());
-                },
-
-                async onOwnershipFileChange(e, kind) {
-                    const file = e.target.files[0];
-                    if (!file) return;
-                    this.ownershipImageUploading = true;
-                    try {
-                        const canvas = document.createElement('canvas');
-                        const img = await new Promise((res, rej) => {
-                            const i = new Image();
-                            i.onload = () => res(i);
-                            i.onerror = rej;
-                            i.src = URL.createObjectURL(file);
-                        });
-                        const maxW = 1280;
-                        const scale = Math.min(1, maxW / img.width);
-                        canvas.width = img.width * scale;
-                        canvas.height = img.height * scale;
-                        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-                        const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.8));
-
-                        const fd = new FormData();
-                        fd.append('file', blob, `${kind}_${Date.now()}.jpg`);
-                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/upload_complaint_image`, { method: 'POST', body: fd });
-                        const d = await res.json();
-                        if (!res.ok) throw new Error(d.error || 'อัปโหลดไม่สำเร็จ');
-                        if (kind === 'deed') this.ownershipForm.deed_image_url = d.url;
-                        else this.ownershipForm.id_card_image_url = d.url;
-                    } catch (err) {
-                        Swal.fire('อัปโหลดไม่สำเร็จ', err.message, 'error');
-                    } finally {
-                        this.ownershipImageUploading = false;
-                    }
-                },
-
-                // ลายเซ็นยืนยันสิทธิ์เจ้าของบ้าน — canvas แยกคนละตัวจากร้องเรียน/CCTV
-                ownershipSigSetupCanvas() {
-                    const canvas = this.$refs.ownershipSigCanvas;
-                    if (!canvas) return;
-                    const ratio = window.devicePixelRatio || 1;
-                    const rect = canvas.getBoundingClientRect();
-                    canvas.width = rect.width * ratio;
-                    canvas.height = rect.height * ratio;
-                    const ctx = canvas.getContext('2d');
-                    ctx.scale(ratio, ratio);
-                    ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.strokeStyle = '#1e293b';
-                    this.ownershipSigHasDrawn = false;
-                },
-                ownershipSigPos(e) {
-                    const canvas = this.$refs.ownershipSigCanvas;
-                    const rect = canvas.getBoundingClientRect();
-                    const t = e.touches ? e.touches[0] : e;
-                    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
-                },
-                ownershipSigStart(e) { this.ownershipSigDrawing = true; this._ownershipSigLast = this.ownershipSigPos(e); },
-                ownershipSigMove(e) {
-                    if (!this.ownershipSigDrawing) return;
-                    const canvas = this.$refs.ownershipSigCanvas;
-                    const ctx = canvas.getContext('2d');
-                    const p = this.ownershipSigPos(e);
-                    ctx.beginPath(); ctx.moveTo(this._ownershipSigLast.x, this._ownershipSigLast.y); ctx.lineTo(p.x, p.y); ctx.stroke();
-                    this._ownershipSigLast = p; this.ownershipSigHasDrawn = true;
-                },
-                ownershipSigEnd() { this.ownershipSigDrawing = false; },
-                ownershipSigClear() {
-                    const canvas = this.$refs.ownershipSigCanvas;
-                    if (!canvas) return;
-                    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-                    this.ownershipSigHasDrawn = false;
-                },
-
-                async submitOwnershipRequest() {
-                    if (!this.ownershipForm.house_number?.trim()) return Swal.fire('', 'กรุณากรอกบ้านเลขที่', 'warning');
-                    if (!this.ownershipForm.full_name?.trim()) return Swal.fire('', 'กรุณากรอกชื่อ-สกุล', 'warning');
-                    if (!this.ownershipForm.deed_image_url) return Swal.fire('', 'กรุณาแนบรูปโฉนดที่ดิน', 'warning');
-                    if (!this.ownershipForm.id_card_image_url) return Swal.fire('', 'กรุณาแนบรูปบัตรประชาชน', 'warning');
-                    if (!this.ownershipForm.consent) return Swal.fire('', 'กรุณายินยอมให้ตรวจสอบข้อมูลก่อน', 'warning');
-                    if (!this.ownershipSigHasDrawn) return Swal.fire('', 'กรุณาเซ็นชื่อยืนยันก่อนส่งคำขอ', 'warning');
-
-                    this.ownershipSaving = true;
-                    try {
-                        const canvas = this.$refs.ownershipSigCanvas;
-                        const sigBlob = await new Promise(res => canvas.toBlob(res, 'image/png'));
-                        const sigFd = new FormData();
-                        sigFd.append('file', sigBlob, `ownership_sig_${Date.now()}.png`);
-                        const sigRes = await fetch(`${EDGE_FUNCTION_URL}/api/crm/upload_complaint_image`, { method: 'POST', body: sigFd });
-                        const sigD = await sigRes.json();
-                        if (!sigRes.ok) throw new Error(sigD.error || 'อัปโหลดลายเซ็นไม่สำเร็จ');
-
-                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/ownership_verify_submit`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                uid: this.userProfile.userId, lineDisplayName: this.userProfile.displayName,
-                                linePictureUrl: this.userProfile.pictureUrl,
-                                houseNumber: this.ownershipForm.house_number, fullName: this.ownershipForm.full_name,
-                                phoneNumber: this.ownershipForm.phone || null,
-                                claimType: this.ownershipForm.claim_type,
-                                ownershipShare: this.ownershipForm.claim_type === 'joint' ? this.ownershipForm.ownership_share : null,
-                                deedImageUrl: this.ownershipForm.deed_image_url, idCardImageUrl: this.ownershipForm.id_card_image_url,
-                                consentGiven: true, signatureUrl: sigD.url,
-                            })
-                        });
-                        const d = await res.json();
-                        if (!res.ok) throw new Error(d.error || 'ส่งคำขอไม่สำเร็จ');
-
-                        Swal.fire({ icon: 'success', title: '🏠 ส่งคำขอแล้ว', html: '<small>รอการตรวจสอบจากนิติบุคคล</small>', timer: 2200, showConfirmButton: false });
-                        this.ownershipFormModal = false;
-                        await this.loadMyOwnershipRequests();
-                    } catch (err) {
-                        Swal.fire('ไม่สำเร็จ', err.message, 'error');
-                    } finally {
-                        this.ownershipSaving = false;
                     }
                 },
 
