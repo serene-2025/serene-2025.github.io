@@ -3,6 +3,9 @@
 
 <head>
   <meta charset="UTF-8">
+<script src="config.js" charset="utf-8"></script>
+<script src="config-core.js" charset="utf-8"></script>
+<script>if(!window.appCfg){window.appCfg=function(k,d){return d};window.appCfgIn=function(k,s,d){return d};}</script>
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ระบบบันทึกค่าส่วนกลาง ซีรีน 2</title>
@@ -11,6 +14,18 @@
   <!-- Import Libraries -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.3/jquery.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+/* ─── LIFF Mini App: ใช้ LIFF ID เดียวเปิดได้ทุกหน้า (https://liff.line.me/<ID>/<หน้า>.html) ───
+   ตั้งค่าที่ system_settings 'liff_mini_app_id' — ถ้ายังไม่ตั้งจะใช้ LIFF ID เดิมของแต่ละหน้า (ย้ายทีละหน้าได้) */
+function pickLiffId(rows, legacyKey) {
+    var m = {}; (rows || []).forEach(function (r) { m[r.key] = r.value; });
+    function ok(v) {
+        if (typeof v === 'string') { try { var j = JSON.parse(v); if (typeof j === 'string') v = j; } catch (e) {} }
+        v = v == null ? '' : String(v).trim(); return v && v.indexOf('YOUR_') !== 0 ? v : '';
+    }
+    return ok(m.liff_mini_app_id) || ok(m[legacyKey]) || '';
+}
+</script>
   
   <!-- Library สำหรับบีบอัดรูปภาพ -->
   <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.1/dist/browser-image-compression.js"></script>
@@ -602,11 +617,11 @@
 
   <script>
     // --- Supabase Configuration ---
-    const SUPABASE_URL = 'https://zmdywddraaeegzkvpwsw.supabase.co';
-    const SUPABASE_KEY = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ'; 
+    const SUPABASE_URL = appCfg('SUPABASE_URL', 'https://zmdywddraaeegzkvpwsw.supabase.co');
+    const SUPABASE_KEY = appCfg('SUPABASE_KEY', 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ'); 
     
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-    const EDGE_FUNCTION_URL = SUPABASE_URL + '/functions/v1/line-webhook';
+    const EDGE_FUNCTION_URL = appCfg('EDGE_FUNCTION_URL', SUPABASE_URL + '/functions/v1/line-webhook');
 
     // 🔌 เปิด/ปิดการตรวจสอบสลิปผ่าน API — ตั้งค่าได้จากหน้า Admin
     // ค่าเริ่มต้น true (เปิด) เผื่อโหลดค่าจาก DB ไม่ทัน/ไม่สำเร็จ ให้ทำงาน
@@ -797,13 +812,13 @@
       // ดึง slip_verify_enabled คู่กันไปเลย (Promise.all) จะได้พร้อมใช้งาน
       // ก่อนที่ user จะมีโอกาสแนบไฟล์สลิปจริง (กัน race condition)
       (async () => {
-          let liffId = "2000143615-yk0LA09G"; // ค่า fallback เดิม เผื่อดึงจาก DB ไม่สำเร็จ
+          let liffId = appCfgIn('LIFF_FALLBACK', 'slip', "2000143615-yk0LA09G"); // ค่า fallback (ตั้งใน config.js · tenant ใหม่ปล่อยว่าง) เผื่อดึงจาก DB ไม่สำเร็จ
           try {
               const [{ data: cfg }, { data: verifyCfg }] = await Promise.all([
-                  supabaseClient.from('system_settings').select('value').eq('key', 'slip_liff_id').maybeSingle(),
+                  supabaseClient.from('system_settings').select('key,value').in('key', ['liff_mini_app_id', 'slip_liff_id']),
                   supabaseClient.from('system_settings').select('value').eq('key', 'slip_verify_enabled').maybeSingle(),
               ]);
-              if (cfg && cfg.value && cfg.value !== 'YOUR_SLIP_LIFF_ID_HERE') liffId = cfg.value;
+              { const picked = pickLiffId(cfg, 'slip_liff_id'); if (picked) liffId = picked; }
               // column เก็บเป็น TEXT จริง ค่าที่ได้จึงเป็น string "true"/"false" ไม่ใช่ boolean
               if (verifyCfg && verifyCfg.value !== null && verifyCfg.value !== undefined) {
                   SLIP_VERIFY_ENABLED = String(verifyCfg.value).trim().toLowerCase() !== 'false';
@@ -1379,10 +1394,9 @@
             let upperEN = receiverNameEN.toUpperCase();
 
             let isAmountCorrect = (actualAmount === expectedAmount);
-            let isNameCorrect = upperTH.includes("โกลเด้นแลนด์") || 
-                                upperTH.includes("GOLDENLAND") || 
-                                upperEN.includes("GOLDENLAND") ||
-                                upperTH.includes("นิติบุคคล");
+            // คำที่ต้องพบในชื่อบัญชีผู้รับ (ตั้งใน config.js → SLIP.payee_keywords · ค่าเดิมของหมู่บ้านเดิมเป็น default)
+            const payeeKeywords = appCfgIn('SLIP', 'payee_keywords', ["โกลเด้นแลนด์", "GOLDENLAND", "นิติบุคคล"]).map(k => String(k).toUpperCase());
+            let isNameCorrect = payeeKeywords.some(k => upperTH.includes(k) || upperEN.includes(k));
             
             let statusText = "ตรวจสอบผ่าน";
 
@@ -1613,7 +1627,7 @@
           const { data: recentRecords, error: idError } = await supabaseClient
             .from('common_fees')
             .select('id')
-            .like('id', 'serene______')
+            .like('id', appCfgIn('SLIP', 'id_prefix', 'serene') + '______')
             .order('id', { ascending: false })
             .limit(50);
           
@@ -1623,7 +1637,7 @@
           if (recentRecords && recentRecords.length > 0) {
               recentRecords.forEach(record => {
                   if(record.id) {
-                      let numStr = record.id.replace('serene', '');
+                      let numStr = record.id.replace(appCfgIn('SLIP', 'id_prefix', 'serene'), '');
                       if (/^\d{6}$/.test(numStr)) {
                           let num = parseInt(numStr, 10);
                           if (num > currentIdNum) {
@@ -1649,7 +1663,7 @@
               for (let i = 0; i < selectedItems.length; i++) {
                   let item = selectedItems[i];
                   tempIdNum++; 
-                  let newId = 'serene' + ('000000' + tempIdNum).slice(-6); 
+                  let newId = appCfgIn('SLIP', 'id_prefix', 'serene') + ('000000' + tempIdNum).slice(-6); 
 
                   let currentFileInputId = (mode === 'single') ? 'file_image' : `file_slip_box_${item.year}_${item.idx}`;
                   let alertNote = globalSlipAlerts[currentFileInputId];

@@ -2,6 +2,9 @@
 <html lang="th">
 <head>
 <meta charset="UTF-8">
+<script src="config.js" charset="utf-8"></script>
+<script src="config-core.js" charset="utf-8"></script>
+<script>if(!window.appCfg){window.appCfg=function(k,d){return d};window.appCfgIn=function(k,s,d){return d};}</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>ยืนยันสิทธิ์เจ้าของบ้าน</title>
 
@@ -26,10 +29,10 @@
 <script type="text/babel">
     const { useState, useEffect } = React;
 
-    const SUPABASE_URL = 'https://zmdywddraaeegzkvpwsw.supabase.co';
-    const SUPABASE_KEY = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ';
+    const SUPABASE_URL = appCfg('SUPABASE_URL', 'https://zmdywddraaeegzkvpwsw.supabase.co');
+    const SUPABASE_KEY = appCfg('SUPABASE_KEY', 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ');
     const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-    const EDGE_FUNCTION_URL = SUPABASE_URL + '/functions/v1/line-webhook';
+    const EDGE_FUNCTION_URL = appCfg('EDGE_FUNCTION_URL', SUPABASE_URL + '/functions/v1/line-webhook');
 
     const STATUS_OPTIONS = [
         { value:'เจ้าของบ้าน', icon:'🏠', desc:'เป็นเจ้าของกรรมสิทธิ์บ้านหลังนี้แต่เพียงผู้เดียว' },
@@ -42,8 +45,9 @@
     function lineAuthHeaders(extra) {
         let t = '';
         try { t = (window.liff && liff.getAccessToken && liff.getAccessToken()) || ''; } catch (e) { t = ''; }
-        return Object.assign({}, extra || {}, t ? { 'x-line-token': t } : {});
+        return Object.assign({}, extra || {}, t ? { 'x-line-token': t } : {}, TENANT_KEY ? { 'x-tenant': TENANT_KEY } : {});
     }
+    const TENANT_KEY = appCfg('TENANT_KEY', ''); // 🏢 SaaS: ใส่ slug ของ tenant (เว้นว่าง = หมู่บ้านเดิม)
     const OWNER_VALUES = ['เจ้าของบ้าน', 'เจ้าของร่วม'];
 
     async function getSetting(key) {
@@ -111,7 +115,8 @@
         useEffect(() => {
             (async () => {
                 try {
-                    const liffId = await getSetting('confirm_status_liff_id');
+                    const miniId = await getSetting('liff_mini_app_id');
+                    const liffId = miniId || await getSetting('confirm_status_liff_id');
                     if (!liffId) { setPhase('error'); setErrorMsg('ระบบยังไม่ได้ตั้งค่า LIFF — กรุณาติดต่อผู้ดูแลระบบ'); return; }
 
                     await liff.init({ liffId: liffId });
@@ -121,7 +126,7 @@
                     setCurrentUid(profile.userId);
                     setLiffStatus('✅ ' + (profile.displayName || ''));
 
-                    const checkRes = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/check_registration?uid=' + profile.userId);
+                    const checkRes = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/check_registration?uid=' + encodeURIComponent(profile.userId), { headers: lineAuthHeaders() });
                     const checkData = await checkRes.json();
                     if (!checkRes.ok) throw new Error(checkData.error || 'ตรวจสอบไม่สำเร็จ');
 
@@ -129,10 +134,13 @@
                         setPhase('redirecting');
                         // key 'liff_id' คือหน้าลงทะเบียนจริง (liff_register.html)
                         // แยกจาก 'liff_crm_id' ซึ่งเป็น crm.html Mini App คนละหน้า
-                        const registerLiffId = await getSetting('liff_id');
+                        const registerLiffId = miniId ? '' : await getSetting('liff_id');
                         setTimeout(() => {
-                            if (registerLiffId) {
-                                window.location.href = 'https://liff.line.me/' + registerLiffId;
+                            if (miniId || registerLiffId) {
+                                // Mini App ID เดียว: เปิดหน้าลงทะเบียนด้วยพาธ · แบบเดิม: ใช้ LIFF ID ของหน้าลงทะเบียน
+                                window.location.href = miniId
+                                    ? 'https://liff.line.me/' + miniId + '/liff_register.html'
+                                    : 'https://liff.line.me/' + registerLiffId;
                             } else {
                                 setPhase('error'); setErrorMsg('ยังไม่พบข้อมูลการลงทะเบียน และระบบยังไม่ได้ตั้งค่าหน้าลงทะเบียนไว้');
                             }
@@ -144,7 +152,7 @@
 
                     // 🆕 ดึงรายชื่อสมาชิกบ้านเดียวกันเสมอ (ทั้งกรณียืนยันแล้ว/ยังไม่
                     // ยืนยัน) เพื่อให้เจ้าของบ้านเห็นว่าใครอยู่บ้าง แม้ยืนยันไปแล้ว
-                    const membersRes = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/house_members_status?house_no=' + encodeURIComponent(checkData.profile.house_no));
+                    const membersRes = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/house_members_status?uid=' + encodeURIComponent(profile.userId), { headers: lineAuthHeaders() });
                     const membersData = await membersRes.json();
                     setHouseMembers(membersData.members || []);
                     await Promise.all([loadOwnerInfo(profile.userId), loadHouseInfo(profile.userId)]);
@@ -238,13 +246,14 @@
 
         const submitRemoval = async () => {
             if (!removalTarget) return;
+            if (removalReason.trim().length < 3) return showToast('กรุณาระบุเหตุผลที่ขอลบ (อย่างน้อย 3 ตัวอักษร)', 'error');
             setRemovalSending(true);
             try {
                 const res = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/report_member_removal', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    method: 'POST', headers: lineAuthHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({
                         requesterUid: currentUid, requesterName: myRecord ? (myRecord.fullname || myRecord.line_name) : null,
-                        targetUid: removalTarget.uid, targetName: removalTarget.fullname || removalTarget.line_name,
+                        targetRef: removalTarget.ref, targetName: removalTarget.fullname || removalTarget.line_name,
                         houseNumber: myRecord ? myRecord.house_no : null, reason: removalReason.trim() || null,
                     }),
                 });
@@ -378,7 +387,7 @@
                                     {m.living_status || 'ยังไม่ระบุ'} {m.status_confirmed ? '🔒 ยืนยันแล้ว' : '(ยังไม่ยืนยัน)'}
                                 </div>
                             </div>
-                            {m.uid !== currentUid && (
+                            {!m.isMe && (
                                 <button onClick={() => setRemovalTarget(m)}
                                     className="text-[10px] font-bold text-rose-500 bg-rose-50 hover:bg-rose-100 px-2.5 py-1.5 rounded-lg flex-shrink-0">
                                     🗑️ แจ้งลบ
@@ -522,7 +531,7 @@
                                 แจ้งนิติบุคคลให้ตรวจสอบและลบ <b>{removalTarget.fullname || removalTarget.line_name}</b> ออกจากทะเบียนบ้านนี้ — ใช้เมื่อสมาชิกย้ายออกไปแล้วจริง
                             </p>
                             <textarea value={removalReason} onChange={e => setRemovalReason(e.target.value)} rows={2}
-                                placeholder="เหตุผล (ไม่บังคับ) เช่น ย้ายออกไปแล้ว..."
+                                placeholder="เหตุผล (จำเป็น อย่างน้อย 3 ตัวอักษร) เช่น ย้ายออกไปแล้ว..."
                                 className="w-full px-3 py-2.5 bg-gray-50 rounded-2xl border border-gray-200 text-sm outline-none resize-none mb-4" />
                             <div className="flex gap-2">
                                 <button onClick={submitRemoval} disabled={removalSending}
