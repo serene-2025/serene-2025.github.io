@@ -2,6 +2,9 @@
 <html lang="th">
 <head>
   <meta charset="utf-8">
+<script src="config.js" charset="utf-8"></script>
+<script src="config-core.js" charset="utf-8"></script>
+<script>if(!window.appCfg){window.appCfg=function(k,d){return d};window.appCfgIn=function(k,s,d){return d};}</script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>ลงทะเบียนสมาชิก Serene</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -342,12 +345,19 @@
 // ══════════════════════════════════════════════════════
 // CONFIG
 // ══════════════════════════════════════════════════════
-const SUPABASE_URL    = 'https://zmdywddraaeegzkvpwsw.supabase.co';
-const SUPABASE_KEY    = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ';
-const WEBHOOK_URL     = `${SUPABASE_URL}/functions/v1/line-webhook`;
-const DEFAULT_LIFF_ID      = '2000143615-Mp3la3EK';
-const DEFAULT_MEMBER_RM    = 'richmenu-6dbab648fe7753fd311142e0c706ae1f';
-const OA_ADD_FRIEND_URL    = 'https://line.me/R/ti/p/@serene'; // ⚠️ แก้ @serene เป็น username OA จริงถ้าเปลี่ยน
+const SUPABASE_URL    = appCfg('SUPABASE_URL', 'https://zmdywddraaeegzkvpwsw.supabase.co');
+const SUPABASE_KEY    = appCfg('SUPABASE_KEY', 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ');
+const WEBHOOK_URL     = appCfg('EDGE_FUNCTION_URL', `${SUPABASE_URL}/functions/v1/line-webhook`);
+// 🔒 แนบ LINE access token ให้ server พิสูจน์ว่า userId นี้คือคนที่เปิดหน้านี้จริง
+function lineAuthHeaders(extra) {
+  let t = '';
+  try { t = (window.liff && liff.getAccessToken && liff.getAccessToken()) || ''; } catch (e) { t = ''; }
+  return Object.assign({}, extra || {}, t ? { 'x-line-token': t } : {}, TENANT_KEY ? { 'x-tenant': TENANT_KEY } : {});
+}
+const TENANT_KEY = appCfg('TENANT_KEY', ''); // 🏢 SaaS: ใส่ slug ของ tenant (เว้นว่าง = หมู่บ้านเดิม)
+const DEFAULT_LIFF_ID      = appCfgIn('LIFF_FALLBACK', 'register', '2000143615-Mp3la3EK');
+const DEFAULT_MEMBER_RM    = appCfg('DEFAULT_MEMBER_RICHMENU', 'richmenu-6dbab648fe7753fd311142e0c706ae1f');
+const OA_ADD_FRIEND_URL    = appCfg('OA_ADD_FRIEND_URL', 'https://line.me/R/ti/p/@serene'); // ⚠️ แก้ @serene เป็น username OA จริงถ้าเปลี่ยน
 let   LIFF_ID              = DEFAULT_LIFF_ID;
 let   MEMBER_RICHMENU      = DEFAULT_MEMBER_RM;
 
@@ -374,10 +384,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       const { data: settings } = await db
         .from('system_settings')
         .select('key, value')
-        .in('key', ['liff_id', 'member_richmenu', 'default_richmenu']);
+        .in('key', ['liff_mini_app_id', 'liff_id', 'member_richmenu', 'default_richmenu']);
       const cfg = {};
       (settings || []).forEach(r => { cfg[r.key] = r.value; });
       if (cfg.liff_id)          LIFF_ID         = cfg.liff_id;
+      if (cfg.liff_mini_app_id) LIFF_ID         = String(cfg.liff_mini_app_id).trim();   // Mini App ID เดียวทุกหน้า (ถ้าตั้งไว้ใช้ก่อน)
       if (cfg.member_richmenu)  MEMBER_RICHMENU = cfg.member_richmenu;
     } catch (_) { /* ใช้ค่า default */ }
 
@@ -433,7 +444,7 @@ async function checkMember() {
       const rmId = data.richmenu || MEMBER_RICHMENU;
       fetch(`${WEBHOOK_URL}/api/register/complete`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: lineAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           userId:      liffProfile.userId,
           displayName: liffProfile.displayName,
@@ -604,7 +615,7 @@ async function completeRegistration() {
   try {
     // 1️⃣ เปลี่ยน Rich Menu + Telegram แจ้งเตือน
     fetch(`${WEBHOOK_URL}/api/register/complete`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: lineAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         userId: liffProfile.userId, displayName: liffProfile.displayName,
         pictureUrl: liffProfile.pictureUrl, richMenuId: MEMBER_RICHMENU, userData: registeredData,
@@ -655,7 +666,7 @@ async function completeRegistration() {
     // 3️⃣ Flex Welcome
     try {
       await liff.sendMessages([{
-        type: 'flex', altText: `ยินดีต้อนรับ ${liffProfile.displayName} เข้าสู่ระบบ Serene`,
+        type: 'flex', altText: `ยินดีต้อนรับ ${liffProfile.displayName} เข้าสู่ระบบ ${appCfgIn('BRAND', 'short', 'Serene')}`,
         contents: {
           type: 'bubble', size: 'mega',
           hero: { type: 'image', url: liffProfile.pictureUrl||'https://via.placeholder.com/600x200',
