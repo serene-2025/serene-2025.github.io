@@ -15018,6 +15018,9 @@ const CAR_PER_PAGE = 30;
         // 🏠 คำขอให้เจ้าของบ้านยืนยันผู้เช่า/ผู้อาศัย (status_approvals)
         let residentStatusFilter = 'open';     // open = pending + no_owner
         let residentOpenCount = null;
+        // 🗑️ คำขอลบสมาชิกที่เจ้าของบ้านแจ้งจาก CRM (member_removal_requests)
+        let removalStatusFilter = 'pending';
+        let removalPendingCount = null;
         let ownerClaimSelected = new Set();
         const RESIDENT_STATUS = {
             pending:  { icon:'⏳', label:'รอเจ้าของบ้านกด', cls:'bg-amber-100 text-amber-700' },
@@ -15038,44 +15041,297 @@ const CAR_PER_PAGE = 30;
             return r.status === 'pending' && r.registry_found && r.name_correct === true && r.member_name_matches === true;
         }
 
+
+        // ═════════ helper: ฟอร์มใน modal + ตัวเลือก "ส่งแจ้งกลับ" (ประหยัดโควต้า LINE push) ═════════
+        function openFormModal(title, html) {
+            document.getElementById('modal-title').innerText = title;
+            document.getElementById('modal-content').innerHTML = html;
+            openModal();
+            lucide.createIcons();
+        }
+        async function admPost(action, body) {
+            const res = await fetch(`${API_BASE_URL}/api/admin/audience/${action}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'ทำรายการไม่สำเร็จ');
+            return d;
+        }
+        function notifyPref() { try { return localStorage.getItem('adm_notify_back') !== '0'; } catch (e) { return true; } }
+        function setNotifyPref(on) { try { localStorage.setItem('adm_notify_back', on ? '1' : '0'); } catch (e) {} }
+        function notifyChecked(id) { const el = document.getElementById(id); return el ? !!el.checked : true; }
+        function notifyToggleHtml(id, who) {
+            return '<label class="flex items-start gap-2 text-xs text-slate-700 bg-sky-50 border border-sky-100 rounded-xl p-2.5 cursor-pointer">' +
+                '<input type="checkbox" id="' + id + '" class="mt-0.5"' + (notifyPref() ? ' checked' : '') + ' onchange="setNotifyPref(this.checked)">' +
+                '<span><b>📲 ส่งข้อความแจ้งกลับ' + who + '</b><br><span class="text-slate-400">ปิดไว้ = ไม่ส่ง LINE (ไม่เสียโควต้า push) · ระบบจำค่าที่เลือกไว้ให้</span></span></label>';
+        }
+        function notifyToggleInline(id) {
+            return '<label class="flex items-center gap-1.5 font-bold text-slate-600 cursor-pointer"><input type="checkbox" id="' + id + '"' + (notifyPref() ? ' checked' : '') +
+                ' onchange="setNotifyPref(this.checked)"> 📲 ส่งแจ้งกลับสมาชิก</label>';
+        }
+        function reloadOwnershipLists() {
+            if (ownershipMode === 'residents') loadResidentApprovals();
+            else if (ownershipMode === 'removals') { loadMemberRemovals(); refreshRemovalBadge(); }
+            else if (ownershipMode === 'claims') loadOwnerClaims();
+        }
+
+        // ═════════ แอดมินแก้ไข / ลบสมาชิก (userhome) ═════════
+        function memberActionsHtml(uid) {
+            if (!uid) return '';
+            const u = escapeHtml(uid);
+            return '<div class="flex gap-2 mt-3 pt-3 border-t border-slate-100">' +
+                '<button data-uid="' + u + '" onclick="openMemberEditor(this.dataset.uid)" class="flex-1 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-[11px] font-bold hover:bg-slate-50">✏️ แก้ไขข้อมูลสมาชิก</button>' +
+                '<button data-uid="' + u + '" onclick="openMemberRemove(this.dataset.uid)" class="flex-1 py-1.5 bg-white border border-rose-200 text-rose-600 rounded-xl text-[11px] font-bold hover:bg-rose-50">🗑️ ลบออกจากทะเบียน</button>' +
+                '</div>';
+        }
+        const MEMBER_LIVING_STATUSES = ['เจ้าของบ้าน', 'เจ้าของร่วม', 'ผู้เช่า', 'ผู้อาศัย', 'ญาติ', 'อื่นๆ'];
+        async function loadMemberRow(uid) {
+            try {
+                const { data, error } = await supabaseClient.from('userhome').select('*').eq('uid', uid).maybeSingle();
+                if (error) throw error;
+                if (!data) { showToast('ไม่พบสมาชิกคนนี้ในทะเบียน (อาจถูกลบไปแล้ว)', 'error'); return null; }
+                return data;
+            } catch (e) { showToast('❌ โหลดข้อมูลสมาชิกไม่สำเร็จ: ' + (e.message || e), 'error'); return null; }
+        }
+        async function openMemberEditor(uid) {
+            const m = await loadMemberRow(uid);
+            if (!m) return;
+            let phone = m.phone == null ? '' : String(m.phone);
+            if (/^[6-9]\d{8}$/.test(phone)) phone = '0' + phone;      // เบอร์ที่เลข 0 นำหน้าหาย (bigint)
+            const f = (id, label, val, ph) => '<div><label class="block text-xs font-bold text-slate-600 mb-1">' + label + '</label>' +
+                '<input id="' + id + '" value="' + escapeHtml(val == null ? '' : String(val)) + '" placeholder="' + (ph || '') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>';
+            const cur = m.living_status || '';
+            const opts = (MEMBER_LIVING_STATUSES.includes(cur) || !cur ? MEMBER_LIVING_STATUSES : [cur].concat(MEMBER_LIVING_STATUSES))
+                .map(v => '<option value="' + escapeHtml(v) + '"' + (v === cur ? ' selected' : '') + '>' + escapeHtml(v) + '</option>').join('');
+            openFormModal('✏️ แก้ไขข้อมูลสมาชิก',
+                '<div class="space-y-3 text-left">' +
+                '<div class="text-[11px] text-slate-400 break-all">LINE: ' + escapeHtml(m.line_name || '—') + '</div>' +
+                f('me-fullname', 'ชื่อ-นามสกุล', m.fullname) +
+                '<div class="grid grid-cols-2 gap-2">' + f('me-house', 'บ้านเลขที่', m.house_no) + f('me-soi', 'ซอย', m.soi) + '</div>' +
+                f('me-phone', 'เบอร์โทร', phone, '0812345678') +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">สถานะ</label><select id="me-status" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm">' + opts + '</select></div>' +
+                '<label class="flex items-start gap-2 text-xs text-slate-600"><input type="checkbox" id="me-confirmed" class="mt-0.5"' + (m.status_confirmed ? ' checked' : '') + '> ยืนยันสถานะแล้ว <span class="text-slate-400">(เจ้าของบ้านได้ 1 คน/หลัง · เจ้าของร่วมได้ 2 คน/หลัง)</span></label>' +
+                '<div class="flex gap-2 pt-2">' +
+                '<button id="me-submit" data-uid="' + escapeHtml(uid) + '" onclick="saveMemberEditor(this.dataset.uid)" class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-sm">บันทึก</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button></div></div>');
+        }
+        async function saveMemberEditor(uid) {
+            const btn = document.getElementById('me-submit');
+            if (btn) { if (btn.disabled) return; btn.disabled = true; }
+            try {
+                const g = (id) => (document.getElementById(id)?.value || '').trim();
+                const d = await admPost('member_registry_update', {
+                    uid, fullname: g('me-fullname'), house_no: g('me-house'), soi: g('me-soi'), phone: g('me-phone'),
+                    living_status: g('me-status'), status_confirmed: !!document.getElementById('me-confirmed')?.checked,
+                });
+                closeModal();
+                const n = Object.keys(d.changed || {}).length;
+                showToast(n ? '✅ บันทึกแล้ว (แก้ ' + n + ' ช่อง)' : 'ไม่มีข้อมูลที่เปลี่ยน', 'success');
+                reloadOwnershipLists();
+            } catch (e) {
+                if (btn) btn.disabled = false;
+                showToast('❌ ' + e.message, 'error');
+            }
+        }
+        async function openMemberRemove(uid) {
+            const m = await loadMemberRow(uid);
+            if (!m) return;
+            openFormModal('🗑️ ลบสมาชิกออกจากทะเบียน',
+                '<div class="space-y-3 text-left">' +
+                '<div class="text-sm bg-slate-50 rounded-xl p-3"><b>' + escapeHtml(m.fullname || m.line_name || uid) + '</b><br>' +
+                '<span class="text-xs text-slate-500">🏠 ' + escapeHtml(m.house_no || '—') + (m.soi ? ' ซอย ' + escapeHtml(m.soi) : '') + ' · ' + escapeHtml(m.living_status || '—') + '</span></div>' +
+                '<div class="text-[11px] text-rose-600 bg-rose-50 rounded-xl p-2.5">ระบบเก็บสำเนาไว้ในตาราง <b>userhome_removed</b> ก่อนลบเสมอ (กู้คืนได้ด้วย SQL) · ผู้ถูกลบต้องลงทะเบียนใหม่ · ระบบ<b>ไม่ส่งข้อความ</b>หาผู้ถูกลบ</div>' +
+                '<label class="flex items-start gap-2 text-xs text-slate-600"><input type="checkbox" id="mr-tenant" checked class="mt-0.5"> ลบข้อมูลของคนนี้ใน tenant_registry ด้วย (ถ้ามี)</label>' +
+                '<label class="flex items-start gap-2 text-xs text-slate-600"><input type="checkbox" id="mr-richmenu" checked class="mt-0.5"> ปลด Rich Menu ของสมาชิกคนนี้ (ไม่เสียโควต้า push)</label>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">เหตุผล (บันทึกไว้ในสำเนา)</label>' +
+                '<input id="mr-reason" placeholder="เช่น ผู้เช่าย้ายออกแล้ว" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '<div class="flex gap-2 pt-2">' +
+                '<button id="mr-submit" data-uid="' + escapeHtml(uid) + '" onclick="confirmMemberRemove(this.dataset.uid)" class="flex-1 py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold text-sm">ลบออกจากทะเบียน</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button></div></div>');
+        }
+        async function confirmMemberRemove(uid) {
+            const btn = document.getElementById('mr-submit');
+            if (btn) { if (btn.disabled) return; btn.disabled = true; }
+            try {
+                await admPost('member_remove', {
+                    uid, reason: (document.getElementById('mr-reason')?.value || '').trim() || null,
+                    tenantRegistry: !!document.getElementById('mr-tenant')?.checked,
+                    unlinkRichMenu: !!document.getElementById('mr-richmenu')?.checked,
+                });
+                closeModal();
+                showToast('🗑️ ลบออกจากทะเบียนแล้ว (เก็บสำเนาไว้ใน userhome_removed)', 'success');
+                reloadOwnershipLists();
+            } catch (e) {
+                if (btn) btn.disabled = false;
+                showToast('❌ ' + e.message, 'error');
+            }
+        }
+        function deleteResidentApproval(idx) {
+            const a = (window._residentApprovals || [])[parseInt(idx)];
+            if (!a) return;
+            showConfirmModal('ลบรายการนี้?', 'ลบประวัติคำขอของ <b>' + escapeHtml(a.requester_name || a.requester_line_name || a.house_no) + '</b> (ไม่ลบตัวสมาชิก)', async () => {
+                try {
+                    await admPost('resident_approval_delete', { id: a.id });
+                    showToast('ลบรายการแล้ว', 'success');
+                    loadResidentApprovals();
+                } catch (e) { showToast('❌ ' + e.message, 'error'); }
+            });
+        }
+
+        // ═════════ คำขอลบสมาชิกจากเจ้าของบ้าน (CRM) ═════════
+        const REMOVAL_STATUS = {
+            pending:  { icon:'⏳', label:'รอแอดมินพิจารณา', cls:'bg-amber-100 text-amber-700' },
+            approved: { icon:'✅', label:'ลบแล้ว', cls:'bg-emerald-100 text-emerald-700' },
+            rejected: { icon:'❌', label:'ไม่อนุมัติ', cls:'bg-rose-100 text-rose-700' },
+            cancelled:{ icon:'⛔', label:'ยกเลิก', cls:'bg-slate-100 text-slate-500' },
+        };
+        function switchRemovalStatus(status) {
+            removalStatusFilter = status;
+            renderOwnershipManagementView();
+        }
+        async function refreshRemovalBadge() {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/member_removal_list?counts_only=1`);
+                const d = await res.json();
+                if (!res.ok) return;
+                removalPendingCount = d.counts?.pending || 0;
+                const bd = document.getElementById('rm-badge');
+                if (bd) { bd.textContent = removalPendingCount; bd.classList.toggle('hidden', !removalPendingCount); }
+            } catch (e) { /* ป้ายตัวเลขไม่สำคัญ */ }
+        }
+        async function loadMemberRemovals() {
+            const el = document.getElementById('removal-list');
+            if (!el) return;
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/member_removal_list${removalStatusFilter ? '?status=' + encodeURIComponent(removalStatusFilter) : ''}`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+                const items = d.items || [];
+                window._removals = items;
+                removalPendingCount = d.counts?.pending || 0;
+                const bd = document.getElementById('rm-badge');
+                if (bd) { bd.textContent = removalPendingCount; bd.classList.toggle('hidden', !removalPendingCount); }
+                if (!items.length) { el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">ไม่มีรายการในหมวดนี้</div>'; return; }
+                const fmt = (v) => new Date(v).toLocaleString('th-TH', { day:'2-digit', month:'short', year:'2-digit', hour:'2-digit', minute:'2-digit' });
+                el.innerHTML = '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' + items.map((r, idx) => {
+                    const st = REMOVAL_STATUS[r.status] || { icon:'❓', label:r.status, cls:'bg-slate-100 text-slate-600' };
+                    const tname = r.target_name || r.target_line_name || '(ไม่ระบุชื่อ)';
+                    const open = r.status === 'pending';
+                    return '<div class="glass rounded-3xl p-5">' +
+                        '<div class="flex justify-between items-start mb-3 gap-2">' +
+                        '<div class="flex items-center gap-2.5 min-w-0">' +
+                        (r.target_picture
+                            ? '<img src="' + escapeHtml(r.target_picture) + '" class="w-10 h-10 rounded-full object-cover border border-slate-200 flex-shrink-0">'
+                            : '<div class="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0"><i data-lucide="user" class="w-4 h-4 text-slate-400"></i></div>') +
+                        '<div class="min-w-0"><div class="font-bold text-slate-800 truncate">' + escapeHtml(tname) + '</div>' +
+                        '<div class="text-xs text-slate-400 truncate">🏠 ' + escapeHtml(r.house_no) + (r.soi ? ' ซอย ' + escapeHtml(r.soi) : '') + (r.target_status ? ' · ' + escapeHtml(r.target_status) : '') + '</div></div></div>' +
+                        '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ' + st.cls + '">' + st.icon + ' ' + st.label + '</span></div>' +
+                        '<div class="text-xs text-slate-600 bg-slate-50 rounded-xl p-2.5 mb-2">🙋 ผู้แจ้ง (เจ้าของบ้าน): <b>' + escapeHtml(r.requester_name || '—') + '</b></div>' +
+                        '<div class="text-xs text-amber-800 bg-amber-50 rounded-xl p-2.5 mb-2">💬 เหตุผล: ' + escapeHtml(r.reason || '—') + '</div>' +
+                        (open && r.target_exists === false ? '<div class="text-xs text-sky-700 bg-sky-50 rounded-xl p-2.5 mb-2">ℹ️ สมาชิกคนนี้ไม่อยู่ในทะเบียนแล้ว (ถูกลบไปก่อนหน้านี้) — กดปิดรายการได้เลย</div>' : '') +
+                        (r.decided_at ? '<div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-2.5 mb-2">พิจารณาโดย ' + escapeHtml(r.decided_by_name || 'แอดมิน') + ' · ' + fmt(r.decided_at) + '</div>' : '') +
+                        (r.admin_remark ? '<div class="text-xs text-indigo-600 bg-indigo-50 rounded-xl p-2.5 mb-2">💬 ' + escapeHtml(r.admin_remark) + '</div>' : '') +
+                        '<div class="text-[11px] text-slate-400 mb-3">แจ้งเมื่อ ' + fmt(r.created_at) + '</div>' +
+                        (open ?
+                            '<div class="flex gap-2">' +
+                            '<button data-idx="' + idx + '" onclick="openRemovalDecision(this.dataset.idx,\'approved\')" class="flex-1 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold">' + (r.target_exists === false ? '✅ ปิดรายการ' : '🗑️ อนุมัติ — ลบออก') + '</button>' +
+                            '<button data-idx="' + idx + '" onclick="openRemovalDecision(this.dataset.idx,\'rejected\')" class="flex-1 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold">❌ ไม่อนุมัติ</button>' +
+                            '</div>' : '') +
+                        '</div>';
+                }).join('') + '</div>';
+                lucide.createIcons();
+            } catch (e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+        function openRemovalDecision(idx, decision) {
+            const r = (window._removals || [])[parseInt(idx)];
+            if (!r) return;
+            const isApprove = decision === 'approved';
+            const tname = r.target_name || r.target_line_name || r.house_no;
+            openFormModal((isApprove ? '🗑️ อนุมัติลบ' : '❌ ไม่อนุมัติลบ') + ' — ' + tname,
+                '<div class="space-y-3 text-left">' +
+                '<div class="text-xs text-slate-600 bg-slate-50 rounded-xl p-2.5">🏠 ' + escapeHtml(r.house_no) + ' · ผู้แจ้ง: <b>' + escapeHtml(r.requester_name || '—') + '</b><br>💬 ' + escapeHtml(r.reason || '—') + '</div>' +
+                (isApprove && r.target_exists !== false ?
+                    '<div class="text-[11px] text-rose-600 bg-rose-50 rounded-xl p-2.5">ระบบจะลบ <b>' + escapeHtml(tname) + '</b> ออกจากทะเบียนสมาชิก (เก็บสำเนาไว้ใน userhome_removed ก่อนลบ) และยกเลิกคำขอยืนยันที่ค้างอยู่ของเขา</div>' +
+                    '<label class="flex items-start gap-2 text-xs text-slate-600"><input type="checkbox" id="rm-tenant" checked class="mt-0.5"> ลบข้อมูลใน tenant_registry ด้วย (ถ้ามี)</label>' +
+                    '<label class="flex items-start gap-2 text-xs text-slate-600"><input type="checkbox" id="rm-richmenu" checked class="mt-0.5"> ปลด Rich Menu ของคนที่ถูกลบ (ไม่เสียโควต้า push)</label>' : '') +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">หมายเหตุ' + (isApprove ? ' (ไม่บังคับ)' : ' (แนะนำให้ระบุเหตุผล — ส่งให้เจ้าของบ้านที่แจ้ง)') + '</label>' +
+                '<textarea id="rm-remark" rows="3" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none"></textarea></div>' +
+                notifyToggleHtml('rm-notify', 'ให้เจ้าของบ้านที่แจ้ง') +
+                '<div class="flex gap-2 pt-2">' +
+                '<button id="rm-submit" data-idx="' + idx + '" data-decision="' + decision + '" onclick="confirmRemovalDecision(this.dataset.idx,this.dataset.decision)" class="flex-1 py-2.5 ' + (isApprove ? 'bg-rose-500 hover:bg-rose-600' : 'bg-slate-700 hover:bg-slate-800') + ' text-white rounded-2xl font-bold text-sm">ยืนยัน</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button></div></div>');
+        }
+        async function confirmRemovalDecision(idx, decision) {
+            const r = (window._removals || [])[parseInt(idx)];
+            if (!r) return;
+            const btn = document.getElementById('rm-submit');
+            if (btn) { if (btn.disabled) return; btn.disabled = true; }
+            try {
+                const d = await admPost('member_removal_decide', {
+                    id: r.id, decision, remark: (document.getElementById('rm-remark')?.value || '').trim() || null,
+                    notify: notifyChecked('rm-notify'),
+                    tenantRegistry: document.getElementById('rm-tenant') ? !!document.getElementById('rm-tenant').checked : true,
+                    unlinkRichMenu: document.getElementById('rm-richmenu') ? !!document.getElementById('rm-richmenu').checked : true,
+                });
+                closeModal();
+                showToast((decision === 'approved' ? (d.targetGone ? '✅ ปิดรายการแล้ว (สมาชิกไม่อยู่ในทะเบียนแล้ว)' : '🗑️ ลบออกจากทะเบียนแล้ว') : '❌ ไม่อนุมัติแล้ว') +
+                    (d.notified === false ? ' · 🔕 ไม่ได้ส่งแจ้งกลับ' : ' · แจ้งเจ้าของบ้านทาง LINE แล้ว'), 'success');
+                loadMemberRemovals(); refreshRemovalBadge();
+            } catch (e) {
+                if (btn) btn.disabled = false;
+                showToast('❌ ' + e.message, 'error');
+            }
+        }
+
         async function renderOwnershipManagementView() {
             const isClaims = ownershipMode === 'claims';
             const isResidents = ownershipMode === 'residents';
-            const filters = isClaims
+            const isRemovals = ownershipMode === 'removals';
+            const filters = isRemovals
+                ? [['pending','⏳ รอพิจารณา'],['approved','✅ ลบแล้ว'],['rejected','❌ ไม่อนุมัติ'],['','ทั้งหมด']]
+                : isClaims
                 ? [['pending','⏳ รอตรวจสอบ'],['approved','✅ อนุมัติแล้ว'],['rejected','❌ ไม่อนุมัติ'],['matched','✅ ชื่อตรงโฉนด (ระบบเดิม)'],['','ทั้งหมด']]
                 : isResidents
                     ? [['open','⏳ รอดำเนินการ'],['pending','รอเจ้าของบ้านกด'],['no_owner','🙋 ไม่มีเจ้าของ'],['approved','✅ ยืนยันแล้ว'],['rejected','❌ ไม่ยืนยัน'],['','ทั้งหมด']]
                     : [['pending','⏳ รอตรวจสอบ'],['verified','✅ ยืนยันแล้ว'],['rejected','❌ ไม่ผ่าน'],['','ทั้งหมด']];
-            const activeFilter = isClaims ? ownerClaimStatusFilter : isResidents ? residentStatusFilter : ownershipStatusFilter;
+            const activeFilter = isRemovals ? removalStatusFilter : isClaims ? ownerClaimStatusFilter : isResidents ? residentStatusFilter : ownershipStatusFilter;
             document.getElementById('content-area').innerHTML =
                 '<div class="slide-in p-2">' +
                 '<div class="mb-6"><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
                 '<span class="bg-indigo-100 text-indigo-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="badge-check" class="w-8 h-8"></i></span>' +
                 'ยืนยันสิทธิ์เจ้าของบ้าน</h1>' +
-                '<p class="text-sm text-slate-500 mt-2 ml-1">' + (isClaims
+                '<p class="text-sm text-slate-500 mt-2 ml-1">' + (isRemovals
+                    ? 'เจ้าของบ้านแจ้งขอลบผู้เช่า/ผู้อาศัยออกจากทะเบียนผ่านหน้า CRM — แอดมินตรวจเหตุผลแล้วอนุมัติ (ลบจริง เก็บสำเนาไว้) หรือไม่อนุมัติ'
+                    : isClaims
                     ? 'ชื่อเจ้าของ/เลขโฉนดที่สมาชิกตรวจสอบตอนยืนยันสถานะ — ทุกรายการรอแอดมินอนุมัติ (รายการที่ชื่อตรงโฉนดมีป้าย "แนะนำอนุมัติ" และอนุมัติเป็นชุดได้)'
                     : isResidents
                         ? 'ผู้เช่า/ผู้อาศัยที่ยืนยันสถานะ — ระบบส่ง Flex ให้เจ้าของบ้านกดยืนยันทาง LINE; แอดมินตัดสินแทนหรือส่งซ้ำได้ที่นี่'
                         : 'ตรวจสอบคำขอยืนยันกรรมสิทธิ์ พร้อมเทียบกับข้อมูลโฉนดจริงในระบบ') + '</p></div>' +
-                '<div class="flex gap-2 mb-3">' +
+                '<div class="flex gap-2 mb-3 flex-wrap">' +
                     '<button onclick="switchOwnershipMode(\'claims\')" class="px-4 py-2 rounded-xl text-sm font-bold ' + (isClaims ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200') + '">📜 ตรวจชื่อ-โฉนด' +
                         ' <span id="oc-badge" class="ml-1 px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px]' + (ownerClaimPendingCount ? '' : ' hidden') + '">' + (ownerClaimPendingCount || 0) + '</span></button>' +
                     '<button onclick="switchOwnershipMode(\'residents\')" class="px-4 py-2 rounded-xl text-sm font-bold ' + (isResidents ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200') + '">🏠 ผู้เช่า/ผู้อาศัย' +
                         ' <span id="ra-badge" class="ml-1 px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px]' + (residentOpenCount ? '' : ' hidden') + '">' + (residentOpenCount || 0) + '</span></button>' +
-                    '<button onclick="switchOwnershipMode(\'docs\')" class="px-4 py-2 rounded-xl text-sm font-bold ' + (!isClaims && !isResidents ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200') + '">📎 เอกสารยืนยัน</button>' +
+                    '<button onclick="switchOwnershipMode(\'removals\')" class="px-4 py-2 rounded-xl text-sm font-bold ' + (isRemovals ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200') + '">🗑️ แจ้งลบสมาชิก' +
+                        ' <span id="rm-badge" class="ml-1 px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px]' + (removalPendingCount ? '' : ' hidden') + '">' + (removalPendingCount || 0) + '</span></button>' +
+                    '<button onclick="switchOwnershipMode(\'docs\')" class="px-4 py-2 rounded-xl text-sm font-bold ' + (!isClaims && !isResidents && !isRemovals ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200') + '">📎 เอกสารยืนยัน</button>' +
                 '</div>' +
                 '<div class="glass rounded-3xl p-4 shadow-sm mb-4 flex flex-wrap gap-1.5 items-center">' +
                 filters.map(([v,l]) =>
-                    '<button data-status="' + v + '" onclick="' + (isClaims ? 'switchOwnerClaimStatus' : isResidents ? 'switchResidentStatus' : 'switchOwnershipStatus') + '(this.dataset.status)" class="px-3 py-2 rounded-xl text-xs font-bold transition-all ' +
+                    '<button data-status="' + v + '" onclick="' + (isRemovals ? 'switchRemovalStatus' : isClaims ? 'switchOwnerClaimStatus' : isResidents ? 'switchResidentStatus' : 'switchOwnershipStatus') + '(this.dataset.status)" class="px-3 py-2 rounded-xl text-xs font-bold transition-all ' +
                     (activeFilter === v ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-600') + '">' + l + '</button>'
                 ).join('') +
-                '<button onclick="' + (isClaims ? 'loadOwnerClaims()' : isResidents ? 'loadResidentApprovals()' : 'loadOwnershipList()') + '" class="ml-auto px-3 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600">🔄 รีเฟรช</button>' +
+                '<button onclick="' + (isRemovals ? 'loadMemberRemovals()' : isClaims ? 'loadOwnerClaims()' : isResidents ? 'loadResidentApprovals()' : 'loadOwnershipList()') + '" class="ml-auto px-3 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600">🔄 รีเฟรช</button>' +
                 '</div>' +
                 '<div id="' + (isClaims ? 'owner-claims-bar' : 'ownership-bar-unused') + '"></div>' +
-                '<div id="' + (isClaims ? 'owner-claims-list' : isResidents ? 'resident-approvals-list' : 'ownership-list') + '"></div></div>';
+                '<div id="' + (isRemovals ? 'removal-list' : isClaims ? 'owner-claims-list' : isResidents ? 'resident-approvals-list' : 'ownership-list') + '"></div></div>';
             lucide.createIcons();
             if (!isResidents) refreshResidentBadge();
-            if (isClaims) await loadOwnerClaims(); else if (isResidents) await loadResidentApprovals(); else await loadOwnershipList();
+            if (!isRemovals) refreshRemovalBadge();
+            if (isRemovals) await loadMemberRemovals(); else if (isClaims) await loadOwnerClaims(); else if (isResidents) await loadResidentApprovals(); else await loadOwnershipList();
         }
 
         async function refreshResidentBadge() {
@@ -15138,7 +15394,8 @@ const CAR_PER_PAGE = 30;
                             '<button data-idx="' + idx + '" onclick="openResidentDecision(this.dataset.idx,\'approved\')" class="flex-1 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold">✅ ยืนยันแทน</button>' +
                             '<button data-idx="' + idx + '" onclick="openResidentDecision(this.dataset.idx,\'rejected\')" class="flex-1 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold">❌ ไม่ยืนยัน</button>' +
                             '<button data-idx="' + idx + '" onclick="resendResidentApproval(this.dataset.idx)" class="px-3 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold">📨 ส่ง Flex ซ้ำ</button>' +
-                            '</div>' : '') +
+                            '</div>' : '<div class="flex gap-2"><button data-idx="' + idx + '" onclick="deleteResidentApproval(this.dataset.idx)" class="px-3 py-2 bg-white border border-slate-200 text-slate-500 rounded-xl text-xs font-bold">🗑️ ลบรายการนี้</button></div>') +
+                        memberActionsHtml(a.uid) +
                         '</div>';
                 }).join('') + '</div>';
                 lucide.createIcons();
@@ -15151,12 +15408,13 @@ const CAR_PER_PAGE = 30;
             const a = (window._residentApprovals || [])[parseInt(idx)];
             if (!a) return;
             const isApprove = decision === 'approved';
-            showModal((isApprove ? '✅ ยืนยันแทนเจ้าของบ้าน' : '❌ ไม่ยืนยัน') + ' — ' + escapeHtml(a.requester_name || a.requester_line_name || a.house_no),
+            openFormModal((isApprove ? '✅ ยืนยันแทนเจ้าของบ้าน' : '❌ ไม่ยืนยัน') + ' — ' + (a.requester_name || a.requester_line_name || a.house_no),
                 '<div class="space-y-3 text-left">' +
                 '<div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-2.5">🏠 ' + escapeHtml(a.house_no) + ' · สถานะที่แจ้ง: <b>' + escapeHtml(a.claimed_status) + '</b></div>' +
-                (!isApprove ? '<div class="text-[11px] text-rose-600 bg-rose-50 rounded-xl p-2.5">ผู้ลงทะเบียนจะถูกปลดล็อกให้กลับไปเลือกสถานะใหม่ และได้รับแจ้งทาง LINE</div>' : '') +
+                (!isApprove ? '<div class="text-[11px] text-rose-600 bg-rose-50 rounded-xl p-2.5">ผู้ลงทะเบียนจะถูกปลดล็อกให้กลับไปเลือกสถานะใหม่ (และได้รับแจ้งทาง LINE ถ้าเปิดตัวเลือก "ส่งข้อความแจ้งกลับ" ด้านล่าง)</div>' : '') +
                 '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">หมายเหตุ' + (isApprove ? ' (ไม่บังคับ)' : ' (แนะนำให้ระบุเหตุผล — ส่งให้ผู้ลงทะเบียน)') + '</label>' +
                 '<textarea id="ra-remark" rows="3" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none"></textarea></div>' +
+                notifyToggleHtml('ra-notify', 'ให้ผู้ลงทะเบียน') +
                 '<div class="flex gap-2 pt-2">' +
                 '<button id="ra-submit" data-idx="' + idx + '" data-decision="' + decision + '" onclick="confirmResidentDecision(this.dataset.idx,this.dataset.decision)" class="flex-1 py-2.5 ' + (isApprove ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-rose-500 hover:bg-rose-600') + ' text-white rounded-2xl font-bold text-sm">ยืนยัน</button>' +
                 '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
@@ -15172,12 +15430,12 @@ const CAR_PER_PAGE = 30;
             try {
                 const res = await fetch(`${API_BASE_URL}/api/admin/audience/resident_approval_decide`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: a.id, decision, remark: document.getElementById('ra-remark')?.value?.trim() || null })
+                    body: JSON.stringify({ id: a.id, decision, remark: document.getElementById('ra-remark')?.value?.trim() || null, notify: notifyChecked('ra-notify') })
                 });
                 const d = await res.json();
                 if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
                 closeModal();
-                showToast((decision === 'approved' ? '✅ ยืนยันแล้ว' : '❌ บันทึกไม่ยืนยันแล้ว') + ' · แจ้งผู้ลงทะเบียนทาง LINE แล้ว', 'success');
+                showToast((decision === 'approved' ? '✅ ยืนยันแล้ว' : '❌ บันทึกไม่ยืนยันแล้ว') + (d.notified === false ? ' · 🔕 ไม่ได้ส่งแจ้งกลับ' : ' · แจ้งผู้ลงทะเบียนทาง LINE แล้ว'), 'success');
                 loadResidentApprovals();
             } catch (e) {
                 if (btn) btn.disabled = false;
@@ -15226,7 +15484,7 @@ const CAR_PER_PAGE = 30;
                     ? '<div class="glass rounded-3xl p-3 mb-4 flex flex-wrap items-center gap-2 text-xs">' +
                       '<span class="font-bold text-emerald-700">✅ แนะนำอนุมัติ ' + suggestedN + ' รายการ (ชื่อตรงโฉนด + สมาชิกกดถูกต้อง)</span>' +
                       '<button onclick="selectSuggestedOwnerClaims()" class="px-3 py-1.5 rounded-xl bg-slate-100 font-bold text-slate-600">เลือกทั้งหมดที่แนะนำ</button>' +
-                      '<button id="oc-bulk-btn" onclick="bulkApproveOwnerClaims()" class="px-3 py-1.5 rounded-xl bg-emerald-500 text-white font-bold disabled:opacity-40" disabled>อนุมัติที่เลือก (<span id="oc-bulk-n">0</span>)</button></div>'
+                      notifyToggleInline('oc-bulk-notify') + '<button id="oc-bulk-btn" onclick="bulkApproveOwnerClaims()" class="px-3 py-1.5 rounded-xl bg-emerald-500 text-white font-bold disabled:opacity-40" disabled>อนุมัติที่เลือก (<span id="oc-bulk-n">0</span>)</button></div>'
                     : '';
                 const bd = document.getElementById('oc-badge');
                 if (bd) { bd.textContent = ownerClaimPendingCount; bd.classList.toggle('hidden', !ownerClaimPendingCount); }
@@ -15270,6 +15528,7 @@ const CAR_PER_PAGE = 30;
                             '<button data-idx="' + idx + '" onclick="openOwnerClaimReview(this.dataset.idx,\'approved\')" class="flex-1 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold">✅ อนุมัติ</button>' +
                             '<button data-idx="' + idx + '" onclick="openOwnerClaimReview(this.dataset.idx,\'rejected\')" class="flex-1 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold">❌ ไม่อนุมัติ</button>' +
                             '</div>' : '') +
+                        memberActionsHtml(r.uid) +
                         '</div>';
                 }).join('') + '</div>';
                 lucide.createIcons();
@@ -15295,11 +15554,11 @@ const CAR_PER_PAGE = 30;
             if (btn) { if (btn.disabled) return; btn.disabled = true; }
             try {
                 const res = await fetch(`${API_BASE_URL}/api/admin/audience/owner_name_claims_bulk_approve`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids })
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, notify: notifyChecked('oc-bulk-notify') })
                 });
                 const d = await res.json();
                 if (!res.ok) throw new Error(d.error || 'อนุมัติไม่สำเร็จ');
-                showToast('✅ อนุมัติแล้ว ' + d.approved + ' รายการ' + (d.skipped?.length ? ' · ข้าม ' + d.skipped.length : '') + (d.resentApprovals ? ' · ส่ง Flex ผู้เช่า/ผู้อาศัยที่ค้างแล้ว ' + d.resentApprovals + ' ราย' : ''), 'success');
+                showToast('✅ อนุมัติแล้ว ' + d.approved + ' รายการ' + (d.skipped?.length ? ' · ข้าม ' + d.skipped.length : '') + (d.notified === false ? ' · 🔕 ไม่ได้ส่งแจ้งกลับสมาชิก' : '') + (d.resentApprovals ? ' · ส่ง Flex ผู้เช่า/ผู้อาศัยที่ค้างแล้ว ' + d.resentApprovals + ' ราย' : ''), 'success');
                 loadOwnerClaims();
             } catch (e) {
                 if (btn) btn.disabled = false;
@@ -15312,7 +15571,7 @@ const CAR_PER_PAGE = 30;
             if (!r) return;
             const isApprove = decision === 'approved';
             const canUpdateRegistry = isApprove && r.correct_name && r.registry_id;
-            showModal((isApprove ? '✅ อนุมัติ' : '❌ ไม่อนุมัติ') + ' — ' + escapeHtml(r.member_fullname || r.line_name || r.house_no),
+            openFormModal((isApprove ? '✅ อนุมัติ' : '❌ ไม่อนุมัติ') + ' — ' + (r.member_fullname || r.line_name || r.house_no),
                 '<div class="space-y-3 text-left">' +
                 '<div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-2.5">🏠 ' + escapeHtml(r.house_no) +
                     (r.registry_found ? '<br>📜 ตามทะเบียน: ' + escapeHtml(r.registry_full_name || '—') + ' · โฉนด ' + escapeHtml(r.registry_deed_number || '—') : '') +
@@ -15328,6 +15587,7 @@ const CAR_PER_PAGE = 30;
                     '<label class="flex items-start gap-2 text-xs text-slate-600"><input type="checkbox" id="oc-unlock" checked class="mt-0.5"> ปลดล็อกให้สมาชิกกลับไปยืนยันสถานะใหม่ได้</label>' : '') +
                 '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">หมายเหตุ' + (isApprove ? ' (ไม่บังคับ)' : ' (แนะนำให้ระบุเหตุผล — ส่งให้สมาชิกทาง LINE)') + '</label>' +
                 '<textarea id="oc-remark" rows="3" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none"></textarea></div>' +
+                notifyToggleHtml('oc-notify', 'ให้สมาชิก') +
                 '<div class="flex gap-2 pt-2">' +
                 '<button id="oc-submit" data-idx="' + idx + '" data-decision="' + decision + '" onclick="confirmOwnerClaimReview(this.dataset.idx,this.dataset.decision)" class="flex-1 py-2.5 ' + (isApprove ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-rose-500 hover:bg-rose-600') + ' text-white rounded-2xl font-bold text-sm">ยืนยัน</button>' +
                 '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
@@ -15348,12 +15608,13 @@ const CAR_PER_PAGE = 30;
                         adminRemark: document.getElementById('oc-remark')?.value?.trim() || null,
                         registryMode: document.getElementById('oc-registry-mode')?.value || 'none',
                         unlockMember: decision === 'rejected' ? !!document.getElementById('oc-unlock')?.checked : undefined,
+                        notify: notifyChecked('oc-notify'),
                     })
                 });
                 const d = await res.json();
                 if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
                 closeModal();
-                showToast((decision === 'approved' ? '✅ อนุมัติแล้ว' : '❌ ปฏิเสธแล้ว') + (d.registryMsg ? ' · ' + d.registryMsg : '') + ' · แจ้งสมาชิกทาง LINE แล้ว' + (d.resentApprovals ? ' · ส่ง Flex ผู้เช่า/ผู้อาศัยที่ค้างแล้ว ' + d.resentApprovals + ' ราย' : ''), 'success');
+                showToast((decision === 'approved' ? '✅ อนุมัติแล้ว' : '❌ ปฏิเสธแล้ว') + (d.registryMsg ? ' · ' + d.registryMsg : '') + (d.notified === false ? ' · 🔕 ไม่ได้ส่งแจ้งกลับ' : ' · แจ้งสมาชิกทาง LINE แล้ว') + (d.resentApprovals ? ' · ส่ง Flex ผู้เช่า/ผู้อาศัยที่ค้างแล้ว ' + d.resentApprovals + ' ราย' : ''), 'success');
                 loadOwnerClaims();
             } catch(e) {
                 if (btn) btn.disabled = false;
@@ -16390,6 +16651,7 @@ function renderCarTable() {
                 <div class="flex gap-1 justify-center flex-wrap">
                     ${r.status !== 'approved' ? `<button onclick="updateCarStatus('${r.id}', 'approved')" class="px-2 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[11px] font-bold">✅ ${r.status === 'renewal_pending' ? 'อนุมัติต่ออายุ' : 'อนุมัติ'}</button>` : ''}
                     ${r.status !== 'rejected' ? `<button onclick="updateCarStatus('${r.id}', 'rejected')" class="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-bold">❌ ปฏิเสธ</button>` : ''}
+                    <button onclick="openCarEditor('${r.id}')" title="แก้ไขข้อมูลรถ" class="px-2 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-[11px] font-bold">✏️</button>
                     <button onclick="deleteCarAdmin('${r.id}', '${escapeHtml(r.plate_number).replace(/'/g,"&apos;")}')" class="px-2 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg text-[11px] font-bold">🗑</button>
                 </div>
             </td>
@@ -16722,6 +16984,89 @@ async function updateCarStatus(carId, status) {
         }
         loadCarData();
     } catch (e) { showToast(e.message, 'error'); }
+}
+
+
+// ─── ✏️ แอดมินแก้ไขข้อมูลรถ (ทะเบียน/จังหวัด/ประเภท/ชื่อ/บ้าน/เบอร์) — ถ้ารถอนุมัติแล้วจะ sync allowed_cars ให้ ───
+function openCarEditor(carId) {
+    const car = carData.find(c => String(c.id) === String(carId));
+    if (!car) return showToast('ไม่พบข้อมูลรถ — กดรีเฟรชแล้วลองใหม่', 'error');
+    const f = (id, label, val, ph) => `<div><label class="block text-xs font-bold text-slate-600 mb-1">${label}</label>
+        <input id="${id}" value="${escapeHtml(val == null ? '' : String(val))}" placeholder="${ph || ''}" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>`;
+    const types = ['รถยนต์', 'รถจักรยานยนต์'];
+    if (car.car_type && !types.includes(car.car_type)) types.push(car.car_type);
+    const typeOpts = types.map(t => `<option value="${escapeHtml(t)}"${t === car.car_type ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('');
+    openFormModal('✏️ แก้ไขข้อมูลรถ', `<div class="space-y-3 text-left">
+        <div class="grid grid-cols-2 gap-2">${f('ce-plate', 'ทะเบียนรถ', car.plate_number)}${f('ce-province', 'จังหวัด', car.province)}</div>
+        <div><label class="block text-xs font-bold text-slate-600 mb-1">ประเภทรถ</label><select id="ce-type" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm">${typeOpts}</select></div>
+        ${f('ce-fullname', 'ชื่อเจ้าของรถ', car.fullname)}
+        <div class="grid grid-cols-2 gap-2">${f('ce-house', 'บ้านเลขที่', car.house_number)}${f('ce-phone', 'เบอร์โทร', car.phone, '0812345678')}</div>
+        ${car.status === 'approved' ? '<div class="text-[11px] text-sky-700 bg-sky-50 rounded-xl p-2.5">รถคันนี้อนุมัติแล้ว — ถ้าแก้ทะเบียน/จังหวัด/บ้าน/ประเภท ระบบจะอัปเดต allowed_cars และตั้งสถานะ "รอ sync" ให้</div>' : ''}
+        <div class="flex gap-2 pt-2">
+            <button id="ce-submit" onclick="saveCarEditor('${escapeHtml(String(car.id))}')" class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-sm">บันทึก</button>
+            <button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>
+        </div></div>`);
+}
+
+async function saveCarEditor(carId) {
+    const car = carData.find(c => String(c.id) === String(carId));
+    if (!car) return;
+    const btn = document.getElementById('ce-submit');
+    if (btn) { if (btn.disabled) return; btn.disabled = true; }
+    const g = (id) => (document.getElementById(id)?.value || '').trim();
+    try {
+        let phone = g('ce-phone').replace(/[\s-]/g, '');
+        if (/^[6-9]\d{8}$/.test(phone)) phone = '0' + phone;
+        const patch = {
+            plate_number: g('ce-plate'), province: g('ce-province'), car_type: g('ce-type'),
+            fullname: g('ce-fullname'), house_number: g('ce-house'), phone: phone || null,
+        };
+        if (!patch.plate_number) throw new Error('กรุณากรอกทะเบียนรถ');
+        if (!patch.house_number) throw new Error('กรุณากรอกบ้านเลขที่');
+        if (!patch.fullname) throw new Error('กรุณากรอกชื่อเจ้าของรถ');
+        if (phone && !/^0\d{8,9}$/.test(phone)) throw new Error('เบอร์โทรไม่ถูกต้อง (ต้องเป็นเลข 9-10 หลักขึ้นต้นด้วย 0)');
+
+        const changed = Object.keys(patch).filter(k => String(patch[k] ?? '') !== String(car[k] ?? ''));
+        if (!changed.length) { closeModal(); return showToast('ไม่มีข้อมูลที่เปลี่ยน', 'success'); }
+
+        // กันทะเบียนซ้ำ (ทะเบียน+จังหวัด+บ้านเดียวกัน ที่ยังไม่ถูกปฏิเสธ)
+        if (changed.some(k => ['plate_number', 'province', 'house_number'].includes(k))) {
+            const { data: dup, error: dErr } = await supabaseClient.from('car_registrations').select('id')
+                .eq('plate_number', patch.plate_number).eq('house_number', patch.house_number)
+                .eq('province', patch.province).neq('status', 'rejected').neq('id', car.id).limit(1);
+            if (dErr) throw dErr;
+            if (dup && dup.length) throw new Error('มีทะเบียน ' + patch.plate_number + ' ' + patch.province + ' ของบ้าน ' + patch.house_number + ' ในระบบอยู่แล้ว');
+        }
+
+        const { error } = await supabaseClient.from('car_registrations').update(patch).eq('id', car.id);
+        if (error) throw error;
+
+        // sync allowed_cars (รถที่อนุมัติแล้ว) — หาแถวด้วย allowed_car_id ก่อน ไม่มีค่อย match ทะเบียนเดิม+บ้านเดิม
+        let synced = false;
+        const syncKeys = ['plate_number', 'province', 'house_number', 'car_type'];
+        if ((car.status === 'approved' || car.allowed_car_id) && changed.some(k => syncKeys.includes(k))) {
+            let acId = car.allowed_car_id || null;
+            if (!acId) {
+                const { data: ac } = await supabaseClient.from('allowed_cars').select('id')
+                    .eq('plate_number', car.plate_number).eq('house_number', car.house_number).maybeSingle();
+                acId = ac?.id || null;
+            }
+            if (acId) {
+                const { error: aErr } = await supabaseClient.from('allowed_cars').update({
+                    plate_number: patch.plate_number, house_number: patch.house_number, province: patch.province || null,
+                    status: patch.car_type === 'รถจักรยานยนต์' ? 'ignore_sync' : 'pending_update',
+                }).eq('id', acId);
+                if (aErr) throw new Error('แก้ทะเบียนรถแล้ว แต่ sync allowed_cars ไม่สำเร็จ: ' + aErr.message);
+                synced = true;
+            }
+        }
+        closeModal();
+        showToast('✅ บันทึกข้อมูลรถแล้ว' + (synced ? ' + sync allowed_cars' : ''), 'success');
+        loadCarData();
+    } catch (e) {
+        if (btn) btn.disabled = false;
+        showToast('❌ ' + (e.message || e), 'error');
+    }
 }
 
 async function deleteCarAdmin(carId, plate) {
