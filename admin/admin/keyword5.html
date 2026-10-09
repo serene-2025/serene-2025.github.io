@@ -1,8 +1,11 @@
 <!DOCTYPE html>
-<html lang="th" class="scroll-smooth">
+<html lang="th" class="scroll-smooth" data-brand-replace="off">
 
 <head>
     <meta charset="UTF-8">
+<script src="config.js" charset="utf-8"></script>
+<script src="config-core.js" charset="utf-8"></script>
+<script>if(!window.appCfg){window.appCfg=function(k,d){return d};window.appCfgIn=function(k,s,d){return d};}</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Super Admin Bot • 2026</title>
     <link id="favicon" rel="icon" href="https://cdn-icons-png.flaticon.com/128/9977/9977388.png">
@@ -224,24 +227,31 @@
         // ==============================================
         //                  CONFIGURATION
         // ==============================================
-        const LIFF_ID = "2009815540-mD9OJXZa";
-        const SUPABASE_URL = "https://zmdywddraaeegzkvpwsw.supabase.co";
-        const SUPABASE_KEY = "sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ";
-        const API_BASE_URL = `${SUPABASE_URL}/functions/v1/line-webhook`;
+        const MINI_APP_ID = appCfg('MINI_APP_ID', ''); // 🆔 LIFF Mini App ID เดียวทุกหน้า (ตั้งใน config.js · เว้นว่าง = ใช้ LIFF ID แยกแบบเดิม)
+        const LIFF_ID = MINI_APP_ID || appCfgIn('LIFF_FALLBACK', 'admin', "2009815540-mD9OJXZa");
+        const SUPABASE_URL = appCfg('SUPABASE_URL', "https://zmdywddraaeegzkvpwsw.supabase.co");
+        const SUPABASE_KEY = appCfg('SUPABASE_KEY', "sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ");
+        const API_BASE_URL = appCfg('EDGE_FUNCTION_URL', `${SUPABASE_URL}/functions/v1/line-webhook`);
 
         // ─── Auto-inject apikey header ทุกครั้งที่เรียก Edge Function ───
         // ป้องกัน "No API key found in request" error
         // 🛡️ Two-Tier Guard: ใส่ x-admin-uid ไปด้วยทุก request อัตโนมัติ — ทำให้
         // backend รู้ว่า "ใครเรียก" โดยไม่ต้องแก้ fetch() นับร้อยจุดในไฟล์นี้เลย
+        const TENANT_KEY = appCfg('TENANT_KEY', ''); // 🏢 SaaS: ใส่ slug ของ tenant (เว้นว่าง = หมู่บ้านเดิม)
         const _origFetch = window.fetch.bind(window);
         window.fetch = function(input, init = {}) {
             const url = typeof input === 'string' ? input : input.url;
             if (url && url.startsWith(API_BASE_URL)) {
+                // 🔒 แนบ LINE access token ด้วย → backend พิสูจน์ได้ว่าคนเรียกคือแอดมินคนนั้นจริง (กันปลอม x-admin-uid)
+                let _lt = '';
+                try { _lt = (window.liff && liff.getAccessToken && liff.getAccessToken()) || ''; } catch (e) { _lt = ''; }
                 init.headers = {
                     ...(init.headers || {}),
                     'apikey': SUPABASE_KEY,
                     'Authorization': `Bearer ${SUPABASE_KEY}`,
                     'x-admin-uid': currentUserProfile?.userId || '',
+                    ...(_lt ? { 'x-line-token': _lt } : {}),
+                    ...(TENANT_KEY ? { 'x-tenant': TENANT_KEY } : {}),
                 };
             }
             return _origFetch(input, init);
@@ -324,6 +334,7 @@
                 { id: 'reportBuilder', label: 'Custom Report' },
                 { id: 'kanban', label: 'กระดานติดตามงาน' },
                 { id: 'agm', label: 'AGM Voting' },
+                { id: 'formsManagement', label: 'ฟอร์มในแชท' },
             ]},
             { id: 'navcat-7', label: 'ความปลอดภัย & ระบบ', icon: 'shield', color: 'slate', items: [
                 { id: 'adminRoles', label: 'จัดการสิทธิ์ Admin' },
@@ -727,6 +738,7 @@
                                 <i data-lucide="kanban-square" class="w-5 h-5 text-emerald-500 transition-transform group-hover:scale-110"></i> <span>กระดานติดตามงาน</span>
                             </button>
                                     <button onclick="loadView('agm');" id="nav-agm" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="vote" class="w-5 h-5 text-rose-500"></i> <span>AGM Voting</span></button>
+                                    <button onclick="loadView('formsManagement');" id="nav-formsManagement" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="clipboard-list" class="w-5 h-5 text-violet-500"></i> <span>ฟอร์มในแชท</span></button>
                                 </div>
                             </div>
 
@@ -2110,7 +2122,7 @@
             { key: 'userhome', label: 'ทะเบียนบ้าน & สมาชิก' }, { key: 'dataReconciliation', label: 'ตรวจสอบข้อมูลไม่ตรงกัน' },
             { key: 'crmDash', label: 'CRM Dashboard' }, { key: 'rewardsManage', label: 'จัดการของรางวัล' },
             { key: 'sysSettings', label: 'ตั้งค่าระบบ' }, { key: 'execDashboard', label: 'Executive Dashboard' },
-            { key: 'ownershipManagement', label: 'ยืนยันสิทธิ์เจ้าของบ้าน' }, { key: 'crmLinks', label: 'ลิงก์หน้า CRM (URI)' },
+            { key: 'ownershipManagement', label: 'ยืนยันสิทธิ์เจ้าของบ้าน' }, { key: 'crmLinks', label: 'ลิงก์หน้า CRM (URI)' }, { key: 'formsManagement', label: 'ฟอร์มในแชท' },
         ];
         const GUARDABLE_ROLES = ['admin', 'staff', 'security', 'treasurer']; // superadmin bypass เสมอ ไม่ต้องมีในตาราง
 
@@ -2584,8 +2596,8 @@
             const { data } = await supabaseClient.from('payment_settings').select('key,value').in('key', ['village_name','juristic_name']);
             const cfg = {};
             (data||[]).forEach(x => { cfg[x.key] = x.value; });
-            const villageName = cfg.village_name || 'Golden Land Serene';
-            const juristicName = cfg.juristic_name || 'นิติบุคคลหมู่บ้านจัดสรร โกลเด้นแลนด์ ซีรีน';
+            const villageName = cfg.village_name || appCfgIn('VILLAGE_DEFAULTS', 'village_name', 'Golden Land Serene');
+            const juristicName = cfg.juristic_name || appCfgIn('VILLAGE_DEFAULTS', 'juristic_name_th', 'นิติบุคคลหมู่บ้านจัดสรร โกลเด้นแลนด์ ซีรีน');
 
             const w = window.open('', '_blank', 'width=700,height=900');
             if (w) { w.document.write(buildFinancialStatementHtml(d, villageName, juristicName)); w.document.close(); }
@@ -3162,6 +3174,7 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'pointsSettings') await renderPointsSettingsView();
             else if (viewName === 'leaderboard') await renderLeaderboardAdminView();
             else if (viewName === 'agm') await renderAgmAdminView();
+            else if (viewName === 'formsManagement') await renderFormsManagementView();
             else if (viewName === 'kanban') await renderKanbanView();
             else if (viewName === 'sandbox') await renderSandboxView();
 
@@ -10379,11 +10392,11 @@ async function updateAllUserProfiles() {
                 monthLabel,
                 issueDate,
                 dueDayNum,
-                villageName: cfg.village_name  || 'Golden Land Serene',
-                juristic:    cfg.juristic_name || 'นิติบุคคลหมู่บ้านจัดสรร GOLDENLAND SERENE',
-                bankName:    cfg.bank_name     || 'ไทยพาณิชย์',
-                accountName: cfg.account_name  || 'นิติบุคคลหมู่บ้านจัดสรร GOLDENLAND SERENE',
-                accountNo:   cfg.account_no    || '4271924463',
+                villageName: cfg.village_name  || appCfgIn('VILLAGE_DEFAULTS', 'village_name', 'Golden Land Serene'),
+                juristic:    cfg.juristic_name || appCfgIn('VILLAGE_DEFAULTS', 'juristic_name', 'นิติบุคคลหมู่บ้านจัดสรร GOLDENLAND SERENE'),
+                bankName:    cfg.bank_name     || appCfgIn('VILLAGE_DEFAULTS', 'bank_name', 'ไทยพาณิชย์'),
+                accountName: cfg.account_name  || appCfgIn('VILLAGE_DEFAULTS', 'account_name', 'นิติบุคคลหมู่บ้านจัดสรร GOLDENLAND SERENE'),
+                accountNo:   cfg.account_no    || appCfgIn('VILLAGE_DEFAULTS', 'account_no', '4271924463'),
                 phone:       cfg.contact_phone || '',
                 address:     cfg.address       || '',
                 footerNote:  cfg.footer_note   || 'กรุณาส่งสลิปการโอนเงินผ่าน LINE OA หลังชำระเงิน',
@@ -10619,8 +10632,8 @@ async function updateAllUserProfiles() {
                 '<div><div class="font-bold text-slate-800">ข้อมูลหมู่บ้าน / นิติบุคคล</div>' +
                 '<div class="text-xs text-slate-500">แสดงในหัวใบแจ้งหนี้</div></div></div>' +
                 '<div class="space-y-3">' +
-                inp('village_name','ชื่อหมู่บ้าน',s.village_name,'Golden Land Serene') +
-                inp('juristic_name','ชื่อนิติบุคคล (เต็ม)',s.juristic_name,'นิติบุคคลหมู่บ้านจัดสรร GOLDENLAND SERENE') +
+                inp('village_name','ชื่อหมู่บ้าน',s.village_name,appCfgIn('VILLAGE_DEFAULTS', 'village_name', 'Golden Land Serene')) +
+                inp('juristic_name','ชื่อนิติบุคคล (เต็ม)',s.juristic_name,appCfgIn('VILLAGE_DEFAULTS', 'juristic_name', 'นิติบุคคลหมู่บ้านจัดสรร GOLDENLAND SERENE')) +
                 inp('address','ที่อยู่',s.address,'เลขที่ xxx ถ.xxx ต.xxx อ.xxx จ.ระยอง') +
                 inp('contact_phone','เบอร์ติดต่อ',s.contact_phone,'02-xxx-xxxx') +
                 '</div></div>' +
@@ -10629,9 +10642,9 @@ async function updateAllUserProfiles() {
                 '<div><div class="font-bold text-slate-800">บัญชีรับชำระเงิน</div>' +
                 '<div class="text-xs text-slate-500">แสดงในใบแจ้งหนี้และ Flex LINE</div></div></div>' +
                 '<div class="space-y-3">' +
-                inp('bank_name','ธนาคาร',s.bank_name||'ไทยพาณิชย์','ไทยพาณิชย์') +
-                inp('account_name','ชื่อบัญชี',s.account_name||'นิติบุคคลหมู่บ้านจัดสรร GOLDENLAND SERENE') +
-                inp('account_no','เลขบัญชี',s.account_no||'4271924463','4271924463','text',true) +
+                inp('bank_name','ธนาคาร',s.bank_name||appCfgIn('VILLAGE_DEFAULTS', 'bank_name', 'ไทยพาณิชย์'),appCfgIn('VILLAGE_DEFAULTS', 'bank_name', 'ไทยพาณิชย์')) +
+                inp('account_name','ชื่อบัญชี',s.account_name||appCfgIn('VILLAGE_DEFAULTS', 'account_name', 'นิติบุคคลหมู่บ้านจัดสรร GOLDENLAND SERENE')) +
+                inp('account_no','เลขบัญชี',s.account_no||appCfgIn('VILLAGE_DEFAULTS', 'account_no', '4271924463'),appCfgIn('VILLAGE_DEFAULTS', 'account_no', '4271924463'),'text',true) +
                 '</div></div>' +
                 '<div class="glass rounded-3xl p-5 mb-5">' +
                 '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">💰</span>' +
@@ -12242,9 +12255,9 @@ async function updateAllUserProfiles() {
 
             // Sender rows
             const senders = [
-                {id:'admin',   def:'ผู้ช่วย Admin', icon:'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot03.png'},
-                {id:'ai_auto', def:'AI อัตโนมัติ',  icon:'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot02.png'},
-                {id:'serene',  def:'น้องซีรีน AI',  icon:'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot04.png'},
+                {id:'admin',   def:appCfgIn('SENDER_NAMES', 'admin', 'ผู้ช่วย Admin'), icon:appCfgIn('SENDER_ICONS', 'admin', 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot03.png')},
+                {id:'ai_auto', def:appCfgIn('SENDER_NAMES', 'ai_auto', 'AI อัตโนมัติ'),  icon:appCfgIn('SENDER_ICONS', 'ai_auto', 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot02.png')},
+                {id:'serene',  def:appCfgIn('SENDER_NAMES', 'serene', 'น้องซีรีน AI'),  icon:appCfgIn('SENDER_ICONS', 'serene', 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot04.png')},
             ];
             const senderRows = senders.map(s => {
                 const nk = 'sender_' + s.id + '_name';
@@ -12292,8 +12305,8 @@ async function updateAllUserProfiles() {
                 '<div><div class="font-bold text-slate-800">Telegram การแจ้งเตือน</div>' +
                 '<div class="text-xs text-slate-500">Token และ Chat ID ของกลุ่มที่รับแจ้งเตือน</div></div></div>' +
                 '<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">' +
-                inpRow('tg-niti-token', cfg.tg_niti_token||'7899944770:AAFmmc9f8l19WqqBfQhg2XDsp9DDd7Wy9WY', 'Bot Token (นิติ)', true) +
-                inpRow('tg-niti-chat',  cfg.tg_niti_chat_id||'-4574041962', 'Chat ID กลุ่มนิติ', true) +
+                inpRow('tg-niti-token', cfg.tg_niti_token||'', 'Bot Token (นิติ)', true) +
+                inpRow('tg-niti-chat',  cfg.tg_niti_chat_id||'', 'Chat ID กลุ่มนิติ', true) +
                 '</div>' +
                 '<div class="text-xs font-bold text-slate-600 mb-2">เปิด/ปิด การแจ้งเตือนแต่ละประเภท</div>' +
                 '<div class="grid grid-cols-2 md:grid-cols-3 gap-2">' +
@@ -12303,6 +12316,7 @@ async function updateAllUserProfiles() {
                 chkRow('notify_visitor',      'ผู้มาเยือน',       '🚪') +
                 chkRow('notify_birthday',     'วันเกิดสมาชิก',    '🎂') +
                 chkRow('notify_daily_report', 'รายงานประจำวัน',  '📊') +
+                chkRow('sentiment_alert',     'ลูกบ้านไม่พอใจ (AI)', '😤') +
                 '</div></div>' +
 
                 // SENDER
@@ -12311,6 +12325,11 @@ async function updateAllUserProfiles() {
                 '<div><div class="font-bold text-slate-800">LINE Sender Profiles</div>' +
                 '<div class="text-xs text-slate-500">ชื่อและรูป Sender (max 20 ตัวอักษร)</div></div></div>' +
                 '<div class="space-y-3">' + senderRows + '</div>' +
+                '<div class="mt-4 pt-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-3">' +
+                inpRow('brand_village_name', cfg.brand_village_name||'', '🏘️ ชื่อหมู่บ้าน/โครงการ (ใช้ในข้อความของบอท)') +
+                inpRow('brand_bot_name', cfg.brand_bot_name||'', '🤖 ชื่อบอทผู้ช่วย เช่น น้องใจดี') +
+                '<p class="sm:col-span-2 text-[10px] text-slate-400">ใช้กับระบบ SaaS (หลาย tenant): ถ้าเว้นว่างบอทจะใช้ชื่อกลาง ๆ ไม่ใช้ชื่อหมู่บ้านอื่น</p>' +
+                '</div>' +
                 '<div class="mt-4 pt-4 border-t border-slate-100">' +
                 '<label class="block text-xs font-bold text-slate-600 mb-1.5">Sender สำหรับคำสั่ง Admin (ข้อมูลบ้าน, รหัสของฉัน)</label>' +
                 '<select id="cfg-admin-util-sender" class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white">' +
@@ -12333,7 +12352,7 @@ async function updateAllUserProfiles() {
                 '<div class="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl">' +
                 '<label class="block text-xs font-bold text-emerald-700 mb-2">✅ Rich Menu สมาชิก (หลังลงทะเบียน)</label>' +
                 '<div class="flex gap-2 items-center">' +
-                '<input id="cfg-member-richmenu" value="' + escapeHtml(cfg.member_richmenu||'richmenu-6dbab648fe7753fd311142e0c706ae1f') + '"' +
+                '<input id="cfg-member-richmenu" value="' + escapeHtml(cfg.member_richmenu||appCfg('DEFAULT_MEMBER_RICHMENU', 'richmenu-6dbab648fe7753fd311142e0c706ae1f')) + '"' +
                 ' class="flex-1 border border-emerald-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-emerald-300" placeholder="richmenu-xxx">' +
                 '<button onclick="previewRichMenu(\'member\')" class="px-3 py-2 bg-white border border-emerald-200 rounded-xl text-xs font-bold text-emerald-700 hover:bg-emerald-50">👁 Preview</button>' +
                 '</div>' +
@@ -12369,14 +12388,28 @@ async function updateAllUserProfiles() {
                 '<div class="glass rounded-3xl p-5 mb-5">' +
                 '<div class="flex items-center gap-3 mb-4"><span class="text-2xl">💬</span>' +
                 '<div><div class="font-bold text-slate-800">LINE OA & LIFF</div>' +
-                '<div class="text-xs text-slate-500">ตั้งค่า LIFF ID แยกแต่ละหน้า · gen ลิงก์ได้ทันที</div></div></div>' +
+                '<div class="text-xs text-slate-500">ใช้ Mini App ID เดียวทุกหน้า (แนะนำ) หรือ LIFF ID แยกแต่ละหน้า (แบบเดิม) · gen ลิงก์ได้ทันที</div></div></div>' +
                 '<div class="space-y-3">' +
+
+                // LIFF Mini App ID — ID เดียวทุกหน้า
+                '<div class="p-3 bg-emerald-50 border-2 border-emerald-300 rounded-2xl">' +
+                '<label class="block text-xs font-bold text-emerald-700 mb-1.5">🆔 LIFF Mini App ID — ID เดียวใช้ได้ทุกหน้า <span class="text-[10px] bg-emerald-100 px-1.5 py-0.5 rounded-full">แนะนำ</span></label>' +
+                '<div class="flex gap-2 items-center">' +
+                '<input id="cfg-liff-mini-id" value="' + escapeHtml(_cleanLiffSetting(cfg.liff_mini_app_id)) + '"' +
+                ' class="flex-1 border border-emerald-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-emerald-300" oninput="genAllLiffLinks()" placeholder="xxxxxxxxxx-xxxxxxxx">' +
+                '<button onclick="genAllLiffLinks()" class="px-3 py-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-xl text-xs font-bold">🔗 Gen Link</button>' +
+                '</div>' +
+                '<div class="text-[11px] text-emerald-700 mt-1.5 leading-relaxed">' +
+                'ตั้ง <b>Endpoint URL</b> ของ Mini App ที่ LINE Developers เป็นโฟลเดอร์ที่เก็บไฟล์ทุกหน้า: <code class="bg-emerald-100 px-1 rounded">' + escapeHtml(location.origin + location.pathname.replace(/\/[^/]*$/, '/')) + '</code> ' +
+                '(ในโฟลเดอร์ต้องมี <code class="bg-emerald-100 px-1 rounded">index.html</code> ตัวกระจายหน้า) · เมื่อกรอกช่องนี้ ทุกหน้าจะใช้ ID นี้แทน ID แยกด้านล่าง (ช่องด้านล่างเก็บเป็นค่าสำรอง ปล่อยไว้ได้)</div>' +
+                '<div id="mini-liff-links-box" class="hidden space-y-2 mt-2"></div>' +
+                '</div>' +
 
                 // LIFF Register
                 '<div class="p-3 bg-blue-50 border border-blue-200 rounded-2xl">' +
                 '<label class="block text-xs font-bold text-blue-700 mb-1.5">📝 LIFF ID — หน้าลงทะเบียน <code class="text-[10px] bg-blue-100 px-1 rounded">liff_register.html</code></label>' +
                 '<div class="flex gap-2 items-center">' +
-                '<input id="cfg-liff-id" value="' + escapeHtml(cfg.liff_id||'2000143615-GxkrLkE5') + '"' +
+                '<input id="cfg-liff-id" value="' + escapeHtml(cfg.liff_id||appCfgIn('LIFF_FALLBACK', 'adminSettingsRegister', '2000143615-GxkrLkE5')) + '"' +
                 ' class="flex-1 border border-blue-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-blue-300" oninput="genLiffLinks()" placeholder="xxxx-xxxxxxxx">' +
                 '<button onclick="genLiffLinks()" class="px-3 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-xl text-xs font-bold">🔗 Gen Link</button>' +
                 '</div></div>' +
@@ -12385,7 +12418,7 @@ async function updateAllUserProfiles() {
                 '<div class="p-3 bg-fuchsia-50 border border-indigo-200 rounded-2xl">' +
                 '<label class="block text-xs font-bold text-indigo-700 mb-1.5">🏠 LIFF ID — Mini App CRM <code class="text-[10px] bg-fuchsia-100 px-1 rounded">crm.html</code></label>' +
                 '<div class="flex gap-2 items-center">' +
-                '<input id="cfg-liff-crm-id" value="' + escapeHtml(cfg.liff_crm_id||'2009022424-9o19KWRH') + '"' +
+                '<input id="cfg-liff-crm-id" value="' + escapeHtml(cfg.liff_crm_id||appCfgIn('LIFF_FALLBACK', 'adminSettingsCrm', '2009022424-9o19KWRH')) + '"' +
                 ' class="flex-1 border border-indigo-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-fuchsia-300" oninput="genCrmLiffLinks()" placeholder="xxxx-xxxxxxxx">' +
                 '<button onclick="genCrmLiffLinks()" class="px-3 py-2 bg-fuchsia-100 hover:bg-indigo-200 text-indigo-700 rounded-xl text-xs font-bold">🔗 Gen Link</button>' +
                 '</div></div>' +
@@ -12398,7 +12431,7 @@ async function updateAllUserProfiles() {
                 ' class="flex-1 border border-orange-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-orange-300" oninput="genCarLiffLinks()" placeholder="ยังไม่ได้ตั้งค่า — สร้าง LIFF App ใหม่ที่ LINE Developers Console ก่อน">' +
                 '<button onclick="genCarLiffLinks()" class="px-3 py-2 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded-xl text-xs font-bold">🔗 Gen Link</button>' +
                 '</div>' +
-                (!cfg.car_liff_id || cfg.car_liff_id === 'YOUR_CAR_LIFF_ID_HERE' ?
+                (!cfg.liff_mini_app_id && (!cfg.car_liff_id || cfg.car_liff_id === 'YOUR_CAR_LIFF_ID_HERE') ?
                     '<div class="text-[11px] text-orange-500 mt-1.5">⚠️ ยังไม่ได้ตั้งค่า — ไปสร้าง LIFF App ใหม่ที่ LINE Developers Console (Endpoint URL ชี้ไปที่ car.html) แล้วเอา LIFF ID มากรอกที่นี่</div>'
                     : '') +
                 '</div>' +
@@ -12411,7 +12444,7 @@ async function updateAllUserProfiles() {
                 ' class="flex-1 border border-rose-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-rose-300" oninput="genComplaintLiffLinks()" placeholder="ยังไม่ได้ตั้งค่า — สร้าง LIFF App ใหม่ที่ LINE Developers Console ก่อน">' +
                 '<button onclick="genComplaintLiffLinks()" class="px-3 py-2 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-xl text-xs font-bold">🔗 Gen Link</button>' +
                 '</div>' +
-                (!cfg.complaint_liff_id || cfg.complaint_liff_id === 'YOUR_COMPLAINT_LIFF_ID_HERE' ?
+                (!cfg.liff_mini_app_id && (!cfg.complaint_liff_id || cfg.complaint_liff_id === 'YOUR_COMPLAINT_LIFF_ID_HERE') ?
                     '<div class="text-[11px] text-rose-500 mt-1.5">⚠️ ยังไม่ได้ตั้งค่า — ไปสร้าง LIFF App ใหม่ที่ LINE Developers Console (Endpoint URL ชี้ไปที่ complaint.html) แล้วเอา LIFF ID มากรอกที่นี่</div>'
                     : '') +
                 '</div>' +
@@ -12439,7 +12472,7 @@ async function updateAllUserProfiles() {
                 ' class="flex-1 border border-fuchsia-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-fuchsia-300" oninput="genGalleryLiffLinks()" placeholder="ยังไม่ได้ตั้งค่า — สร้าง LIFF App ใหม่ที่ LINE Developers Console ก่อน">' +
                 '<button onclick="genGalleryLiffLinks()" class="px-3 py-2 bg-fuchsia-100 hover:bg-fuchsia-200 text-fuchsia-700 rounded-xl text-xs font-bold">🔗 Gen Link</button>' +
                 '</div>' +
-                (!cfg.gallery_liff_id || cfg.gallery_liff_id === 'YOUR_GALLERY_LIFF_ID_HERE' ?
+                (!cfg.liff_mini_app_id && (!cfg.gallery_liff_id || cfg.gallery_liff_id === 'YOUR_GALLERY_LIFF_ID_HERE') ?
                     '<div class="text-[11px] text-fuchsia-500 mt-1.5">⚠️ ยังไม่ได้ตั้งค่า — ไปสร้าง LIFF App ใหม่ที่ LINE Developers Console (Endpoint URL ชี้ไปที่ gallery.html) แล้วเอา LIFF ID มากรอกที่นี่</div>'
                     : '') +
                 '</div>' +
@@ -12452,7 +12485,7 @@ async function updateAllUserProfiles() {
                 ' class="flex-1 border border-blue-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-blue-300" oninput="genMaintenanceLiffLinks()" placeholder="ยังไม่ได้ตั้งค่า — สร้าง LIFF App ใหม่ที่ LINE Developers Console ก่อน">' +
                 '<button onclick="genMaintenanceLiffLinks()" class="px-3 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-xl text-xs font-bold">🔗 Gen Link</button>' +
                 '</div>' +
-                (!cfg.maintenance_liff_id || cfg.maintenance_liff_id === 'YOUR_MAINTENANCE_LIFF_ID_HERE' ?
+                (!cfg.liff_mini_app_id && (!cfg.maintenance_liff_id || cfg.maintenance_liff_id === 'YOUR_MAINTENANCE_LIFF_ID_HERE') ?
                     '<div class="text-[11px] text-blue-500 mt-1.5">⚠️ ยังไม่ได้ตั้งค่า — ไปสร้าง LIFF App ใหม่ที่ LINE Developers Console (Endpoint URL ชี้ไปที่ maintenance.html) แล้วเอา LIFF ID มากรอกที่นี่</div>'
                     : '') +
                 '</div>' +
@@ -12465,7 +12498,7 @@ async function updateAllUserProfiles() {
                 ' class="flex-1 border border-emerald-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-emerald-300" oninput="genSlipLiffLinks()" placeholder="ยังไม่ได้ตั้งค่า — สร้าง LIFF App ใหม่ที่ LINE Developers Console ก่อน">' +
                 '<button onclick="genSlipLiffLinks()" class="px-3 py-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-xl text-xs font-bold">🔗 Gen Link</button>' +
                 '</div>' +
-                (!cfg.slip_liff_id || cfg.slip_liff_id === 'YOUR_SLIP_LIFF_ID_HERE' ?
+                (!cfg.liff_mini_app_id && (!cfg.slip_liff_id || cfg.slip_liff_id === 'YOUR_SLIP_LIFF_ID_HERE') ?
                     '<div class="text-[11px] text-emerald-500 mt-1.5">⚠️ ยังไม่ได้ตั้งค่า — ไปสร้าง LIFF App ใหม่ที่ LINE Developers Console (Endpoint URL ชี้ไปที่ slip.html) แล้วเอา LIFF ID มากรอกที่นี่</div>'
                     : '') +
                 '<div class="mt-3 pt-3 border-t border-emerald-200">' +
@@ -12482,7 +12515,7 @@ async function updateAllUserProfiles() {
                 ' class="flex-1 border border-indigo-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-indigo-300" oninput="genOwnershipLiffLinks()" placeholder="ยังไม่ได้ตั้งค่า — สร้าง LIFF App ใหม่ที่ LINE Developers Console ก่อน">' +
                 '<button onclick="genOwnershipLiffLinks()" class="px-3 py-2 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-xl text-xs font-bold">🔗 Gen Link</button>' +
                 '</div>' +
-                (!cfg.ownership_liff_id || cfg.ownership_liff_id === 'YOUR_OWNERSHIP_LIFF_ID_HERE' ?
+                (!cfg.liff_mini_app_id && (!cfg.ownership_liff_id || cfg.ownership_liff_id === 'YOUR_OWNERSHIP_LIFF_ID_HERE') ?
                     '<div class="text-[11px] text-indigo-500 mt-1.5">⚠️ ยังไม่ได้ตั้งค่า — ไปสร้าง LIFF App ใหม่ที่ LINE Developers Console (Endpoint URL ชี้ไปที่ ownership.html) แล้วเอา LIFF ID มากรอกที่นี่</div>'
                     : '') +
                 '</div>' +
@@ -12496,7 +12529,7 @@ async function updateAllUserProfiles() {
                 ' class="flex-1 border border-teal-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-teal-300" oninput="genConfirmStatusLiffLinks()" placeholder="ยังไม่ได้ตั้งค่า — สร้าง LIFF App ใหม่ที่ LINE Developers Console ก่อน">' +
                 '<button onclick="genConfirmStatusLiffLinks()" class="px-3 py-2 bg-teal-100 hover:bg-teal-200 text-teal-700 rounded-xl text-xs font-bold">🔗 Gen Link</button>' +
                 '</div>' +
-                (!cfg.confirm_status_liff_id || cfg.confirm_status_liff_id === 'YOUR_CONFIRM_STATUS_LIFF_ID_HERE' ?
+                (!cfg.liff_mini_app_id && (!cfg.confirm_status_liff_id || cfg.confirm_status_liff_id === 'YOUR_CONFIRM_STATUS_LIFF_ID_HERE') ?
                     '<div class="text-[11px] text-teal-500 mt-1.5">⚠️ ยังไม่ได้ตั้งค่า — ไปสร้าง LIFF App ใหม่ที่ LINE Developers Console (Endpoint URL ชี้ไปที่ confirm-status.html) แล้วเอา LIFF ID มากรอกที่นี่</div>'
                     : '') +
                 '</div>' +
@@ -12510,7 +12543,7 @@ async function updateAllUserProfiles() {
                 ' class="flex-1 border border-sky-200 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-sky-300" oninput="genInvoiceLiffLinks()" placeholder="ยังไม่ได้ตั้งค่า — สร้าง LIFF App ใหม่ที่ LINE Developers Console ก่อน">' +
                 '<button onclick="genInvoiceLiffLinks()" class="px-3 py-2 bg-sky-100 hover:bg-sky-200 text-sky-700 rounded-xl text-xs font-bold">🔗 Gen Link</button>' +
                 '</div>' +
-                (!cfg.invoice_liff_id || cfg.invoice_liff_id === 'YOUR_INVOICE_LIFF_ID_HERE' ?
+                (!cfg.liff_mini_app_id && (!cfg.invoice_liff_id || cfg.invoice_liff_id === 'YOUR_INVOICE_LIFF_ID_HERE') ?
                     '<div class="text-[11px] text-sky-500 mt-1.5">⚠️ ยังไม่ได้ตั้งค่า — ไปสร้าง LIFF App ใหม่ที่ LINE Developers Console (Endpoint URL ชี้ไปที่ checkinvoice.html) แล้วเอา LIFF ID มากรอกที่นี่</div>'
                     : '') +
                 '</div>' +
@@ -12523,7 +12556,7 @@ async function updateAllUserProfiles() {
                 ' class="flex-1 border border-slate-300 bg-white rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-slate-400" oninput="genCctvLiffLinks()" placeholder="ยังไม่ได้ตั้งค่า — สร้าง LIFF App ใหม่ที่ LINE Developers Console ก่อน">' +
                 '<button onclick="genCctvLiffLinks()" class="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold">🔗 Gen Link</button>' +
                 '</div>' +
-                (!cfg.cctv_liff_id || cfg.cctv_liff_id === 'YOUR_CCTV_LIFF_ID_HERE' ?
+                (!cfg.liff_mini_app_id && (!cfg.cctv_liff_id || cfg.cctv_liff_id === 'YOUR_CCTV_LIFF_ID_HERE') ?
                     '<div class="text-[11px] text-slate-500 mt-1.5">⚠️ ยังไม่ได้ตั้งค่า — ไปสร้าง LIFF App ใหม่ที่ LINE Developers Console (Endpoint URL ชี้ไปที่ cctv.html) แล้วเอา LIFF ID มากรอกที่นี่</div>'
                     : '') +
                 '</div>' +
@@ -12543,7 +12576,7 @@ async function updateAllUserProfiles() {
 
                 '<div><label class="block text-xs font-bold text-slate-600 mb-1">Webhook URL</label>' +
                 '<div class="flex gap-2">' +
-                '<input id="cfg-webhook-url" value="' + escapeHtml(cfg.webhook_url||'https://zmdywddraaeegzkvpwsw.supabase.co/functions/v1/line-webhook') + '" class="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-blue-200">' +
+                '<input id="cfg-webhook-url" value="' + escapeHtml(cfg.webhook_url||API_BASE_URL) + '" class="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-blue-200">' +
                 '<button onclick="copyToClipboard(document.getElementById(\'cfg-webhook-url\').value)" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-bold">📋 Copy</button>' +
                 '</div></div>' +
                 '</div></div>' +
@@ -12558,7 +12591,7 @@ async function updateAllUserProfiles() {
 
             lucide.createIcons();
             lucide.createIcons();
-            setTimeout(() => { genLiffLinks(); genCrmLiffLinks(); genCarLiffLinks(); genComplaintLiffLinks(); genGalleryLiffLinks(); genMaintenanceLiffLinks(); genCctvLiffLinks(); genSlipLiffLinks(); genOwnershipLiffLinks(); genConfirmStatusLiffLinks(); genInvoiceLiffLinks(); }, 100);
+            setTimeout(() => { genMiniLiffLinks(); genLiffLinks(); genCrmLiffLinks(); genCarLiffLinks(); genComplaintLiffLinks(); genGalleryLiffLinks(); genMaintenanceLiffLinks(); genCctvLiffLinks(); genSlipLiffLinks(); genOwnershipLiffLinks(); genConfirmStatusLiffLinks(); genInvoiceLiffLinks(); }, 100);
         }
 
         // 🎨 รวม "LIFF Direct URL" + "LINE Deep Link" (2 การ์ดแรกเสมอ ทุกระบบ)
@@ -12598,15 +12631,46 @@ async function updateAllUserProfiles() {
             ).join('');
         }
 
+        // ═══ 🆔 LIFF Mini App ID เดียว: ลิงก์ทุกหน้า = https://liff.line.me/<ID>/<หน้า>.html ═══
+        const MINI_LIFF_PAGES = [
+            ['liff_register.html', '📝', 'ลงทะเบียนสมาชิก'], ['crm.html', '🏠', 'Mini App CRM (บัตรสมาชิก)'],
+            ['car.html', '🚗', 'ลงทะเบียนรถ'], ['complaint.html', '📢', 'ร้องเรียน'], ['gallery.html', '🖼️', 'แกลเลอรี่'],
+            ['maintenance.html', '🔧', 'แจ้งซ่อม/บำรุงรักษา'], ['slip.html', '🧾', 'แจ้งชำระ/สลิป'], ['ownership.html', '🏡', 'ยืนยันความเป็นเจ้าของ'],
+            ['confirm-status.html', '🔐', 'ยืนยันสถานะ'], ['checkinvoice.html', '🧮', 'ตรวจสอบค่าส่วนกลาง'], ['cctv.html', '📹', 'ขอดูกล้องวงจรปิด'],
+            ['payment.html', '💳', 'ชำระเงิน'], ['new.html', '📰', 'ข่าวสาร'],
+        ];
+        function _cleanLiffSetting(v) {   // ค่าจาก system_settings อาจเป็น JSON-string หรือ placeholder YOUR_...
+            if (typeof v === 'string') { try { const j = JSON.parse(v); if (typeof j === 'string') v = j; } catch (_) {} }
+            v = v == null ? '' : String(v).trim();
+            return v.startsWith('YOUR_') ? '' : v;
+        }
+        function _miniId() { return (document.getElementById('cfg-liff-mini-id')?.value || '').trim(); }
+        function _effectiveLiffId(v) { return _miniId() || v; }
+        function _liffUrl(id, page) { const m = _miniId(); return (m && id === m) ? 'https://liff.line.me/' + m + '/' + page : 'https://liff.line.me/' + id; }
+        function _liffDeepUrl(id, page) { const m = _miniId(); return (m && id === m) ? 'https://miniapp.line.me/' + m + '/' + page : 'https://line.me/R/app/' + id; }
+        function genMiniLiffLinks() {
+            const box = document.getElementById('mini-liff-links-box');
+            if (!box) return;
+            const m = _miniId();
+            if (!m) { box.classList.add('hidden'); return; }
+            const links = MINI_LIFF_PAGES.map(p => ({ icon: p[1], label: p[2] + ' — ' + p[0], url: 'https://liff.line.me/' + m + '/' + p[0], desc: 'วางใน Rich Menu / Flex / ข้อความ' }));
+            box.innerHTML = _buildLinkCardsPlain(links);
+            box.classList.remove('hidden');
+        }
+        function genAllLiffLinks() {
+            [genMiniLiffLinks, genLiffLinks, genCrmLiffLinks, genCarLiffLinks, genComplaintLiffLinks, genGalleryLiffLinks, genMaintenanceLiffLinks,
+             genCctvLiffLinks, genSlipLiffLinks, genOwnershipLiffLinks, genConfirmStatusLiffLinks, genInvoiceLiffLinks].forEach(fn => { try { fn(); } catch (_) {} });
+        }
+
         function genLiffLinks() {
-            const liffId = document.getElementById('cfg-liff-id')?.value?.trim();
+            const liffId = _effectiveLiffId(document.getElementById('cfg-liff-id')?.value?.trim());
             const box    = document.getElementById('liff-links-box');
             if (!box) return;
             if (!liffId) { box.classList.add('hidden'); return; }
             const pageBase = location.origin + location.pathname.replace(/\/[^/]*$/, '/');
             const links = [
-                { icon:'🔗', label:'LIFF Direct URL',    url: 'https://liff.line.me/' + liffId,  desc: 'วางใน Rich Menu / LINE OA' },
-                { icon:'📱', label:'LINE Deep Link',      url: 'https://line.me/R/app/' + liffId, desc: 'เปิดใน LINE app ทันที' },
+                { icon:'🔗', label:'LIFF Direct URL',    url: _liffUrl(liffId, 'liff_register.html'),  desc: 'วางใน Rich Menu / LINE OA' },
+                { icon:'📱', label:'LINE Deep Link',      url: _liffDeepUrl(liffId, 'liff_register.html'), desc: 'เปิดใน LINE app ทันที' },
                 { icon:'📄', label:'liff_register.html',  url: pageBase + 'liff_register.html',   desc: 'URL หน้าลงทะเบียน GitHub Pages' },
             ];
             box.innerHTML = _buildLinkCards(links);
@@ -12614,14 +12678,14 @@ async function updateAllUserProfiles() {
         }
 
         function genCrmLiffLinks() {
-            const liffId = document.getElementById('cfg-liff-crm-id')?.value?.trim();
+            const liffId = _effectiveLiffId(document.getElementById('cfg-liff-crm-id')?.value?.trim());
             const box    = document.getElementById('crm-liff-links-box');
             if (!box) return;
             if (!liffId) { box.classList.add('hidden'); return; }
             const pageBase = location.origin + location.pathname.replace(/\/[^/]*$/, '/');
             const links = [
-                { icon:'🔗', label:'LIFF Direct URL',  url: 'https://liff.line.me/' + liffId,  desc: 'วางใน Rich Menu ปุ่ม Mini App' },
-                { icon:'📱', label:'LINE Deep Link',    url: 'https://line.me/R/app/' + liffId, desc: 'เปิดใน LINE app ทันที' },
+                { icon:'🔗', label:'LIFF Direct URL',  url: _liffUrl(liffId, 'crm.html'),  desc: 'วางใน Rich Menu ปุ่ม Mini App' },
+                { icon:'📱', label:'LINE Deep Link',    url: _liffDeepUrl(liffId, 'crm.html'), desc: 'เปิดใน LINE app ทันที' },
                 { icon:'📄', label:'crm.html',          url: pageBase + 'crm.html',             desc: 'URL Mini App CRM บน GitHub Pages' },
             ];
             box.innerHTML = _buildLinkCards(links);
@@ -12629,14 +12693,14 @@ async function updateAllUserProfiles() {
         }
 
         function genCarLiffLinks() {
-            const liffId = document.getElementById('cfg-liff-car-id')?.value?.trim();
+            const liffId = _effectiveLiffId(document.getElementById('cfg-liff-car-id')?.value?.trim());
             const box    = document.getElementById('car-liff-links-box');
             if (!box) return;
             if (!liffId || liffId === 'YOUR_CAR_LIFF_ID_HERE') { box.classList.add('hidden'); return; }
             const pageBase = location.origin + location.pathname.replace(/\/[^/]*$/, '/');
             const links = [
-                { icon:'🔗', label:'LIFF Direct URL',  url: 'https://liff.line.me/' + liffId,  desc: 'วางใน Rich Menu ปุ่มลงทะเบียนรถ' },
-                { icon:'📱', label:'LINE Deep Link',    url: 'https://line.me/R/app/' + liffId, desc: 'เปิดใน LINE app ทันที' },
+                { icon:'🔗', label:'LIFF Direct URL',  url: _liffUrl(liffId, 'car.html'),  desc: 'วางใน Rich Menu ปุ่มลงทะเบียนรถ' },
+                { icon:'📱', label:'LINE Deep Link',    url: _liffDeepUrl(liffId, 'car.html'), desc: 'เปิดใน LINE app ทันที' },
                 { icon:'🚗', label:'car.html',          url: pageBase + 'car.html',             desc: 'URL หน้าลงทะเบียนรถบน GitHub Pages' },
             ];
             box.innerHTML = _buildLinkCards(links);
@@ -12644,14 +12708,14 @@ async function updateAllUserProfiles() {
         }
 
         function genComplaintLiffLinks() {
-            const liffId = document.getElementById('cfg-liff-complaint-id')?.value?.trim();
+            const liffId = _effectiveLiffId(document.getElementById('cfg-liff-complaint-id')?.value?.trim());
             const box    = document.getElementById('complaint-liff-links-box');
             if (!box) return;
             if (!liffId || liffId === 'YOUR_COMPLAINT_LIFF_ID_HERE') { box.classList.add('hidden'); return; }
             const pageBase = location.origin + location.pathname.replace(/\/[^/]*$/, '/');
             const links = [
-                { icon:'🔗', label:'LIFF Direct URL',  url: 'https://liff.line.me/' + liffId,  desc: 'วางใน Rich Menu ปุ่มร้องเรียน' },
-                { icon:'📱', label:'LINE Deep Link',    url: 'https://line.me/R/app/' + liffId, desc: 'เปิดใน LINE app ทันที' },
+                { icon:'🔗', label:'LIFF Direct URL',  url: _liffUrl(liffId, 'complaint.html'),  desc: 'วางใน Rich Menu ปุ่มร้องเรียน' },
+                { icon:'📱', label:'LINE Deep Link',    url: _liffDeepUrl(liffId, 'complaint.html'), desc: 'เปิดใน LINE app ทันที' },
                 { icon:'📢', label:'complaint.html',    url: pageBase + 'complaint.html',       desc: 'URL หน้าร้องเรียนบน GitHub Pages' },
             ];
             box.innerHTML = _buildLinkCards(links);
@@ -12659,14 +12723,14 @@ async function updateAllUserProfiles() {
         }
 
         function genGalleryLiffLinks() {
-            const liffId = document.getElementById('cfg-liff-gallery-id')?.value?.trim();
+            const liffId = _effectiveLiffId(document.getElementById('cfg-liff-gallery-id')?.value?.trim());
             const box    = document.getElementById('gallery-liff-links-box');
             if (!box) return;
             if (!liffId || liffId === 'YOUR_GALLERY_LIFF_ID_HERE') { box.classList.add('hidden'); return; }
             const pageBase = location.origin + location.pathname.replace(/\/[^/]*$/, '/');
             const links = [
-                { icon:'🔗', label:'LIFF Direct URL',  url: 'https://liff.line.me/' + liffId,  desc: 'วางใน Rich Menu ปุ่มแกลเลอรี่' },
-                { icon:'📱', label:'LINE Deep Link',    url: 'https://line.me/R/app/' + liffId, desc: 'เปิดใน LINE app ทันที' },
+                { icon:'🔗', label:'LIFF Direct URL',  url: _liffUrl(liffId, 'gallery.html'),  desc: 'วางใน Rich Menu ปุ่มแกลเลอรี่' },
+                { icon:'📱', label:'LINE Deep Link',    url: _liffDeepUrl(liffId, 'gallery.html'), desc: 'เปิดใน LINE app ทันที' },
                 { icon:'📸', label:'gallery.html',      url: pageBase + 'gallery.html',         desc: 'URL หน้าแกลเลอรี่บน GitHub Pages' },
             ];
             box.innerHTML = _buildLinkCards(links);
@@ -12674,14 +12738,14 @@ async function updateAllUserProfiles() {
         }
 
         function genMaintenanceLiffLinks() {
-            const liffId = document.getElementById('cfg-liff-maintenance-id')?.value?.trim();
+            const liffId = _effectiveLiffId(document.getElementById('cfg-liff-maintenance-id')?.value?.trim());
             const box    = document.getElementById('maintenance-liff-links-box');
             if (!box) return;
             if (!liffId || liffId === 'YOUR_MAINTENANCE_LIFF_ID_HERE') { box.classList.add('hidden'); return; }
             const pageBase = location.origin + location.pathname.replace(/\/[^/]*$/, '/');
             const links = [
-                { icon:'🔗', label:'LIFF Direct URL',  url: 'https://liff.line.me/' + liffId,  desc: 'วางใน Rich Menu ปุ่มแจ้งซ่อม' },
-                { icon:'📱', label:'LINE Deep Link',    url: 'https://line.me/R/app/' + liffId, desc: 'เปิดใน LINE app ทันที' },
+                { icon:'🔗', label:'LIFF Direct URL',  url: _liffUrl(liffId, 'maintenance.html'),  desc: 'วางใน Rich Menu ปุ่มแจ้งซ่อม' },
+                { icon:'📱', label:'LINE Deep Link',    url: _liffDeepUrl(liffId, 'maintenance.html'), desc: 'เปิดใน LINE app ทันที' },
                 { icon:'🔧', label:'maintenance.html',  url: pageBase + 'maintenance.html',     desc: 'URL หน้าแจ้งซ่อมบน GitHub Pages' },
             ];
             box.innerHTML = _buildLinkCards(links);
@@ -12689,14 +12753,14 @@ async function updateAllUserProfiles() {
         }
 
         function genSlipLiffLinks() {
-            const liffId = document.getElementById('cfg-liff-slip-id')?.value?.trim();
+            const liffId = _effectiveLiffId(document.getElementById('cfg-liff-slip-id')?.value?.trim());
             const box    = document.getElementById('slip-liff-links-box');
             if (!box) return;
             if (!liffId || liffId === 'YOUR_SLIP_LIFF_ID_HERE') { box.classList.add('hidden'); return; }
             const pageBase = location.origin + location.pathname.replace(/\/[^/]*$/, '/');
             const links = [
-                { icon:'🔗', label:'LIFF Direct URL', url: 'https://liff.line.me/' + liffId,  desc: 'วางใน Rich Menu ปุ่มแจ้งชำระค่าส่วนกลาง' },
-                { icon:'📱', label:'LINE Deep Link',   url: 'https://line.me/R/app/' + liffId, desc: 'เปิดใน LINE app ทันที' },
+                { icon:'🔗', label:'LIFF Direct URL', url: _liffUrl(liffId, 'slip.html'),  desc: 'วางใน Rich Menu ปุ่มแจ้งชำระค่าส่วนกลาง' },
+                { icon:'📱', label:'LINE Deep Link',   url: _liffDeepUrl(liffId, 'slip.html'), desc: 'เปิดใน LINE app ทันที' },
                 { icon:'🧾', label:'slip.html',        url: pageBase + 'slip.html',            desc: 'URL หน้าแจ้งชำระค่าส่วนกลางบน GitHub Pages' },
             ];
             box.innerHTML = _buildLinkCards(links);
@@ -12704,14 +12768,14 @@ async function updateAllUserProfiles() {
         }
 
         function genOwnershipLiffLinks() {
-            const liffId = document.getElementById('cfg-liff-ownership-id')?.value?.trim();
+            const liffId = _effectiveLiffId(document.getElementById('cfg-liff-ownership-id')?.value?.trim());
             const box    = document.getElementById('ownership-liff-links-box');
             if (!box) return;
             if (!liffId || liffId === 'YOUR_OWNERSHIP_LIFF_ID_HERE') { box.classList.add('hidden'); return; }
             const pageBase = location.origin + location.pathname.replace(/\/[^/]*$/, '/');
             const links = [
-                { icon:'🔗', label:'LIFF Direct URL', url: 'https://liff.line.me/' + liffId,  desc: 'วางใน Rich Menu ปุ่มยืนยันสิทธิ์เจ้าของบ้าน' },
-                { icon:'📱', label:'LINE Deep Link',   url: 'https://line.me/R/app/' + liffId, desc: 'เปิดใน LINE app ทันที' },
+                { icon:'🔗', label:'LIFF Direct URL', url: _liffUrl(liffId, 'ownership.html'),  desc: 'วางใน Rich Menu ปุ่มยืนยันสิทธิ์เจ้าของบ้าน' },
+                { icon:'📱', label:'LINE Deep Link',   url: _liffDeepUrl(liffId, 'ownership.html'), desc: 'เปิดใน LINE app ทันที' },
                 { icon:'🏠', label:'ownership.html',   url: pageBase + 'ownership.html',       desc: 'URL หน้ายืนยันสิทธิ์เจ้าของบ้านบน GitHub Pages' },
             ];
             box.innerHTML = _buildLinkCards(links);
@@ -12719,14 +12783,14 @@ async function updateAllUserProfiles() {
         }
 
         function genConfirmStatusLiffLinks() {
-            const liffId = document.getElementById('cfg-liff-confirmstatus-id')?.value?.trim();
+            const liffId = _effectiveLiffId(document.getElementById('cfg-liff-confirmstatus-id')?.value?.trim());
             const box    = document.getElementById('confirmstatus-liff-links-box');
             if (!box) return;
             if (!liffId || liffId === 'YOUR_CONFIRM_STATUS_LIFF_ID_HERE') { box.classList.add('hidden'); return; }
             const pageBase = location.origin + location.pathname.replace(/\/[^/]*$/, '/');
             const links = [
-                { icon:'🔗', label:'LIFF Direct URL', url: 'https://liff.line.me/' + liffId,  desc: 'ลิงก์ที่แอดมินส่งให้ user เปิดเอง' },
-                { icon:'📱', label:'LINE Deep Link',   url: 'https://line.me/R/app/' + liffId, desc: 'เปิดใน LINE app ทันที' },
+                { icon:'🔗', label:'LIFF Direct URL', url: _liffUrl(liffId, 'confirm-status.html'),  desc: 'ลิงก์ที่แอดมินส่งให้ user เปิดเอง' },
+                { icon:'📱', label:'LINE Deep Link',   url: _liffDeepUrl(liffId, 'confirm-status.html'), desc: 'เปิดใน LINE app ทันที' },
                 { icon:'🔐', label:'confirm-status.html', url: pageBase + 'confirm-status.html', desc: 'URL หน้ายืนยันสถานะด้วยตัวเองบน GitHub Pages' },
             ];
             box.innerHTML = _buildLinkCards(links);
@@ -12734,14 +12798,14 @@ async function updateAllUserProfiles() {
         }
 
         function genInvoiceLiffLinks() {
-            const liffId = document.getElementById('cfg-liff-invoice-id')?.value?.trim();
+            const liffId = _effectiveLiffId(document.getElementById('cfg-liff-invoice-id')?.value?.trim());
             const box    = document.getElementById('invoice-liff-links-box');
             if (!box) return;
             if (!liffId || liffId === 'YOUR_INVOICE_LIFF_ID_HERE') { box.classList.add('hidden'); return; }
             const pageBase = location.origin + location.pathname.replace(/\/[^/]*$/, '/');
             const links = [
-                { icon:'🔗', label:'LIFF Direct URL', url: 'https://liff.line.me/' + liffId,  desc: 'วางใน Rich Menu ปุ่มตรวจสอบค่าส่วนกลาง' },
-                { icon:'📱', label:'LINE Deep Link',   url: 'https://line.me/R/app/' + liffId, desc: 'เปิดใน LINE app ทันที' },
+                { icon:'🔗', label:'LIFF Direct URL', url: _liffUrl(liffId, 'checkinvoice.html'),  desc: 'วางใน Rich Menu ปุ่มตรวจสอบค่าส่วนกลาง' },
+                { icon:'📱', label:'LINE Deep Link',   url: _liffDeepUrl(liffId, 'checkinvoice.html'), desc: 'เปิดใน LINE app ทันที' },
                 { icon:'🧮', label:'checkinvoice.html', url: pageBase + 'checkinvoice.html', desc: 'URL หน้าตรวจสอบค่าส่วนกลางบน GitHub Pages' },
             ];
             box.innerHTML = _buildLinkCards(links);
@@ -12749,14 +12813,14 @@ async function updateAllUserProfiles() {
         }
 
         function genCctvLiffLinks() {
-            const liffId = document.getElementById('cfg-liff-cctv-id')?.value?.trim();
+            const liffId = _effectiveLiffId(document.getElementById('cfg-liff-cctv-id')?.value?.trim());
             const box    = document.getElementById('cctv-liff-links-box');
             if (!box) return;
             if (!liffId || liffId === 'YOUR_CCTV_LIFF_ID_HERE') { box.classList.add('hidden'); return; }
             const pageBase = location.origin + location.pathname.replace(/\/[^/]*$/, '/');
             const links = [
-                { icon:'🔗', label:'LIFF Direct URL',  url: 'https://liff.line.me/' + liffId,  desc: 'วางใน Rich Menu ปุ่มขอดูกล้อง' },
-                { icon:'📱', label:'LINE Deep Link',    url: 'https://line.me/R/app/' + liffId, desc: 'เปิดใน LINE app ทันที' },
+                { icon:'🔗', label:'LIFF Direct URL',  url: _liffUrl(liffId, 'cctv.html'),  desc: 'วางใน Rich Menu ปุ่มขอดูกล้อง' },
+                { icon:'📱', label:'LINE Deep Link',    url: _liffDeepUrl(liffId, 'cctv.html'), desc: 'เปิดใน LINE app ทันที' },
                 { icon:'📹', label:'cctv.html',         url: pageBase + 'cctv.html',            desc: 'URL หน้าขอดูกล้องบน GitHub Pages' },
             ];
             box.innerHTML = _buildLinkCards(links);
@@ -12931,6 +12995,12 @@ async function updateAllUserProfiles() {
         async function saveAllSettings(btn) {
             setBtnLoading(btn, true);
             const get = id => document.getElementById(id)?.value?.trim() || '';
+            const miniIdVal = get('cfg-liff-mini-id');
+            if (miniIdVal && !/^\d{6,12}-[A-Za-z0-9]{6,12}$/.test(miniIdVal)) {
+                setBtnLoading(btn, false);
+                showToast('LIFF Mini App ID รูปแบบไม่ถูกต้อง (ตัวอย่าง 2001234567-AbCdEfGh)', 'error');
+                return;
+            }
             const upserts = [
                 { key:'tg_niti_token',       value: get('cfg-tg-niti-token') },
                 { key:'tg_niti_chat_id',     value: get('cfg-tg-niti-chat') },
@@ -12940,12 +13010,15 @@ async function updateAllUserProfiles() {
                 { key:'sender_ai_auto_icon', value: get('cfg-sender_ai_auto_icon') },
                 { key:'sender_serene_name',  value: get('cfg-sender_serene_name') },
                 { key:'sender_serene_icon',  value: get('cfg-sender_serene_icon') },
+                { key:'brand_village_name',  value: get('cfg-brand_village_name') },
+                { key:'brand_bot_name',      value: get('cfg-brand_bot_name') },
                 { key:'member_richmenu',     value: get('cfg-member-richmenu') },
                 { key:'default_richmenu',    value: get('cfg-default-richmenu') },
                 { key:'points_fee_ontime',   value: get('cfg-points-fee-ontime') },
                 { key:'points_fee_early',    value: get('cfg-points-fee-early') },
                 { key:'points_birthday',     value: get('cfg-points-birthday') },
                 { key:'points_checkin',      value: get('cfg-points-checkin') },
+                { key:'liff_mini_app_id',    value: get('cfg-liff-mini-id') },
                 { key:'liff_id',             value: get('cfg-liff-id') },
                 { key:'liff_crm_id',         value: get('cfg-liff-crm-id') },
                 { key:'car_liff_id',         value: get('cfg-liff-car-id') },
@@ -12960,6 +13033,8 @@ async function updateAllUserProfiles() {
                 { key:'webhook_url',         value: get('cfg-webhook-url') },
             ].filter(r => r.value);
             const { error } = await supabaseClient.from('system_settings').upsert(upserts, { onConflict: 'key' });
+            // ล้างช่อง Mini App ID = ย้อนกลับไปใช้ LIFF ID แยกหน้าแบบเดิม (ตัวกรองด้านบนไม่เขียนค่าว่าง จึงล้างแยกที่นี่)
+            if (!error && !miniIdVal) { try { await supabaseClient.from('system_settings').update({ value: '' }).eq('key', 'liff_mini_app_id'); } catch (_) {} }
             setBtnLoading(btn, false);
             error ? showToast('บันทึกไม่สำเร็จ: '+error.message,'error') : showToast('✅ บันทึกการตั้งค่าสำเร็จ','success');
         }
@@ -12972,7 +13047,7 @@ async function updateAllUserProfiles() {
             try {
                 const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
                     method:'POST', headers:{'Content-Type':'application/json'},
-                    body: JSON.stringify({ chat_id:chat, text:'✅ ทดสอบการแจ้งเตือน Golden Land Serene — ระบบเชื่อมต่อปกติ', parse_mode:'Markdown' })
+                    body: JSON.stringify({ chat_id:chat, text:'✅ ทดสอบการแจ้งเตือน ' + appCfgIn('VILLAGE_DEFAULTS', 'village_name', 'Golden Land Serene') + ' — ระบบเชื่อมต่อปกติ', parse_mode:'Markdown' })
                 });
                 const d = await r.json();
                 r.ok ? showToast('✅ ส่ง Telegram สำเร็จ!','success') : showToast('❌ '+d.description,'error');
@@ -13123,8 +13198,14 @@ async function updateAllUserProfiles() {
         // ─── Tier Management ────────────────────────────────
         // ─── Tier Management ────────────────────────────────
         async function renderCrmTiersView() {
-            const { data: tiers } = await supabaseClient.from('tiers').select('*').order('min_points', { ascending: true });
+            const [{ data: tiers }, rmRes, rwRes] = await Promise.all([
+                supabaseClient.from('tiers').select('*').order('min_points', { ascending: true }),
+                supabaseClient.from('rich_menus').select('rich_menu_id, name').order('name'),
+                supabaseClient.from('rewards').select('id, name, is_active').order('name'),
+            ]);
             window._tiers = tiers || [];
+            window._tierRichMenus = rmRes.data || [];
+            window._tierRewards = rwRes.data || [];
             const maxPts = (tiers || []).length > 0 ? Math.max(...tiers.map(t => t.min_points)) : 1000;
 
             const TIER_ICONS = ['🥉', '🥈', '🥇', '💎', '👑', '🌟', '⚡', '🔥'];
@@ -13137,9 +13218,16 @@ async function updateAllUserProfiles() {
                                 <span class="bg-fuchsia-100 text-fuchsia-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="award" class="w-8 h-8"></i></span>
                                 จัดการ Level (Tiers)
                             </h1>
-                            <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">กำหนดระดับสมาชิก คะแนนขั้นต่ำ และสีประจำระดับ</p>
+                            <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">กำหนดระดับสมาชิก คะแนนขั้นต่ำ สี รวมถึง Rich Menu และคูปองของขวัญเมื่อเลื่อนระดับ</p>
                         </div>
-                        <button onclick="openTierModal()" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold shadow-lg shadow-indigo-200 flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i> เพิ่ม Level</button>
+                        <div class="flex flex-wrap gap-2">
+                            <button onclick="processTierQueueAdmin()" class="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-2xl font-bold flex items-center gap-2" title="ปกติระบบประมวลผลให้อัตโนมัติ — ปุ่มนี้ใช้เก็บตกรายการที่ค้าง"><i data-lucide="bell-ring" class="w-4 h-4"></i> ประมวลผลคิวเลื่อนระดับ <span id="tier-queue-count" class="text-xs px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 hidden"></span></button>
+                            <button onclick="openTierModal()" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold shadow-lg shadow-indigo-200 flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i> เพิ่ม Level</button>
+                        </div>
+                    </div>
+                    <div class="mb-5 text-xs text-slate-500 bg-indigo-50 border border-indigo-100 rounded-2xl px-4 py-3 leading-relaxed">
+                        💡 <b>สิทธิพิเศษตามระดับ:</b> เมื่อสมาชิกเลื่อน/ตกระดับ ระบบจะ <b>สลับ Rich Menu</b> ให้เฉพาะสมาชิกที่ลงทะเบียนแล้ว และ <b>แจกคูปองของขวัญ 1 ครั้ง/คน/ระดับ</b> พร้อมแจ้งผ่านแชท
+                        (เปิด/ปิดข้อความแจ้งเตือนได้ที่ตั้งค่าแต้ม <code>tier_promote_notify</code> — ถ้ามีคูปองแจก ระบบจะแจ้งเสมอ)
                     </div>
 
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -13150,12 +13238,16 @@ async function updateAllUserProfiles() {
                             <div class="glass rounded-3xl p-5 shadow-sm hover:shadow-lg transition-all group cursor-pointer" onclick="openTierModal('${t.id}')">
                                 <div class="flex items-start justify-between mb-3">
                                     <div class="w-14 h-14 ${t.color_theme} rounded-2xl shadow-lg flex items-center justify-center text-white text-2xl font-black border-4 border-white">${icon}</div>
-                                    <button onclick="event.stopPropagation(); deleteTier('${t.id}', '${escapeHtml(t.name)}')" class="opacity-0 group-hover:opacity-100 p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                    <button onclick="event.stopPropagation(); deleteTier('${t.id}')" class="opacity-0 group-hover:opacity-100 p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
                                 </div>
                                 <h3 class="font-bold text-slate-800 text-lg">${escapeHtml(t.name)}</h3>
                                 <div class="text-3xl font-extrabold text-slate-700 mt-1">${t.min_points.toLocaleString()}<span class="text-xs font-normal text-slate-400 ml-1">แต้ม</span></div>
                                 <div class="text-[10px] text-slate-400 font-mono mt-1">${t.color_theme}</div>
                                 <div class="mt-3 h-2 bg-slate-100 rounded-full overflow-hidden"><div class="h-full ${t.color_theme}" style="width:${pct}%"></div></div>
+                                ${(t.rich_menu_id || t.upgrade_reward_id) ? `<div class="mt-3 flex flex-wrap gap-1.5">
+                                    ${t.rich_menu_id ? `<span class="text-[10px] font-bold px-2 py-1 rounded-lg bg-sky-50 text-sky-700 border border-sky-100">📱 ${escapeHtml((window._tierRichMenus.find(r => r.rich_menu_id === t.rich_menu_id) || {}).name || 'Rich Menu')}</span>` : ''}
+                                    ${t.upgrade_reward_id ? `<span class="text-[10px] font-bold px-2 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-100">🎁 ${escapeHtml((window._tierRewards.find(r => r.id === t.upgrade_reward_id) || {}).name || 'คูปอง')}</span>` : ''}
+                                </div>` : ''}
                             </div>`;
                         }).join('') || '<div class="col-span-full text-center py-16 text-slate-400">ยังไม่มี Level — กดปุ่ม "เพิ่ม Level" เพื่อสร้างระดับสมาชิก</div>'}
                     </div>
@@ -13172,6 +13264,51 @@ async function updateAllUserProfiles() {
                     </div>` : ''}
                 </div>`;
             lucide.createIcons();
+            refreshTierQueueCount();
+        }
+
+        async function refreshTierQueueCount() {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/tier_queue_status`);
+                const d = await res.json();
+                const el = document.getElementById('tier-queue-count');
+                if (el && res.ok && d.pending > 0) { el.textContent = d.pending; el.classList.remove('hidden'); }
+            } catch (_) { /* ไม่แสดงตัวเลขก็ไม่เป็นไร */ }
+        }
+
+        async function processTierQueueAdmin() {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/process_tier_notifications`, { method: 'POST' });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ประมวลผลไม่สำเร็จ');
+                if (!d.pending) showToast('ไม่มีรายการค้างในคิว', 'info');
+                else showToast(`ประมวลผล ${d.pending} รายการ · เปลี่ยนเมนู ${d.menus} · แจกคูปอง ${d.coupons} · แจ้งเตือน ${d.pushed}` + ((d.errors || []).length ? ` · ผิดพลาด ${d.errors.length}` : ''), (d.errors || []).length ? 'warning' : 'success');
+                const el = document.getElementById('tier-queue-count'); if (el) el.classList.add('hidden');
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+
+        async function syncTierMenuAdmin(tierId) {
+            const tierName = ((window._tiers || []).find(t => t.id === tierId) || {}).name || '';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/sync_tier_menu`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tierId, dryRun: true })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ตรวจจำนวนไม่สำเร็จ');
+                if (!d.registered) return showToast(`ยังไม่มีสมาชิกที่ลงทะเบียนอยู่ในระดับ "${tierName}"`, 'info');
+                showConfirmModal(`ใส่ Rich Menu ให้สมาชิก ${d.registered} คน?`,
+                    `สมาชิกที่อยู่ระดับ "${tierName}" และลงทะเบียนแล้ว (จากทั้งหมด ${d.inTier} คนในระดับนี้) จะเห็นเมนูใหม่ทันที`, async () => {
+                        try {
+                            const r2 = await fetch(`${API_BASE_URL}/api/admin/audience/sync_tier_menu`, {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tierId })
+                            });
+                            const d2 = await r2.json();
+                            if (!r2.ok) throw new Error(d2.error || 'ซิงก์ไม่สำเร็จ');
+                            if (d2.failed) showToast(`สำเร็จ ${d2.linked} · ไม่สำเร็จ ${d2.failed}${d2.error ? ' (' + d2.error + ')' : ''}`, 'warning');
+                            else showToast(`ใส่เมนูให้ ${d2.linked} คนแล้ว`, 'success');
+                        } catch (e) { showToast(e.message, 'error'); }
+                    });
+            } catch (e) { showToast(e.message, 'error'); }
         }
 
         function openTierModal(editId) {
@@ -13216,6 +13353,24 @@ async function updateAllUserProfiles() {
                                 </label>`).join('')}
                         </div>
                     </div>
+                    <div class="pt-2 border-t border-slate-100">
+                        <div class="text-sm font-bold text-slate-700 mb-3">🎖️ สิทธิพิเศษของระดับนี้ <span class="text-xs font-normal text-slate-400">(ไม่บังคับ)</span></div>
+                        <label class="block text-xs font-bold text-slate-600 mb-1">📱 Rich Menu ของระดับนี้</label>
+                        <select id="t-menu" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm bg-white focus:ring-2 focus:ring-indigo-400 outline-none">
+                            <option value="">— ไม่เปลี่ยนเมนู (ใช้เมนูสมาชิกทั่วไป) —</option>
+                            ${(window._tierRichMenus || []).map(r => `<option value="${escapeHtml(r.rich_menu_id)}" ${editing?.rich_menu_id === r.rich_menu_id ? 'selected' : ''}>${escapeHtml(r.name || r.rich_menu_id)}</option>`).join('')}
+                        </select>
+                        <p class="text-[11px] text-slate-400 mt-1">สมาชิกที่ลงทะเบียนแล้วจะเห็นเมนูนี้เมื่อเข้าระดับนี้ · ตกระดับไปที่ไม่มีเมนูพิเศษ ระบบคืนเมนูสมาชิกทั่วไปให้</p>
+                        ${editing?.rich_menu_id ? `<button type="button" onclick="syncTierMenuAdmin('${editing.id}')" class="mt-2 text-xs font-bold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-100 px-3 py-2 rounded-xl">⚡ ใส่เมนูนี้ให้คนที่อยู่ระดับนี้อยู่แล้วทันที</button>
+                        <span class="text-[10px] text-slate-400 ml-1">(บันทึกก่อนแล้วค่อยกด)</span>` : ''}
+
+                        <label class="block text-xs font-bold text-slate-600 mt-4 mb-1">🎁 คูปองของขวัญเมื่อเลื่อนขึ้นมาถึงระดับนี้</label>
+                        <select id="t-reward" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm bg-white focus:ring-2 focus:ring-indigo-400 outline-none">
+                            <option value="">— ไม่แจกคูปอง —</option>
+                            ${(window._tierRewards || []).map(r => `<option value="${escapeHtml(r.id)}" ${editing?.upgrade_reward_id === r.id ? 'selected' : ''}>${escapeHtml(r.name)}${r.is_active ? '' : ' (ซ่อนจากหน้าแลกแต้ม)'}</option>`).join('')}
+                        </select>
+                        <p class="text-[11px] text-slate-400 mt-1">แจกให้ 1 ครั้ง/คน/ระดับ (ขึ้น-ลง-ขึ้นไม่ได้ซ้ำ) · ไม่หักแต้ม · หมดอายุ 30 วัน · เคารพจำนวนคงเหลือของรางวัล<br>💡 อยากให้เป็นของขวัญล้วน: สร้างรางวัลแล้วปิดการใช้งานไว้ จะไม่โผล่ในหน้าแลกแต้ม แต่ยังแจกเป็นของขวัญได้</p>
+                    </div>
                     <div class="flex gap-3 pt-4 border-t border-slate-100">
                         <button onclick="closeModal()" class="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold border border-slate-200">ยกเลิก</button>
                         <button onclick="saveTier('${editing?.id || ''}')" id="t-save-btn" class="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> บันทึก</button>
@@ -13235,18 +13390,27 @@ async function updateAllUserProfiles() {
             setBtnLoading(btn, true);
 
             const payload = { name, min_points: min, color_theme: color };
+            const menu = document.getElementById('t-menu')?.value || '';
+            const reward = document.getElementById('t-reward')?.value || '';
+            // ยังไม่ได้รัน migration_tier_perks.sql → คอลัมน์ใหม่ยังไม่มี: ส่งเฉพาะเมื่อมีคอลัมน์แล้ว หรือแอดมินเลือกค่าจริง (จะได้แจ้ง error ชัดเจน)
+            const hasPerkCols = (window._tiers || []).length ? ('rich_menu_id' in window._tiers[0]) : true;
+            if (hasPerkCols || menu || reward) { payload.rich_menu_id = menu || null; payload.upgrade_reward_id = reward || null; }
             const { error } = editId
                 ? await supabaseClient.from('tiers').update(payload).eq('id', editId)
                 : await supabaseClient.from('tiers').insert([payload]);
 
             setBtnLoading(btn, false);
-            if (error) return showToast(error.message, 'error');
+            if (error) {
+                if (/rich_menu_id|upgrade_reward_id/.test(error.message || '')) return showToast('ยังไม่ได้รัน migration_tier_perks.sql ใน Supabase — รันก่อนแล้วลองใหม่', 'error');
+                return showToast(error.message, 'error');
+            }
             showToast(editId ? 'อัปเดตแล้ว' : 'เพิ่ม Level สำเร็จ!', 'success');
             closeModal();
             renderCrmTiersView();
         }
 
-        async function deleteTier(id, name) {
+        async function deleteTier(id) {
+            const name = ((window._tiers || []).find(t => t.id === id) || {}).name || '';
             showConfirmModal(`ลบ Level "${name}"?`, 'การลบไม่สามารถนำกลับได้', async () => {
                 const { error } = await supabaseClient.from('tiers').delete().eq('id', id);
                 if (error) return showToast(error.message, 'error');
@@ -13568,13 +13732,13 @@ async function updateAllUserProfiles() {
             { tab:'checkin',    icon:'📍', name:'เช็คอิน / กิจกรรม',       desc:'เช็คอินรับแต้ม (ดูตัวสร้างลิงก์โค้ดกิจกรรมด้านล่าง)', alias:[] },
             { tab:'profile',    icon:'👤', name:'โปรไฟล์สมาชิก',          desc:'ข้อมูลส่วนตัว บ้าน และเบอร์โทร',                alias:[] },
         ];
-        let _crmLinksState = { liffId: '', mode: 'liff', q: '', configured: false };
+        let _crmLinksState = { liffId: '', miniId: '', mode: 'liff', q: '', configured: false };
 
         function _crmLinkBase() {
             const pageBase = location.origin + location.pathname.replace(/\/[^/]*$/, '/');
             return _crmLinksState.mode === 'file'
                 ? pageBase + 'crm.html'
-                : 'https://liff.line.me/' + _crmLinksState.liffId;
+                : 'https://liff.line.me/' + (_crmLinksState.miniId ? _crmLinksState.miniId + '/crm.html' : _crmLinksState.liffId);
         }
         function _crmLinkFor(params) {
             const qs = Object.keys(params).map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k])).join('&');
@@ -13582,15 +13746,18 @@ async function updateAllUserProfiles() {
         }
 
         async function renderCrmLinksView() {
-            let liffId = '';
+            let liffId = '', miniId = '';
             try {
-                const { data } = await supabaseClient.from('system_settings').select('value').eq('key', 'liff_crm_id').maybeSingle();
-                let v = data?.value;
-                if (typeof v === 'string') { try { const j = JSON.parse(v); if (typeof j === 'string') v = j; } catch (_) {} }
-                liffId = (typeof v === 'string' ? v : '').trim();
-            } catch (e) { console.warn('renderCrmLinksView: โหลด liff_crm_id ไม่สำเร็จ', e); }
-            _crmLinksState.configured = !!liffId;
-            _crmLinksState.liffId = liffId || '2009022424-9o19KWRH';   // ค่าเริ่มต้นเดียวกับหน้าตั้งค่าระบบ
+                const { data } = await supabaseClient.from('system_settings').select('key,value').in('key', ['liff_mini_app_id', 'liff_crm_id']);
+                const clean = (v) => {
+                    if (typeof v === 'string') { try { const j = JSON.parse(v); if (typeof j === 'string') v = j; } catch (_) {} }
+                    return (typeof v === 'string' ? v : '').trim();
+                };
+                (data || []).forEach(r => { if (r.key === 'liff_mini_app_id') miniId = clean(r.value); else if (r.key === 'liff_crm_id') liffId = clean(r.value); });
+            } catch (e) { console.warn('renderCrmLinksView: โหลด LIFF ID ไม่สำเร็จ', e); }
+            _crmLinksState.miniId = miniId;
+            _crmLinksState.configured = !!(liffId || miniId);
+            _crmLinksState.liffId = liffId || appCfgIn('LIFF_FALLBACK', 'adminSettingsCrm', '2009022424-9o19KWRH');   // ค่าเริ่มต้นเดียวกับหน้าตั้งค่าระบบ
             _crmLinksState.q = '';
 
             document.getElementById('content-area').innerHTML = `
@@ -16177,6 +16344,223 @@ const CAR_PER_PAGE = 30;
             });
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        // 📝 ฟอร์มในแชท (Dynamic Form) — แอดมินสร้างฟอร์ม ลูกบ้านพิมพ์ keyword แล้วบอทถามทีละข้อ
+        // ═══════════════════════════════════════════════════════════════
+        const FORM_TYPE_LABELS = { text: 'ข้อความ', number: 'ตัวเลข', phone: 'เบอร์โทร', date: 'วันที่', choice: 'ตัวเลือก' };
+        let _formsState = { list: [], edit: null, subs: null };
+
+        async function formsApi(action, opt) {
+            opt = opt || {};
+            const qs = opt.query ? '?' + new URLSearchParams(opt.query).toString() : '';
+            const res = await fetch(`${API_BASE_URL}/api/admin/audience/${action}${qs}`, opt.body
+                ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opt.body) } : {});
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'ทำรายการไม่สำเร็จ');
+            return d;
+        }
+
+        async function renderFormsManagementView() {
+            document.getElementById('content-area').innerHTML =
+                '<div class="slide-in p-2">' +
+                '<div class="mb-6 flex justify-between items-end flex-wrap gap-3">' +
+                '<div><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
+                '<span class="bg-violet-100 text-violet-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="clipboard-list" class="w-8 h-8"></i></span>ฟอร์มในแชท</h1>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">สร้างฟอร์มให้ลูกบ้านกรอกผ่านแชท LINE — พิมพ์คำกระตุ้น (keyword) แล้วบอทถามทีละข้อ ตอบด้วย reply ฟรี ไม่กินโควต้า push</p></div>' +
+                '<button onclick="openFormEditor(null)" class="px-5 py-2.5 bg-violet-500 hover:bg-violet-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i> สร้างฟอร์มใหม่</button>' +
+                '</div><div id="forms-list"></div></div>';
+            lucide.createIcons();
+            await loadFormsList();
+        }
+
+        async function loadFormsList() {
+            const el = document.getElementById('forms-list');
+            if (!el) return;
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div>';
+            try {
+                const d = await formsApi('forms_list');
+                _formsState.list = d.forms || [];
+                if (!_formsState.list.length) {
+                    el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">ยังไม่มีฟอร์ม กด "สร้างฟอร์มใหม่" เช่น แจ้งแขกเข้าหมู่บ้าน, จองสนาม, แบบสำรวจความพึงพอใจ</div>';
+                    return;
+                }
+                el.innerHTML = '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' + _formsState.list.map((f, idx) => {
+                    const st = f.stats || {};
+                    return '<div class="glass rounded-3xl p-5' + (f.is_active ? '' : ' opacity-60') + '">' +
+                        '<div class="flex justify-between items-start gap-2 mb-2"><div class="min-w-0">' +
+                        '<div class="font-bold text-slate-800 truncate">' + escapeHtml(f.title) + '</div>' +
+                        '<div class="text-xs text-slate-500 mt-1">ลูกบ้านพิมพ์ <code class="bg-violet-50 text-violet-700 px-1.5 py-0.5 rounded font-bold">' + escapeHtml(f.keyword) + '</code></div></div>' +
+                        '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ' + (f.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500') + '">' + (f.is_active ? '✅ เปิดใช้งาน' : '⏸️ ปิดอยู่') + '</span></div>' +
+                        '<div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 mb-4">' +
+                        '<span>❓ ' + (st.fields || 0) + ' คำถาม</span><span>📥 ส่งแล้ว <b class="text-slate-700">' + (st.done || 0) + '</b></span><span>✍️ กำลังกรอก ' + (st.pending || 0) + '</span>' +
+                        (f.require_registered ? '<span>🔒 เฉพาะลูกบ้าน</span>' : '') + (f.one_per_user ? '<span>1️⃣ คนละครั้ง</span>' : '') + '</div>' +
+                        '<div class="flex gap-2">' +
+                        '<button data-idx="' + idx + '" onclick="openFormEditor(_formsState.list[this.dataset.idx].id)" class="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold">✏️ แก้ไข</button>' +
+                        '<button data-idx="' + idx + '" onclick="openFormSubmissions(_formsState.list[this.dataset.idx].id)" class="flex-1 py-2 bg-violet-100 hover:bg-violet-200 text-violet-700 rounded-xl text-xs font-bold">📥 คำตอบ (' + (st.done || 0) + ')</button>' +
+                        '<button data-idx="' + idx + '" onclick="deleteFormAdmin(_formsState.list[this.dataset.idx].id)" class="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-500 rounded-xl text-xs font-bold">🗑️</button>' +
+                        '</div></div>';
+                }).join('') + '</div>';
+                lucide.createIcons();
+            } catch (e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function deleteFormAdmin(id) {
+            const f = _formsState.list.find(x => x.id === id);
+            if (!f) return;
+            showConfirmModal('ลบฟอร์ม "' + f.title + '"?', 'คำตอบที่ลูกบ้านส่งมาแล้วทั้งหมด (' + ((f.stats && f.stats.done) || 0) + ' รายการ) จะถูกลบด้วย — ถ้าแค่ไม่อยากให้ใช้ ให้แก้ไขแล้วปิดการใช้งานแทน', async () => {
+                try { await formsApi('form_delete', { body: { id } }); showToast('🗑️ ลบฟอร์มแล้ว'); await loadFormsList(); }
+                catch (e) { showToast('❌ ' + e.message, 'error'); }
+            });
+        }
+
+        // ───────── ตัวแก้ไขฟอร์ม ─────────
+        async function openFormEditor(id) {
+            let form = { keyword: '', title: '', description: '', success_message: '', notify_channel: 'forms', require_registered: false, one_per_user: false, is_active: true };
+            let fields = [{ label: '', field_type: 'text', options: null, hint: '', required: true }];
+            if (id) {
+                try { const d = await formsApi('form_get', { query: { id } }); form = d.form; fields = d.fields.length ? d.fields : fields; }
+                catch (e) { return showToast('❌ ' + e.message, 'error'); }
+            }
+            _formsState.edit = { id: id || null, fields: fields.map(f => ({ id: f.id || null, label: f.label || '', fieldType: f.field_type || 'text', options: Array.isArray(f.options) ? f.options.join('\n') : '', hint: f.hint || '', required: f.required !== false })) };
+            const chk = (k, v, label, hint) => '<label class="flex items-start gap-2 text-sm text-slate-700 cursor-pointer"><input type="checkbox" id="fe-' + k + '" class="mt-1"' + (v ? ' checked' : '') + '><span><b>' + label + '</b><br><span class="text-xs text-slate-400">' + hint + '</span></span></label>';
+            const inp = (k, label, val, ph) => '<div><label class="block text-xs font-bold text-slate-600 mb-1">' + label + '</label><input id="fe-' + k + '" type="text" value="' + escapeHtml(val || '') + '" placeholder="' + escapeHtml(ph || '') + '" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-violet-200"></div>';
+            openFormModal(id ? '✏️ แก้ไขฟอร์ม' : '📝 สร้างฟอร์มใหม่',
+                '<div class="space-y-3 max-h-[70vh] overflow-y-auto pr-1">' +
+                inp('keyword', 'คำกระตุ้น (keyword) *', form.keyword, 'เช่น แจ้งแขก') +
+                inp('title', 'ชื่อฟอร์ม *', form.title, 'เช่น แจ้งแขกเข้าหมู่บ้าน') +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">คำอธิบายก่อนเริ่มถาม</label><textarea id="fe-description" rows="2" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none">' + escapeHtml(form.description || '') + '</textarea></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">ข้อความหลังส่งสำเร็จ</label><textarea id="fe-success" rows="2" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none">' + escapeHtml(form.success_message || '') + '</textarea></div>' +
+                inp('channel', 'ช่องทางแจ้งเตือนแอดมิน (channel_key)', form.notify_channel || 'forms', 'forms') +
+                '<div class="grid grid-cols-1 gap-2 bg-slate-50 rounded-xl p-3">' +
+                chk('active', form.is_active, 'เปิดใช้งาน', 'ปิดไว้ = พิมพ์ keyword แล้วไม่เกิดอะไร') +
+                chk('reg', form.require_registered, 'เฉพาะลูกบ้านที่ลงทะเบียนแล้ว', 'ต้องมีข้อมูลในทะเบียนบ้านก่อนจึงกรอกได้') +
+                chk('once', form.one_per_user, 'ส่งได้คนละ 1 ครั้ง', 'เหมาะกับแบบสำรวจ/ลงคะแนน') +
+                '</div>' +
+                '<div class="flex items-center justify-between"><div class="text-sm font-bold text-slate-700">❓ คำถาม (ถามตามลำดับ)</div>' +
+                '<button onclick="formAddQuestion()" class="px-3 py-1.5 bg-violet-100 hover:bg-violet-200 text-violet-700 rounded-lg text-xs font-bold">+ เพิ่มคำถาม</button></div>' +
+                '<div id="fe-questions" class="space-y-2"></div>' +
+                '<div class="text-[11px] text-slate-400">ลูกบ้านพิมพ์ "ยกเลิก" เพื่อออกจากฟอร์มได้เสมอ · คำถามที่ไม่บังคับ พิมพ์ "ข้าม" ได้ · ฟอร์มที่ค้างเกิน 30 นาทีจะหมดอายุเอง · ' +
+                'แก้โครงสร้างคำถาม (เพิ่ม/ลบ/สลับ/เปลี่ยนชนิด) จะยกเลิกฟอร์มที่ลูกบ้านกำลังกรอกค้างอยู่</div>' +
+                '<div class="flex gap-2 pt-2"><button id="fe-save" onclick="saveFormAdmin()" class="flex-1 py-2.5 bg-violet-500 hover:bg-violet-600 text-white rounded-xl font-bold text-sm">💾 บันทึก</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 text-slate-500 rounded-xl font-bold text-sm">ยกเลิก</button></div></div>');
+            renderFormQuestions();
+        }
+
+        function syncFormQuestionsFromDom() {
+            const E = _formsState.edit; if (!E) return;
+            E.fields.forEach((f, i) => {
+                const g = s => document.getElementById('fq-' + s + '-' + i);
+                if (g('label')) {
+                    f.label = g('label').value; f.fieldType = g('type').value; f.options = g('opts').value;
+                    f.hint = g('hint').value; f.required = g('req').checked;
+                }
+            });
+        }
+        function renderFormQuestions() {
+            const E = _formsState.edit, el = document.getElementById('fe-questions'); if (!E || !el) return;
+            el.innerHTML = E.fields.map((f, i) =>
+                '<div class="border border-slate-200 rounded-2xl p-3 bg-white">' +
+                '<div class="flex items-center gap-2 mb-2"><span class="w-6 h-6 rounded-full bg-violet-100 text-violet-700 text-xs font-bold flex items-center justify-center flex-shrink-0">' + (i + 1) + '</span>' +
+                '<input id="fq-label-' + i + '" type="text" value="' + escapeHtml(f.label) + '" placeholder="คำถาม เช่น ชื่อแขก" class="flex-1 min-w-0 px-3 py-1.5 rounded-lg border border-slate-200 text-sm outline-none">' +
+                '<button data-i="' + i + '" onclick="formMoveQuestion(+this.dataset.i,-1)" class="px-2 py-1 text-slate-400 hover:text-slate-700"' + (i === 0 ? ' disabled style="opacity:.3"' : '') + '>↑</button>' +
+                '<button data-i="' + i + '" onclick="formMoveQuestion(+this.dataset.i,1)" class="px-2 py-1 text-slate-400 hover:text-slate-700"' + (i === E.fields.length - 1 ? ' disabled style="opacity:.3"' : '') + '>↓</button>' +
+                '<button data-i="' + i + '" onclick="formRemoveQuestion(+this.dataset.i)" class="px-2 py-1 text-rose-400 hover:text-rose-600">✕</button></div>' +
+                '<div class="flex flex-wrap items-center gap-2 text-xs"><select id="fq-type-' + i + '" data-i="' + i + '" onchange="formQuestionTypeChanged()" class="px-2 py-1.5 rounded-lg border border-slate-200 bg-white">' +
+                Object.keys(FORM_TYPE_LABELS).map(k => '<option value="' + k + '"' + (f.fieldType === k ? ' selected' : '') + '>' + FORM_TYPE_LABELS[k] + '</option>').join('') + '</select>' +
+                '<label class="flex items-center gap-1 text-slate-600"><input type="checkbox" id="fq-req-' + i + '"' + (f.required ? ' checked' : '') + '> บังคับตอบ</label>' +
+                '<input id="fq-hint-' + i + '" type="text" value="' + escapeHtml(f.hint) + '" placeholder="คำอธิบายใต้คำถาม (ไม่บังคับ)" class="flex-1 min-w-[140px] px-2 py-1.5 rounded-lg border border-slate-200 outline-none"></div>' +
+                '<textarea id="fq-opts-' + i + '" rows="3" placeholder="ตัวเลือก — พิมพ์บรรทัดละ 1 ข้อ (2-10 ข้อ)" class="w-full mt-2 px-3 py-2 rounded-lg border border-slate-200 text-xs outline-none' + (f.fieldType === 'choice' ? '' : ' hidden') + '">' + escapeHtml(f.options) + '</textarea></div>'
+            ).join('');
+        }
+        function formQuestionTypeChanged() { syncFormQuestionsFromDom(); renderFormQuestions(); }
+        function formAddQuestion() {
+            syncFormQuestionsFromDom();
+            if (_formsState.edit.fields.length >= 20) return showToast('เพิ่มได้สูงสุด 20 คำถาม', 'error');
+            _formsState.edit.fields.push({ id: null, label: '', fieldType: 'text', options: '', hint: '', required: true });
+            renderFormQuestions();
+        }
+        function formRemoveQuestion(i) {
+            syncFormQuestionsFromDom();
+            if (_formsState.edit.fields.length <= 1) return showToast('ต้องมีอย่างน้อย 1 คำถาม', 'error');
+            _formsState.edit.fields.splice(i, 1); renderFormQuestions();
+        }
+        function formMoveQuestion(i, dir) {
+            syncFormQuestionsFromDom();
+            const a = _formsState.edit.fields, j = i + dir; if (j < 0 || j >= a.length) return;
+            [a[i], a[j]] = [a[j], a[i]]; renderFormQuestions();
+        }
+        async function saveFormAdmin() {
+            syncFormQuestionsFromDom();
+            const E = _formsState.edit, v = k => (document.getElementById('fe-' + k) || {}).value || '', c = k => !!(document.getElementById('fe-' + k) || {}).checked;
+            const btn = document.getElementById('fe-save');
+            const body = {
+                id: E.id, keyword: v('keyword').trim(), title: v('title').trim(), description: v('description'), successMessage: v('success'),
+                notifyChannel: v('channel').trim() || 'forms', isActive: c('active'), requireRegistered: c('reg'), onePerUser: c('once'),
+                fields: E.fields.map(f => ({ id: f.id, label: f.label.trim(), fieldType: f.fieldType, options: f.fieldType === 'choice' ? f.options.split('\n').map(s => s.trim()).filter(Boolean) : null, hint: f.hint, required: f.required })),
+            };
+            if (!body.keyword) return showToast('กรุณาระบุคำกระตุ้น (keyword)', 'error');
+            if (!body.title) return showToast('กรุณาระบุชื่อฟอร์ม', 'error');
+            const bad = body.fields.findIndex(f => !f.label);
+            if (bad >= 0) return showToast('คำถามข้อ ' + (bad + 1) + ' ยังไม่ได้พิมพ์ข้อความ', 'error');
+            setBtnLoading(btn, true);
+            try {
+                const d = await formsApi('form_save', { body });
+                closeModal();
+                showToast(d.keywordConflict ? '✅ บันทึกแล้ว · ⚠️ keyword นี้ซ้ำกับคำตอบอัตโนมัติ — ฟอร์มจะทำงานก่อน' : '✅ บันทึกฟอร์มแล้ว');
+                await loadFormsList();
+            } catch (e) { showToast('❌ ' + e.message, 'error'); }
+            finally { setBtnLoading(btn, false); }
+        }
+
+        // ───────── ดูคำตอบ ─────────
+        async function openFormSubmissions(formId) {
+            const f = _formsState.list.find(x => x.id === formId) || {};
+            openFormModal('📥 คำตอบ: ' + (f.title || ''), '<div class="text-center text-slate-400 py-8">⏳ กำลังโหลด...</div>');
+            try {
+                const d = await formsApi('form_submissions', { query: { formId, limit: 200 } });
+                _formsState.subs = { formId, title: f.title || 'form', fields: d.fields || [], rows: d.submissions || [] };
+                renderFormSubmissions();
+            } catch (e) { document.getElementById('modal-content').innerHTML = '<div class="text-rose-500 text-center py-6">❌ ' + escapeHtml(e.message) + '</div>'; }
+        }
+        function fmtFormTime(iso) { try { return new Date(iso).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }); } catch (_) { return ''; } }
+        function renderFormSubmissions() {
+            const S = _formsState.subs; if (!S) return;
+            document.getElementById('modal-content').innerHTML =
+                '<div class="flex items-center justify-between mb-3"><div class="text-sm text-slate-500">ทั้งหมด <b class="text-slate-800">' + S.rows.length + '</b> รายการ (ล่าสุด 200)</div>' +
+                '<button onclick="exportFormSubmissionsCsv()" ' + (S.rows.length ? '' : 'disabled style="opacity:.4"') + ' class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold">⬇️ ดาวน์โหลด CSV</button></div>' +
+                '<div class="space-y-2 max-h-[65vh] overflow-y-auto pr-1">' + (S.rows.length ? S.rows.map((r, i) =>
+                    '<div class="border border-slate-200 rounded-2xl p-3 bg-white"><div class="flex justify-between items-start gap-2 mb-2">' +
+                    '<div class="text-xs"><b class="text-slate-800">' + escapeHtml(r.display_name || 'ไม่ทราบชื่อ') + '</b>' + (r.house_no ? ' · 🏠 ' + escapeHtml(r.house_no) : '') + '<div class="text-slate-400">' + escapeHtml(fmtFormTime(r.completed_at || r.created_at)) + '</div></div>' +
+                    '<button data-i="' + i + '" onclick="deleteFormSubmission(+this.dataset.i)" class="text-rose-400 hover:text-rose-600 text-xs">🗑️</button></div>' +
+                    '<div class="space-y-1">' + (r.answers || []).map(a => '<div class="text-xs flex gap-2"><span class="text-slate-400 w-1/3 flex-shrink-0">' + escapeHtml(a.label) + (a.archived ? ' <i>(ลบแล้ว)</i>' : '') + '</span><span class="text-slate-800 font-medium break-words">' + escapeHtml(a.value || '-') + '</span></div>').join('') + '</div></div>'
+                ).join('') : '<div class="text-center text-slate-400 py-8">ยังไม่มีผู้ส่งฟอร์มนี้</div>') + '</div>';
+        }
+        function deleteFormSubmission(i) {
+            const S = _formsState.subs, r = S && S.rows[i]; if (!r) return;
+            showConfirmModal('ลบคำตอบนี้?', 'ลบคำตอบของ ' + (r.display_name || 'ผู้ส่ง') + ' ออกถาวร', async () => {
+                try { await formsApi('form_submission_delete', { body: { id: r.id } }); S.rows.splice(i, 1); showToast('🗑️ ลบแล้ว'); openFormSubmissionsRerender(); }
+                catch (e) { showToast('❌ ' + e.message, 'error'); }
+            });
+        }
+        function openFormSubmissionsRerender() { openFormModal('📥 คำตอบ: ' + _formsState.subs.title, ''); renderFormSubmissions(); loadFormsList(); }
+        function exportFormSubmissionsCsv() {
+            const S = _formsState.subs; if (!S || !S.rows.length) return;
+            const cols = S.fields.map(f => f.label);
+            const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+            // กัน CSV/Excel formula injection: ค่าที่ขึ้นต้นด้วย = + - @ ให้นำหน้าด้วย '
+            const safe = v => { v = String(v == null ? '' : v); return /^[=+\-@\t\r]/.test(v) ? "'" + v : v; };
+            const lines = [['เวลาที่ส่ง', 'ชื่อ LINE', 'บ้านเลขที่'].concat(cols).map(q).join(',')];
+            S.rows.forEach(r => {
+                const byLabel = {}; (r.answers || []).forEach(a => { byLabel[a.label] = a.value; });
+                lines.push([fmtFormTime(r.completed_at || r.created_at), r.display_name, r.house_no].concat(cols.map(c => byLabel[c])).map(v => q(safe(v))).join(','));
+            });
+            const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'form_' + S.title.replace(/[^\wก-๙]+/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.csv';
+            document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+        }
+
         async function renderNotificationChannelsView() {
             document.getElementById('content-area').innerHTML =
                 '<div class="slide-in p-2">' +
@@ -18061,9 +18445,9 @@ function quickPushUser(uid, name) {
     document.getElementById('modal-title').innerHTML = `<div class="flex items-center gap-2"><i data-lucide="send" class="w-5 h-5 text-indigo-500"></i> ส่งข้อความถึง ${escapeHtml(name) || 'สมาชิก'}</div>`;
     const senders = [
         { id:'none',    label:'(ค่าเริ่มต้น)', icon:'', emoji:'🤖' },
-        { id:'admin',   label:'ผู้ช่วย Admin',  icon:'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot03.png' },
-        { id:'ai_auto', label:'AI อัตโนมัติ',   icon:'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot02.png' },
-        { id:'serene',  label:'น้องซีรีน AI',   icon:'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot04.png' },
+        { id:'admin',   label:appCfgIn('SENDER_NAMES', 'admin', 'ผู้ช่วย Admin'),  icon:appCfgIn('SENDER_ICONS', 'admin', 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot03.png') },
+        { id:'ai_auto', label:appCfgIn('SENDER_NAMES', 'ai_auto', 'AI อัตโนมัติ'),   icon:appCfgIn('SENDER_ICONS', 'ai_auto', 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot02.png') },
+        { id:'serene',  label:appCfgIn('SENDER_NAMES', 'serene', 'น้องซีรีน AI'),   icon:appCfgIn('SENDER_ICONS', 'serene', 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot04.png') },
         { id:'custom',  label:'กำหนดเอง',        icon:'', emoji:'✏️' },
     ];
     document.getElementById('modal-content').innerHTML = `
@@ -18141,9 +18525,9 @@ function quickPushUser(uid, name) {
 
 const QP_SENDERS = {
     none:    null,
-    admin:   { name: 'ผู้ช่วย Admin', iconUrl: 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot03.png' },
-    ai_auto: { name: 'AI อัตโนมัติ',  iconUrl: 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot02.png' },
-    serene:  { name: 'น้องซีรีน AI', iconUrl: 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot04.png' },
+    admin:   { name: appCfgIn('SENDER_NAMES', 'admin', 'ผู้ช่วย Admin'), iconUrl: appCfgIn('SENDER_ICONS', 'admin', 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot03.png') },
+    ai_auto: { name: appCfgIn('SENDER_NAMES', 'ai_auto', 'AI อัตโนมัติ'),  iconUrl: appCfgIn('SENDER_ICONS', 'ai_auto', 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot02.png') },
+    serene:  { name: appCfgIn('SENDER_NAMES', 'serene', 'น้องซีรีน AI'), iconUrl: appCfgIn('SENDER_ICONS', 'serene', 'https://raw.githubusercontent.com/serene-2025/serene-2025.github.io/refs/heads/main/bot04.png') },
 };
 
 function qpSetSender(id) {
@@ -19114,12 +19498,19 @@ async function toggleEventActive(eventId, newState) {
     loadActiveEvents();
 }
 
-function showEventQR(eventId, code, name) {
+async function showEventQR(eventId, code, name) {
     // ─── LIFF Direct Link ────────────────────────────────────
-    // หา LIFF_ID จาก LIFF_URL ที่ถูกกำหนดในหัวไฟล์ (ถ้ามี)
-    // ถ้าไม่มี ให้ admin ตั้งค่าผ่าน prompt หรือใช้ default
-    const LIFF_ID = window.LIFF_ID || '2009022424-9o19KWRH';   // ค่า default ของระบบ
-    const directLink = `https://liff.line.me/${LIFF_ID}?event=${encodeURIComponent(code)}`;
+    // Mini App ID เดียว (liff_mini_app_id) → https://liff.line.me/<ID>/crm.html?event=...
+    // ไม่ได้ตั้ง → ใช้ LIFF ID ของ CRM แบบเดิม (liff_crm_id) หรือค่า default ของระบบ
+    let LIFF_ID = window.LIFF_ID || appCfgIn('LIFF_FALLBACK', 'adminSettingsCrm', '2009022424-9o19KWRH');   // ค่า default ของระบบ
+    let liffPath = '';
+    try {
+        const { data: idRows } = await supabaseClient.from('system_settings').select('key,value').in('key', ['liff_mini_app_id', 'liff_crm_id']);
+        const idMap = {}; (idRows || []).forEach(r => { idMap[r.key] = String(r.value ?? '').trim(); });
+        if (idMap.liff_mini_app_id && !idMap.liff_mini_app_id.startsWith('YOUR_')) { LIFF_ID = idMap.liff_mini_app_id; liffPath = '/crm.html'; }
+        else if (idMap.liff_crm_id && !idMap.liff_crm_id.startsWith('YOUR_')) LIFF_ID = idMap.liff_crm_id;
+    } catch (_) { /* ใช้ค่า default */ }
+    const directLink = `https://liff.line.me/${LIFF_ID}${liffPath}?event=${encodeURIComponent(code)}`;
     const codeQrUrl  = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(code)}`;
     const linkQrUrl  = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(directLink)}`;
 
