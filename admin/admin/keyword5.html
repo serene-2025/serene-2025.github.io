@@ -14817,42 +14817,188 @@ const CAR_PER_PAGE = 30;
         let ownershipMode = 'claims';          // 'claims' = ตรวจชื่อ-โฉนด | 'docs' = เอกสารยืนยัน (ownership.html)
         let ownerClaimStatusFilter = 'pending';
         let ownerClaimPendingCount = null;
+        // 🏠 คำขอให้เจ้าของบ้านยืนยันผู้เช่า/ผู้อาศัย (status_approvals)
+        let residentStatusFilter = 'open';     // open = pending + no_owner
+        let residentOpenCount = null;
+        let ownerClaimSelected = new Set();
+        const RESIDENT_STATUS = {
+            pending:  { icon:'⏳', label:'รอเจ้าของบ้านกด', cls:'bg-amber-100 text-amber-700' },
+            no_owner: { icon:'🙋', label:'ไม่มีเจ้าของ — แอดมินตัดสิน', cls:'bg-sky-100 text-sky-700' },
+            approved: { icon:'✅', label:'ยืนยันแล้ว', cls:'bg-emerald-100 text-emerald-700' },
+            rejected: { icon:'❌', label:'ไม่ยืนยัน', cls:'bg-rose-100 text-rose-700' },
+            cancelled:{ icon:'⛔', label:'ยกเลิก', cls:'bg-slate-100 text-slate-500' },
+        };
         const OWNER_CLAIM_STATUS = {
             pending:  { icon:'⏳', label:'รอตรวจสอบ', cls:'bg-amber-100 text-amber-700' },
-            matched:  { icon:'✅', label:'ชื่อตรงโฉนด', cls:'bg-emerald-100 text-emerald-700' },
+            matched:  { icon:'✅', label:'ชื่อตรงโฉนด (ระบบเดิม)', cls:'bg-emerald-100 text-emerald-700' },
             approved: { icon:'✅', label:'อนุมัติแล้ว', cls:'bg-emerald-100 text-emerald-700' },
             rejected: { icon:'❌', label:'ไม่อนุมัติ', cls:'bg-rose-100 text-rose-700' },
         };
 
+        // ชื่อที่ลงทะเบียนตรงโฉนด + สมาชิกกดถูกต้อง = "แนะนำอนุมัติ" (ระบบไม่ผ่านให้เองอีกแล้ว — แอดมินต้องกดเอง)
+        function ownerClaimSuggested(r) {
+            return r.status === 'pending' && r.registry_found && r.name_correct === true && r.member_name_matches === true;
+        }
+
         async function renderOwnershipManagementView() {
             const isClaims = ownershipMode === 'claims';
+            const isResidents = ownershipMode === 'residents';
             const filters = isClaims
-                ? [['pending','⏳ รอตรวจสอบ'],['approved','✅ อนุมัติแล้ว'],['rejected','❌ ไม่อนุมัติ'],['matched','✅ ชื่อตรงโฉนด'],['','ทั้งหมด']]
-                : [['pending','⏳ รอตรวจสอบ'],['verified','✅ ยืนยันแล้ว'],['rejected','❌ ไม่ผ่าน'],['','ทั้งหมด']];
-            const activeFilter = isClaims ? ownerClaimStatusFilter : ownershipStatusFilter;
+                ? [['pending','⏳ รอตรวจสอบ'],['approved','✅ อนุมัติแล้ว'],['rejected','❌ ไม่อนุมัติ'],['matched','✅ ชื่อตรงโฉนด (ระบบเดิม)'],['','ทั้งหมด']]
+                : isResidents
+                    ? [['open','⏳ รอดำเนินการ'],['pending','รอเจ้าของบ้านกด'],['no_owner','🙋 ไม่มีเจ้าของ'],['approved','✅ ยืนยันแล้ว'],['rejected','❌ ไม่ยืนยัน'],['','ทั้งหมด']]
+                    : [['pending','⏳ รอตรวจสอบ'],['verified','✅ ยืนยันแล้ว'],['rejected','❌ ไม่ผ่าน'],['','ทั้งหมด']];
+            const activeFilter = isClaims ? ownerClaimStatusFilter : isResidents ? residentStatusFilter : ownershipStatusFilter;
             document.getElementById('content-area').innerHTML =
                 '<div class="slide-in p-2">' +
                 '<div class="mb-6"><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
                 '<span class="bg-indigo-100 text-indigo-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="badge-check" class="w-8 h-8"></i></span>' +
                 'ยืนยันสิทธิ์เจ้าของบ้าน</h1>' +
                 '<p class="text-sm text-slate-500 mt-2 ml-1">' + (isClaims
-                    ? 'ชื่อเจ้าของ/เลขโฉนดที่สมาชิกตรวจสอบตอนยืนยันสถานะ — ชื่อไม่ตรงจะรอแอดมินตรวจสอบที่นี่'
-                    : 'ตรวจสอบคำขอยืนยันกรรมสิทธิ์ พร้อมเทียบกับข้อมูลโฉนดจริงในระบบ') + '</p></div>' +
+                    ? 'ชื่อเจ้าของ/เลขโฉนดที่สมาชิกตรวจสอบตอนยืนยันสถานะ — ทุกรายการรอแอดมินอนุมัติ (รายการที่ชื่อตรงโฉนดมีป้าย "แนะนำอนุมัติ" และอนุมัติเป็นชุดได้)'
+                    : isResidents
+                        ? 'ผู้เช่า/ผู้อาศัยที่ยืนยันสถานะ — ระบบส่ง Flex ให้เจ้าของบ้านกดยืนยันทาง LINE; แอดมินตัดสินแทนหรือส่งซ้ำได้ที่นี่'
+                        : 'ตรวจสอบคำขอยืนยันกรรมสิทธิ์ พร้อมเทียบกับข้อมูลโฉนดจริงในระบบ') + '</p></div>' +
                 '<div class="flex gap-2 mb-3">' +
                     '<button onclick="switchOwnershipMode(\'claims\')" class="px-4 py-2 rounded-xl text-sm font-bold ' + (isClaims ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200') + '">📜 ตรวจชื่อ-โฉนด' +
                         ' <span id="oc-badge" class="ml-1 px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px]' + (ownerClaimPendingCount ? '' : ' hidden') + '">' + (ownerClaimPendingCount || 0) + '</span></button>' +
-                    '<button onclick="switchOwnershipMode(\'docs\')" class="px-4 py-2 rounded-xl text-sm font-bold ' + (!isClaims ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200') + '">📎 เอกสารยืนยัน</button>' +
+                    '<button onclick="switchOwnershipMode(\'residents\')" class="px-4 py-2 rounded-xl text-sm font-bold ' + (isResidents ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200') + '">🏠 ผู้เช่า/ผู้อาศัย' +
+                        ' <span id="ra-badge" class="ml-1 px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px]' + (residentOpenCount ? '' : ' hidden') + '">' + (residentOpenCount || 0) + '</span></button>' +
+                    '<button onclick="switchOwnershipMode(\'docs\')" class="px-4 py-2 rounded-xl text-sm font-bold ' + (!isClaims && !isResidents ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200') + '">📎 เอกสารยืนยัน</button>' +
                 '</div>' +
                 '<div class="glass rounded-3xl p-4 shadow-sm mb-4 flex flex-wrap gap-1.5 items-center">' +
                 filters.map(([v,l]) =>
-                    '<button data-status="' + v + '" onclick="' + (isClaims ? 'switchOwnerClaimStatus' : 'switchOwnershipStatus') + '(this.dataset.status)" class="px-3 py-2 rounded-xl text-xs font-bold transition-all ' +
+                    '<button data-status="' + v + '" onclick="' + (isClaims ? 'switchOwnerClaimStatus' : isResidents ? 'switchResidentStatus' : 'switchOwnershipStatus') + '(this.dataset.status)" class="px-3 py-2 rounded-xl text-xs font-bold transition-all ' +
                     (activeFilter === v ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-600') + '">' + l + '</button>'
                 ).join('') +
-                '<button onclick="' + (isClaims ? 'loadOwnerClaims()' : 'loadOwnershipList()') + '" class="ml-auto px-3 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600">🔄 รีเฟรช</button>' +
+                '<button onclick="' + (isClaims ? 'loadOwnerClaims()' : isResidents ? 'loadResidentApprovals()' : 'loadOwnershipList()') + '" class="ml-auto px-3 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600">🔄 รีเฟรช</button>' +
                 '</div>' +
-                '<div id="' + (isClaims ? 'owner-claims-list' : 'ownership-list') + '"></div></div>';
+                '<div id="' + (isClaims ? 'owner-claims-bar' : 'ownership-bar-unused') + '"></div>' +
+                '<div id="' + (isClaims ? 'owner-claims-list' : isResidents ? 'resident-approvals-list' : 'ownership-list') + '"></div></div>';
             lucide.createIcons();
-            if (isClaims) await loadOwnerClaims(); else await loadOwnershipList();
+            if (!isResidents) refreshResidentBadge();
+            if (isClaims) await loadOwnerClaims(); else if (isResidents) await loadResidentApprovals(); else await loadOwnershipList();
+        }
+
+        async function refreshResidentBadge() {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/resident_approvals_list?counts_only=1`);
+                const d = await res.json();
+                if (!res.ok) return;
+                residentOpenCount = (d.counts?.pending || 0) + (d.counts?.no_owner || 0);
+                const bd = document.getElementById('ra-badge');
+                if (bd) { bd.textContent = residentOpenCount; bd.classList.toggle('hidden', !residentOpenCount); }
+            } catch (e) { /* ป้ายตัวเลขไม่สำคัญ */ }
+        }
+
+        function switchResidentStatus(status) {
+            residentStatusFilter = status;
+            renderOwnershipManagementView();
+        }
+
+        async function loadResidentApprovals() {
+            const el = document.getElementById('resident-approvals-list');
+            if (!el) return;
+            el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div>';
+            try {
+                const qs = residentStatusFilter && residentStatusFilter !== 'open' ? '?status=' + encodeURIComponent(residentStatusFilter) : '';
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/resident_approvals_list${qs}`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+                let items = d.items || [];
+                if (residentStatusFilter === 'open') items = items.filter(a => a.status === 'pending' || a.status === 'no_owner');
+                residentOpenCount = (d.counts?.pending || 0) + (d.counts?.no_owner || 0);
+                const bd = document.getElementById('ra-badge');
+                if (bd) { bd.textContent = residentOpenCount; bd.classList.toggle('hidden', !residentOpenCount); }
+                window._residentApprovals = items;
+                if (!items.length) { el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">ไม่มีรายการในหมวดนี้</div>'; return; }
+                el.innerHTML = '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' + items.map((a, idx) => {
+                    const st = RESIDENT_STATUS[a.status] || { icon:'❓', label:a.status, cls:'bg-slate-100 text-slate-600' };
+                    const dt = new Date(a.created_at).toLocaleString('th-TH', { day:'2-digit', month:'short', year:'2-digit', hour:'2-digit', minute:'2-digit' });
+                    const who = a.requester_name || a.requester_line_name || '(ไม่ระบุชื่อ)';
+                    const open = a.status === 'pending' || a.status === 'no_owner';
+                    return '<div class="glass rounded-3xl p-5">' +
+                        '<div class="flex justify-between items-start mb-3 gap-2">' +
+                        '<div class="flex items-center gap-2.5 min-w-0">' +
+                        (a.requester_picture
+                            ? '<img src="' + escapeHtml(a.requester_picture) + '" class="w-10 h-10 rounded-full object-cover border border-slate-200 flex-shrink-0">'
+                            : '<div class="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0"><i data-lucide="user" class="w-4 h-4 text-slate-400"></i></div>') +
+                        '<div class="min-w-0"><div class="font-bold text-slate-800 truncate">' + escapeHtml(who) + '</div>' +
+                        '<div class="text-xs text-slate-400 truncate">🏠 ' + escapeHtml(a.house_no) + (a.soi ? ' ซอย ' + escapeHtml(a.soi) : '') + (a.requester_phone ? ' · 📞 ' + escapeHtml(a.requester_phone) : '') + '</div></div>' +
+                        '</div>' +
+                        '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ' + st.cls + '">' + st.icon + ' ' + st.label + '</span>' +
+                        '</div>' +
+                        '<div class="text-xs font-bold text-slate-600 mb-2">สถานะที่แจ้ง: ' + escapeHtml(a.claimed_status) + '</div>' +
+                        ((a.owner_names || []).length
+                            ? '<div class="text-xs text-slate-600 bg-slate-50 rounded-xl p-2.5 mb-2">📨 ส่ง Flex ให้เจ้าของ: <b>' + escapeHtml(a.owner_names.join(', ')) + '</b>' + (a.notify_count > 1 ? ' · ส่งแล้ว ' + a.notify_count + ' ครั้ง' : '') + '</div>'
+                            : (open ? '<div class="text-xs text-sky-700 bg-sky-50 rounded-xl p-2.5 mb-2">🙋 ยังไม่มีเจ้าของที่ยืนยันสิทธิ์และผ่านการตรวจชื่อ/โฉนด — ตรวจสอบแล้วตัดสินเองได้</div>' : '')) +
+                        (a.decided_at ? '<div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-2.5 mb-2">ตัดสินโดย ' + (a.decision_source === 'admin' ? 'แอดมิน' : 'เจ้าของบ้านผ่าน LINE') + (a.decided_by_name ? ' (' + escapeHtml(a.decided_by_name) + ')' : '') + ' · ' + new Date(a.decided_at).toLocaleString('th-TH', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) + '</div>' : '') +
+                        (a.admin_remark ? '<div class="text-xs text-indigo-600 bg-indigo-50 rounded-xl p-2.5 mb-2">💬 ' + escapeHtml(a.admin_remark) + '</div>' : '') +
+                        '<div class="text-[11px] text-slate-400 mb-3">แจ้งเมื่อ ' + dt + '</div>' +
+                        (open ?
+                            '<div class="flex gap-2 flex-wrap">' +
+                            '<button data-idx="' + idx + '" onclick="openResidentDecision(this.dataset.idx,\'approved\')" class="flex-1 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold">✅ ยืนยันแทน</button>' +
+                            '<button data-idx="' + idx + '" onclick="openResidentDecision(this.dataset.idx,\'rejected\')" class="flex-1 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold">❌ ไม่ยืนยัน</button>' +
+                            '<button data-idx="' + idx + '" onclick="resendResidentApproval(this.dataset.idx)" class="px-3 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold">📨 ส่ง Flex ซ้ำ</button>' +
+                            '</div>' : '') +
+                        '</div>';
+                }).join('') + '</div>';
+                lucide.createIcons();
+            } catch (e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function openResidentDecision(idx, decision) {
+            const a = (window._residentApprovals || [])[parseInt(idx)];
+            if (!a) return;
+            const isApprove = decision === 'approved';
+            showModal((isApprove ? '✅ ยืนยันแทนเจ้าของบ้าน' : '❌ ไม่ยืนยัน') + ' — ' + escapeHtml(a.requester_name || a.requester_line_name || a.house_no),
+                '<div class="space-y-3 text-left">' +
+                '<div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-2.5">🏠 ' + escapeHtml(a.house_no) + ' · สถานะที่แจ้ง: <b>' + escapeHtml(a.claimed_status) + '</b></div>' +
+                (!isApprove ? '<div class="text-[11px] text-rose-600 bg-rose-50 rounded-xl p-2.5">ผู้ลงทะเบียนจะถูกปลดล็อกให้กลับไปเลือกสถานะใหม่ และได้รับแจ้งทาง LINE</div>' : '') +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">หมายเหตุ' + (isApprove ? ' (ไม่บังคับ)' : ' (แนะนำให้ระบุเหตุผล — ส่งให้ผู้ลงทะเบียน)') + '</label>' +
+                '<textarea id="ra-remark" rows="3" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none"></textarea></div>' +
+                '<div class="flex gap-2 pt-2">' +
+                '<button id="ra-submit" data-idx="' + idx + '" data-decision="' + decision + '" onclick="confirmResidentDecision(this.dataset.idx,this.dataset.decision)" class="flex-1 py-2.5 ' + (isApprove ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-rose-500 hover:bg-rose-600') + ' text-white rounded-2xl font-bold text-sm">ยืนยัน</button>' +
+                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+                '</div></div>'
+            );
+        }
+
+        async function confirmResidentDecision(idx, decision) {
+            const a = (window._residentApprovals || [])[parseInt(idx)];
+            if (!a) return;
+            const btn = document.getElementById('ra-submit');
+            if (btn) { if (btn.disabled) return; btn.disabled = true; }
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/resident_approval_decide`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: a.id, decision, remark: document.getElementById('ra-remark')?.value?.trim() || null })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+                closeModal();
+                showToast((decision === 'approved' ? '✅ ยืนยันแล้ว' : '❌ บันทึกไม่ยืนยันแล้ว') + ' · แจ้งผู้ลงทะเบียนทาง LINE แล้ว', 'success');
+                loadResidentApprovals();
+            } catch (e) {
+                if (btn) btn.disabled = false;
+                showToast('❌ ' + e.message, 'error');
+            }
+        }
+
+        async function resendResidentApproval(idx) {
+            const a = (window._residentApprovals || [])[parseInt(idx)];
+            if (!a) return;
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/resident_approval_resend`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: a.id })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ส่งไม่สำเร็จ');
+                showToast('📨 ส่ง Flex ให้เจ้าของบ้านอีกครั้งแล้ว (' + d.sent + ' ท่าน)', 'success');
+                loadResidentApprovals();
+            } catch (e) { showToast('❌ ' + e.message, 'error'); }
         }
 
         function switchOwnershipMode(mode) {
@@ -14874,7 +15020,16 @@ const CAR_PER_PAGE = 30;
                 const d = await res.json();
                 if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
                 window._ownerClaims = d.items || [];
+                ownerClaimSelected = new Set();
                 ownerClaimPendingCount = d.pendingCount || 0;
+                const suggestedN = (d.items || []).filter(ownerClaimSuggested).length;
+                const bar = document.getElementById('owner-claims-bar');
+                if (bar) bar.innerHTML = suggestedN
+                    ? '<div class="glass rounded-3xl p-3 mb-4 flex flex-wrap items-center gap-2 text-xs">' +
+                      '<span class="font-bold text-emerald-700">✅ แนะนำอนุมัติ ' + suggestedN + ' รายการ (ชื่อตรงโฉนด + สมาชิกกดถูกต้อง)</span>' +
+                      '<button onclick="selectSuggestedOwnerClaims()" class="px-3 py-1.5 rounded-xl bg-slate-100 font-bold text-slate-600">เลือกทั้งหมดที่แนะนำ</button>' +
+                      '<button id="oc-bulk-btn" onclick="bulkApproveOwnerClaims()" class="px-3 py-1.5 rounded-xl bg-emerald-500 text-white font-bold disabled:opacity-40" disabled>อนุมัติที่เลือก (<span id="oc-bulk-n">0</span>)</button></div>'
+                    : '';
                 const bd = document.getElementById('oc-badge');
                 if (bd) { bd.textContent = ownerClaimPendingCount; bd.classList.toggle('hidden', !ownerClaimPendingCount); }
 
@@ -14899,6 +15054,8 @@ const CAR_PER_PAGE = 30;
                         '</div>' +
                         '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ' + st.cls + '">' + st.icon + ' ' + st.label + '</span>' +
                         '</div>' +
+                        (ownerClaimSuggested(r)
+                            ? '<label class="flex items-center gap-2 text-[11px] font-bold text-emerald-700 bg-emerald-50 rounded-xl p-2 mb-2"><input type="checkbox" class="oc-sel" data-id="' + escapeHtml(r.id) + '" onchange="toggleOwnerClaimSel(this)"> ✅ แนะนำอนุมัติ — ชื่อที่ลงทะเบียนตรงโฉนด และสมาชิกกดว่าถูกต้อง</label>' : '') +
                         '<div class="text-xs font-bold text-slate-600 mb-2">สถานะที่ยืนยัน: ' + escapeHtml(r.claimed_status) + '</div>' +
                         (r.registry_found
                             ? '<div class="text-xs text-slate-600 bg-slate-50 rounded-xl p-2.5 mb-2">📜 ตามทะเบียน: <b>' + escapeHtml(r.registry_full_name || '—') + '</b><br>โฉนดเลขที่ <b>' + escapeHtml(r.registry_deed_number || '—') + '</b>' + nameNow + '</div>'
@@ -14920,6 +15077,35 @@ const CAR_PER_PAGE = 30;
                 lucide.createIcons();
             } catch(e) {
                 el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function toggleOwnerClaimSel(cb) {
+            if (cb.checked) ownerClaimSelected.add(cb.dataset.id); else ownerClaimSelected.delete(cb.dataset.id);
+            const n = document.getElementById('oc-bulk-n'); if (n) n.textContent = ownerClaimSelected.size;
+            const b = document.getElementById('oc-bulk-btn'); if (b) b.disabled = ownerClaimSelected.size === 0;
+        }
+        function selectSuggestedOwnerClaims() {
+            document.querySelectorAll('.oc-sel').forEach(cb => { cb.checked = true; ownerClaimSelected.add(cb.dataset.id); });
+            const n = document.getElementById('oc-bulk-n'); if (n) n.textContent = ownerClaimSelected.size;
+            const b = document.getElementById('oc-bulk-btn'); if (b) b.disabled = ownerClaimSelected.size === 0;
+        }
+        async function bulkApproveOwnerClaims() {
+            const ids = [...ownerClaimSelected];
+            if (!ids.length) return;
+            const btn = document.getElementById('oc-bulk-btn');
+            if (btn) { if (btn.disabled) return; btn.disabled = true; }
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/owner_name_claims_bulk_approve`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'อนุมัติไม่สำเร็จ');
+                showToast('✅ อนุมัติแล้ว ' + d.approved + ' รายการ' + (d.skipped?.length ? ' · ข้าม ' + d.skipped.length : '') + (d.resentApprovals ? ' · ส่ง Flex ผู้เช่า/ผู้อาศัยที่ค้างแล้ว ' + d.resentApprovals + ' ราย' : ''), 'success');
+                loadOwnerClaims();
+            } catch (e) {
+                if (btn) btn.disabled = false;
+                showToast('❌ ' + e.message, 'error');
             }
         }
 
@@ -14969,7 +15155,7 @@ const CAR_PER_PAGE = 30;
                 const d = await res.json();
                 if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
                 closeModal();
-                showToast((decision === 'approved' ? '✅ อนุมัติแล้ว' : '❌ ปฏิเสธแล้ว') + (d.registryMsg ? ' · ' + d.registryMsg : '') + ' · แจ้งสมาชิกทาง LINE แล้ว', 'success');
+                showToast((decision === 'approved' ? '✅ อนุมัติแล้ว' : '❌ ปฏิเสธแล้ว') + (d.registryMsg ? ' · ' + d.registryMsg : '') + ' · แจ้งสมาชิกทาง LINE แล้ว' + (d.resentApprovals ? ' · ส่ง Flex ผู้เช่า/ผู้อาศัยที่ค้างแล้ว ' + d.resentApprovals + ' ราย' : ''), 'success');
                 loadOwnerClaims();
             } catch(e) {
                 if (btn) btn.disabled = false;
@@ -16572,7 +16758,7 @@ function uhNameCheckBadge(r) {
         none:      ['bg-slate-100 text-slate-500', '⚪ ยังไม่เคยตรวจ'],
         requested: ['bg-sky-100 text-sky-700', '📨 ขอให้ตรวจแล้ว'],
         pending:   ['bg-amber-100 text-amber-700', '⏳ รอแอดมินตรวจ'],
-        matched:   ['bg-emerald-100 text-emerald-700', '✅ ชื่อตรงโฉนด'],
+        matched:   ['bg-emerald-100 text-emerald-700', '✅ ชื่อตรงโฉนด (ระบบเดิม)'],
         approved:  ['bg-emerald-100 text-emerald-700', '✅ อนุมัติแล้ว'],
         rejected:  ['bg-rose-100 text-rose-700', '❌ ไม่ผ่าน'],
         unknown:   ['bg-slate-100 text-slate-400', '? โหลดไม่ได้'],
