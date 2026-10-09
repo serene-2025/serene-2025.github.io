@@ -3,6 +3,9 @@
 
 <head>
     <meta charset="UTF-8">
+<script src="config.js" charset="utf-8"></script>
+<script src="config-core.js" charset="utf-8"></script>
+<script>if(!window.appCfg){window.appCfg=function(k,d){return d};window.appCfgIn=function(k,s,d){return d};}</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>CRM Pro · Member Card</title>
     <link rel="icon" href="https://cdn-icons-png.flaticon.com/128/15267/15267807.png">
@@ -140,6 +143,18 @@
 
             <!-- ═══════ HOME ═══════ -->
             <div v-if="currentTab === 'home'" class="slide-up">
+                <!-- ➕ ยังไม่ได้เป็นเพื่อนกับ LINE OA: ขอเพิ่มเพื่อนในหน้านี้เลย (liff.requestFriendship) ไม่ต้องออกจากระบบ -->
+                <div v-if="showFriendBanner" class="mb-4 rounded-3xl p-4 bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg flex items-center gap-3" role="region" aria-label="เพิ่มเพื่อน LINE">
+                    <div class="w-11 h-11 rounded-2xl bg-white/20 flex items-center justify-center text-2xl flex-shrink-0">💬</div>
+                    <div class="flex-1 min-w-0">
+                        <div class="font-extrabold text-sm leading-tight">เพิ่มเพื่อน LINE หมู่บ้าน</div>
+                        <div class="text-[11px] opacity-90 mt-0.5">เพื่อรับแจ้งเตือนค่าส่วนกลาง ประกาศ และผลการดำเนินการต่าง ๆ</div>
+                    </div>
+                    <div class="flex flex-col gap-1 flex-shrink-0">
+                        <button @click="requestFriend" :disabled="friendBusy" class="px-3.5 py-2 rounded-xl bg-white text-emerald-700 text-xs font-extrabold shadow disabled:opacity-60">{{ friendBusy ? '⏳' : 'เพิ่มเพื่อน' }}</button>
+                        <button @click="dismissFriendBanner" class="text-[10px] opacity-80 underline">ไว้ทีหลัง</button>
+                    </div>
+                </div>
                 <div class="flex items-center justify-between mb-5">
                     <div class="flex items-center gap-3">
                         <img :src="userProfile?.pictureUrl" class="w-12 h-12 rounded-full border-2 border-white shadow-md" onerror="this.src='data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Ccircle cx='50' cy='50' r='50' fill='%23e2e8f0'/%3E%3Ccircle cx='50' cy='38' r='16' fill='%2394a3b8'/%3E%3Cellipse cx='50' cy='86' rx='28' ry='20' fill='%2394a3b8'/%3E%3C/svg%3E'">
@@ -2327,10 +2342,43 @@
         const { createClient } = supabase;
 
         // ⚠️ ใส่ค่าของคุณ
-        const SUPABASE_URL = 'https://zmdywddraaeegzkvpwsw.supabase.co';
-        const SUPABASE_KEY = 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ';
-        let LIFF_ID = '2009022424-9o19KWRH'; // อาจถูกแทนที่จาก system_settings
-        const EDGE_FUNCTION_URL = 'https://zmdywddraaeegzkvpwsw.supabase.co/functions/v1/line-webhook';
+        const SUPABASE_URL = appCfg('SUPABASE_URL', 'https://zmdywddraaeegzkvpwsw.supabase.co');
+        const SUPABASE_KEY = appCfg('SUPABASE_KEY', 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ');
+        let LIFF_ID = appCfgIn('LIFF_FALLBACK', 'crm', '2009022424-9o19KWRH'); // อาจถูกแทนที่จาก system_settings
+        const EDGE_FUNCTION_URL = appCfg('EDGE_FUNCTION_URL', 'https://zmdywddraaeegzkvpwsw.supabase.co/functions/v1/line-webhook');
+        const TENANT_KEY = appCfg('TENANT_KEY', ''); // 🏢 SaaS: ใส่ slug ของ tenant ที่ได้จากแอดมินแพลตฟอร์ม (เว้นว่าง = หมู่บ้านเดิม)
+
+        // 🔒 แนบ LINE access token ให้ทุก request ไป Edge Function อัตโนมัติ — server ใช้พิสูจน์ว่า userId ที่ส่งมา
+        // คือคนที่เปิดหน้านี้จริง (ไม่ต้องแก้ fetch ทีละจุด) ถ้ามี header อยู่แล้วจะไม่ทับ
+        (function () {
+            const _origFetch = window.fetch.bind(window);
+            window.fetch = function (input, init) {
+                try {
+                    const u = typeof input === 'string' ? input : (input && input.url) || '';
+                    if (u.indexOf(EDGE_FUNCTION_URL) === 0) {
+                        const add = {};
+                        if (TENANT_KEY) add['x-tenant'] = TENANT_KEY;
+                        const t = (window.liff && liff.getAccessToken) ? liff.getAccessToken() : '';
+                        if (t) add['x-line-token'] = t;
+                        if (Object.keys(add).length && (typeof input === 'string' || !input.headers)) {
+                            init = init || {};
+                            const cur = init.headers;
+                            if (cur && typeof cur.has === 'function') {            // Headers instance
+                                Object.keys(add).forEach(function (k) { if (!cur.has(k)) cur.set(k, add[k]); });
+                            } else if (!Array.isArray(cur)) {                       // plain object / undefined
+                                const o = Object.assign({}, cur || {});
+                                Object.keys(add).forEach(function (k) {
+                                    if (!Object.keys(o).some(function (x) { return x.toLowerCase() === k; })) o[k] = add[k];
+                                });
+                                init.headers = o;
+                            }
+                        }
+                    }
+                } catch (e) { /* ส่งต่อแบบเดิม */ }
+                return _origFetch(input, init);
+            };
+        })();
+        const OA_ADD_FRIEND_URL = appCfg('OA_ADD_FRIEND_URL', 'https://line.me/R/ti/p/@serene'); // ⚠️ ใช้เฉพาะ fallback — แก้ @serene เป็น Basic ID ของ OA จริง (เหมือน liff_register.html)
 
         const _origFetch = window.fetch.bind(window);
         window.fetch = function(input, init = {}) {
@@ -2405,6 +2453,7 @@
                         { value: 'ผู้เช่า', icon: '🔑', desc: 'เช่าบ้านหลังนี้อยู่' },
                     ],
                     // 👨‍👩‍👧‍👦 สมาชิกบ้านเดียวกัน + แจ้งลบสมาชิก (หน้ายืนยันสิทธิ์)
+                    isFriend: true, friendChecked: false, friendBusy: false, friendDismissed: false,
                     houseMembers: [], houseIsOwner: false, houseMembersError: '', removalTarget: null, removalReason: '', removalSending: false,
 
                     // ─── CCTV Requests (ขอดูกล้องวงจรปิด) ───
@@ -2434,6 +2483,8 @@
                 }
             },
             computed: {
+                // แสดงแบนเนอร์เมื่อ "ตรวจแล้วว่ายังไม่เป็นเพื่อน/ถูกบล็อก" เท่านั้น (ตรวจไม่ได้ = ไม่แสดง กันรบกวน)
+                showFriendBanner() { return this.friendChecked && !this.isFriend && !this.friendDismissed; },
                 isOwnerStatusSel() { return this.selectedStatus === 'เจ้าของบ้าน' || this.selectedStatus === 'เจ้าของร่วม'; },
                 ownerList() { return (this.ownerInfo && this.ownerInfo.owners) || []; },
                 ownerNoneMatch() { return this.ownerList.length > 0 && this.ownerList.every(o => !o.member_matches); },
@@ -2564,10 +2615,11 @@
                         })();
                         const { data: settingRows } = await db0
                             .from('system_settings').select('key,value')
-                            .in('key', ['liff_crm_id','liff_id']);
+                            .in('key', ['liff_mini_app_id','liff_crm_id','liff_id']);
                         const sc = {};
                         (settingRows||[]).forEach(r => { sc[r.key]=r.value; });
-                        if (sc.liff_crm_id) LIFF_ID = sc.liff_crm_id;
+                        if (sc.liff_mini_app_id) LIFF_ID = String(sc.liff_mini_app_id).trim();   // Mini App ID เดียวทุกหน้า
+                        else if (sc.liff_crm_id) LIFF_ID = sc.liff_crm_id;
                         else if (sc.liff_id) LIFF_ID = sc.liff_id;
                     } catch(_) {}
 
@@ -2680,6 +2732,8 @@
                 //   ?tab=rewards           → เปิด tab ที่ระบุ
                 //   ?coupon=XYZ            → เปิด coupon detail
                 this.handleDeepLink().catch(e => console.warn('deep link', e));
+                try { this.friendDismissed = sessionStorage.getItem('crm_friend_dismissed') === '1'; } catch (e) { /* ใช้ไม่ได้ก็ข้าม */ }
+                this.checkFriendship();
             },
             watch: {
                 currentTab(newVal) {
@@ -2698,6 +2752,48 @@
                 fullscreenCoupon(v) { if (v) this.$nextTick(() => this.renderBarcode('fs-barcode', v.code, { width: 2.5, height: 80 })); }
             },
             methods: {
+                // ───────── ➕ เพิ่มเพื่อน LINE OA ในหน้านี้ ─────────
+                async checkFriendship() {
+                    try {
+                        if (!window.liff || typeof liff.getFriendship !== 'function') return;
+                        const r = await liff.getFriendship();          // ต้องมี scope profile + ผูก OA กับ LIFF channel
+                        this.isFriend = !!(r && r.friendFlag);
+                        this.friendChecked = true;
+                    } catch (e) {
+                        console.warn('getFriendship', e);               // ไม่ได้ผูก OA / ไม่มีสิทธิ์ → ไม่แสดงแบนเนอร์
+                        this.friendChecked = false;
+                    }
+                },
+                async requestFriend() {
+                    if (this.friendBusy) return;
+                    this.friendBusy = true;
+                    try {
+                        if (typeof liff.requestFriendship === 'function') {
+                            await liff.requestFriendship();             // LIFF SDK 2.28+: popup เพิ่มเพื่อน/ปลดบล็อก อยู่ในหน้านี้
+                        } else {
+                            // LINE เวอร์ชันเก่าที่ยังไม่มี API นี้ → เปิดหน้าเพิ่มเพื่อนของ OA แทน
+                            liff.openWindow({ url: OA_ADD_FRIEND_URL, external: false });
+                            return;
+                        }
+                        await this.checkFriendship();
+                        if (this.friendChecked && this.isFriend) {
+                            Swal.fire({ icon: 'success', title: 'เพิ่มเพื่อนแล้ว 🎉', text: 'จากนี้จะได้รับการแจ้งเตือนจากหมู่บ้านทาง LINE', timer: 2000, showConfirmButton: false });
+                        }
+                    } catch (e) {
+                        console.warn('requestFriendship', e);
+                        if (e && e.code === 'FORBIDDEN') {
+                            // ขนาดหน้าจอ LIFF ไม่ใช่ Full หรือยังไม่ได้ผูก LINE OA กับ channel → ใช้ลิงก์เพิ่มเพื่อนปกติแทน
+                            try { liff.openWindow({ url: OA_ADD_FRIEND_URL, external: false }); } catch (e2) { /* skip */ }
+                        }
+                    } finally {
+                        this.friendBusy = false;
+                    }
+                },
+                dismissFriendBanner() {
+                    this.friendDismissed = true;
+                    try { sessionStorage.setItem('crm_friend_dismissed', '1'); } catch (e) { /* skip */ }
+                },
+
                 formatDate(d) { return d ? new Date(d).toLocaleDateString('th-TH', { year: '2-digit', month: 'short', day: 'numeric' }) : '-'; },
 
                 renderBarcode(elemId, value, opts = {}) {
@@ -3245,7 +3341,7 @@
                                     { type: 'separator', margin: 'sm' },
                                     {
                                         type: 'text',
-                                        text: 'CRM Pro · โกลเด้นแลนด์ ซีรีน',
+                                        text: 'CRM Pro · ' + appCfgIn('BRAND', 'village_th', 'โกลเด้นแลนด์ ซีรีน'),
                                         size: 'xxs', color: '#94a3b8', align: 'center', margin: 'md'
                                     }
                                 ]
@@ -3440,10 +3536,10 @@
                                     unpaidMonths: unpaid,
                                     monthLabel: unpaid.map(m => monthLabels[months.indexOf(m)]).join(', '),
                                     due_day:    cfg.due_day || '25',
-                                    bank_name:  cfg.bank_name || 'ไทยพาณิชย์',
-                                    account_no: cfg.account_no || '4271924463',
+                                    bank_name:  cfg.bank_name || appCfgIn('VILLAGE_DEFAULTS', 'bank_name', 'ไทยพาณิชย์'),
+                                    account_no: cfg.account_no || appCfgIn('VILLAGE_DEFAULTS', 'account_no', '4271924463'),
                                     account_name: cfg.account_name || '',
-                                    village_name: cfg.village_name || 'Golden Land Serene',
+                                    village_name: cfg.village_name || appCfgIn('VILLAGE_DEFAULTS', 'village_name', 'Golden Land Serene'),
                                     juristic: cfg.juristic_name || '',
                                     footer_note: cfg.footer_note || 'กรุณาส่งสลิปผ่าน LINE OA หลังชำระเงิน',
                                     year: yearTH,
@@ -4007,7 +4103,7 @@
                 lineAuthHeaders(extra) {
                     let t = '';
                     try { t = (window.liff && liff.getAccessToken && liff.getAccessToken()) || ''; } catch (e) { t = ''; }
-                    return Object.assign({}, extra || {}, t ? { 'x-line-token': t } : {});
+                    return Object.assign({}, extra || {}, t ? { 'x-line-token': t } : {}, TENANT_KEY ? { 'x-tenant': TENANT_KEY } : {});
                 },
                 slotFull(value) {
                     const s = this.houseInfo && this.houseInfo.slots && this.houseInfo.slots[value];
