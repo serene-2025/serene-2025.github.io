@@ -38,6 +38,14 @@
         { value:'ผู้เช่า',      icon:'🔑', desc:'เช่าบ้านหลังนี้อยู่' },
     ];
 
+    // 🔒 แนบ LINE access token ให้ server พิสูจน์ว่า uid นี้คือคนที่เปิดหน้านี้จริง
+    function lineAuthHeaders(extra) {
+        let t = '';
+        try { t = (window.liff && liff.getAccessToken && liff.getAccessToken()) || ''; } catch (e) { t = ''; }
+        return Object.assign({}, extra || {}, t ? { 'x-line-token': t } : {});
+    }
+    const OWNER_VALUES = ['เจ้าของบ้าน', 'เจ้าของร่วม'];
+
     async function getSetting(key) {
         const { data } = await supabaseClient.from('system_settings').select('value').eq('key', key).maybeSingle();
         return (data && data.value && !String(data.value).startsWith('YOUR_')) ? data.value : '';
@@ -59,6 +67,8 @@
         const [nameChoice, setNameChoice] = useState('');      // '' | 'correct' | 'wrong'
         const [correctName, setCorrectName] = useState('');
         const [nameNote, setNameNote] = useState('');
+        // 🏠 โควตาเจ้าของของบ้าน (เจ้าของบ้าน 1 / เจ้าของร่วม 1-2) + สถานะคำขอให้เจ้าของบ้านยืนยันผู้เช่า/ผู้อาศัย
+        const [houseInfo, setHouseInfo] = useState(null);      // { slots, approval }
 
         const showToast = (msg, type) => { setToast({ msg, type: type || 'success' }); setTimeout(() => setToast(null), 3000); };
 
@@ -73,10 +83,22 @@
             : correctName.trim().length >= 3;
         const checkReady = !isOwnerStatus || ownerInfoError || !needCheck || nameChoice === 'correct' || (nameChoice === 'wrong' && correctName.trim().length >= 3);
 
+        const loadHouseInfo = async (uid) => {
+            try {
+                const r = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/house_status_info?uid=' + encodeURIComponent(uid), { headers: lineAuthHeaders() });
+                const d = await r.json();
+                if (r.ok) setHouseInfo(d);
+            } catch (e) { console.error(e); }
+        };
+        const slotFull = (value) => {
+            const s = houseInfo && houseInfo.slots && houseInfo.slots[value];
+            return !!s && s.used >= s.max;
+        };
+
         const loadOwnerInfo = async (uid) => {
             setOwnerInfoError(false);
             try {
-                const r = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/owner_registry_info?uid=' + encodeURIComponent(uid));
+                const r = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/owner_registry_info?uid=' + encodeURIComponent(uid), { headers: lineAuthHeaders() });
                 const d = await r.json();
                 if (!r.ok) throw new Error(d.error || 'โหลดข้อมูลโฉนดไม่สำเร็จ');
                 setOwnerInfo(d);
@@ -125,7 +147,7 @@
                     const membersRes = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/house_members_status?house_no=' + encodeURIComponent(checkData.profile.house_no));
                     const membersData = await membersRes.json();
                     setHouseMembers(membersData.members || []);
-                    await loadOwnerInfo(profile.userId);
+                    await Promise.all([loadOwnerInfo(profile.userId), loadHouseInfo(profile.userId)]);
 
                     if (checkData.profile.status_confirmed) {
                         setPhase('already-confirmed');
@@ -158,12 +180,18 @@
             setSubmitting(true);
             try {
                 const res = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/confirm_ownership_status', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    method: 'POST', headers: lineAuthHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ uid: currentUid, livingStatus: selectedStatus, nameCheck: nameCheck }),
                 });
                 const d = await res.json();
-                if (!res.ok) throw new Error(d.error || 'ยืนยันไม่สำเร็จ');
-                showToast(d.nameClaimStatus === 'pending' ? '🎉 ยืนยันแล้ว · ส่งให้นิติบุคคลตรวจสอบชื่อแล้ว' : '🎉 ยืนยันสถานะเรียบร้อยแล้ว');
+                if (!res.ok) {
+                    if (d.slotFull) loadHouseInfo(currentUid);
+                    throw new Error(d.error || 'ยืนยันไม่สำเร็จ');
+                }
+                showToast(d.nameClaimStatus === 'pending' ? '🎉 ยืนยันแล้ว · ส่งให้นิติบุคคลตรวจสอบชื่อแล้ว'
+                    : d.approvalStatus === 'pending' ? '🎉 ยืนยันแล้ว · ส่งให้เจ้าของบ้านกดยืนยันทาง LINE แล้ว'
+                    : '🎉 ยืนยันสถานะเรียบร้อยแล้ว');
+                if (d.approvalStatus) setHouseInfo(prev => Object.assign({}, prev || {}, { approval: { status: d.approvalStatus, claimed_status: selectedStatus } }));
                 if (d.nameClaimStatus) setOwnerInfo(prev => Object.assign({}, prev || {}, { latest_claim: { status: d.nameClaimStatus, name_correct: nameChoice ? nameChoice === 'correct' : null, correct_name: correctName.trim() || null } }));
                 setMyRecord(prev => Object.assign({}, prev, { living_status: selectedStatus, status_confirmed: true }));
                 setTimeout(() => setPhase('already-confirmed'), 1200);
@@ -187,7 +215,7 @@
             setSubmitting(true);
             try {
                 const res = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/owner_name_check_submit', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    method: 'POST', headers: lineAuthHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ uid: currentUid, nameCheck: nameCheck }),
                 });
                 const d = await res.json();
@@ -317,6 +345,22 @@
             return <div className={'border rounded-2xl p-3 text-xs font-bold ' + m[0]}>{m[1]}</div>;
         };
 
+        // 🏠 สถานะคำขอให้เจ้าของบ้านยืนยัน (ผู้เช่า/ผู้อาศัย)
+        const renderApprovalBanner = () => {
+            const a = houseInfo && houseInfo.approval;
+            if (!a) return null;
+            const st = a.claimed_status || '';
+            const map = {
+                pending:  ['bg-amber-50 border-amber-200 text-amber-700', '⏳ รอเจ้าของบ้านกดยืนยันสถานะ "' + st + '" ของท่านทาง LINE'],
+                no_owner: ['bg-amber-50 border-amber-200 text-amber-700', '⏳ บ้านนี้ยังไม่มีเจ้าของที่ยืนยันสิทธิ์ในระบบ — นิติบุคคลจะตรวจสอบให้ท่าน'],
+                approved: ['bg-emerald-50 border-emerald-200 text-emerald-700', '✅ ' + (a.decision_source === 'admin' ? 'นิติบุคคล' : 'เจ้าของบ้าน') + 'ยืนยันสถานะ "' + st + '" ของท่านแล้ว'],
+                rejected: ['bg-rose-50 border-rose-200 text-rose-700', '❌ ' + (a.decision_source === 'admin' ? 'นิติบุคคล' : 'เจ้าของบ้าน') + 'ไม่ยืนยันสถานะ "' + st + '" ของท่าน' + (a.admin_remark ? ' — ' + a.admin_remark : '') + ' กรุณาเลือกสถานะใหม่หรือติดต่อนิติบุคคล'],
+            };
+            const m = map[a.status];
+            if (!m) return null;
+            return <div className={'border rounded-2xl p-3 text-xs font-bold ' + m[0]}>{m[1]}</div>;
+        };
+
         // 👨‍👩‍👧‍👦 รายชื่อสมาชิกบ้านเดียวกัน — ใช้ร่วมกันทั้ง 2 phase (form และ
         // already-confirmed) ให้เห็นว่าใครอยู่บ้าง พร้อมปุ่มแจ้งลบต่อคน
         const MemberList = () => (
@@ -398,6 +442,7 @@
                                 </p>
                             </div>
                             {renderClaimBanner()}
+                            {renderApprovalBanner()}
                             {lockedNeedsCheck && (
                                 <div className="space-y-3">
                                     <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-3 text-xs text-indigo-700">
@@ -424,23 +469,32 @@
                             </div>
 
                             {renderClaimBanner()}
+                            {renderApprovalBanner()}
                             {houseMembers.length > 0 && <MemberList />}
 
                             <div className="bg-white rounded-3xl shadow-lg p-5 border border-gray-100">
                                 <p className="text-sm font-bold text-slate-700 mb-3">กรุณาเลือกสถานะของท่าน *</p>
                                 <div className="space-y-2">
-                                    {STATUS_OPTIONS.map(opt => (
-                                        <button key={opt.value} type="button" onClick={() => setSelectedStatus(opt.value)}
-                                            className={'w-full text-left p-3.5 rounded-2xl border-2 transition-all flex items-start gap-3 ' +
+                                    {STATUS_OPTIONS.map(opt => {
+                                        const full = OWNER_VALUES.includes(opt.value) && slotFull(opt.value);
+                                        const sl = OWNER_VALUES.includes(opt.value) && houseInfo && houseInfo.slots ? houseInfo.slots[opt.value] : null;
+                                        return (
+                                        <button key={opt.value} type="button" disabled={full} onClick={() => setSelectedStatus(opt.value)}
+                                            className={'w-full text-left p-3.5 rounded-2xl border-2 transition-all flex items-start gap-3 ' + (full ? 'opacity-60 cursor-not-allowed ' : '') +
                                                 (selectedStatus === opt.value ? 'border-teal-500 bg-teal-50' : 'border-gray-200 bg-gray-50')}>
                                             <span className="text-xl flex-shrink-0">{opt.icon}</span>
                                             <div className="flex-1">
                                                 <div className={'text-sm font-bold ' + (selectedStatus === opt.value ? 'text-teal-700' : 'text-slate-700')}>{opt.value}</div>
                                                 <div className="text-[11px] text-slate-400 mt-0.5">{opt.desc}</div>
+                                                {sl && <div className={'text-[11px] mt-1 font-bold ' + (full ? 'text-rose-500' : 'text-slate-400')}>
+                                                    {full ? '🚫 มีผู้ยืนยันครบแล้ว (' + sl.used + '/' + sl.max + ') — หากข้อมูลไม่ถูกต้องให้ติดต่อนิติบุคคล' : 'ยืนยันแล้ว ' + sl.used + '/' + sl.max + ' ท่าน'}
+                                                </div>}
+                                                {(opt.value === 'ผู้เช่า' || opt.value === 'ผู้อาศัย') && <div className="text-[11px] mt-1 text-amber-600">📨 ระบบจะส่งให้เจ้าของบ้านกดยืนยันทาง LINE</div>}
                                             </div>
                                             {selectedStatus === opt.value && <span className="text-teal-500 text-lg flex-shrink-0">✓</span>}
                                         </button>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             </div>
 
@@ -450,7 +504,7 @@
                                 ⚠️ <b>ยืนยันได้เพียงครั้งเดียว</b> กรุณาเลือกให้ถูกต้อง หากต้องการเปลี่ยนแปลงภายหลัง ต้องติดต่อนิติบุคคลหมู่บ้านเท่านั้น
                             </div>
 
-                            <button onClick={submitConfirm} disabled={submitting || !selectedStatus || !checkReady}
+                            <button onClick={submitConfirm} disabled={submitting || !selectedStatus || !checkReady || slotFull(selectedStatus)}
                                 className="w-full py-3.5 bg-gradient-to-r from-teal-600 to-emerald-500 text-white rounded-2xl font-bold shadow-lg disabled:opacity-50">
                                 {submitting ? '⏳ กำลังยืนยัน...' : '✅ ยืนยันสถานะ'}
                             </button>
