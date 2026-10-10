@@ -22,7 +22,7 @@
     },
 
     // ── LINE OA ───────────────────────────────────────────────────────
-    OA_ADD_FRIEND_URL: 'https://line.me/R/ti/p/@serene',                     // ลิงก์เพิ่มเพื่อน OA (https://line.me/R/ti/p/@<Basic ID>)
+    OA_ADD_FRIEND_URL: 'https://line.me/R/ti/p/@500vulmn',                     // ลิงก์เพิ่มเพื่อน OA (https://line.me/R/ti/p/@<Basic ID>)
     DEFAULT_MEMBER_RICHMENU: 'richmenu-6dbab648fe7753fd311142e0c706ae1f',   // Rich Menu สำรองของสมาชิก (ว่าง = ไม่เปลี่ยนเมนู)
 
     // ── แบรนด์ (ข้อความที่แสดงในหน้า) ────────────────────────────────
