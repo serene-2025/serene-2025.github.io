@@ -8,7 +8,7 @@
 <script>if(!window.appCfg){window.appCfg=function(k,d){return d};window.appCfgIn=function(k,s,d){return d};}</script>
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ระบบบันทึกค่าส่วนกลาง ซีรีน 2</title>
+  <title>แจ้งชำระค่าส่วนกลาง</title>
   <link rel="icon" href="https://cdn-icons-png.flaticon.com/512/1571/1571031.png" type="image/png">
 
   <!-- Import Libraries -->
@@ -329,7 +329,7 @@ function pickLiffId(rows, legacyKey) {
       <form class="needs-validation" novalidate id="user_form">
         <div class="col-md-12 text-center mb-4">
           <h4 class="mb-2 p-3 text-white rounded shadow-sm" style="background: linear-gradient(to right, #0f9b0f, #52c234);">
-            <i class='bx bxs-buildings fs-3'></i> 💴 จ่ายค่าส่วนกลาง Serene 2
+            <i class='bx bxs-buildings fs-3'></i> 💴 จ่ายค่าส่วนกลาง <span id="brandShort"></span>
           </h4>
         </div>
 
@@ -1101,7 +1101,6 @@ function pickLiffId(rows, legacyKey) {
     }
 
     async function sendFlexMessage(uid, uname, picture, name, name1, telegramMonthsSummary, selectedItems, monthImageMap, slipMode) {
-      if (!liff.isInClient()) return; 
       let bubbles = [];
       const mainYear = selectedItems.length > 0 ? selectedItems[0].year : "";
 
@@ -1129,7 +1128,23 @@ function pickLiffId(rows, legacyKey) {
           } 
       };
       if (bubbles.length === 1) flexMessage.contents = bubbles[0];
-      try { await liff.sendMessages([flexMessage]); } catch (err) { console.error("Error sending FlexMessage:", err); }
+      // 1) ทางหลัก: ส่งเข้าแชทในนามผู้ใช้ (ต้องเปิดหน้านี้ในแอป LINE ผ่านลิงก์ LIFF + สิทธิ์ chat_message.write)
+      let sent = false;
+      try {
+          if (liff.isInClient()) { await liff.sendMessages([flexMessage]); sent = true; }
+      } catch (err) { console.error("Error sending FlexMessage:", err); }
+      if (sent) return;
+
+      // 2) สำรอง: เปิดนอกแอป LINE (เบราว์เซอร์ภายนอก) หรือ sendMessages ไม่ได้ → ให้เซิร์ฟเวอร์ push Flex เดิมเข้าแชท OA
+      //    (เซิร์ฟเวอร์ตรวจ LINE access token ว่าเป็นเจ้าของ uid ก่อนส่งเสมอ)
+      try {
+          if (!uid) return;
+          const res = await fetch(EDGE_FUNCTION_URL + '/api/admin/audience/slip_receipt_push', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ userId: uid, altText: flexMessage.altText, contents: flexMessage.contents })
+          });
+          if (!res.ok) console.warn('slip_receipt_push ไม่สำเร็จ', res.status);
+      } catch (err) { console.warn('slip_receipt_push error', err); }
     }
 
     function createFlexBubble(imageUrl, name, houseNo, year, monthStr, uid, uname, modeText, slipDetails) {
@@ -1424,7 +1439,7 @@ function pickLiffId(rows, legacyKey) {
                 globalSlipAlerts[inputElement.id] = `ยอดไม่ตรง (โอนมา ${actualAmount} บ.)`;
             } else if (!isNameCorrect) {
                 statusText = "บัญชีไม่ใช่ส่วนกลาง";
-                if(statusDiv) statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-error-circle'></i> บัญชีปลายทางไม่ใช่ "โกลเด้นแลนด์ ซีรีน" *ยังบันทึกได้</span>`;
+                if(statusDiv) statusDiv.innerHTML = `<span class="text-warning text-dark"><i class='bx bx-error-circle'></i> บัญชีปลายทางไม่ใช่ "${appCfgIn('BRAND', 'village_th', 'ของหมู่บ้าน')}" *ยังบันทึกได้</span>`;
                 globalSlipAlerts[inputElement.id] = `บัญชีปลายทางไม่ถูกต้อง`;
             } else {
                 if(statusDiv) statusDiv.innerHTML = `<span class="text-success"><i class='bx bx-check-circle'></i> ตรวจสอบผ่าน (ยอดโอน ${actualAmount} บ.)</span>`;
@@ -2205,5 +2220,6 @@ function pickLiffId(rows, legacyKey) {
         confirmSubmit();
     });
   </script>
+<script>try{var _b=document.getElementById('brandShort');if(_b)_b.textContent=appCfgIn('BRAND','short','');}catch(_){}</script>
 </body>
 </html>
