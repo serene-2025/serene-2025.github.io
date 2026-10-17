@@ -278,6 +278,12 @@
                         <span class="text-xs font-bold text-slate-700">ค่าส่วนกลาง</span>
                         <span v-if="paymentStreak.streak >= 3" class="absolute top-2 right-2 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[9px] font-bold">🔥{{ paymentStreak.streak }}</span>
                     </button>
+                    <!-- 👨‍👩‍👧 สมาชิกในบ้าน — แสดงเฉพาะเจ้าของบ้าน/เจ้าของร่วมที่ยืนยันสิทธิ์แล้ว (server ตรวจซ้ำทุกครั้ง) -->
+                    <button v-if="houseRole" @click="openHouseMembers" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 relative col-span-3">
+                        <div class="w-12 h-12 rounded-full bg-sky-100 text-sky-600 flex items-center justify-center text-lg"><i class="fa-solid fa-people-roof"></i></div>
+                        <span class="text-xs font-bold text-slate-700">สมาชิกในบ้าน</span>
+                        <span v-if="houseCount > 0" class="absolute top-2 right-2 min-w-[20px] h-5 px-1 rounded-full bg-sky-500 text-white text-[10px] font-bold flex items-center justify-center">{{ houseCount }}</span>
+                    </button>
                     <button @click="openKeyCard" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 relative col-span-2">
                         <div class="w-12 h-12 rounded-full bg-cyan-100 text-cyan-600 flex items-center justify-center text-lg"><i class="fa-solid fa-id-card"></i></div>
                         <span class="text-xs font-bold text-slate-700">จัดการคีย์การ์ด</span>
@@ -1376,6 +1382,77 @@
                             <button @click="submitRemoval" :disabled="removalSending || removalReason.trim().length < 3" class="flex-1 py-2.5 bg-rose-500 text-white rounded-2xl text-sm font-bold disabled:opacity-50">{{ removalSending ? '⏳ กำลังส่ง...' : 'แจ้งนิติบุคคล' }}</button>
                             <button @click="removalTarget = null" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════ 👨‍👩‍👧 สมาชิกในบ้าน ═══════ -->
+        <div v-if="currentTab === 'housemembers' && !loading" class="fixed inset-0 bg-gray-50 overflow-y-auto z-20 pb-24">
+            <div class="max-w-lg mx-auto p-4 space-y-4">
+                <div class="flex items-center gap-3">
+                    <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="flex-1 min-w-0">
+                        <h2 class="text-2xl font-extrabold text-slate-800">สมาชิกในบ้าน</h2>
+                        <p class="text-sm text-slate-500 truncate">บ้านเลขที่ {{ houseView.house_no || '-' }} · ลงทะเบียนแล้ว {{ houseView.members.length }} คน</p>
+                    </div>
+                    <button @click="loadHouseView" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" title="รีเฟรช"><i class="fa-solid fa-rotate" :class="{ 'fa-spin': houseView.loading }"></i></button>
+                </div>
+
+                <div class="rounded-2xl p-3 text-[11px] font-bold border" :class="houseRole === 'owner' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-sky-50 border-sky-200 text-sky-700'">
+                    <template v-if="houseRole === 'owner'">🔑 เจ้าของบ้าน — ดูข้อมูลสมาชิกได้ทั้งหมด (เบอร์โทรซ่อนบางส่วน) และแจ้งลบผู้เช่า/ผู้อาศัยได้</template>
+                    <template v-else>🤝 เจ้าของร่วม — ดูรายชื่อ บทบาท และสถานะการยืนยันของสมาชิกในบ้าน</template>
+                </div>
+
+                <div v-if="houseView.loading && houseView.members.length === 0" class="text-center py-12 text-slate-400"><i class="fa-solid fa-spinner fa-spin text-2xl"></i></div>
+                <div v-else-if="houseView.error" class="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-700">
+                    ⚠️ {{ houseView.error }} <button type="button" @click="loadHouseView" class="ml-2 font-bold underline">ลองใหม่</button>
+                </div>
+                <template v-else>
+                    <div class="flex gap-2 overflow-x-auto no-scrollbar">
+                        <span v-for="g in houseSummary" :key="g.label" class="px-3 py-1.5 rounded-full bg-white border border-slate-200 text-[11px] font-bold text-slate-600 whitespace-nowrap flex-shrink-0">{{ g.label }} {{ g.n }}</span>
+                    </div>
+                    <div class="space-y-3">
+                        <div v-for="m in houseView.members" :key="m.ref" class="bg-white rounded-3xl shadow-sm p-4 border" :class="m.isMe ? 'border-sky-300' : 'border-gray-100'">
+                            <div class="flex items-start gap-3">
+                                <img v-if="m.profile" :src="m.profile" class="w-11 h-11 rounded-full object-cover border border-slate-200 flex-shrink-0">
+                                <div v-else class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0 text-slate-400">👤</div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-1.5 flex-wrap">
+                                        <span class="text-sm font-bold text-slate-800 truncate">{{ m.fullname || m.line_name || 'ไม่ระบุชื่อ' }}</span>
+                                        <span v-if="m.isMe" class="text-[10px] font-bold bg-sky-100 text-sky-600 px-1.5 py-0.5 rounded">คุณ</span>
+                                    </div>
+                                    <div v-if="m.fullname && m.line_name && m.fullname !== m.line_name" class="text-[10px] text-slate-400 truncate">LINE: {{ m.line_name }}</div>
+                                    <div class="mt-1 flex items-center gap-1.5 flex-wrap">
+                                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="m.is_owner ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'">{{ m.living_status || 'ยังไม่ระบุสถานะ' }}</span>
+                                        <span class="text-[10px] font-bold" :class="m.status_confirmed ? 'text-emerald-600' : 'text-amber-600'">{{ m.status_confirmed ? '🔒 ยืนยันแล้ว' : '⏳ ยังไม่ยืนยัน' }}</span>
+                                    </div>
+                                    <div v-if="houseRole === 'owner'" class="mt-1.5 text-[11px] text-slate-500 space-y-0.5">
+                                        <div v-if="m.phone_masked">📞 {{ m.phone_masked }}</div>
+                                        <div>🗓️ ลงทะเบียน {{ formatDate(m.registered_at) }}<span v-if="m.status_confirmed_at"> · ยืนยันสถานะ {{ formatDate(m.status_confirmed_at) }}</span></div>
+                                    </div>
+                                </div>
+                                <template v-if="houseRole === 'owner'">
+                                    <span v-if="m.removal_pending" class="text-[10px] font-bold text-amber-600 bg-amber-50 px-2.5 py-1.5 rounded-lg flex-shrink-0">⏳ รอนิติบุคคล</span>
+                                    <button v-else-if="m.removable" @click="openRemoval(m)" class="text-[10px] font-bold text-rose-500 bg-rose-50 hover:bg-rose-100 px-2.5 py-1.5 rounded-lg flex-shrink-0">🗑️ แจ้งลบ</button>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="text-[10px] text-slate-400 text-center px-4">แสดงเฉพาะสมาชิกที่ลงทะเบียนในบ้านหลังนี้ · เห็นได้เฉพาะเจ้าของบ้าน/เจ้าของร่วมที่ยืนยันสิทธิ์แล้ว</p>
+                </template>
+            </div>
+
+            <!-- 🗑️ Modal แจ้งลบสมาชิก (ชุดเดียวกับหน้ายืนยันสิทธิ์) -->
+            <div v-if="removalTarget" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-5" @click="removalTarget = null">
+                <div class="bg-white rounded-3xl p-5 w-full max-w-xs slide-up" @click.stop>
+                    <p class="font-bold text-slate-800 mb-1">🗑️ แจ้งขอลบสมาชิก</p>
+                    <p class="text-sm text-slate-500 mb-4">แจ้งนิติบุคคลให้ตรวจสอบและลบ <b>{{ removalTarget.fullname || removalTarget.line_name }}</b> ({{ removalTarget.living_status }}) ออกจากทะเบียนบ้านนี้ — นิติบุคคลจะตรวจสอบก่อนลบ</p>
+                    <textarea v-model="removalReason" rows="2" maxlength="300" placeholder="เหตุผล * เช่น ผู้เช่าย้ายออกแล้ว"
+                              class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none resize-none mb-3"></textarea>
+                    <div class="flex gap-2">
+                        <button @click="submitRemoval" :disabled="removalSending || removalReason.trim().length < 3" class="flex-1 py-2.5 bg-rose-500 text-white rounded-2xl text-sm font-bold disabled:opacity-50">{{ removalSending ? '⏳ กำลังส่ง...' : 'แจ้งนิติบุคคล' }}</button>
+                        <button @click="removalTarget = null" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>
                     </div>
                 </div>
             </div>
@@ -2486,6 +2563,7 @@
                     ],
                     // 👨‍👩‍👧‍👦 สมาชิกบ้านเดียวกัน + แจ้งลบสมาชิก (หน้ายืนยันสิทธิ์)
                     isFriend: true, friendChecked: false, friendBusy: false, friendDismissed: false,
+                    houseRole: null, houseCount: 0, houseView: { loading: false, error: '', house_no: '', members: [] },
                     houseMembers: [], houseIsOwner: false, houseMembersError: '', removalTarget: null, removalReason: '', removalSending: false,
 
                     // ─── CCTV Requests (ขอดูกล้องวงจรปิด) ───
@@ -2552,6 +2630,11 @@
                         rejected: { cls: 'bg-rose-50 border-rose-200 text-rose-700', text: '❌ ' + who + 'ไม่ยืนยันสถานะ "' + st + '" ของท่าน' + (a.admin_remark ? ' — ' + a.admin_remark : '') + ' กรุณาเลือกสถานะใหม่หรือติดต่อนิติบุคคล' },
                     };
                     return map[a.status] || null;
+                },
+                houseSummary() {
+                    const g = {};
+                    (this.houseView.members || []).forEach(m => { const k = m.living_status || 'ยังไม่ระบุ'; g[k] = (g[k] || 0) + 1; });
+                    return Object.keys(g).map(label => ({ label, n: g[label] }));
                 },
                 cardCategories() {
                     return [
@@ -2779,6 +2862,7 @@
                 this.handleDeepLink().catch(e => console.warn('deep link', e));
                 try { this.friendDismissed = sessionStorage.getItem('crm_friend_dismissed') === '1'; } catch (e) { /* ใช้ไม่ได้ก็ข้าม */ }
                 this.checkFriendship();
+                this.loadHouseRole();
             },
             watch: {
                 currentTab(newVal) {
@@ -2943,7 +3027,7 @@
                     // ชื่อเรียกอื่นที่ใช้ในลิงก์ได้ (เช่น ?tab=car หรือ ?tab=confirm)
                     const tabAlias = { car: 'cars', vehicle: 'cars', confirm: 'status', ownership: 'status', verify: 'status', complaint: 'complaints', repair: 'repairs', camera: 'cctv' };
                     const validTabs = ['home', 'rewards', 'coupons', 'news', 'profile', 'history', 'checkin', 'agm', 'payments', 'keycard',
-                                       'cars', 'complaints', 'repairs', 'cctv', 'gallery', 'status'];
+                                       'cars', 'complaints', 'repairs', 'cctv', 'gallery', 'status', 'housemembers'];
                     const tabKey = tabAlias[tabName] || tabName;
                     if (tabKey && validTabs.includes(tabKey)) {
                         this.currentTab = tabKey;
@@ -4187,6 +4271,38 @@
                         if (['เจ้าของบ้าน', 'เจ้าของร่วม'].includes(this.statusCheckResult?.profile?.living_status)) this.houseMembersError = e.message || 'error';
                     }
                 },
+                // 👨‍👩‍👧 สมาชิกในบ้าน — เช็คสิทธิ์แบบเบา (probe) เพื่อตัดสินว่าจะโชว์ปุ่มหรือไม่ · server เป็นผู้ตัดสินตัวจริง
+                async loadHouseRole() {
+                    const uid = this.userProfile?.userId;
+                    if (!uid) return;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/house_members_view?uid=${encodeURIComponent(uid)}&probe=1`, { headers: this.lineAuthHeaders() });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.error || 'HTTP ' + res.status);
+                        this.houseRole = d.role || null;
+                        this.houseCount = d.role ? (d.count || 0) : 0;
+                    } catch (e) { console.warn('loadHouseRole', e); this.houseRole = null; this.houseCount = 0; }
+                },
+                async openHouseMembers() {
+                    this.currentTab = 'housemembers';
+                    await this.loadHouseView();
+                },
+                async loadHouseView() {
+                    const uid = this.userProfile?.userId;
+                    if (!uid) return;
+                    this.houseView.loading = true; this.houseView.error = '';
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/house_members_view?uid=${encodeURIComponent(uid)}`, { headers: this.lineAuthHeaders() });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.error || 'โหลดไม่สำเร็จ');
+                        if (!d.role) { this.houseRole = null; this.houseCount = 0; this.houseView.members = []; this.currentTab = 'home'; return; }
+                        this.houseRole = d.role; this.houseCount = d.count || (d.members || []).length;
+                        this.houseView.house_no = d.house_no || ''; this.houseView.members = d.members || [];
+                    } catch (e) {
+                        console.warn('loadHouseView', e);
+                        this.houseView.error = 'โหลดรายชื่อสมาชิกในบ้านไม่สำเร็จ: ' + (e.message || '');
+                    } finally { this.houseView.loading = false; }
+                },
                 openRemoval(m) { this.removalTarget = m; this.removalReason = ''; },
                 // 🗑️ แจ้งขอลบสมาชิก — บันทึกคำขอ + แจ้งแอดมิน (Telegram) ไม่ลบทันที แอดมินอนุมัติในหน้า "ยืนยันสิทธิ์เจ้าของบ้าน → แจ้งลบสมาชิก"
                 async submitRemoval() {
@@ -4205,6 +4321,7 @@
                         this.removalTarget = null;
                         Swal.fire({ icon: 'success', title: '📨 แจ้งนิติบุคคลแล้ว', text: 'นิติบุคคลจะตรวจสอบก่อนลบ', timer: 2200, showConfirmButton: false });
                         await this.loadHouseMembers();
+                        if (this.currentTab === 'housemembers') await this.loadHouseView();
                     } catch (err) {
                         Swal.fire('ไม่สำเร็จ', err.message, 'error');
                     } finally {
