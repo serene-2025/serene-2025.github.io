@@ -3157,7 +3157,7 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'tags') await renderTagsView();
             else if (viewName === 'narrowcast') await renderNarrowcastView();
             else if (viewName === 'permissions') await renderPermissionsTable();
-            else if (viewName === 'richmenus') await renderRichMenusTable();
+            else if (viewName === 'richmenus') { _rmAutoChecked = false; await renderRichMenusTable(); }
             else if (viewName === 'groups') await renderGroupsTable();
             else if (viewName === 'storage') await renderStorageTable();
             else if (viewName === 'dataai') await renderDataAIView();
@@ -4793,41 +4793,80 @@ async function updateAllUserProfiles() {
             if (isNaN(d.getTime())) return null;
             return d.toISOString();
         }
-        async function syncRichMenus() {
-            showConfirmModal('Sync Rich Menu', 'ต้องการ Sync ข้อมูล Rich Menu จาก LINE หรือไม่? (ข้อมูลเก่าที่มี ID ตรงกันจะถูกอัปเดต)', async () => {
-                const btn = document.querySelector('button[onclick="syncRichMenus()"]');
-                const originalContent = btn.innerHTML;
+        // ซิงก์ Rich Menu จาก LINE → ตารางในระบบ  (opts.silent = ไม่ถามยืนยัน ใช้ตอนเช็กอัตโนมัติ)
+        let _rmSyncing = false;
+        async function runRichMenuSync(silent) {
+            if (_rmSyncing) return;
+            _rmSyncing = true;
+            const btn = document.querySelector('button[onclick="syncRichMenus()"]');
+            const originalContent = btn ? btn.innerHTML : '';
+            if (btn) {
                 btn.innerHTML = `<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> กำลัง Sync...`;
                 btn.disabled = true;
                 lucide.createIcons();
+            }
+            showToast(silent ? 'พบ Rich Menu บน LINE ไม่ตรงกับในระบบ กำลังซิงก์อัตโนมัติ...' : 'กำลังดึงข้อมูลจาก LINE...', 'loading');
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/richmenus`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'sync' })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Sync Failed');
+                if (data.error) throw new Error(data.error);
 
-                showToast('กำลังดึงข้อมูลจาก LINE...', 'loading');
-
-                try {
-                    const res = await fetch(`${API_BASE_URL}/api/admin/richmenus`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: 'sync' })
-                    });
-                    const data = await res.json();
-                    const error = !res.ok ? new Error(data.error || 'Sync Failed') : null;
-
-                    if (error) throw error;
-                    if (data.error) throw new Error(data.error);
-
-                    const successCount = data.results.filter(r => r.status === 'success').length;
-                    showToast(`Sync เสร็จสิ้น! อัปเดต ${successCount} รายการ`);
-                    renderRichMenusTable();
-
-                } catch (err) {
-                    console.error(err);
-                    showToast('Sync ล้มเหลว: ' + err.message, 'error');
-                } finally {
-                    btn.innerHTML = originalContent;
-                    btn.disabled = false;
-                    lucide.createIcons();
+                const results = data.results || [];
+                const ok = results.filter(r => r.status === 'success').length;
+                const failed = results.filter(r => r.status !== 'success');
+                if (failed.length) {
+                    showToast(`Sync ได้ ${ok}/${results.length} รายการ · ไม่สำเร็จ ${failed.length}: ${failed[0].error || 'ไม่ทราบสาเหตุ'}`, 'error');
+                } else {
+                    showToast(`Sync เสร็จสิ้น! ตรงกับ LINE ${ok} เมนู`);
                 }
-            });
+                _rmSyncing = false;
+                if (currentView === 'richmenus') { _rmAutoChecked = true; await renderRichMenusTable(); }
+            } catch (err) {
+                console.error(err);
+                showToast('Sync ล้มเหลว: ' + err.message, 'error');
+            } finally {
+                _rmSyncing = false;
+                const b2 = document.querySelector('button[onclick="syncRichMenus()"]');
+                if (b2 && btn) { b2.disabled = false; }
+                if (btn && btn.isConnected) { btn.innerHTML = originalContent; btn.disabled = false; }
+                lucide.createIcons();
+            }
+        }
+        async function syncRichMenus(opts) {
+            if (opts && opts.silent) return runRichMenuSync(true);
+            showConfirmModal('Sync Rich Menu', 'ต้องการ Sync ข้อมูล Rich Menu จาก LINE หรือไม่? (ข้อมูลเก่าที่มี ID ตรงกันจะถูกอัปเดต)', () => runRichMenuSync(false));
+        }
+
+        // เช็กว่ารายการใน LINE ตรงกับตารางในระบบไหม — ถ้าไม่ตรง ซิงก์ให้อัตโนมัติ (ทำครั้งเดียวต่อการเปิดหน้า)
+        let _rmAutoChecked = false;
+        async function autoCheckRichMenus() {
+            if (_rmAutoChecked || _rmSyncing) return;
+            _rmAutoChecked = true;
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/richmenus`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'list_live' })
+                });
+                if (!res.ok) return;                       // เซิร์ฟเวอร์รุ่นเก่า/ไม่มีสิทธิ์ → ข้ามเงียบ ๆ
+                const live = await res.json();
+                if (!live || !Array.isArray(live.richmenus)) return;
+                const { data: rows, error } = await supabaseClient.from('rich_menus').select('rich_menu_id');
+                if (error) return;
+                const have = new Set((rows || []).map(r => r.rich_menu_id));
+                const liveIds = live.richmenus.map(m => m.richMenuId);
+                const missing = liveIds.filter(id => !have.has(id)).length;
+                const stale = [...have].filter(id => !liveIds.includes(id)).length;
+                if (currentView !== 'richmenus') return;
+                if (missing || stale) {
+                    await runRichMenuSync(true);
+                }
+            } catch (e) { console.warn('autoCheckRichMenus', e); }
         }
 
         // ════════════════════════════════════════════════════════════════
@@ -4889,7 +4928,7 @@ async function updateAllUserProfiles() {
                 modal.classList.remove('active');
                 document.body.style.overflow = '';   // ปลดล็อคหน้าจอ
                 // สั่งรีเฟรชตาราง Rich Menu ด้านหลัง เผื่อมีการอัปเดตหรือลบเมนูจากระบบขั้นสูง
-                if (typeof syncRichMenus === 'function') syncRichMenus();
+                if (typeof syncRichMenus === 'function') syncRichMenus({ silent: true });
             }
         };
 
@@ -5263,6 +5302,7 @@ async function updateAllUserProfiles() {
             </div>`;
             document.getElementById('content-area').innerHTML = html;
             lucide.createIcons();
+            autoCheckRichMenus();   // เทียบกับ LINE เบื้องหลัง ถ้าไม่ตรงจะซิงก์ให้เอง
         }
 
         async function deleteRichMenu(id) {
