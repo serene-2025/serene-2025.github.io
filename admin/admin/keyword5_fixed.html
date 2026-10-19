@@ -8395,6 +8395,20 @@ async function updateAllUserProfiles() {
                     </ul>
                 </div>
 
+                <div class="glass rounded-3xl p-5 mb-5 slide-in border-0 shadow-lg">
+                    <div class="flex items-center gap-2 mb-2">
+                        <i data-lucide="flask-conical" class="w-4 h-4 text-violet-600"></i>
+                        <span class="text-sm font-bold text-slate-800">ทดสอบถามบอท</span>
+                        <span class="text-[11px] text-slate-400">รันเส้นทางเดียวกับที่ลูกบ้านพิมพ์ใน LINE แล้วแสดงผล/สาเหตุ error จริง</span>
+                    </div>
+                    <div class="flex flex-col sm:flex-row gap-3">
+                        <input id="ainews-test-q" type="text" value="ข่าวสาร" onkeydown="if(event.key==='Enter')testAiNews()"
+                            class="flex-1 rounded-xl border border-slate-200 p-3 text-sm bg-white shadow-sm focus:ring-2 focus:ring-violet-500 outline-none" />
+                        <button id="ainews-test-btn" onclick="testAiNews()" class="px-5 py-3 bg-violet-50 text-violet-700 rounded-xl font-bold hover:bg-violet-100 text-sm whitespace-nowrap flex items-center gap-2"><i data-lucide="play" class="w-4 h-4"></i> ทดสอบ</button>
+                    </div>
+                    <div id="ainews-test-result" class="mt-3 hidden"></div>
+                </div>
+
                 <div id="ainews-filters" class="flex flex-wrap gap-2 mb-4"></div>
                 <div id="ainews-list" class="space-y-3"></div>
             `;
@@ -8474,6 +8488,45 @@ async function updateAllUserProfiles() {
             };
             if (list.length === 0) showConfirmModal('ปิดระบบข่าวสาร', 'ไม่มีคีย์เวิร์ดเหลือ — ลูกบ้านจะไม่สามารถขอข่าวสารจากบอทได้ ต้องการบันทึกหรือไม่?', doSave);
             else doSave();
+        }
+
+        async function testAiNews() {
+            const q = (document.getElementById('ainews-test-q') || {}).value || 'ข่าวสาร';
+            const out = document.getElementById('ainews-test-result');
+            const btn = document.getElementById('ainews-test-btn');
+            if (!out) return;
+            out.className = 'mt-3 text-sm text-slate-500';
+            out.textContent = '⏳ กำลังทดสอบ...';
+            if (btn) btn.disabled = true;
+            const box = (cls, title, body, extra) =>
+                '<div class="rounded-2xl border p-4 ' + cls + '"><div class="font-bold mb-1">' + title + '</div>' +
+                (body ? '<div class="text-xs whitespace-pre-wrap break-words">' + body + '</div>' : '') + (extra || '') + '</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/ai_news_test`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: q })
+                });
+                const d = await res.json().catch(() => ({}));
+                const bubble = t => '<div class="mt-3 bg-white/80 border border-slate-200 rounded-xl p-3 text-slate-700 text-sm whitespace-pre-wrap leading-relaxed">' + escapeHtml(t) + '</div>';
+                if (!res.ok && !d.stage) {
+                    out.innerHTML = box('bg-rose-50 border-rose-200 text-rose-700', '❌ เรียกเซิร์ฟเวอร์ไม่สำเร็จ', escapeHtml(d.error || ('HTTP ' + res.status)) + '\n(ต้อง deploy index_v22.ts ล่าสุดก่อน)');
+                } else if (d.stage === 'match' && !d.matched) {
+                    out.innerHTML = box('bg-amber-50 border-amber-200 text-amber-800', '⚠️ ไม่ตรงคีย์เวิร์ดข่าวสาร', escapeHtml(d.message || ''));
+                } else if (d.stage === 'fetch') {
+                    const hint = /relation|does not exist|permission denied|schema cache/i.test(d.error || '') ? '\n\nวิธีแก้: รัน migration_ai_news.sql ใน Supabase SQL Editor แล้วลองใหม่' : '';
+                    out.innerHTML = box('bg-rose-50 border-rose-200 text-rose-700', '❌ ดึงข่าวจากฐานข้อมูลไม่สำเร็จ (ขั้นดึงข่าว)', escapeHtml(d.error || '') + escapeHtml(hint));
+                } else if (d.source === 'empty') {
+                    out.innerHTML = box('bg-amber-50 border-amber-200 text-amber-800', '📭 ไม่มีข่าวที่ใช้ได้ตอนนี้', 'ลูกบ้านจะได้รับข้อความ "ยังไม่มีข่าวสารใหม่" — ตรวจว่าข่าวเปิดใช้งาน ถึงวันเริ่มแล้ว และยังไม่หมดอายุ');
+                } else if (d.source === 'fallback') {
+                    out.innerHTML = box('bg-amber-50 border-amber-200 text-amber-800', '⚠️ AI สรุปไม่ได้ — ระบบส่งรายการข่าวตรง ๆ แทน (ขั้น Gemini)',
+                        'สาเหตุ: ' + escapeHtml(d.ai_error || 'ไม่ทราบ') + '\nตรวจที่หน้า "Gemini API Keys" (โควตา/คีย์หมดอายุ/ติด cooldown)', bubble(d.answer || ''));
+                } else {
+                    out.innerHTML = box('bg-emerald-50 border-emerald-200 text-emerald-800', '✅ AI ตอบได้ (' + (d.count || 0) + ' ข่าว' + (d.topic ? ' · หัวข้อ: ' + escapeHtml(d.topic) : '') + ')', '', bubble(d.answer || ''));
+                }
+            } catch (e) {
+                out.innerHTML = box('bg-rose-50 border-rose-200 text-rose-700', '❌ เกิดข้อผิดพลาด', escapeHtml(e.message || String(e)));
+            } finally {
+                if (btn) btn.disabled = false;
+            }
         }
 
         function openAiNewsModal(id) {
