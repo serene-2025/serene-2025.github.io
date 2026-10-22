@@ -5019,18 +5019,30 @@ async function updateAllUserProfiles() {
 
         // เช็กว่ารายการใน LINE ตรงกับตารางในระบบไหม — ถ้าไม่ตรง ซิงก์ให้อัตโนมัติ (ทำครั้งเดียวต่อการเปิดหน้า)
         let _rmAutoChecked = false;
-        async function autoCheckRichMenus() {
-            if (_rmAutoChecked || _rmSyncing) return;
-            _rmAutoChecked = true;
+        let _rmLastCheck = 0;
+        let _rmWarned = false;
+        // force=true: ตรวจใหม่แม้เคยตรวจแล้ว (ใช้ตอนกลับมาที่แท็บนี้ หลังสร้าง/แก้เมนูจากหน้า richmenumanager.html ที่เปิดอีกแท็บ)
+        async function autoCheckRichMenus(force) {
+            if (_rmSyncing || (_rmAutoChecked && !force)) return;
+            _rmAutoChecked = true; _rmLastCheck = Date.now();
             try {
-                const res = await fetch(`${API_BASE_URL}/api/admin/richmenus`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'list_live' })
-                });
-                if (!res.ok) return;                       // เซิร์ฟเวอร์รุ่นเก่า/ไม่มีสิทธิ์ → ข้ามเงียบ ๆ
-                const live = await res.json();
-                if (!live || !Array.isArray(live.richmenus)) return;
+                let live = null, res = null;
+                try {
+                    res = await fetch(`${API_BASE_URL}/api/admin/richmenus`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'list_live' })
+                    });
+                    if (res.ok) live = await res.json();
+                } catch (_) { /* ตกไปทางสำรองด้านล่าง */ }
+                if (!live || !Array.isArray(live.richmenus)) {
+                    // เซิร์ฟเวอร์รุ่นเก่า / อ่านจาก LINE ไม่ได้ → ถ้าตารางว่างอยู่ ลองซิงก์ตรง ๆ เลย · ไม่งั้นบอกให้กดปุ่มเอง (เดิมข้ามเงียบ ๆ ทำให้ไม่รู้ว่าทำไมไม่ขึ้น)
+                    const { count } = await supabaseClient.from('rich_menus').select('*', { count: 'exact', head: true });
+                    if (currentView !== 'richmenus') return;
+                    if (!count) { await runRichMenuSync(true); return; }
+                    if (!_rmWarned) { _rmWarned = true; showToast('เทียบรายการกับ LINE อัตโนมัติไม่ได้ (' + (res ? 'HTTP ' + res.status : 'เชื่อมต่อไม่ได้') + ') — กดปุ่ม “Sync from LINE” เพื่อดึงข้อมูลล่าสุด', 'error'); }
+                    return;
+                }
                 const { data: rows, error } = await supabaseClient.from('rich_menus').select('rich_menu_id');
                 if (error) return;
                 const have = new Set((rows || []).map(r => r.rich_menu_id));
@@ -5043,6 +5055,16 @@ async function updateAllUserProfiles() {
                 }
             } catch (e) { console.warn('autoCheckRichMenus', e); }
         }
+        // กลับมาที่แท็บนี้ (เช่น เพิ่งสร้างเมนูในหน้า richmenumanager.html อีกแท็บ) → เทียบกับ LINE ใหม่ทันที (ไม่ถี่เกิน 15 วินาที)
+        (function () {
+            const recheck = () => {
+                if (typeof currentView === 'undefined' || currentView !== 'richmenus') return;
+                if (document.visibilityState === 'hidden' || Date.now() - _rmLastCheck < 15000) return;
+                autoCheckRichMenus(true);
+            };
+            document.addEventListener('visibilitychange', recheck);
+            window.addEventListener('focus', recheck);
+        })();
 
         // ════════════════════════════════════════════════════════════════
         // 🎨 Rich Menu Pro Manager (Iframe Modal)
@@ -5424,10 +5446,12 @@ async function updateAllUserProfiles() {
                 const emptyState = `
                     <div class="flex flex-col items-center justify-center py-24 text-slate-400">
                         <div class="bg-fuchsia-50 p-6 rounded-full mb-4 shadow-sm"><i data-lucide="layout" class="w-12 h-12 text-indigo-300"></i></div>
-                        <p class="text-xl font-bold text-slate-600 font-display">ไม่พบข้อมูล Rich Menu</p>
+                        <p class="text-xl font-bold text-slate-600 font-display">ไม่พบข้อมูล Rich Menu ในระบบ</p>
+                        <p class="text-sm mt-2 max-w-md text-center">ตารางนี้เก็บสำเนาของเมนูที่อยู่บน LINE — เมนูที่สร้างจากหน้า richmenumanager.html หรือโดยตรงใน LINE จะขึ้นหลังกด Sync</p>
+                        <button onclick="syncRichMenus()" class="mt-5 bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg shadow-emerald-200">Sync from LINE</button>
                     </div>
                 `;
-                html += `</tbody></table></div> <div class="md:hidden p-8 text-center">${emptyState}</div>`;
+                html += `</tbody></table></div> <div class="p-8 text-center">${emptyState}</div>`;
             } else {
                 data.forEach(item => {
                     html += `
