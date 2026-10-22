@@ -67,6 +67,11 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
 @media (max-width:640px){.feat-grid{grid-template-columns:1fr}}
 .sumbar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
 .sumbar .badge{font-size:13px;padding:3px 11px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:8px 0 14px}
+.stat{border:1px solid var(--line);border-radius:10px;padding:10px 12px}.stat b{display:block;font-size:20px}.stat span{font-size:12.5px;color:var(--mute)}
+.stat.bad b{color:var(--bad)}
+.qgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:0 12px}
+@media (max-width:640px){.qgrid{grid-template-columns:1fr}}
 .sec{border-top:1px solid var(--line);margin:12px 0 8px;padding-top:10px}
 .sec h4{margin:0 0 6px;font-size:14px}
 .quick{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px}
@@ -88,11 +93,11 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
   var RANK = { viewer: 1, operator: 2, owner: 3 };
   var ROLE_TH = { owner: 'เจ้าของ', operator: 'ผู้ดูแล', viewer: 'ดูอย่างเดียว' };
   var TABS = [
-    ['tenants', 'หมู่บ้าน (Tenant)', 'viewer'], ['plans', 'แพ็กเกจ', 'viewer'], ['jobs', 'งานตั้งเวลา', 'operator'],
+    ['tenants', 'หมู่บ้าน (Tenant)', 'viewer'], ['plans', 'แพ็กเกจ', 'viewer'], ['billing', 'การเงิน', 'viewer'], ['jobs', 'งานตั้งเวลา', 'operator'],
     ['audit', 'ประวัติการใช้งาน', 'viewer'], ['admins', 'แอดมิน', 'owner'], ['system', 'ระบบ', 'viewer']
   ];
 
-  var S = { sb: null, token: '', me: null, tab: 'tenants', tenants: null, plans: null, admins: null, audit: null, info: null, jobs: null,
+  var S = { sb: null, token: '', me: null, tab: 'tenants', tenants: null, plans: null, admins: null, audit: null, info: null, jobs: null, billing: null,
             msg: null, jobResult: null, stats: {}, factor: null };
 
   function $(id) { return document.getElementById(id); }
@@ -181,7 +186,7 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
     S.me = r.data; await enter();
   }
   async function logout(text) {
-    S.token = ''; S.me = null; S.tenants = S.plans = S.admins = S.audit = S.info = S.jobs = null; S.stats = {};
+    S.token = ''; S.me = null; S.tenants = S.plans = S.admins = S.audit = S.info = S.jobs = S.billing = null; S.stats = {};
     try { if (S.sb) await S.sb.auth.signOut(); } catch (_) { /* ไม่เป็นไร */ }
     setMsg(text ? 'err' : null, text || ''); renderLogin();
   }
@@ -249,7 +254,7 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
       '<button class="btn sm" data-act="logout">ออกจากระบบ</button></header>' +
       '<nav class="tabs" role="tablist">' + tabs.map(function (t) { return '<button role="tab" data-act="tab" data-tab="' + t[0] + '" class="' + (S.tab === t[0] ? 'on' : '') + '">' + esc(t[1]) + '</button>'; }).join('') + '</nav>' +
       msgBox(S.msg) + '<div id="view"></div>';
-    var v = { tenants: viewTenants, plans: viewPlans, jobs: viewJobs, audit: viewAudit, admins: viewAdmins, system: viewSystem }[S.tab];
+    var v = { tenants: viewTenants, plans: viewPlans, billing: viewBilling, jobs: viewJobs, audit: viewAudit, admins: viewAdmins, system: viewSystem }[S.tab];
     $('view').innerHTML = v();
   }
 
@@ -315,6 +320,54 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
     return Array.prototype.map.call(form.querySelectorAll('input[name="feat"]:checked'), function (c) { return c.value; });
   }
 
+  // ─── โควตา ───────────────────────────────────────────────────
+  var QM = [['members', 'สมาชิกที่ลงทะเบียน (คน)'], ['line_msgs', 'ข้อความ LINE ที่ส่งออก/เดือน'], ['ai_replies', 'AI ตอบ/เดือน (ครั้ง)']];
+  var QM_SHORT = { members: 'สมาชิก', line_msgs: 'LINE', ai_replies: 'AI' };
+  function fmtN(n) { return Number(n).toLocaleString('th-TH'); }
+  function money(n) { return Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' ฿'; }
+  function mergeLimitsUi(l) { l = l || {}; return { members: l.members == null || l.members < 0 ? null : l.members, line_msgs: l.line_msgs == null || l.line_msgs < 0 ? null : l.line_msgs, ai_replies: l.ai_replies == null || l.ai_replies < 0 ? null : l.ai_replies, mode: l.mode === 'block' ? 'block' : 'warn' }; }
+  function limitSummary(l) {   // l = effectiveLimits ({members,line_msgs,ai_replies: number|null, mode})
+    if (!l) return '';
+    var parts = QM.filter(function (m) { return l[m[0]] != null; }).map(function (m) { return QM_SHORT[m[0]] + ' ' + fmtN(l[m[0]]); });
+    return parts.length ? parts.join(' · ') + (l.mode === 'block' ? ' (บล็อกเมื่อเต็ม)' : ' (เตือน)') : '';
+  }
+  // own: ค่าที่เก็บไว้ ({members:100,...,mode}) · forTenant: true = ว่างคือ “ตามแพ็กเกจ” (ใส่ -1 = ไม่จำกัด)
+  function quotaBlock(own, forTenant) {
+    own = own || {};
+    var ph = forTenant ? 'ตามแพ็กเกจ' : 'ไม่จำกัด';
+    var inputs = QM.map(function (m) {
+      return '<label class="f"><span>' + esc(m[1]) + '</span><input name="lim_' + m[0] + '" type="number" min="' + (forTenant ? -1 : 0) + '" max="1000000000" step="1" value="' + esc(own[m[0]] == null ? '' : own[m[0]]) + '" placeholder="' + ph + '"></label>';
+    }).join('');
+    var mode = own.mode || '';
+    var opts = (forTenant ? [['', 'ตามแพ็กเกจ']] : []).concat([['warn', 'เตือนอย่างเดียว (ไม่บล็อก)'], ['block', 'บล็อกเมื่อเต็ม']]);
+    return '<div class="sec"><h4>โควตาการใช้งาน</h4><div class="mute" style="font-size:12.5px;margin-bottom:6px">เว้นว่าง = ' + (forTenant ? 'ตามแพ็กเกจ (ใส่ -1 = ไม่จำกัดเฉพาะหมู่บ้านนี้)' : 'ไม่จำกัด') +
+      ' · ข้อความ LINE นับเฉพาะ push/multicast/broadcast (ข้อความตอบกลับฟรีไม่นับ)</div>' +
+      '<div class="qgrid">' + inputs + '</div>' +
+      '<label class="f"><span>เมื่อเต็มโควตา</span><select name="lim_mode">' + opts.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === mode ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select></label></div>';
+  }
+  function readLimits(form) {
+    var o = {};
+    QM.forEach(function (m) { var v = String(form.elements['lim_' + m[0]].value || '').trim(); if (v !== '') o[m[0]] = Number(v); });
+    var md = form.elements.lim_mode ? form.elements.lim_mode.value : ''; if (md) o.mode = md;
+    return o;
+  }
+  function checkLimits(form, forTenant) {
+    for (var i = 0; i < QM.length; i++) {
+      var v = String(form.elements['lim_' + QM[i][0]].value || '').trim();
+      if (v === '') continue;
+      var n = Number(v);
+      if (!/^-?\d+$/.test(v) || n < (forTenant ? -1 : 0) || n > 1000000000) return 'โควตา “' + QM[i][1] + '” ต้องเป็นจำนวนเต็ม ' + (forTenant ? '0 ขึ้นไป (หรือ -1 = ไม่จำกัด)' : '0 ขึ้นไป');
+    }
+    return '';
+  }
+  function quotaLines(q) {
+    if (!q || !q.metrics) return '';
+    return q.metrics.filter(function (m) { return m.limit != null; }).map(function (m) {
+      var bd = m.used == null ? '' : (m.over ? ' <span class="badge b-bad">เต็ม</span>' : ((m.pct || 0) >= 80 ? ' <span class="badge b-pending">ใกล้เต็ม</span>' : ''));
+      return '<div class="mute">' + esc(QM_SHORT[m.key]) + ' ' + esc(m.used == null ? '–' : fmtN(m.used)) + '/' + esc(fmtN(m.limit)) + bd + '</div>';
+    }).join('');
+  }
+
   function viewTenants() {
     var ts = S.tenants || [];
     var nExp = ts.filter(function (t) { return t.expired; }).length;
@@ -323,12 +376,12 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
       var st = S.stats[t.slug];
       return '<tr><td><b>' + esc(t.name) + '</b><div class="mono mute">' + esc(t.slug) + '</div></td>' +
         '<td><span class="badge b-' + esc(t.status) + '">' + esc(STATUS_TH[t.status] || t.status) + '</span></td>' +
-        '<td>' + esc(t.plan) + '</td>' +
+        '<td>' + esc(t.plan) + (limitSummary(t.effectiveLimits) ? '<div class="mute" style="font-size:12px">โควตา: ' + esc(limitSummary(t.effectiveLimits)) + (t.limits ? ' · กำหนดเอง' : '') + '</div>' : '') + '</td>' +
         '<td>' + expiryBadge(t) + '</td><td>' + featSummary(t) + '</td>' +
         '<td class="mono">' + esc(host(t.supabaseUrl)) + '</td>' +
         '<td>' + (st ? (st.error ? '<span class="mute">' + esc(st.error) + '</span>' :
           'เพื่อน ' + esc(st.friends == null ? '–' : st.friends) + ' · ลงทะเบียน ' + esc(st.registeredMembers == null ? '–' : st.registeredMembers) +
-          '<div class="mute">LINE ' + esc(st.line && st.line.usedThisMonth != null ? st.line.usedThisMonth : '–') + '/' + esc(st.line && st.line.quotaLimit != null ? st.line.quotaLimit : '∞') + '</div>') : '<span class="mute">–</span>') + '</td>' +
+          '<div class="mute">LINE ' + esc(st.line && st.line.usedThisMonth != null ? st.line.usedThisMonth : '–') + '/' + esc(st.line && st.line.quotaLimit != null ? st.line.quotaLimit : '∞') + '</div>' + quotaLines(st.quota)) : '<span class="mute">–</span>') + '</td>' +
         '<td><div class="row">' +
         '<button class="btn sm" data-act="t-stats" data-slug="' + esc(t.slug) + '">สถิติ</button>' +
         (can('operator') ? '<button class="btn sm" data-act="t-test" data-slug="' + esc(t.slug) + '">ทดสอบ</button>' +
@@ -385,6 +438,7 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
       '<div class="grid2"><label class="f"><span>แพ็กเกจ</span><select name="plan">' + planOptions(t.plan || 'trial') + '</select></label>' +
       '<label class="f"><span>หมายเหตุ</span><input name="notes" value="' + esc(t.notes || '') + '" maxlength="500"></label></div>' +
       expiryFeatBlock(t, edit) +
+      quotaBlock(t.limits, true) +
       (shared.length ? '<div class="f"><span class="mute" style="font-size:13px">ใช้คีย์กลางของแพลตฟอร์มร่วมกัน (ถ้าไม่ติ๊ก ต้องกรอกของหมู่บ้านเอง)</span>' +
         shared.map(function (k) { return '<label class="chk"><input type="checkbox" name="sharedEnv" value="' + esc(k) + '"' + ((t.sharedEnv || []).indexOf(k) >= 0 ? ' checked' : '') + '> ' + esc(k) + '</label>'; }).join('') + '</div>' : '') +
       '<details><summary>ตั้งค่าขั้นสูง (Gemini / Thunder / Telegram / แอดมิน / Cron)</summary><div class="grid2">' +
@@ -395,13 +449,14 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
   }
   function formBody(form) {
     var fd = new FormData(form), b = {}, shared = [];
-    fd.forEach(function (v, k) { v = String(v); if (k === 'sharedEnv') shared.push(v); else if (k === 'feat' || k === 'featMode' || k === 'expiresAt') return; else if (v.trim() !== '' || k === 'notes') b[k] = v.trim(); });
+    fd.forEach(function (v, k) { v = String(v); if (k === 'sharedEnv') shared.push(v); else if (k === 'feat' || k === 'featMode' || k === 'expiresAt' || k.indexOf('lim_') === 0) return; else if (v.trim() !== '' || k === 'notes') b[k] = v.trim(); });
     b.sharedEnv = shared;
     if (form.elements.expiresAt) {   // แก้ไข: ว่าง = ไม่หมดอายุ (ส่ง null) · สร้างใหม่: ว่าง = ใช้อายุเริ่มต้นของแพ็กเกจ (ไม่ส่ง)
       var ex = form.elements.expiresAt.value;
       if (ex) b.expiresAt = ex; else if (form.getAttribute('data-mode') === 'update') b.expiresAt = null;
     }
     if (form.querySelector('input[name="featMode"]')) b.features = readFeat(form);
+    if (form.elements.lim_mode) { var lm = readLimits(form); if (Object.keys(lm).length || form.getAttribute('data-mode') === 'update') b.limits = Object.keys(lm).length ? lm : null; }   // แก้ไข: ว่างทั้งหมด = กลับไปตามแพ็กเกจ (null)
     return b;
   }
   async function submitTenant(form) {
@@ -411,6 +466,7 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
     if (!b.name) return bad('ต้องระบุชื่อ');
     if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(b.supabaseUrl || '')) return bad('Supabase URL ต้องอยู่ในรูป https://xxxx.supabase.co');
     if (mode === 'create' && !b.serviceKey) return bad('ต้องระบุ service_role key');
+    var lerr = checkLimits(form, true); if (lerr) return bad(lerr);
     var btn = $('tf-go'); btn.disabled = true;
     var r = await api(mode === 'create' ? 'tenant_create' : 'tenant_update', { body: b });
     btn.disabled = false;
@@ -472,12 +528,12 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
       return '<tr><td><b>' + esc(p.name) + '</b><div class="mono mute">' + esc(p.code) + '</div></td><td>' + (p.price_thb == null ? '–' : esc(Number(p.price_thb).toLocaleString('th-TH')) + ' บาท') + '</td>' +
         '<td>' + (p.duration_days ? esc(p.duration_days) + ' วัน' : '<span class="mute">ไม่หมดอายุ</span>') + '</td>' +
         '<td>' + (nf == null ? 'ทั้งหมด' : '<b>' + esc(nf) + '</b>/' + esc(total)) + '</td>' +
-        '<td class="mono">' + esc(JSON.stringify(p.limits || {})) + '</td><td><span class="badge ' + (p.active !== false ? 'b-ok' : 'b-idle') + '">' + (p.active !== false ? 'เปิด' : 'ปิด') + '</span></td>' +
+        '<td>' + (limitSummary(mergeLimitsUi(p.limits)) ? esc(limitSummary(mergeLimitsUi(p.limits))) : '<span class="mute">ไม่จำกัด</span>') + '</td><td><span class="badge ' + (p.active !== false ? 'b-ok' : 'b-idle') + '">' + (p.active !== false ? 'เปิด' : 'ปิด') + '</span></td>' +
         '<td>' + (can('owner') ? '<div class="row"><button class="btn sm" data-act="p-edit" data-code="' + esc(p.code) + '">แก้ไข</button><button class="btn sm dan" data-act="p-del" data-code="' + esc(p.code) + '">ลบ</button></div>' : '') + '</td></tr>';
     }).join('');
     return '<div class="card"><div class="row"><h2 class="grow">แพ็กเกจ</h2>' + (can('owner') ? '<button class="btn pri" data-act="p-new">+ เพิ่มแพ็กเกจ</button>' : '') + '</div>' +
-      '<div class="msg warn">แพ็กเกจกำหนด “ชุดฟีเจอร์ตั้งต้น” และ “อายุเริ่มต้น” ของหมู่บ้านใหม่ — ระบบบังคับใช้จริงที่ฝั่งเซิร์ฟเวอร์ (ปรับรายหมู่บ้านได้ในหน้าแก้ไขหมู่บ้าน) · ส่วนโควต้า (ช่องข้อจำกัด) และการเรียกเก็บเงินอัตโนมัติ ยังไม่บังคับใช้</div>' +
-      '<div class="scroll"><table class="tbl"><thead><tr><th>ชื่อ</th><th>ราคา/เดือน</th><th>อายุเริ่มต้น</th><th>ฟีเจอร์</th><th>ข้อจำกัด (JSON)</th><th>สถานะ</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+      '<div class="msg warn">แพ็กเกจกำหนด “ชุดฟีเจอร์ตั้งต้น” และ “อายุเริ่มต้น” ของหมู่บ้านใหม่ — ระบบบังคับใช้จริงที่ฝั่งเซิร์ฟเวอร์ (ปรับรายหมู่บ้านได้ในหน้าแก้ไขหมู่บ้าน) · ส่วนโควตา (สมาชิก / ข้อความ LINE / AI) บังคับใช้ตามโหมดที่เลือก และใบแจ้งหนี้ดูได้ในแท็บ “การเงิน” (บันทึกเอง — ยังไม่ต่อระบบชำระเงินอัตโนมัติ)</div>' +
+      '<div class="scroll"><table class="tbl"><thead><tr><th>ชื่อ</th><th>ราคา/เดือน</th><th>อายุเริ่มต้น</th><th>ฟีเจอร์</th><th>โควตา</th><th>สถานะ</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
   }
   function planForm(p) {
     var edit = !!p; p = p || {};
@@ -489,7 +545,7 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
       '<label class="f"><span>ลำดับแสดง</span><input name="sort" type="number" value="' + esc(p.sort == null ? 100 : p.sort) + '"></label>' +
       '<label class="f"><span>อายุเริ่มต้นเมื่อสร้างหมู่บ้าน (วัน, เว้นว่าง = ไม่หมดอายุ)</span><input name="durationDays" type="number" min="1" max="3650" step="1" value="' + esc(p.duration_days == null ? '' : p.duration_days) + '" placeholder="เช่น 14 สำหรับทดลองใช้"></label></div>' +
       featBlock(mode, mode === 'custom' ? p.features : allFeatKeys(), ['เปิดทุกฟีเจอร์', 'เลือกเฉพาะบางฟีเจอร์']) +
-      '<label class="f"><span>ข้อจำกัด (JSON เช่น {"members":500}) — บันทึกไว้เท่านั้น ยังไม่บังคับใช้</span><textarea name="limits">' + esc(JSON.stringify(p.limits || {}, null, 2)) + '</textarea></label>' +
+      quotaBlock(p.limits, false) +
       '<label class="chk"><input type="checkbox" name="active"' + (p.active === false ? '' : ' checked') + '> เปิดให้เลือกใช้</label>' +
       '<div class="mute" style="font-size:12.5px;margin:4px 0 8px">การเปลี่ยนชุดฟีเจอร์ของแพ็กเกจมีผลกับหมู่บ้านที่ “ตามแพ็กเกจ” ทันที (หมู่บ้านที่กำหนดเองไม่เปลี่ยน) · อายุเริ่มต้นใช้เฉพาะหมู่บ้านที่สร้างใหม่</div>' +
       '<div class="row"><button class="btn pri" type="submit" id="pf-go">บันทึก</button><button class="btn" type="button" data-act="close">ปิด</button></div></form>';
@@ -497,8 +553,8 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
   async function submitPlan(form) {
     var fd = new FormData(form), box = $('pf-msg'), limits;
     var bad = function (t) { box.innerHTML = msgBox({ kind: 'err', text: t }); };
-    try { limits = JSON.parse(String(fd.get('limits') || '{}') || '{}'); } catch (_) { return bad('ข้อจำกัดต้องเป็น JSON ที่ถูกต้อง'); }
-    if (!limits || typeof limits !== 'object' || Array.isArray(limits)) return bad('ข้อจำกัดต้องเป็น object เช่น {"members":500}');
+    var lerr = checkLimits(form, false); if (lerr) return bad(lerr);
+    limits = readLimits(form);
     var price = String(fd.get('priceThb') || '').trim();
     var dur = String(fd.get('durationDays') || '').trim();
     if (dur !== '' && (!/^\d+$/.test(dur) || Number(dur) < 1 || Number(dur) > 3650)) return bad('อายุเริ่มต้นต้องเป็นจำนวนวัน 1-3650');
@@ -509,6 +565,102 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
     if (r.handled) return;
     if (!r.ok) return bad(errText(r));
     closeModal(); setMsg('ok', 'บันทึกแพ็กเกจแล้ว'); await Promise.all([loadPlans(), loadTenants()]); render();
+  }
+
+  // ─── การเงิน / ใบแจ้งหนี้ ────────────────────────────────────
+  var INV_ST = { issued: ['ค้างชำระ', 'b-pending'], paid: ['ชำระแล้ว', 'b-ok'], void: ['ยกเลิก', 'b-idle'] };
+  function ymdTh(s) { if (!s) return '–'; var p = String(s).slice(0, 10).split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + (Number(p[0]) + 543) : esc(s); }
+  async function loadBilling() {
+    var st = (S.billing && S.billing.status) || '';
+    var sm = await api('billing_summary');
+    if (sm.handled) return;
+    if (sm.status === 503 && sm.data && sm.data.code === 'billing_not_ready') { S.billing = { notReady: true, status: st }; return; }
+    var l = await api('invoices', { query: { status: st } });
+    if (l.handled) return;
+    S.billing = { sum: sm.ok ? sm.data : null, list: l.ok ? (l.data.invoices || []) : [], status: st, err: sm.ok && l.ok ? '' : errText(sm.ok ? l : sm) };
+  }
+  function viewBilling() {
+    var B = S.billing;
+    if (!B) return '<div class="card"><p class="mute">กำลังโหลด…</p></div>';
+    if (B.notReady) return '<div class="card"><h2>การเงิน</h2><div class="msg warn">ยังไม่มีตาราง saas_invoices — รัน <b>migration_billing_quota.sql</b> ใน Supabase project หลัก แล้วกดรีเฟรช</div><button class="btn sm" data-act="b-reload">รีเฟรช</button></div>';
+    var sm = B.sum || {}, c = sm.counts || {};
+    var stats = '<div class="stats">' +
+      '<div class="stat"><b>' + esc(money(sm.revenueMonth)) + '</b><span>รายรับเดือนนี้</span></div>' +
+      '<div class="stat"><b>' + esc(money(sm.revenueYear)) + '</b><span>รายรับปีนี้</span></div>' +
+      '<div class="stat"><b>' + esc(money(sm.outstanding)) + '</b><span>ค้างชำระ (' + esc(c.issued || 0) + ' ใบ)</span></div>' +
+      '<div class="stat' + (sm.overdue > 0 ? ' bad' : '') + '"><b>' + esc(money(sm.overdue)) + '</b><span>เกินกำหนด (' + esc(c.overdue || 0) + ' ใบ)</span></div></div>';
+    var need = (sm.needInvoice || []);
+    var needHtml = need.length ? '<div class="sec"><h4>ใกล้หมดอายุ / ยังไม่มีใบแจ้งหนี้ (' + need.length + ')</h4><div class="scroll"><table class="tbl"><thead><tr><th>หมู่บ้าน</th><th>แพ็กเกจ</th><th>หมดอายุ</th><th></th></tr></thead><tbody>' +
+      need.map(function (t) {
+        return '<tr><td><b>' + esc(t.name) + '</b><div class="mono mute">' + esc(t.slug) + '</div></td><td>' + esc(t.plan) + '</td><td>' + esc(fmtDate(t.expiresAt)) + ' <span class="badge ' + (t.daysLeft < 0 ? 'b-bad' : 'b-pending') + '">' + (t.daysLeft < 0 ? 'หมดแล้ว ' + (-t.daysLeft) + ' วัน' : 'อีก ' + t.daysLeft + ' วัน') + '</span></td>' +
+          '<td>' + (can('operator') ? '<button class="btn sm pri" data-act="inv-new" data-slug="' + esc(t.slug) + '">ออกใบ</button>' : '') + '</td></tr>';
+      }).join('') + '</tbody></table></div></div>' : '';
+    var flt = [['', 'ทั้งหมด'], ['issued', 'ค้างชำระ'], ['paid', 'ชำระแล้ว'], ['void', 'ยกเลิก']].map(function (f) {
+      return '<button class="btn sm' + (B.status === f[0] ? ' pri' : '') + '" data-act="inv-filter" data-status="' + f[0] + '">' + f[1] + '</button>';
+    }).join('');
+    var rows = (B.list || []).map(function (i) {
+      var st = INV_ST[i.status] || [i.status, 'b-idle'];
+      var badge = i.status === 'issued' && i.overdue ? '<span class="badge b-bad">เกินกำหนด</span>' : '<span class="badge ' + st[1] + '">' + esc(st[0]) + '</span>';
+      return '<tr><td class="mono">' + esc(i.invoice_no) + '</td><td><b>' + esc(i.slug) + '</b><div class="mute">' + esc(i.plan || '') + '</div></td>' +
+        '<td>' + esc(ymdTh(i.period_start)) + ' – ' + esc(ymdTh(i.period_end)) + '<div class="mute">' + esc(i.months) + ' เดือน</div></td>' +
+        '<td>' + esc(money(i.amount_thb)) + '</td>' +
+        '<td>' + badge + (i.status === 'issued' && i.due_at ? '<div class="mute">กำหนด ' + esc(ymdTh(i.due_at)) + '</div>' : '') + (i.status === 'paid' ? '<div class="mute">' + esc(fmtDate(i.paid_at)) + (i.paid_method ? ' · ' + esc(i.paid_method) : '') + '</div>' : '') + '</td>' +
+        '<td>' + (i.status === 'issued' && can('owner') ? '<div class="row"><button class="btn sm pri" data-act="inv-pay" data-id="' + esc(i.id) + '">ชำระแล้ว</button><button class="btn sm dan" data-act="inv-void" data-id="' + esc(i.id) + '">ยกเลิก</button></div>' : '') + '</td></tr>';
+    }).join('');
+    return '<div class="card"><div class="row"><h2 class="grow">การเงิน</h2><button class="btn sm" data-act="b-reload">รีเฟรช</button>' +
+      (can('operator') ? '<button class="btn" data-act="inv-gen">ออกใบแจ้งหนี้อัตโนมัติ (หมดอายุภายใน 14 วัน)</button><button class="btn pri" data-act="inv-new" data-slug="">+ ออกใบแจ้งหนี้</button>' : '') + '</div>' +
+      (B.err ? '<div class="msg err">' + esc(B.err) + '</div>' : '') + stats +
+      '<div class="mute" style="font-size:12.5px">ระบบบันทึกใบแจ้งหนี้เอง (ไม่ต่อระบบชำระเงิน) · เมื่อกด “ชำระแล้ว” (เฉพาะสิทธิ์เจ้าของ) ระบบต่ออายุหมู่บ้านให้อัตโนมัติ นับจากวันหมดอายุเดิมหรือวันนี้ แล้วแต่อย่างไหนช้ากว่า</div>' +
+      needHtml +
+      '<div class="sec"><div class="row"><h4 class="grow">ใบแจ้งหนี้</h4>' + flt + '</div>' +
+      ((B.list || []).length ? '<div class="scroll"><table class="tbl"><thead><tr><th>เลขที่</th><th>หมู่บ้าน</th><th>รอบ</th><th>ยอด</th><th>สถานะ</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<p class="mute">ยังไม่มีใบแจ้งหนี้</p>') + '</div></div>';
+  }
+  function invoiceForm(slug) {
+    var opts = (S.tenants || []).map(function (t) { return '<option value="' + esc(t.slug) + '"' + (t.slug === slug ? ' selected' : '') + '>' + esc(t.name) + ' (' + esc(t.slug) + ')</option>'; }).join('');
+    return '<h3>ออกใบแจ้งหนี้</h3><div id="iv-msg"></div><form id="f-inv">' +
+      '<label class="f"><span>หมู่บ้าน</span><select name="slug" required>' + opts + '</select></label>' +
+      '<div class="grid2"><label class="f"><span>จำนวนเดือน (1-36)</span><input name="months" type="number" min="1" max="36" step="1" value="1" required></label>' +
+      '<label class="f"><span>ยอดรวม (บาท) — เว้นว่าง = ราคาแพ็กเกจ × จำนวนเดือน</span><input name="amountThb" type="number" min="0" step="0.01"></label>' +
+      '<label class="f"><span>เริ่มรอบวันที่ — เว้นว่าง = วันหมดอายุเดิม (หรือวันนี้ถ้าหมดแล้ว)</span><input name="periodStart" type="date"></label>' +
+      '<label class="f"><span>ครบกำหนดชำระภายใน (วัน)</span><input name="dueDays" type="number" min="0" max="90" step="1" value="7"></label></div>' +
+      '<label class="f"><span>หมายเหตุ</span><input name="note" maxlength="300"></label>' +
+      '<div class="row"><button class="btn pri" type="submit" id="iv-go">ออกใบ</button><button class="btn" type="button" data-act="close">ปิด</button></div></form>';
+  }
+  async function submitInvoice(form) {
+    var fd = new FormData(form), box = $('iv-msg'), b = {};
+    fd.forEach(function (v, k) { v = String(v).trim(); if (v !== '') b[k] = v; });
+    var bad = function (t) { box.innerHTML = msgBox({ kind: 'err', text: t }); };
+    if (!b.slug) return bad('เลือกหมู่บ้าน');
+    var btn = $('iv-go'); btn.disabled = true;
+    var r = await api('invoice_create', { body: b });
+    btn.disabled = false;
+    if (r.handled) return;
+    if (!r.ok) return bad(errText(r));
+    closeModal(); setMsg('ok', 'ออกใบแจ้งหนี้ ' + r.data.invoice.invoice_no + ' แล้ว (' + money(r.data.invoice.amount_thb) + ')');
+    await loadBilling(); render();
+  }
+  function payForm(inv) {
+    var today = thDate(new Date().toISOString());
+    return '<h3>บันทึกการชำระเงิน</h3><div id="pay-msg"></div><p>ใบ <b class="mono">' + esc(inv.invoice_no) + '</b> · ' + esc(inv.slug) + ' · ' + esc(money(inv.amount_thb)) + '</p>' +
+      '<div class="msg warn">เมื่อบันทึก ระบบจะต่ออายุหมู่บ้านนี้อีก <b>' + esc(inv.months) + ' เดือน</b> ให้อัตโนมัติ (ทำซ้ำไม่ได้)</div>' +
+      '<form id="f-pay" data-id="' + esc(inv.id) + '"><div class="grid2"><label class="f"><span>ช่องทางที่ได้รับเงิน</span><select name="paidMethod">' +
+      ['โอนเงิน', 'พร้อมเพย์', 'เงินสด', 'เช็ค', 'อื่น ๆ'].map(function (m) { return '<option>' + m + '</option>'; }).join('') + '</select></label>' +
+      '<label class="f"><span>วันที่ได้รับเงิน</span><input name="paidAt" type="date" value="' + esc(today) + '" max="' + esc(today) + '"></label></div>' +
+      '<label class="f"><span>หมายเหตุ</span><input name="note" maxlength="300" value="' + esc(inv.note || '') + '"></label>' +
+      '<div class="row"><button class="btn pri" type="submit" id="pay-go">บันทึกว่าชำระแล้ว + ต่ออายุ</button><button class="btn" type="button" data-act="close">ปิด</button></div></form>';
+  }
+  async function submitPay(form) {
+    var fd = new FormData(form), box = $('pay-msg');
+    var body = { id: form.getAttribute('data-id'), status: 'paid', paidMethod: String(fd.get('paidMethod') || ''), note: String(fd.get('note') || '').trim() };
+    var d = String(fd.get('paidAt') || ''); if (d) body.paidAt = new Date(d + 'T12:00:00+07:00').toISOString();
+    var btn = $('pay-go'); btn.disabled = true;
+    var r = await api('invoice_set_status', { body: body });
+    btn.disabled = false;
+    if (r.handled) return;
+    if (!r.ok) { box.innerHTML = msgBox({ kind: 'err', text: errText(r) }); return; }
+    closeModal();
+    setMsg('ok', 'บันทึกการชำระแล้ว' + (r.data.renewed ? ' · ต่ออายุถึง ' + fmtDate(r.data.expiresAt) : ' · หมู่บ้านนี้ไม่มีวันหมดอายุ จึงไม่ต้องต่อ'));
+    await Promise.all([loadBilling(), loadTenants()]); render();
   }
 
   // ─── ต่ออายุ ─────────────────────────────────────────────────
@@ -632,6 +784,7 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
         if (S.tab === 'admins') { var a = await api('admins'); if (a.ok) S.admins = a.data.admins || []; }
         if (S.tab === 'jobs' && !S.jobs) { var j = await api('jobs'); if (j.ok) S.jobs = j.data.jobs || []; }
         if (S.tab === 'plans') await loadPlans();
+        if (S.tab === 'billing') { await Promise.all([loadBilling(), loadTenants(), loadPlans()]); }
         if (S.tab === 'system') await loadInfo();
         return render();
       }
@@ -658,6 +811,27 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
         if (r.handled) return;
         if (!r.ok) setMsg('err', errText(r), r.data && r.data.slugs); else setMsg('ok', 'ลบแล้ว');
         await loadPlans(); return render();
+      }
+      case 'b-reload': setMsg(null); await loadBilling(); return render();
+      case 'inv-filter': S.billing = Object.assign({}, S.billing, { status: el.getAttribute('data-status') || '' }); await loadBilling(); return render();
+      case 'inv-new': return openModal(invoiceForm(slug));
+      case 'inv-gen': {
+        if (!(await confirmBox('ออกใบแจ้งหนี้อัตโนมัติ', 'ออกใบ 1 เดือนให้ทุกหมู่บ้านที่ใช้งานอยู่และจะหมดอายุภายใน 14 วัน (หรือหมดแล้ว) ซึ่งแพ็กเกจมีราคา และยังไม่มีใบค้างชำระ — กดซ้ำได้ ไม่ออกซ้ำ', 'ออกใบ', false))) return;
+        var g = await api('invoice_generate_due', { body: { daysAhead: 14 } });
+        if (g.handled) return;
+        if (!g.ok) setMsg('err', errText(g));
+        else setMsg(g.data.created.length ? 'ok' : 'warn', 'ออกใบแจ้งหนี้ ' + g.data.created.length + ' ใบ' + (g.data.skipped.length ? ' · ข้าม ' + g.data.skipped.length + ' แห่ง' : ''),
+          g.data.created.map(function (x) { return x.slug + ' → ' + x.invoice_no + ' (' + money(x.amount_thb) + ')'; }).concat(g.data.skipped.map(function (x) { return x.slug + ' — ข้าม: ' + x.reason; })));
+        await loadBilling(); return render();
+      }
+      case 'inv-pay': { var iv = find(S.billing && S.billing.list, 'id', el.getAttribute('data-id')); return iv ? openModal(payForm(iv)) : undefined; }
+      case 'inv-void': {
+        var iv2 = find(S.billing && S.billing.list, 'id', el.getAttribute('data-id')); if (!iv2) return;
+        if (!(await confirmBox('ยกเลิกใบแจ้งหนี้', 'ยกเลิกใบ ' + iv2.invoice_no + ' ของ ' + iv2.slug + ' ? (ยกเลิกแล้วคืนไม่ได้ ต้องออกใบใหม่)', 'ยกเลิกใบ', true))) return;
+        var vr = await api('invoice_set_status', { body: { id: iv2.id, status: 'void' } });
+        if (vr.handled) return;
+        if (!vr.ok) setMsg('err', errText(vr)); else setMsg('ok', 'ยกเลิกใบแล้ว');
+        await loadBilling(); return render();
       }
       case 'a-new': return openModal(adminForm(null));
       case 'a-edit': return openModal(adminForm(find(S.admins, 'email', el.getAttribute('data-email'))));
@@ -688,6 +862,8 @@ details summary{cursor:pointer;color:var(--brand);margin:6px 0 10px}
       case 'f-enroll': return doEnrollVerify($('mfa-code').value);
       case 'f-tenant': return submitTenant(f);
       case 'f-plan': return submitPlan(f);
+      case 'f-inv': return submitInvoice(f);
+      case 'f-pay': return submitPay(f);
       case 'f-renew': return submitRenew(f);
       case 'f-admin': return submitAdmin(f);
       case 'f-job': {
