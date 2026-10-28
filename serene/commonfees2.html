@@ -1949,8 +1949,31 @@
                                 <label class="block text-xs font-bold text-slate-600 mb-1">หมายเหตุ (ไม่บังคับ)</label>
                                 <textarea id="dstNote" rows="2" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm resize-none" placeholder="เช่น 1. ปี 2567 ยังไม่เก็บค่าส่วนกลาง มกราคม -"></textarea>
                             </div>
+                            <div class="border border-rose-200 bg-rose-50/40 rounded-lg px-3 py-3 space-y-2">
+                                <label class="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer select-none">
+                                    <input type="checkbox" id="dstRangeOn" onchange="dstToggleRange()" class="w-4 h-4 accent-rose-500">
+                                    📅 เลือกช่วงเดือน/ปีที่ต้องการออกเอกสาร
+                                </label>
+                                <div id="dstRangeBox" class="hidden space-y-2">
+                                    <div class="grid grid-cols-[3rem_1fr_1fr] gap-2 items-center">
+                                        <span class="text-xs font-bold text-slate-600">ตั้งแต่</span>
+                                        <select id="dstRangeFromMonth" onchange="dstUpdateRangePreview()" class="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm"></select>
+                                        <input type="number" id="dstRangeFromYear" oninput="dstUpdateRangePreview()" placeholder="ปี พ.ศ." class="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm">
+                                        <span class="text-xs font-bold text-slate-600">ถึง</span>
+                                        <select id="dstRangeToMonth" onchange="dstUpdateRangePreview()" class="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm"></select>
+                                        <input type="number" id="dstRangeToYear" oninput="dstUpdateRangePreview()" placeholder="ปี พ.ศ." class="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm">
+                                    </div>
+                                    <div class="flex flex-wrap gap-1.5">
+                                        <button type="button" onclick="dstRangePreset('thisyear')" class="px-2.5 py-1 rounded-full bg-white border border-slate-300 hover:border-rose-400 text-xs">ปีนี้ทั้งปี</button>
+                                        <button type="button" onclick="dstRangePreset('last12')" class="px-2.5 py-1 rounded-full bg-white border border-slate-300 hover:border-rose-400 text-xs">12 เดือนล่าสุด</button>
+                                        <button type="button" onclick="dstRangePreset('lastyear')" class="px-2.5 py-1 rounded-full bg-white border border-slate-300 hover:border-rose-400 text-xs">ปีที่แล้วทั้งปี</button>
+                                        <button type="button" onclick="dstRangePreset('alldata')" class="px-2.5 py-1 rounded-full bg-white border border-slate-300 hover:border-rose-400 text-xs">ทุกปีที่มีข้อมูล</button>
+                                    </div>
+                                </div>
+                                <div id="dstRangePreview" class="text-xs text-slate-500"></div>
+                            </div>
                             <div class="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-500">
-                                📋 ตารางรายเดือน/ปี จะสร้างอัตโนมัติจากข้อมูลการชำระจริงในระบบ
+                                📋 ตารางรายเดือน/ปี จะสร้างอัตโนมัติจากข้อมูลการชำระจริงในระบบ (ไม่ติ๊กช่วงเวลา = ออกทุกปีที่มีข้อมูล)
                             </div>
                         </div>
                         <div class="flex gap-3 px-6 py-4 border-t border-slate-100">
@@ -11471,14 +11494,23 @@ function closeOwnerHistoryModal() {
 // 📄 หนังสือแจ้งเตือนค้างชำระทางการ (Formal Letter)
 // ================================================================
 
-function buildFormalLetterHTML(houseData) {
+// opts (ไม่บังคับ) = { level:0|1|2|3, issueDate:'YYYY-MM-DD', deadlineMode:'eom'|'d7'|'d15'|'d30'|'custom', deadlineCustom,
+//                     range:{fromYear,fromMonth,toYear,toMonth}|null, detail:bool, ref:string, ack:bool, sign:[{name,title},{name,title}] }
+// ไม่ส่ง opts = พฤติกรรมเดิมทุกอย่าง (ขั้นตามเดือนค้าง, ครบกำหนดสิ้นเดือน)
+function buildFormalLetterHTML(houseData, opts) {
+    const o = opts || null;
     const invS = getInvoiceSettings();
-    const today = new Date();
+    const today = (o && _flParseISO(o.issueDate)) || new Date();
     const thaiDate = today.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
     const thaiYear = toBEYear(today.getFullYear());
-    const docNo = `นค.${thaiYear}-${String(today.getMonth()+1).padStart(2,'0')}-${houseData.houseNo.replace('/','_')}`;
+    const level = (o && o.level) || houseData.rule?.level || 3;
+    const docNo = `นค.${thaiYear}-${String(today.getMonth()+1).padStart(2,'0')}-${houseData.houseNo.replace('/','_')}${o ? '-ค' + level : ''}`;
 
-    const level = houseData.rule?.level || 3;
+    // ยอดหนี้ในหนังสือ: ถ้าเลือกช่วงเดือน ให้คิดเฉพาะช่วงนั้น
+    const debtItems = o ? _flItems(houseData.houseNo, o.range) : null;
+    const nMonths = (o && o.range) ? debtItems.length : houseData.totalMonths;
+    const amount  = (o && o.range) ? debtItems.length * RATE_PER_MONTH : houseData.totalAmount;
+    const sign = (o && o.sign) || FL_DEFAULT_SIGNERS;
     const levelLabel = level === 1 ? 'ครั้งที่ 1' : level === 2 ? 'ครั้งที่ 2 (แจ้งเตือนเข้ม)' : 'ครั้งที่ 3 (ขั้นรุนแรง)';
     const levelColor = level === 3 ? '#dc2626' : level === 2 ? '#ea580c' : '#d97706';
     const headerBg   = level === 3 ? '#1e2a3a' : level === 2 ? '#431407' : '#422006';
@@ -11501,8 +11533,7 @@ function buildFormalLetterHTML(houseData) {
   </div>` : '';
 
     // กำหนดวันชำระ = วันสิ้นเดือน (เดือนปัจจุบัน + offset)
-    const monthOffset = level === 1 ? 0 : level === 2 ? 0 : 0; // สิ้นเดือนปัจจุบันทุกขั้น
-    const deadlineDate = new Date(today.getFullYear(), today.getMonth() + monthOffset + 1, 0); // วันสุดท้ายของเดือน
+    const deadlineDate = _flDeadline(today, o ? o.deadlineMode : 'eom', o ? o.deadlineCustom : '') || new Date(today.getFullYear(), today.getMonth() + 1, 0);
     const deadline = deadlineDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
 
     const warningHTML = level === 3
@@ -11517,7 +11548,14 @@ function buildFormalLetterHTML(houseData) {
            </div>`
         : '';
 
-    return `<div class="formal-letter-page">
+    const ackHTML = (o && o.ack) ? `
+  <div style="border-top:1.5px dashed #64748b;margin:8pt 0 0;padding-top:5pt;font-size:10pt;line-height:1.8;">
+    <div style="font-weight:700;">✂ ส่วนรับทราบ (กรุณาลงนามและส่งคืนสำนักงานนิติบุคคล)</div>
+    <div>ข้าพเจ้า ........................................................ เจ้าของ/ผู้อยู่อาศัย บ้านเลขที่ <strong>${houseData.houseNo}</strong> ได้รับหนังสือทวงถามฉบับนี้แล้ว เมื่อวันที่ ........................................</div>
+    <div style="text-align:right;">ลงชื่อ ................................................ ผู้รับ</div>
+  </div>` : '';
+
+    return `<div class="formal-letter-page"><div class="ltr-main">
 
   <!-- ═══ HEADER กึ่งกลาง ═══ -->
   <div class="ltr-header" style="text-align:center;">
@@ -11544,6 +11582,8 @@ function buildFormalLetterHTML(houseData) {
     <div>วันที่: <strong style="color:${levelColor};">${thaiDate}</strong></div>
   </div>
 
+  ${(o && o.ref && o.ref.trim()) ? `<div style="font-size:10pt;margin:2pt 0 4pt;"><strong>อ้างถึง:</strong> ${nsEsc(o.ref.trim())}</div>` : ''}
+
   <div class="ltr-recipient">
     <div class="ltr-recipient-icon" style="background:${headerBg};">👤</div>
     <div>
@@ -11553,12 +11593,14 @@ function buildFormalLetterHTML(houseData) {
     </div>
   </div>
 
-  <p class="ltr-p">ด้วย${invS.orgName} ตรวจสอบพบว่า ท่านมียอดค้างชำระค่าส่วนกลางประจำหมู่บ้านฯ เป็นจำนวน <strong>${houseData.totalMonths} เดือน</strong> คิดเป็นเงินรวมทั้งสิ้น</p>
+  <p class="ltr-p">ด้วย${invS.orgName} ตรวจสอบพบว่า ท่านมียอดค้างชำระค่าส่วนกลางประจำหมู่บ้านฯ เป็นจำนวน <strong>${nMonths} เดือน</strong> คิดเป็นเงินรวมทั้งสิ้น</p>
 
   <div class="ltr-amount-box" style="border-color:${levelColor};">
-    <span class="ltr-amount" style="color:${levelColor};">฿${houseData.totalAmount.toLocaleString()}</span>
-    <span class="ltr-amount-words">(${amountInWords(houseData.totalAmount)})</span>
+    <span class="ltr-amount" style="color:${levelColor};">฿${amount.toLocaleString()}</span>
+    <span class="ltr-amount-words">(${amountInWords(amount)})</span>
   </div>
+
+  ${(o && o.detail) ? _flDetailHTML(debtItems || _flItems(houseData.houseNo, null)) : ''}
 
   <p class="ltr-p">นิติบุคคลฯ ใคร่ขอให้ท่านดำเนินการชำระยอดค้างดังกล่าวให้ครบถ้วน <strong>ภายในวันที่ <span style="color:${levelColor};">${deadline}</span></strong> โดยสามารถโอนเงินผ่านช่องทางดังนี้</p>
 
@@ -11581,6 +11623,9 @@ function buildFormalLetterHTML(houseData) {
 
   <p class="ltr-closing">จึงเรียนมาเพื่อโปรดทราบและดำเนินการโดยเร็ว</p>
 
+  ${ackHTML}
+  </div><!-- /ltr-main -->
+
   <div class="ltr-footer">
     <div class="ltr-stamp-wrap">
       <div class="ltr-stamp" style="border-color:${levelColor};color:${levelColor};">${stampText}</div>
@@ -11588,13 +11633,13 @@ function buildFormalLetterHTML(houseData) {
     <div class="ltr-sign-row">
       <div class="ltr-sign-col">
         <div class="ltr-sign-line"></div>
-        <div class="ltr-sign-bracket">( นางสาว อรนภา ดวงแสงจันทร์ )</div>
-        <div class="ltr-sign-label">เลขานุการ / ผู้จัดทำรายงานการเงิน</div>
+        <div class="ltr-sign-bracket">( ${nsEsc(sign[0].name)} )</div>
+        <div class="ltr-sign-label">${nsEsc(sign[0].title)}</div>
       </div>
       <div class="ltr-sign-col">
         <div class="ltr-sign-line"></div>
-        <div class="ltr-sign-bracket">( นาย สุริยา เหล่าโนนเขวา )</div>
-        <div class="ltr-sign-label">ประธานกรรมการนิติบุคคลหมู่บ้านจัดสรร</div>
+        <div class="ltr-sign-bracket">( ${nsEsc(sign[1].name)} )</div>
+        <div class="ltr-sign-label">${nsEsc(sign[1].title)}</div>
       </div>
     </div>
     <div class="ltr-footer-bar">
@@ -13663,8 +13708,19 @@ function openDebtStatementTableModal(houseNo) {
     document.getElementById('dstLandParcel').value = land.land_parcel_number || '';
     document.getElementById('dstNote').value = '';
 
+    // ช่วงเดือน/ปี: ค่าเริ่มต้น = ปิด (ออกทุกปีที่มีข้อมูล เหมือนเดิม)
+    ['dstRangeFromMonth', 'dstRangeToMonth'].forEach(id => {
+        const s = document.getElementById(id);
+        if (s && s.options.length === 0) s.innerHTML = THAI_MONTHS_FULL.map((m, i) => `<option value="${i}">${m}</option>`).join('');
+    });
+    document.getElementById('dstRangeOn').checked = false;
+    document.getElementById('dstRangeBox').classList.add('hidden');
+    document.getElementById('dstRangeFromYear').value = '';
+    document.getElementById('dstRangeToYear').value = '';
+
     const noDebtNote = document.getElementById('dstNoDebtNote');
     if (noDebtNote) noDebtNote.classList.toggle('hidden', overdueMonths > 0);
+    dstUpdateRangePreview();
 
     const modal = document.getElementById('debtStatementTableModal');
     modal.classList.remove('hidden'); modal.classList.add('flex');
@@ -13677,10 +13733,18 @@ function closeDebtStatementTableModal() {
 }
 
 // สร้างตารางหนี้แยกรายปี/เดือน จากข้อมูลการชำระจริงในระบบ (allData)
-function _buildDebtYearRows(houseNo) {
-    const houseYears = allData.filter(d => d.house_numbe === houseNo).sort((a,b) => a.year - b.year);
+// range (ไม่บังคับ) = { fromYear, fromMonth(0-11), toYear, toMonth(0-11) } ปีเป็น พ.ศ. — ไม่ส่ง = ออกทุกปีที่มีข้อมูล
+// เดือนที่อยู่นอกช่วงจะถูกเว้นว่าง (out:true) และไม่นับรวมเป็นยอดหนี้
+function _buildDebtYearRows(houseNo, range) {
+    const lo = range ? range.fromYear * 12 + range.fromMonth : null;
+    const hi = range ? range.toYear * 12 + range.toMonth : null;
+    const houseYears = allData.filter(d => d.house_numbe === houseNo)
+        .filter(d => !range || (Number(d.year) * 12 + 11 >= lo && Number(d.year) * 12 <= hi))
+        .sort((a,b) => a.year - b.year);
     const rows = houseYears.map(h => {
-        const cells = months.map(m => {
+        const yr = Number(h.year);
+        const cells = months.map((m, mi) => {
+            if (range) { const ym = yr * 12 + mi; if (ym < lo || ym > hi) return { text: '', isDebt: false, out: true }; }
             const s = h[m.key] || '';
             if (s.includes('จ่ายแล้ว') || s.includes('ชำระแล้ว') || s.includes('ล่วงหน้า')) return { text: '', isDebt: false };
             if (s.includes('ยังไม่จ่าย') || s.includes('ค้าง')) return { text: String(RATE_PER_MONTH), isDebt: true };
@@ -13695,6 +13759,72 @@ function _buildDebtYearRows(houseNo) {
     return rows;
 }
 
+// ข้อความอธิบายช่วงเวลา เช่น "มกราคม 2567 – มิถุนายน 2568"
+function _dstRangeLabel(range) {
+    if (!range) return '';
+    return `${THAI_MONTHS_FULL[range.fromMonth]} ${range.fromYear} – ${THAI_MONTHS_FULL[range.toMonth]} ${range.toYear}`;
+}
+
+// อ่านช่วงจากฟอร์ม → { ok, range|null, error }
+function _dstReadRange() {
+    const on = document.getElementById('dstRangeOn');
+    if (!on || !on.checked) return { ok: true, range: null };
+    const fy = parseInt(document.getElementById('dstRangeFromYear').value, 10);
+    const ty = parseInt(document.getElementById('dstRangeToYear').value, 10);
+    const fm = parseInt(document.getElementById('dstRangeFromMonth').value, 10);
+    const tm = parseInt(document.getElementById('dstRangeToMonth').value, 10);
+    if (!Number.isInteger(fy) || !Number.isInteger(ty) || !Number.isInteger(fm) || !Number.isInteger(tm))
+        return { ok: false, error: 'กรุณาระบุเดือนและปีของช่วงเวลาให้ครบ' };
+    if (fy < 2400 || ty < 2400 || fy > 2700 || ty > 2700)
+        return { ok: false, error: 'กรุณากรอกปีเป็น พ.ศ. (เช่น 2568)' };
+    if (fy * 12 + fm > ty * 12 + tm)
+        return { ok: false, error: 'ช่วงเวลาไม่ถูกต้อง: เดือน/ปี "ตั้งแต่" ต้องไม่เกิน "ถึง"' };
+    return { ok: true, range: { fromYear: fy, fromMonth: fm, toYear: ty, toMonth: tm } };
+}
+
+function dstToggleRange() {
+    const on = document.getElementById('dstRangeOn').checked;
+    document.getElementById('dstRangeBox').classList.toggle('hidden', !on);
+    if (on && !document.getElementById('dstRangeFromYear').value) dstRangePreset('alldata');
+    else dstUpdateRangePreview();
+}
+
+function dstRangePreset(kind) {
+    const houseNo = document.getElementById('dstHouseNo').value;
+    const now = new Date();
+    const curY = toBEYear(now.getFullYear()), curM = now.getMonth();
+    const yrs = allData.filter(d => d.house_numbe === houseNo).map(d => Number(d.year)).filter(Number.isFinite);
+    const minY = yrs.length ? Math.min(...yrs) : curY;
+    const maxY = yrs.length ? Math.max(...yrs, curY) : curY;
+    let f, t;
+    if (kind === 'thisyear') { f = [curY, 0]; t = [curY, 11]; }
+    else if (kind === 'lastyear') { f = [curY - 1, 0]; t = [curY - 1, 11]; }
+    else if (kind === 'last12') { const idx = curY * 12 + curM - 11; f = [Math.floor(idx / 12), idx % 12]; t = [curY, curM]; }
+    else { f = [minY, 0]; t = maxY === curY ? [curY, curM] : [maxY, 11]; }
+    document.getElementById('dstRangeFromYear').value = f[0];
+    document.getElementById('dstRangeFromMonth').value = f[1];
+    document.getElementById('dstRangeToYear').value = t[0];
+    document.getElementById('dstRangeToMonth').value = t[1];
+    dstUpdateRangePreview();
+}
+
+function dstUpdateRangePreview() {
+    const el = document.getElementById('dstRangePreview');
+    if (!el) return;
+    const houseNo = document.getElementById('dstHouseNo').value;
+    const r = _dstReadRange();
+    if (!r.ok) { el.innerHTML = `<span class="text-red-500">⚠️ ${r.error}</span>`; return; }
+    const rows = _buildDebtYearRows(houseNo, r.range).filter(x => x.year !== '');
+    const debt = rows.reduce((s, x) => s + x.yearDebt, 0);
+    const n = debt / RATE_PER_MONTH;
+    const yrs = rows.map(x => x.year);
+    const scope = r.range ? `ช่วง ${_dstRangeLabel(r.range)}` : 'ทุกปีที่มีข้อมูล';
+    el.innerHTML = `${scope}: พบข้อมูล ${yrs.length} ปี${yrs.length ? ' (' + yrs.join(', ') + ')' : ''} • ` +
+        (n > 0 ? `<b class="text-rose-600">ค้าง ${n} เดือน = ฿${debt.toLocaleString()}</b>` : '<b class="text-green-600">ไม่มียอดค้างในช่วงนี้</b>');
+    const noDebtNote = document.getElementById('dstNoDebtNote');
+    if (noDebtNote) noDebtNote.classList.toggle('hidden', n > 0);
+}
+
 function buildDebtStatementTableHTML(d) {
     const invS = getInvoiceSettings();
     const LOGO = invS.logoUrl;
@@ -13704,7 +13834,7 @@ function buildDebtStatementTableHTML(d) {
         <tr>
             <td class="dst-td-center">${i + 1}</td>
             <td class="dst-td-center">${r.year ? 'ปี ' + r.year : ''}</td>
-            ${r.cells.map(c => `<td class="dst-td-center ${c.isDebt ? 'dst-cell-debt' : ''}">${c.text}</td>`).join('')}
+            ${r.cells.map(c => `<td class="dst-td-center ${c.isDebt ? 'dst-cell-debt' : ''}${c.out ? ' dst-cell-out' : ''}">${c.text}</td>`).join('')}
             <td class="dst-td-center dst-td-total">${r.yearDebt > 0 ? r.yearDebt.toLocaleString() : (r.year ? '0' : '')}</td>
         </tr>`).join('');
 
@@ -13729,6 +13859,7 @@ function buildDebtStatementTableHTML(d) {
   <p class="dst-p">พร้อมสิ่งปลูกสร้างเลขที่ <span class="dst-blank">${d.houseNo}</span> แขวง/ตำบล <span class="dst-blank">${d.subDistrict}</span></p>
   <p class="dst-p">เขต/อำเภอ <span class="dst-blank">${d.district}</span> จังหวัด <span class="dst-blank">${d.province}</span></p>
   <p class="dst-p" style="text-indent:0;text-align:center;font-weight:700;">มีหนี้ค่าใช้จ่ายในการบำรุงรักษาและการจัดการสาธารณูปโภคค้างชำระ ดังนี้</p>
+  ${d.rangeLabel ? `<p class="dst-p dst-range-line" style="text-indent:0;text-align:center;font-size:9pt;">(เฉพาะช่วง ${d.rangeLabel})</p>` : ''}
 
   <table class="dst-table">
     <thead>
@@ -13771,6 +13902,9 @@ function printDebtStatementTable() {
     const s = getDebtStatementSettings();
     const invS = typeof getInvoiceSettings === 'function' ? getInvoiceSettings() : {};
 
+    const rg = _dstReadRange();
+    if (!rg.ok) { Swal.fire({ icon: 'warning', title: 'ช่วงเวลาไม่ถูกต้อง', text: rg.error }); return; }
+
     const data = {
         docDay: document.getElementById('dstDocDay').value,
         docMonth: THAI_MONTHS_FULL[parseInt(document.getElementById('dstDocMonth').value)] || '',
@@ -13786,10 +13920,11 @@ function printDebtStatementTable() {
         note: document.getElementById('dstNote').value.trim(),
         orgAddress: invS.address || '',
         orgEmail: invS.email || '',
-        yearRows: _buildDebtYearRows(houseNo)
+        rangeLabel: _dstRangeLabel(rg.range),
+        yearRows: _buildDebtYearRows(houseNo, rg.range)
     };
 
-    writeAuditLog('issue_debt_statement_table', `debtstatementtable:${houseNo}`, `ออกแบบแจ้งหนี้บังคับคดี (ตาราง) บ้าน ${houseNo} — ออกโดย ${currentUser?.name || '-'}`).catch(() => {});
+    writeAuditLog('issue_debt_statement_table', `debtstatementtable:${houseNo}`, `ออกแบบแจ้งหนี้บังคับคดี (ตาราง) บ้าน ${houseNo}${rg.range ? ' ช่วง ' + _dstRangeLabel(rg.range) : ' (ทุกปี)'} — ออกโดย ${currentUser?.name || '-'}`).catch(() => {});
 
     const html = buildDebtStatementTableHTML(data);
     _openDebtStatementTablePrintWindow(html, `แจ้งหนี้บังคับคดี (ตาราง) — บ้าน ${houseNo}`);
@@ -13838,6 +13973,7 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
 .dst-th-month{width:5.8%;}
 .dst-td-center{text-align:center;}
 .dst-cell-debt{color:#dc2626;font-weight:700;}
+.dst-cell-out{background:#e2e8f0;}
 .dst-td-total{font-weight:700;}
 .dst-total-label{text-align:right;font-weight:700;padding-right:8pt;background:#f8fafc;}
 .dst-total-amount{font-weight:900;background:#fff1f2;color:#be123c;font-size:9pt;}
@@ -14031,13 +14167,9 @@ function amountInWordsLegacy(amount) {
     return text + 'บาทถ้วน';
 }
 
-function _openPrintWindow(htmlContent, title) {
-    const win = window.open('', '_blank', 'width=920,height=820');
-    if (!win) {
-        Swal.fire('ถูกบล็อก Popup', 'กรุณาอนุญาต Popup สำหรับหน้านี้แล้วลองใหม่', 'warning');
-        return;
-    }
-    win.document.write(`<!DOCTYPE html>
+// สร้างเอกสาร HTML เต็มของหนังสือ (ใช้ทั้งหน้าต่างพิมพ์และตัวอย่างในหน้าจอ)
+function _buildLetterPrintDoc(htmlContent, title, withToolbar) {
+    return `<!DOCTYPE html>
 <html lang="th">
 <head>
 <meta charset="UTF-8">
@@ -14051,8 +14183,10 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
   width:210mm;min-height:297mm;background:#fff;color:#111;
   padding:12mm 14mm 0 14mm;
   position:relative;overflow:visible;
+  display:flex;flex-direction:column;
   page-break-after:always;break-after:page;
 }
+.ltr-main{flex:0 0 auto;}
 .formal-letter-page:last-child{page-break-after:auto;break-after:auto;}
 
 .ltr-header{margin-bottom:6pt;}
@@ -14088,7 +14222,7 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
 .ltr-contact-icon{width:24pt;height:24pt;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12pt;flex-shrink:0;color:#fff;}
 .ltr-closing{text-align:center;font-size:11pt;font-weight:600;margin:4pt 0;color:#334155;}
 
-.ltr-footer{position:absolute;bottom:0;left:14mm;right:14mm;}
+.ltr-footer{margin-top:auto;padding-top:6pt;}
 .ltr-stamp-wrap{text-align:center;margin-bottom:3pt;}
 .ltr-stamp{display:inline-block;border:3px solid;border-radius:6pt;font-size:13pt;font-weight:900;padding:3pt 14pt;transform:rotate(-4deg);letter-spacing:2px;}
 .ltr-sign-row{display:grid;grid-template-columns:1fr 1fr;gap:20pt;margin-bottom:5pt;}
@@ -14119,16 +14253,44 @@ body{font-family:'Kanit',sans-serif;background:#64748b;}
 </style>
 </head>
 <body>
-<div class="print-toolbar no-print">
+${withToolbar === false ? '' : `<div class="print-toolbar no-print">
   <span style="font-weight:700;">${title}</span>
   <button class="btn-print" onclick="window.print()">🖨️ พิมพ์ / บันทึก PDF</button>
   <button class="btn-close" onclick="window.close()">✕ ปิด</button>
-</div>
-<div class="page-wrapper">
+</div>`}
+<div class="page-wrapper" ${withToolbar === false ? 'style="margin-top:0;padding:0"' : ''}>
   ${htmlContent}
 </div>
+<script>
+// ถ้าเนื้อหาหนังสือยาวเกิน 1 หน้า (เช่น ตารางหลายปี + ส่วนรับทราบ) ให้ย่อเนื้อหาลงอัตโนมัติ (ไม่ต่ำกว่า 70%) เพื่อให้ลายเซ็นอยู่หน้าเดียวกัน
+(function(){
+  function fit(){
+    document.querySelectorAll('.formal-letter-page').forEach(function(pg){
+      var main=pg.querySelector('.ltr-main'), foot=pg.querySelector('.ltr-footer');
+      if(!main||!foot) return;
+      main.style.zoom='';
+      var cs=getComputedStyle(pg), pageH=pg.getBoundingClientRect().height;
+      var minH=parseFloat(cs.minHeight)||pageH;
+      var need=main.offsetHeight+foot.offsetHeight+parseFloat(cs.paddingTop)+8;
+      if(need>minH){ main.style.zoom=Math.max(0.7,(minH-foot.offsetHeight-parseFloat(cs.paddingTop)-8)/main.offsetHeight); }
+    });
+  }
+  window.addEventListener('load',fit);
+  if(document.fonts&&document.fonts.ready) document.fonts.ready.then(fit);
+  window.addEventListener('beforeprint',fit);
+})();
+<\/script>
 </body>
-</html>`);
+</html>`;
+}
+
+function _openPrintWindow(htmlContent, title) {
+    const win = window.open('', '_blank', 'width=920,height=820');
+    if (!win) {
+        Swal.fire('ถูกบล็อก Popup', 'กรุณาอนุญาต Popup สำหรับหน้านี้แล้วลองใหม่', 'warning');
+        return;
+    }
+    win.document.write(_buildLetterPrintDoc(htmlContent, title, true));
     win.document.close();
 }
 
@@ -14188,16 +14350,177 @@ window.closeEditHouseModal = closeEditHouseModal;
 window.saveHouseEdit = saveHouseEdit;
 window.openOwnerHistory = openOwnerHistory;
 window.closeOwnerHistoryModal = closeOwnerHistoryModal;
+// ================================================================
+// ✉️ หนังสือทวงถาม/แจ้งเตือนค้างชำระ (ครั้งที่ 1-3) — ตั้งค่าก่อนพิมพ์ได้
+// ================================================================
+const FL_DEFAULT_SIGNERS = [
+    { name: 'นางสาว อรนภา ดวงแสงจันทร์', title: 'เลขานุการ / ผู้จัดทำรายงานการเงิน' },
+    { name: 'นาย สุริยา เหล่าโนนเขวา', title: 'ประธานกรรมการนิติบุคคลหมู่บ้านจัดสรร' }
+];
+let flState = { houses: [] };
+
+// 'YYYY-MM-DD' → Date (เวลาท้องถิ่น) หรือ null ถ้าไม่ใช่วันที่จริง
+function _flParseISO(s) {
+    const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    const y = +m[1], mo = +m[2], d = +m[3];
+    const dt = new Date(y, mo - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+    return dt;
+}
+
+// วันครบกำหนดชำระ: eom = สิ้นเดือนของวันที่ออก (ค่าเดิม), d7/d15/d30 = นับจากวันที่ออก, custom = กำหนดเอง
+function _flDeadline(issue, mode, customISO) {
+    if (!(issue instanceof Date) || isNaN(issue)) return null;
+    if (mode === 'custom') return _flParseISO(customISO);
+    const n = { d7: 7, d15: 15, d30: 30 }[mode];
+    if (n) return new Date(issue.getFullYear(), issue.getMonth(), issue.getDate() + n);
+    return new Date(issue.getFullYear(), issue.getMonth() + 1, 0);
+}
+
+// รายการเดือนที่ค้างของบ้านหนึ่งหลัง (เรียงปี/เดือน) — range = ช่วงที่เลือก (ปี พ.ศ.) หรือ null = ทั้งหมด
+function _flItems(houseNo, range) {
+    const lo = range ? range.fromYear * 12 + range.fromMonth : null;
+    const hi = range ? range.toYear * 12 + range.toMonth : null;
+    const items = [];
+    allData.filter(d => d.house_numbe === houseNo).forEach(d => {
+        const yr = Number(d.year);
+        months.forEach((m, mi) => {
+            const s = d[m.key] || '';
+            if (!(s.includes('ยังไม่จ่าย') || s.includes('ค้าง'))) return;
+            if (range) { const ym = yr * 12 + mi; if (ym < lo || ym > hi) return; }
+            items.push({ year: yr, m: mi });
+        });
+    });
+    items.sort((a, b) => a.year - b.year || a.m - b.m);
+    return items;
+}
+
+function _flDetailHTML(items) {
+    if (!items || !items.length) return '';
+    const by = {};
+    items.forEach(i => (by[i.year] = by[i.year] || []).push(i.m));
+    const yrs = Object.keys(by).map(Number).sort((a, b) => a - b);
+    const td = 'border:1px solid #94a3b8;padding:2pt 5pt;';
+    const rows = yrs.map(y => `<tr>
+        <td style="${td}text-align:center;">${y}</td>
+        <td style="${td}">${by[y].map(m => months[m].label).join(' ')}</td>
+        <td style="${td}text-align:center;">${by[y].length}</td>
+        <td style="${td}text-align:right;">${(by[y].length * RATE_PER_MONTH).toLocaleString()}</td></tr>`).join('');
+    const total = items.length * RATE_PER_MONTH;
+    return `<div style="margin:4pt 0 5pt;">
+      <div style="font-size:10pt;font-weight:700;margin-bottom:2pt;">รายละเอียดเดือนที่ค้างชำระ (อัตราเดือนละ ${RATE_PER_MONTH.toLocaleString()} บาท)</div>
+      <table style="width:100%;border-collapse:collapse;font-size:9pt;">
+        <thead><tr style="background:#e2e8f0;">
+          <th style="${td}width:14%;">ปี พ.ศ.</th><th style="${td}">เดือนที่ค้าง</th><th style="${td}width:12%;">จำนวนเดือน</th><th style="${td}width:16%;">จำนวนเงิน (บาท)</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr style="font-weight:700;background:#f8fafc;">
+          <td colspan="2" style="${td}text-align:right;">รวม</td>
+          <td style="${td}text-align:center;">${items.length}</td>
+          <td style="${td}text-align:right;">${total.toLocaleString()}</td></tr></tfoot>
+      </table></div>`;
+}
+
+// ตรวจช่วงเดือน/ปี (ปี พ.ศ.) — คืน { ok, range } หรือ { ok:false, error }
+function _flParseRange(fy, fm, ty, tm) {
+    if (![fy, fm, ty, tm].every(Number.isInteger)) return { ok: false, error: 'กรุณาระบุเดือนและปีของช่วงเวลาให้ครบ' };
+    if (fy < 2400 || ty < 2400 || fy > 2700 || ty > 2700) return { ok: false, error: 'กรุณากรอกปีเป็น พ.ศ. (เช่น 2568)' };
+    if (fy * 12 + fm > ty * 12 + tm) return { ok: false, error: 'ช่วงเวลาไม่ถูกต้อง: "ตั้งแต่" ต้องไม่เกิน "ถึง"' };
+    return { ok: true, range: { fromYear: fy, fromMonth: fm, toYear: ty, toMonth: tm } };
+}
+
+function _flReadOpts() {
+    const g = id => document.getElementById(id);
+    const issueDate = g('flIssueDate').value;
+    const issue = _flParseISO(issueDate);
+    if (!issue) return { ok: false, error: 'วันที่ออกหนังสือไม่ถูกต้อง' };
+    const mode = g('flDeadlineMode').value;
+    const custom = g('flDeadlineCustom').value;
+    const dl = _flDeadline(issue, mode, custom);
+    if (!dl) return { ok: false, error: 'กรุณาระบุวันครบกำหนดชำระ' };
+    if (dl < issue) return { ok: false, error: 'วันครบกำหนดชำระต้องไม่ก่อนวันที่ออกหนังสือ' };
+    let range = null;
+    if (g('flRangeOn').checked) {
+        const r = _flParseRange(parseInt(g('flRangeFromYear').value, 10), parseInt(g('flRangeFromMonth').value, 10),
+                                parseInt(g('flRangeToYear').value, 10), parseInt(g('flRangeToMonth').value, 10));
+        if (!r.ok) return r;
+        range = r.range;
+    }
+    const dots = '........................';
+    const sign = [0, 1].map(i => ({
+        name: g('flSign' + i + 'Name').value.trim() || dots,
+        title: g('flSign' + i + 'Title').value.trim()
+    }));
+    return { ok: true, opts: {
+        level: parseInt(g('flLevel').value, 10) || 0,
+        issueDate, deadlineMode: mode, deadlineCustom: custom, range,
+        detail: g('flDetail').checked, ref: g('flRef').value, ack: g('flAck').checked, sign
+    } };
+}
+
+function flToggleOptions() {
+    const g = id => document.getElementById(id);
+    g('flDeadlineCustom').classList.toggle('hidden', g('flDeadlineMode').value !== 'custom');
+    const on = g('flRangeOn').checked;
+    g('flRangeBox').classList.toggle('hidden', !on);
+    if (on && !g('flRangeFromYear').value) {
+        const now = new Date();
+        const curY = toBEYear(now.getFullYear());
+        const ys = flState.houses.flatMap(hn => _flItems(hn, null).map(i => i.year));
+        g('flRangeFromYear').value = ys.length ? Math.min(...ys) : curY;
+        g('flRangeFromMonth').value = 0;
+        g('flRangeToYear').value = curY;
+        g('flRangeToMonth').value = now.getMonth();
+    }
+    flRender();
+}
+
+function flRender() {
+    const g = id => document.getElementById(id);
+    const err = g('flError'), frame = g('flPreviewFrame');
+    if (!err || !frame) return;
+    const r = _flReadOpts();
+    if (!r.ok) { err.textContent = '⚠️ ' + r.error; err.classList.remove('hidden'); return; }
+    err.classList.add('hidden');
+    const all = getEscalationData();
+    const found = flState.houses.map(hn => all.find(d => d.houseNo === hn)).filter(Boolean);
+    const usable = r.opts.range ? found.filter(d => _flItems(d.houseNo, r.opts.range).length > 0) : found;
+    const skipped = flState.houses.length - usable.length;
+    g('flCount').textContent = `พิมพ์ ${usable.length} ฉบับ` + (skipped > 0 ? ` (ข้าม ${skipped} หลังที่ไม่มียอดค้างในช่วงนี้)` : '') +
+        (usable[0] ? ` • ตัวอย่าง: บ้าน ${usable[0].houseNo}` : '');
+    frame.srcdoc = usable[0] ? _buildLetterPrintDoc(buildFormalLetterHTML(usable[0], r.opts), 'ตัวอย่างหนังสือ', false) : '<p style="font-family:sans-serif;padding:20px;color:#64748b">ไม่มีหนังสือที่จะพิมพ์ตามเงื่อนไขนี้</p>';
+}
+
+function _flOpen(houses) {
+    const g = id => document.getElementById(id);
+    flState.houses = houses.slice();
+    ['flRangeFromMonth', 'flRangeToMonth'].forEach(id => {
+        const s = g(id);
+        if (s && s.options.length === 0) s.innerHTML = THAI_MONTHS_FULL.map((m, i) => `<option value="${i}">${m}</option>`).join('');
+    });
+    g('flLevel').value = '0';
+    g('flIssueDate').value = nsToday();
+    g('flDeadlineMode').value = 'eom';
+    g('flDeadlineCustom').value = '';
+    g('flRangeOn').checked = false;
+    g('flRangeFromYear').value = ''; g('flRangeToYear').value = '';
+    g('flDetail').checked = true;
+    g('flRef').value = '';
+    g('flAck').checked = false;
+    FL_DEFAULT_SIGNERS.forEach((s, i) => { g('flSign' + i + 'Name').value = s.name; g('flSign' + i + 'Title').value = s.title; });
+    g('flDeadlineCustom').classList.add('hidden');
+    g('flRangeBox').classList.add('hidden');
+    const modal = g('formalLetterModal');
+    modal.classList.remove('hidden'); modal.classList.add('flex');
+    flRender();
+    lucide.createIcons();
+}
+
 function openFormalLetter(houseNo) {
     const data = getEscalationData().find(d => d.houseNo === houseNo);
     if (!data) { Swal.fire('ไม่พบข้อมูล', `ไม่พบบ้าน ${houseNo} ในรายการค้างชำระ`, 'warning'); return; }
-    const modal = document.getElementById('formalLetterModal');
-    const content = document.getElementById('formalLetterContent');
-    content.innerHTML = buildFormalLetterHTML(data);
-    modal.dataset.houseNo = houseNo;
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-    lucide.createIcons();
+    _flOpen([houseNo]);
 }
 
 function closeFormalLetterModal() {
@@ -14207,11 +14530,28 @@ function closeFormalLetterModal() {
 }
 
 function printFormalLetter() {
-    const content = document.getElementById('formalLetterContent')?.innerHTML;
-    if (!content) return;
-    const houseNo = document.getElementById('formalLetterModal')?.dataset?.houseNo || '';
-    writeAuditLog('issue_formal_letter', `formalletter:${houseNo}`, `พิมพ์หนังสือแจ้งเตือนค้างชำระ บ้าน ${houseNo} — ออกโดย ${currentUser?.name || '-'}`).catch(() => {});
-    _openPrintWindow(content, 'หนังสือแจ้งเตือนค้างชำระ');
+    const r = _flReadOpts();
+    if (!r.ok) { Swal.fire('ข้อมูลไม่ถูกต้อง', r.error, 'warning'); return; }
+    const all = getEscalationData();
+    const items = [];
+    flState.houses.forEach(hn => {
+        const d = all.find(x => x.houseNo === hn);
+        if (!d) return;
+        if (r.opts.range && _flItems(hn, r.opts.range).length === 0) return;
+        items.push(d);
+    });
+    if (!items.length) { Swal.fire('ไม่มีหนังสือที่จะพิมพ์', 'ไม่พบยอดค้างตามเงื่อนไขที่เลือก', 'warning'); return; }
+    const issueTxt = r.opts.issueDate;
+    items.forEach(d => {
+        const lv = r.opts.level || d.rule.level;
+        const dl = _flDeadline(_flParseISO(r.opts.issueDate), r.opts.deadlineMode, r.opts.deadlineCustom);
+        writeAuditLog('issue_formal_letter', `formalletter:${d.houseNo}`,
+            `พิมพ์หนังสือทวงถามครั้งที่ ${lv} บ้าน ${d.houseNo} ลงวันที่ ${issueTxt} ครบกำหนด ${dl ? nsFmtDate(dl) : '-'}` +
+            `${r.opts.range ? ' ช่วง ' + THAI_MONTHS_FULL[r.opts.range.fromMonth] + ' ' + r.opts.range.fromYear + '–' + THAI_MONTHS_FULL[r.opts.range.toMonth] + ' ' + r.opts.range.toYear : ''}` +
+            ` — ออกโดย ${currentUser?.name || '-'}`).catch(() => {});
+    });
+    const pages = items.map(d => buildFormalLetterHTML(d, r.opts)).join('');
+    _openPrintWindow(pages, items.length === 1 ? `หนังสือทวงถาม — บ้าน ${items[0].houseNo}` : `หนังสือทวงถาม — ${items.length} ฉบับ`);
 }
 
 function printFormalLetterBatch() {
@@ -14220,13 +14560,7 @@ function printFormalLetterBatch() {
         Swal.fire('เลือกบ้านก่อน', 'กรุณาติ๊กเลือกบ้านที่ต้องการพิมพ์หนังสืออย่างน้อย 1 หลัง', 'warning');
         return;
     }
-    const allEscData = getEscalationData();
-    const pages = checked.map(houseNo => {
-        const data = allEscData.find(d => d.houseNo === houseNo);
-        if (data) writeAuditLog('issue_formal_letter', `formalletter:${houseNo}`, `พิมพ์หนังสือแจ้งเตือน (batch) บ้าน ${houseNo} — ออกโดย ${currentUser?.name || '-'}`).catch(() => {});
-        return data ? buildFormalLetterHTML(data) : '';
-    }).filter(Boolean).join('<div style="page-break-after:always;break-after:page;"></div>');
-    _openPrintWindow(pages, `หนังสือแจ้งเตือนค้างชำระ — ${checked.length} ฉบับ`);
+    _flOpen(checked);
 }
 
 function closeBatchLetterContainer() {
@@ -14237,6 +14571,8 @@ window.openFormalLetter = openFormalLetter;
 window.closeFormalLetterModal = closeFormalLetterModal;
 window.printFormalLetter = printFormalLetter;
 window.printFormalLetterBatch = printFormalLetterBatch;
+window.flRender = flRender;
+window.flToggleOptions = flToggleOptions;
 window.closeBatchLetterContainer = closeBatchLetterContainer;
 
 window.openImageModal = openImageModal;
@@ -14290,6 +14626,9 @@ window.renderDebtStatementTableHouseList = renderDebtStatementTableHouseList;
 window.openDebtStatementTableModal = openDebtStatementTableModal;
 window.closeDebtStatementTableModal = closeDebtStatementTableModal;
 window.printDebtStatementTable = printDebtStatementTable;
+window.dstToggleRange = dstToggleRange;
+window.dstRangePreset = dstRangePreset;
+window.dstUpdateRangePreview = dstUpdateRangePreview;
 window.loadDocIssuanceHistory = loadDocIssuanceHistory;
 window.renderDocIssuanceTable = renderDocIssuanceTable;
 window.exportDocIssuanceCSV = exportDocIssuanceCSV;
@@ -19610,24 +19949,91 @@ window.printReceiptFromInvoice = printReceiptFromInvoice;
 <!-- ================================================================ -->
 <!-- MODAL: หนังสือแจ้งเตือนค้างชำระทางการ                            -->
 <!-- ================================================================ -->
-<div id="formalLetterModal" class="fixed inset-0 bg-black/60 z-[1000] hidden items-start justify-center p-4 overflow-y-auto">
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-6">
-        <!-- toolbar -->
-        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 no-letter-print">
+<div id="formalLetterModal" class="fixed inset-0 bg-black/60 z-[1000] hidden items-start justify-center p-3 overflow-y-auto">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-6xl my-3">
+        <div class="flex items-center justify-between px-5 py-3 border-b border-slate-200">
             <h3 class="font-bold text-slate-800 flex items-center gap-2">
                 <i data-lucide="file-text" class="w-5 h-5 text-red-700"></i>
-                หนังสือแจ้งเตือนค้างชำระ
+                หนังสือทวงถาม / แจ้งเตือนค้างชำระ
             </h3>
             <div class="flex items-center gap-2">
+                <span id="flCount" class="text-xs text-slate-500 hidden md:inline"></span>
                 <button onclick="printFormalLetter()" class="px-4 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg text-sm font-bold flex items-center gap-2">
                     <i data-lucide="printer" class="w-4 h-4"></i>พิมพ์ / บันทึก PDF
                 </button>
                 <button onclick="closeFormalLetterModal()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-bold">ปิด</button>
             </div>
         </div>
-        <!-- หนังสือ -->
-        <div id="formalLetterContent" class="px-10 py-8 font-[Kanit,sans-serif] text-slate-900 text-sm leading-relaxed">
-            <!-- render by JS -->
+        <div class="flex flex-col lg:flex-row gap-4 p-4">
+            <!-- ตัวเลือก -->
+            <div class="lg:w-80 flex-shrink-0 space-y-3 text-sm">
+                <div id="flError" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-xs"></div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 mb-1">หนังสือครั้งที่</label>
+                    <select id="flLevel" onchange="flRender()" class="w-full px-3 py-2 rounded-lg border border-slate-300">
+                        <option value="0">อัตโนมัติ (ตามจำนวนเดือนที่ค้าง)</option>
+                        <option value="1">ครั้งที่ 1 — เตือนทั่วไป</option>
+                        <option value="2">ครั้งที่ 2 — เตือนเข้ม + ระงับสิทธิ์</option>
+                        <option value="3">ครั้งที่ 3 — ขั้นรุนแรง (ก่อนดำเนินคดี)</option>
+                    </select>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-600 mb-1">วันที่ออกหนังสือ</label>
+                        <input type="date" id="flIssueDate" onchange="flRender()" class="w-full px-2 py-2 rounded-lg border border-slate-300">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-600 mb-1">ครบกำหนดชำระ</label>
+                        <select id="flDeadlineMode" onchange="flToggleOptions()" class="w-full px-2 py-2 rounded-lg border border-slate-300">
+                            <option value="eom">สิ้นเดือนที่ออก</option>
+                            <option value="d7">7 วัน</option>
+                            <option value="d15">15 วัน</option>
+                            <option value="d30">30 วัน</option>
+                            <option value="custom">กำหนดวันเอง</option>
+                        </select>
+                    </div>
+                </div>
+                <input type="date" id="flDeadlineCustom" onchange="flRender()" class="hidden w-full px-2 py-2 rounded-lg border border-slate-300">
+
+                <div class="border border-rose-200 bg-rose-50/40 rounded-lg px-3 py-2 space-y-2">
+                    <label class="flex items-center gap-2 font-bold text-slate-700 cursor-pointer select-none">
+                        <input type="checkbox" id="flRangeOn" onchange="flToggleOptions()" class="w-4 h-4 accent-rose-500">
+                        📅 เฉพาะช่วงเดือน/ปี
+                    </label>
+                    <div id="flRangeBox" class="hidden grid grid-cols-[3rem_1fr_1fr] gap-2 items-center">
+                        <span class="text-xs font-bold text-slate-600">ตั้งแต่</span>
+                        <select id="flRangeFromMonth" onchange="flRender()" class="px-1 py-1.5 rounded-lg border border-slate-300 text-xs"></select>
+                        <input type="number" id="flRangeFromYear" oninput="flRender()" placeholder="ปี พ.ศ." class="px-2 py-1.5 rounded-lg border border-slate-300 text-xs">
+                        <span class="text-xs font-bold text-slate-600">ถึง</span>
+                        <select id="flRangeToMonth" onchange="flRender()" class="px-1 py-1.5 rounded-lg border border-slate-300 text-xs"></select>
+                        <input type="number" id="flRangeToYear" oninput="flRender()" placeholder="ปี พ.ศ." class="px-2 py-1.5 rounded-lg border border-slate-300 text-xs">
+                    </div>
+                    <div class="text-[11px] text-slate-500">ไม่ติ๊ก = รวมทุกเดือนที่ค้าง</div>
+                </div>
+
+                <label class="flex items-center gap-2 cursor-pointer select-none"><input type="checkbox" id="flDetail" onchange="flRender()" class="w-4 h-4 accent-rose-500" checked> แนบตารางรายละเอียดเดือนที่ค้าง</label>
+                <label class="flex items-center gap-2 cursor-pointer select-none"><input type="checkbox" id="flAck" onchange="flRender()" class="w-4 h-4 accent-rose-500"> เพิ่มส่วนรับทราบ (ให้ผู้รับลงนามส่งคืน)</label>
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 mb-1">อ้างถึงหนังสือครั้งก่อน (ไม่บังคับ)</label>
+                    <input type="text" id="flRef" oninput="flRender()" placeholder="เช่น หนังสือแจ้งเตือนครั้งที่ 1 ลงวันที่ 5 สิงหาคม 2569" class="w-full px-3 py-2 rounded-lg border border-slate-300">
+                </div>
+                <details>
+                    <summary class="cursor-pointer text-xs font-bold text-slate-600 select-none">✍️ ผู้ลงนาม</summary>
+                    <div class="grid grid-cols-1 gap-1.5 mt-2">
+                        <input type="text" id="flSign0Name" oninput="flRender()" placeholder="ชื่อผู้ลงนามคนที่ 1" class="px-2 py-1.5 rounded-lg border border-slate-300 text-xs">
+                        <input type="text" id="flSign0Title" oninput="flRender()" placeholder="ตำแหน่ง" class="px-2 py-1.5 rounded-lg border border-slate-300 text-xs">
+                        <input type="text" id="flSign1Name" oninput="flRender()" placeholder="ชื่อผู้ลงนามคนที่ 2" class="px-2 py-1.5 rounded-lg border border-slate-300 text-xs">
+                        <input type="text" id="flSign1Title" oninput="flRender()" placeholder="ตำแหน่ง" class="px-2 py-1.5 rounded-lg border border-slate-300 text-xs">
+                    </div>
+                </details>
+                <div class="text-[11px] text-slate-400">เมื่อพิมพ์หลายหลัง ตัวเลือกด้านบนใช้กับทุกฉบับ (ครั้งที่ "อัตโนมัติ" จะแยกตามแต่ละบ้าน)</div>
+            </div>
+            <!-- ตัวอย่าง -->
+            <div class="flex-1 min-w-0 overflow-auto bg-slate-200 rounded-xl p-2">
+                <div style="width:572px;height:808px;margin:0 auto;position:relative;">
+                    <iframe id="flPreviewFrame" title="ตัวอย่างหนังสือ" style="width:794px;height:1123px;border:0;background:#fff;transform:scale(.72);transform-origin:top left;position:absolute;left:0;top:0;"></iframe>
+                </div>
+            </div>
         </div>
     </div>
 </div>
