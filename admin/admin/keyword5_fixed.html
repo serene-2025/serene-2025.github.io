@@ -1285,57 +1285,264 @@
             } catch(e) { showToast('❌ ' + e.message, 'error'); }
         }
 
-        // ─── 🔄 เปลี่ยนเจ้าของกรรมสิทธิ์ (เก็บเจ้าของเก่าไว้) ─────────
+        // ─── 🔄 โอนกรรมสิทธิ์บ้าน + เคลียร์ค่าส่วนกลาง (wizard) ─────────
+        //  1) กรอกเจ้าของใหม่/วันที่โอน  2) ระบบดึงยอดค้างค่าส่วนกลาง ณ วันโอน → เลือกวิธีเคลียร์
+        //  3) เลือกสมาชิก (LINE) ของเจ้าของเดิมที่จะปลดออกจากบ้านนี้  4) ยืนยัน → ธุรกรรมเดียว + ออกใบเคลียร์
+        //  เจ้าของใหม่จะเห็นข้อมูลค่าส่วนกลางตั้งแต่วันโอนเป็นต้นไป (+ ยอดยกมาถ้าเลือก "ผู้ซื้อรับภาระ")
+        const CO_SETTLE = {
+            paid_cash: { icon: '💵', title: 'ผู้ขายชำระเงินสดตอนโอน', hint: 'บันทึกเดือนที่ค้างเป็น "จ่ายแล้ว" + สร้างใบเสร็จเงินสด (ไม่ให้แต้มสะสม)' },
+            carried:   { icon: '🤝', title: 'ผู้ซื้อรับภาระค้างต่อ', hint: 'เดือนที่ค้างยังคงเป็น "ค้าง" และแสดงเป็นยอดยกมาให้เจ้าของใหม่ — ไม่ถือว่าปลอดหนี้' },
+            waived:    { icon: '✂️', title: 'ตัดหนี้ / ยกเว้น', hint: 'บันทึกเดือนที่ค้างเป็น "ไม่เก็บ" — ต้องระบุเหตุผลในหมายเหตุ' },
+        };
+        window._co = null;
+
+        function _coFmtDate(iso) {
+            if (!iso) return '-';
+            const d = new Date(String(iso).slice(0, 10) + 'T00:00:00+07:00');
+            return isNaN(d) ? String(iso) : d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
+        }
+        function _coMoney(n) { return Number(n || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 }); }
+
         function openChangeOwnerModal(idx) {
             const r = window._lrItems[parseInt(idx)];
             if (!r) return;
+            closeChangeOwnerWizard();
             const today = new Date().toISOString().slice(0, 10);
-
-            showModal('🔄 เปลี่ยนเจ้าของกรรมสิทธิ์',
-                '<div class="space-y-4 text-left">' +
+            window._co = { r, preview: null, settlement: '', loadSeq: 0, busy: false, done: null };
+            const ov = document.createElement('div');
+            ov.id = 'co-overlay';
+            ov.className = 'fixed inset-0 z-[10000] bg-slate-900/50 flex items-center justify-center p-3';
+            ov.innerHTML =
+                '<div class="bg-white rounded-3xl shadow-2xl w-full max-w-xl max-h-[92vh] flex flex-col">' +
+                '<div class="flex items-center justify-between px-5 pt-4 pb-3 border-b border-slate-100">' +
+                '<div class="font-black text-slate-800">🔄 โอนกรรมสิทธิ์ + เคลียร์ค่าส่วนกลาง</div>' +
+                '<button onclick="closeChangeOwnerWizard()" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold" title="ปิด">✕</button></div>' +
+                '<div id="co-body" class="overflow-y-auto px-5 py-4 space-y-4 text-left">' +
                 '<div class="bg-slate-50 border border-slate-200 rounded-xl p-3">' +
-                '<div class="text-[11px] font-bold text-slate-400 mb-1">🏠 บ้านเลขที่ ' + escapeHtml(r.house_no||'') + ' ' + escapeHtml(r.soi||'') + '</div>' +
+                '<div class="text-[11px] font-bold text-slate-400 mb-1">🏠 บ้านเลขที่ ' + escapeHtml(r.house_no || '') + ' ' + escapeHtml(r.soi || '') + '</div>' +
                 '<div class="text-sm text-slate-700"><b>เจ้าของปัจจุบัน:</b> ' + escapeHtml(r.full_name || '(ไม่มีชื่อ)') + '</div>' +
-                (r.transfer_date ? '<div class="text-xs text-slate-500">โอนเมื่อ: ' + escapeHtml(r.transfer_date) + '</div>' : '') +
-                '</div>' +
-                '<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">' +
-                '⚠️ เจ้าของปัจจุบันด้านบนจะถูกเก็บเป็น <b>"เจ้าของเก่า"</b> อัตโนมัติ ดูย้อนหลังได้ที่ปุ่ม 📜' +
-                '</div>' +
+                (r.transfer_date ? '<div class="text-xs text-slate-500">โอนเมื่อ: ' + escapeHtml(r.transfer_date) + '</div>' : '') + '</div>' +
                 '<div><label class="block text-xs font-bold text-slate-600 mb-1">👤 ชื่อเจ้าของใหม่ *</label>' +
                 '<input id="co-new-name" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="ชื่อเจ้าของกรรมสิทธิ์ใหม่"></div>' +
                 '<div class="grid grid-cols-2 gap-3">' +
-                '<div><label class="block text-xs font-bold text-slate-600 mb-1">วันที่โอนใหม่</label>' +
-                '<input id="co-new-date" type="date" value="' + today + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">วันที่โอน *</label>' +
+                '<input id="co-new-date" type="date" value="' + today + '" onchange="loadTransferPreview()" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
                 '<div><label class="block text-xs font-bold text-slate-600 mb-1">เลขที่โฉนดใหม่ (ถ้าเปลี่ยน)</label>' +
-                '<input id="co-new-deed" value="' + escapeHtml(r.title_deed_number||'') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div>' +
+                '<input id="co-new-deed" value="' + escapeHtml(r.title_deed_number || '') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></div></div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1">หมายเหตุ <span id="co-note-req" class="text-rose-500 hidden">(จำเป็น — ระบุเหตุผลตัดหนี้)</span></label>' +
+                '<input id="co-note" oninput="renderTransferWizard()" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="เช่น ซื้อขาย, มรดก, โอนให้บุตร"></div>' +
+                '<div id="co-fee"></div><div id="co-members"></div>' +
                 '</div>' +
-                '<div><label class="block text-xs font-bold text-slate-600 mb-1">หมายเหตุ (ถ้ามี)</label>' +
-                '<input id="co-note" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="เช่น ซื้อขาย, มรดก, โอนให้บุตร"></div>' +
-                '<div class="flex gap-2 pt-2">' +
-                '<button data-id="' + r.id + '" onclick="confirmChangeOwner(this.dataset.id)" class="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold text-sm">🔄 ยืนยันเปลี่ยนเจ้าของ</button>' +
-                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
-                '</div></div>'
-            );
+                '<div class="px-5 py-3 border-t border-slate-100 flex gap-2">' +
+                '<button id="co-submit" onclick="confirmChangeOwner()" class="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed">🔄 ยืนยันโอนกรรมสิทธิ์</button>' +
+                '<button onclick="closeChangeOwnerWizard()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button></div></div>';
+            document.body.appendChild(ov);
+            loadTransferPreview();
         }
 
-        async function confirmChangeOwner(id) {
+        function closeChangeOwnerWizard() {
+            document.getElementById('co-overlay')?.remove();
+            window._co = null;
+        }
+
+        async function loadTransferPreview() {
+            const st = window._co; if (!st) return;
+            const seq = ++st.loadSeq;
+            const date = document.getElementById('co-new-date')?.value || '';
+            st.preview = null; st.error = ''; st.notInstalled = false; st.settlement = '';
+            renderTransferWizard();
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/house_transfer_preview?id=${encodeURIComponent(st.r.id)}` + (date ? `&date=${date}` : ''));
+                const d = await res.json().catch(() => ({}));
+                if (!window._co || seq !== window._co.loadSeq) return;       // มีการเปลี่ยนวันที่ซ้อน → ทิ้งผลเก่า
+                if (res.status === 503 && d.notInstalled) st.notInstalled = true;
+                else if (!res.ok) st.error = d.error || 'โหลดยอดค้างไม่สำเร็จ';
+                else {
+                    st.preview = d;
+                    st.unlink = {};
+                    (d.members || []).forEach(m => { st.unlink[m.uid] = /เจ้าของ/.test(m.living_status || ''); });   // ติ๊กเจ้าของเดิมไว้ให้ก่อน — แก้ได้
+                }
+            } catch (e) {
+                if (window._co && seq === window._co.loadSeq) st.error = e.message || 'เชื่อมต่อไม่ได้';
+            }
+            renderTransferWizard();
+        }
+
+        function setCoSettle(v) { if (window._co) { window._co.settlement = v; renderTransferWizard(); } }
+        function toggleCoUnlink(uid, on) { if (window._co?.unlink) window._co.unlink[uid] = !!on; }
+
+        function renderTransferWizard() {
+            const st = window._co; if (!st) return;
+            const fee = document.getElementById('co-fee'), mem = document.getElementById('co-members'), btn = document.getElementById('co-submit');
+            if (!fee || !mem) return;
+            const p = st.preview;
+            const note = (document.getElementById('co-note')?.value || '').trim();
+            document.getElementById('co-note-req')?.classList.toggle('hidden', st.settlement !== 'waived');
+            let canSubmit = false;
+
+            if (!p && !st.error && !st.notInstalled) {
+                fee.innerHTML = '<div class="text-center py-4 text-slate-400 text-sm">⏳ กำลังตรวจยอดค้างค่าส่วนกลาง...</div>';
+            } else if (st.notInstalled) {
+                fee.innerHTML = '<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">⚠️ ฐานข้อมูลหมู่บ้านนี้ยังไม่ได้ติดตั้ง <b>migration_house_transfer.sql</b> — โอนชื่อเจ้าของได้ แต่<b>ระบบจะไม่เคลียร์ค่าส่วนกลาง</b>และไม่ตัดข้อมูลเดิมของเจ้าของใหม่</div>';
+                canSubmit = true;
+            } else if (st.error) {
+                fee.innerHTML = '<div class="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-600">❌ ' + escapeHtml(st.error) +
+                    ' <button onclick="loadTransferPreview()" class="underline font-bold ml-1">ลองใหม่</button></div>';
+            } else if (!p.arrears_count) {
+                fee.innerHTML = '<div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-sm text-emerald-700">✅ <b>ไม่มีค่าส่วนกลางค้าง</b> ณ ' + escapeHtml(_coFmtDate(p.transfer_date)) +
+                    '<div class="text-xs text-emerald-600 mt-0.5">ระบบจะออกใบรับรองปลอดหนี้ให้อัตโนมัติ</div></div>';
+                canSubmit = true;
+            } else {
+                const rows = (p.arrears || []).map(a =>
+                    '<tr><td class="py-0.5 pr-3">' + escapeHtml(a.label) + ' ' + escapeHtml(String(a.year)) + '</td><td class="py-0.5 text-rose-600 font-bold">' + escapeHtml(a.val || 'ไม่มีข้อมูล') + '</td></tr>').join('');
+                const opts = Object.keys(CO_SETTLE).map(k => {
+                    const o = CO_SETTLE[k], on = st.settlement === k;
+                    const extra = k === 'paid_cash' ? ' · รับเงิน ฿' + _coMoney(p.arrears_amount) : '';
+                    return '<label class="flex gap-2 p-2.5 rounded-xl border cursor-pointer ' + (on ? 'border-amber-400 bg-amber-50' : 'border-slate-200 bg-white') + '">' +
+                        '<input type="radio" name="co-settle" class="mt-1" ' + (on ? 'checked' : '') + ' onchange="setCoSettle(\'' + k + '\')">' +
+                        '<div><div class="text-sm font-bold text-slate-700">' + o.icon + ' ' + o.title + escapeHtml(extra) + '</div><div class="text-[11px] text-slate-500">' + o.hint + '</div></div></label>';
+                }).join('');
+                const cashExtra = st.settlement === 'paid_cash'
+                    ? '<div class="mt-2"><label class="block text-[11px] font-bold text-slate-500 mb-1">ช่องทางรับเงิน</label><input id="co-paid-method" value="' + escapeHtml(st._paidMethod || 'เงินสด') + '" oninput="window._co._paidMethod=this.value" class="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs"></div>' : '';
+                fee.innerHTML =
+                    '<div class="bg-rose-50 border border-rose-200 rounded-xl p-3">' +
+                    '<div class="text-sm font-bold text-rose-700">⚠️ ค่าส่วนกลางค้าง ' + p.arrears_count + ' เดือน' + (p.fee_rate ? ' · ประมาณ ฿' + _coMoney(p.arrears_amount) + ' (฿' + _coMoney(p.fee_rate) + '/เดือน)' : '') + '</div>' +
+                    '<table class="text-xs text-slate-700 mt-1.5">' + rows + '</table>' +
+                    (p.arrears.some(a => a.val === 'รอตรวจสอบ') ? '<div class="text-[11px] text-amber-700 mt-1.5">ℹ️ มีเดือนที่ "รอตรวจสอบ" (สลิปที่ยังไม่ได้ยืนยัน) — ตรวจสลิปให้เสร็จก่อนจะแม่นยำกว่า</div>' : '') + '</div>' +
+                    '<div class="text-xs font-bold text-slate-600 mt-3 mb-1.5">เลือกวิธีเคลียร์ยอดค้าง *</div><div class="space-y-1.5">' + opts + '</div>' + cashExtra;
+                canSubmit = !!st.settlement && (st.settlement !== 'waived' || note.length >= 3);
+                if (st.settlement === 'waived' && note.length < 3) fee.innerHTML += '<div class="text-[11px] text-rose-500 mt-1">กรอกเหตุผลในช่องหมายเหตุ (อย่างน้อย 3 ตัวอักษร)</div>';
+            }
+
+            // สมาชิกที่ผูกกับบ้านนี้
+            if (p && (p.members || []).length) {
+                mem.innerHTML = '<div class="text-xs font-bold text-slate-600 mb-1">👥 สมาชิก LINE ที่ผูกกับบ้านนี้ — เลือกคนที่จะ<b>ปลดออก</b></div>' +
+                    '<div class="text-[11px] text-slate-400 mb-1.5">คนที่ปลดจะไม่เห็นข้อมูลบ้านนี้และไม่ได้รับแต้ม/แจ้งเตือนอีก (เก็บสำเนาใน "ประวัติสมาชิกที่ถูกลบ") · ผู้เช่าที่อยู่ต่อให้ปล่อยไว้</div>' +
+                    '<div class="space-y-1">' + p.members.map(m =>
+                        '<label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 text-sm cursor-pointer">' +
+                        '<input type="checkbox" ' + (st.unlink[m.uid] ? 'checked' : '') + ' onchange="toggleCoUnlink(this.dataset.uid,this.checked)" data-uid="' + escapeHtml(m.uid) + '">' +
+                        '<span class="font-semibold text-slate-700">' + escapeHtml(m.fullname || m.line_name || m.uid) + '</span>' +
+                        '<span class="text-[11px] text-slate-400">' + escapeHtml(m.living_status || '') + '</span></label>').join('') + '</div>';
+            } else mem.innerHTML = p ? '<div class="text-[11px] text-slate-400">ไม่มีสมาชิก LINE ผูกกับบ้านนี้</div>' : '';
+
+            if (btn) { btn.disabled = !canSubmit || st.busy; btn.textContent = st.busy ? '⏳ กำลังโอน...' : '🔄 ยืนยันโอนกรรมสิทธิ์'; }
+        }
+
+        async function confirmChangeOwner() {
+            const st = window._co; if (!st || st.busy) return;
             const newFullName = document.getElementById('co-new-name')?.value?.trim();
             if (!newFullName) return showToast('กรอกชื่อเจ้าของใหม่ก่อน', 'warning');
             const newTransferDate = document.getElementById('co-new-date')?.value;
+            if (!newTransferDate) return showToast('เลือกวันที่โอน', 'warning');
             const newTitleDeedNumber = document.getElementById('co-new-deed')?.value?.trim();
             const note = document.getElementById('co-note')?.value?.trim();
-
+            const p = st.preview;
+            const body = { id: st.r.id, newFullName, newTransferDate, newTitleDeedNumber, note };
+            let summary = 'โอนบ้าน ' + (st.r.house_no || '') + '\nจาก: ' + (st.r.full_name || '-') + '\nเป็น: ' + newFullName + '\nวันที่โอน: ' + _coFmtDate(newTransferDate);
+            if (p) {
+                const unlinkUids = Object.keys(st.unlink || {}).filter(u => st.unlink[u]);
+                body.unlinkUids = unlinkUids;
+                if (p.arrears_count) { body.settlement = st.settlement; if (st.settlement === 'paid_cash') body.paidMethod = (st._paidMethod || 'เงินสด').trim(); }
+                summary += '\nค่าส่วนกลางค้าง: ' + (p.arrears_count ? p.arrears_count + ' เดือน → ' + CO_SETTLE[st.settlement].title : 'ไม่มี (ปลอดหนี้)');
+                summary += '\nปลดสมาชิกออก: ' + unlinkUids.length + ' คน';
+            }
+            if (!confirm(summary + '\n\nการโอนย้อนกลับอัตโนมัติไม่ได้ ยืนยัน?')) return;
+            st.busy = true; renderTransferWizard();
             try {
                 const res = await fetch(`${API_BASE_URL}/api/admin/audience/land_registry_change_owner`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id, newFullName, newTransferDate, newTitleDeedNumber, note })
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
                 });
-                const d = await res.json();
-                if (!res.ok) throw new Error(d.error || 'เปลี่ยนเจ้าของไม่สำเร็จ');
-                closeModal();
+                const d = await res.json().catch(() => ({}));
+                if (res.status === 409 && d.needSettlement) { showToast('ยอดค้างเปลี่ยนไป — ตรวจสอบอีกครั้ง', 'warning'); st.busy = false; return loadTransferPreview(); }
+                if (!res.ok) throw new Error(d.error || 'โอนไม่สำเร็จ');
+                st.busy = false;
                 showToast('✅ ' + d.message, 'success');
                 loadLandRegistryList();
-            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+                renderTransferDone(d);
+            } catch (e) { st.busy = false; renderTransferWizard(); showToast('❌ ' + e.message, 'error'); }
+        }
+
+        function renderTransferDone(d) {
+            const body = document.getElementById('co-body'); if (!body) return;
+            document.querySelector('#co-overlay .border-t')?.remove();
+            const t = d.transfer || {};
+            const failed = (d.unlinkFailed || []);
+            body.innerHTML =
+                '<div class="text-center py-2"><div class="text-5xl mb-2">✅</div><div class="font-black text-slate-800">โอนกรรมสิทธิ์เรียบร้อย</div>' +
+                '<div class="text-sm text-slate-500 mt-1">' + escapeHtml(d.message || '') + '</div></div>' +
+                (failed.length ? '<div class="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-600">ปลดสมาชิกไม่สำเร็จ ' + failed.length + ' คน — ไปปลดเองที่หน้ารายชื่อสมาชิก</div>' : '') +
+                '<div class="flex gap-2 pt-1">' +
+                (t.transfer_no ? '<button data-no="' + escapeHtml(t.transfer_no) + '" data-id="' + escapeHtml(window._co?.r?.id || '') + '" onclick="printClearance(this.dataset.no,this.dataset.id)" class="flex-1 py-2.5 bg-emerald-600 text-white rounded-2xl font-bold text-sm">🖨️ พิมพ์ใบเคลียร์ค่าส่วนกลาง</button>' : '') +
+                '<button onclick="closeChangeOwnerWizard()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ปิด</button></div>';
+        }
+
+        // ─── 🖨️ ใบเคลียร์ค่าส่วนกลาง / หนังสือรับรองปลอดหนี้ ─────────────
+        function buildClearanceCertHtml(t) {
+            const e = escapeHtml;
+            const arrears = Array.isArray(t.arrears) ? t.arrears : [];
+            const carried = t.settlement === 'carried';
+            const title = carried ? 'บันทึกการโอนบ้านพร้อมยอดค้างค่าส่วนกลาง' : 'หนังสือรับรองการปลอดหนี้ค่าส่วนกลาง';
+            const settleTxt = {
+                clear: 'ไม่มียอดค้างค่าส่วนกลาง ณ วันที่โอน',
+                paid_cash: 'ผู้ขายชำระค่าส่วนกลางที่ค้างเป็นเงินสดครบถ้วนในวันที่โอน',
+                waived: 'นิติบุคคลฯ ตัดหนี้/ยกเว้นค่าส่วนกลางที่ค้าง',
+                carried: 'ผู้ซื้อรับภาระค่าส่วนกลางที่ค้างต่อจากเจ้าของเดิม',
+            }[t.settlement] || '';
+            const rows = arrears.map(a => '<tr><td>' + e(a.label + ' ' + a.year) + '</td><td>' + e(a.val || '-') + '</td></tr>').join('');
+            const stmt = carried
+                ? 'ณ วันที่โอน บ้านเลขที่นี้มีค่าส่วนกลางค้างชำระ <b>' + t.arrears_count + ' เดือน</b> (ประมาณ ฿' + _coMoney(t.arrears_amount) + ') ซึ่งผู้ซื้อรับทราบและตกลงรับภาระชำระต่อ <b>จึงยังไม่ถือว่าปลอดหนี้</b>'
+                : 'ณ วันที่โอน ' + (t.settlement === 'clear' ? 'บ้านเลขที่นี้<b>ไม่มีค่าส่วนกลางค้างชำระ</b>' : 'ค่าส่วนกลางทั้งหมดถึงเดือนที่โอนได้รับการเคลียร์แล้ว <b>บ้านเลขที่นี้ปลอดหนี้ค่าส่วนกลาง</b>') + ' ผู้ซื้อ/เจ้าของใหม่รับผิดชอบค่าส่วนกลางตั้งแต่เดือนถัดจากวันที่โอนเป็นต้นไป';
+            return `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><title>${e(t.transfer_no || '')}</title>
+                <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+                <style>
+                    *{box-sizing:border-box;margin:0;padding:0}
+                    body{font-family:'Sarabun',sans-serif;font-size:14px;color:#1e293b;padding:40px;max-width:700px;margin:0 auto;line-height:1.75}
+                    .box{border:3px double #1e293b;padding:30px 36px}
+                    h1{font-size:19px;text-align:center}.sub{text-align:center;color:#64748b;font-size:12px}
+                    .t{text-align:center;font-size:17px;font-weight:700;margin:16px 0;text-decoration:underline;text-underline-offset:6px}
+                    .no{text-align:right;font-size:11px;color:#94a3b8}
+                    table.i{width:100%;margin:12px 0}table.i td{padding:3px 0;vertical-align:top}table.i td.l{width:170px;color:#64748b}table.i td.v{font-weight:600}
+                    table.a{border-collapse:collapse;margin:8px 0 8px 0;font-size:13px}table.a td,table.a th{border:1px solid #cbd5e1;padding:3px 12px;text-align:left}
+                    .sg{margin-top:46px;display:flex;justify-content:space-between;gap:12px}.sb{text-align:center;flex:1}.sl{border-bottom:1px dotted #94a3b8;height:44px;margin-bottom:6px}
+                    .fine{font-size:11px;color:#64748b;margin-top:14px}
+                    .btn{display:block;width:100%;padding:13px;background:#059669;color:#fff;border:none;border-radius:12px;font-family:'Sarabun',sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-top:24px}
+                    @media print{.btn{display:none}body{padding:12px}}
+                </style></head><body><div class="box">
+                    <div class="no">เลขที่เอกสาร: ${e(t.transfer_no || '-')}</div>
+                    <h1>นิติบุคคลหมู่บ้านจัดสรร GOLDENLAND SERENE</h1><div class="sub">Golden Land Serene Village</div>
+                    <div class="t">${title}</div>
+                    <table class="i">
+                        <tr><td class="l">บ้านเลขที่</td><td class="v">${e(t.house_no || '-')} ${e(t.soi || '')}</td></tr>
+                        <tr><td class="l">เจ้าของเดิม (ผู้โอน)</td><td class="v">${e(t.old_owner || '-')}</td></tr>
+                        <tr><td class="l">เจ้าของใหม่ (ผู้รับโอน)</td><td class="v">${e(t.new_owner || '-')}</td></tr>
+                        <tr><td class="l">วันที่โอนกรรมสิทธิ์</td><td class="v">${e(_coFmtDate(t.transfer_date))}</td></tr>
+                        <tr><td class="l">การเคลียร์ค่าส่วนกลาง</td><td class="v">${e(settleTxt)}</td></tr>
+                        ${t.settlement === 'paid_cash' ? `<tr><td class="l">ยอดที่รับชำระ</td><td class="v">฿${_coMoney(t.amount_paid)} (${e(t.paid_method || 'เงินสด')})</td></tr>` : ''}
+                        ${t.note ? `<tr><td class="l">หมายเหตุ</td><td class="v">${e(t.note)}</td></tr>` : ''}
+                    </table>
+                    <p>${stmt}</p>
+                    ${rows ? `<div style="margin-top:8px;font-size:13px;color:#64748b">รายการเดือนที่ค้าง ณ วันที่โอน:</div><table class="a"><tr><th>เดือน</th><th>สถานะเดิม</th></tr>${rows}</table>` : ''}
+                    <div class="fine">ออกเอกสารเมื่อ ${e(_coFmtDate(t.created_at))} โดย ${e(t.created_by || 'ผู้ดูแลระบบ')} · อ้างอิงข้อมูลบัญชีค่าส่วนกลางของนิติบุคคลฯ ณ วันที่โอน</div>
+                    <div class="sg">
+                        <div class="sb"><div class="sl"></div><div>เจ้าของเดิม</div></div>
+                        <div class="sb"><div class="sl"></div><div>เจ้าของใหม่</div></div>
+                        <div class="sb"><div class="sl"></div><div>ผู้จัดการนิติบุคคลฯ</div></div>
+                    </div>
+                </div><button class="btn" onclick="window.print()">🖨️ พิมพ์ / บันทึก PDF</button></body></html>`;
+        }
+
+        async function printClearance(transferNo, landId) {
+            const w = window.open('', '_blank', 'width=760,height=950');
+            if (!w) return showToast('เบราว์เซอร์บล็อก popup กรุณาอนุญาต', 'warning');
+            w.document.write('<p style="font-family:sans-serif;padding:30px;color:#64748b">⏳ กำลังโหลดเอกสาร...</p>');
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/house_transfers?id=${encodeURIComponent(landId)}`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดไม่สำเร็จ');
+                const t = (d.transfers || []).find(x => x.transfer_no === transferNo);
+                if (!t) throw new Error('ไม่พบเอกสาร ' + transferNo);
+                w.document.open(); w.document.write(buildClearanceCertHtml(t)); w.document.close();
+            } catch (e) { w.document.body.innerHTML = '<p style="font-family:sans-serif;padding:30px;color:#e11d48">❌ ' + escapeHtml(e.message) + '</p>'; }
         }
 
         // ─── 📜 ดูประวัติเจ้าของเก่า ────────────────────────────────
@@ -1344,13 +1551,28 @@
                 '<div id="oh-body" class="text-left"><div class="text-center py-8 text-slate-400">⏳ กำลังโหลด...</div></div>'
             );
             try {
-                const res = await fetch(`${API_BASE_URL}/api/admin/audience/land_registry_owner_history?id=${landId}`);
+                const [res, res2] = await Promise.all([
+                    fetch(`${API_BASE_URL}/api/admin/audience/land_registry_owner_history?id=${landId}`),
+                    fetch(`${API_BASE_URL}/api/admin/audience/house_transfers?id=${landId}`).catch(() => null),
+                ]);
                 const d = await res.json();
                 if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
+                const d2 = res2 && res2.ok ? await res2.json().catch(() => ({})) : {};
+                const SETTLE_TXT = { clear: '✅ ปลอดหนี้', paid_cash: '💵 ชำระเงินสด', carried: '🤝 ผู้ซื้อรับภาระ', waived: '✂️ ตัดหนี้' };
+                const transfersHtml = (d2.transfers || []).length
+                    ? '<div class="text-xs font-bold text-slate-600 mt-4 mb-1.5">📑 ใบเคลียร์ค่าส่วนกลางตอนโอน</div><div class="space-y-1.5">' +
+                      d2.transfers.map(t =>
+                        '<div class="flex items-center gap-2 p-2.5 bg-white border border-slate-200 rounded-xl text-xs">' +
+                        '<div class="flex-1 min-w-0"><div class="font-bold text-slate-700 truncate">' + escapeHtml(t.old_owner || '-') + ' → ' + escapeHtml(t.new_owner || '-') + '</div>' +
+                        '<div class="text-slate-400">' + escapeHtml(_coFmtDate(t.transfer_date)) + ' · ' + (SETTLE_TXT[t.settlement] || escapeHtml(t.settlement)) +
+                        (t.arrears_count ? ' · ค้าง ' + t.arrears_count + ' เดือน' : '') + ' · <span class="font-mono">' + escapeHtml(t.transfer_no) + '</span></div></div>' +
+                        '<button data-no="' + escapeHtml(t.transfer_no) + '" data-id="' + escapeHtml(landId) + '" onclick="printClearance(this.dataset.no,this.dataset.id)" class="px-2.5 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg font-bold">🖨️</button></div>'
+                      ).join('') + '</div>'
+                    : '';
 
                 const el = document.getElementById('oh-body');
                 if (!d.history?.length) {
-                    el.innerHTML = '<div class="text-center py-8 text-slate-400 text-sm">ยังไม่มีประวัติการเปลี่ยนเจ้าของ<br><span class="text-xs text-slate-300">(บ้านนี้ยังไม่เคยเปลี่ยนมือ)</span></div>';
+                    el.innerHTML = '<div class="text-center py-8 text-slate-400 text-sm">ยังไม่มีประวัติการเปลี่ยนเจ้าของ<br><span class="text-xs text-slate-300">(บ้านนี้ยังไม่เคยเปลี่ยนมือ)</span></div>' + transfersHtml;
                     return;
                 }
 
@@ -1367,7 +1589,7 @@
                         (hh.title_deed_number ? '<div class="text-[11px] text-slate-400 font-mono">โฉนด: ' + escapeHtml(hh.title_deed_number) + '</div>' : '') +
                         (hh.note ? '<div class="text-xs text-amber-600 mt-1">📝 ' + escapeHtml(hh.note) + '</div>' : '') +
                         '</div></div>'
-                    ).join('') + '</div>';
+                    ).join('') + '</div>' + transfersHtml;
             } catch(e) {
                 document.getElementById('oh-body').innerHTML = '<div class="text-rose-500 text-center py-6 text-sm">❌ ' + escapeHtml(e.message) + '</div>';
             }
@@ -12958,10 +13180,74 @@ async function updateAllUserProfiles() {
                   <button id="health-run-btn" onclick="runHealthCheck(false)" class="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white rounded-2xl font-bold shadow flex items-center gap-2"><i data-lucide="refresh-cw" class="w-4 h-4"></i> ตรวจสอบ</button>
                 </div>
               </div>
+              <div id="reply-usage-card"></div>
               <div id="health-result"></div>
             </div>`;
             lucide.createIcons();
+            loadReplyUsageCard();          // ไม่รอ — แสดงคู่กับผลตรวจสุขภาพ
             await runHealthCheck(false);
+        }
+
+        // ─── 📨 การ์ดการใช้ Reply API (LINE คิดโควตา Reply ฟรี 25,000 ข้อความ/เดือน/OA ตั้งแต่ 1 ก.พ. 2570) ───
+        async function loadReplyUsageCard() {
+            const box = document.getElementById('reply-usage-card');
+            if (!box) return;
+            box.innerHTML = '<div class="glass rounded-3xl p-5 mb-4 text-center text-slate-400 text-sm">⏳ กำลังโหลดการใช้ Reply API...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/reply_usage?days=31`);
+                const d = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(d.error || ('HTTP ' + res.status + (res.status === 404 ? ' — ยังไม่ได้ deploy Edge Function เวอร์ชันล่าสุด' : '')));
+                if (document.getElementById('reply-usage-card')) box.innerHTML = renderReplyUsageCard(d);
+            } catch (e) {
+                if (document.getElementById('reply-usage-card')) box.innerHTML = '<div class="glass rounded-3xl p-5 mb-4 text-sm text-rose-500">❌ โหลดการใช้ Reply API ไม่สำเร็จ: ' + escapeHtml(e.message) +
+                    ' <button onclick="loadReplyUsageCard()" class="underline font-bold ml-1">ลองใหม่</button></div>';
+            }
+        }
+
+        function renderReplyUsageCard(d) {
+            const head = (extra) => '<div class="flex items-center gap-2 mb-3 flex-wrap"><span class="text-xl">📨</span><h3 class="font-bold text-slate-700 flex-1">การใช้ Reply API (นับเองทุกครั้งที่บอทตอบ)</h3>' + (extra || '') +
+                '<button onclick="loadReplyUsageCard()" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-bold text-slate-600">รีเฟรช</button></div>';
+            if (d.notInstalled) {
+                return '<div class="glass rounded-3xl p-5 mb-4 border border-amber-200">' + head('') +
+                    '<div class="text-sm text-amber-700">⚠️ ยังไม่ได้นับ — ฐานข้อมูลหมู่บ้านนี้ยังไม่มีตาราง <code class="bg-amber-100 px-1 rounded">reply_usage_daily</code><br>' +
+                    'รัน <code class="bg-violet-50 text-violet-700 px-1.5 py-0.5 rounded font-bold">migration_reply_usage.sql</code> ใน Supabase → SQL Editor แล้วบอทจะเริ่มนับตั้งแต่ข้อความถัดไป</div></div>';
+            }
+            const m = d.month || {}, n = (v) => Number(v || 0).toLocaleString('th-TH');
+            const col = m.status === 'over' ? 'rose' : m.status === 'warn' ? 'amber' : 'emerald';
+            const barW = d.unlimited || m.pct == null ? 0 : Math.min(100, m.pct);
+            const enforce = d.daysToEnforce > 0
+                ? '<span class="text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200 px-2 py-1 rounded-full">LINE เริ่มคิดโควตา 1 ก.พ. 2570 (อีก ' + d.daysToEnforce + ' วัน)</span>'
+                : '<span class="text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200 px-2 py-1 rounded-full">LINE คิดโควตา Reply แล้ว (ตั้งแต่ 1 ก.พ. 2570)</span>';
+            const stat = (label, val, sub) => '<div class="bg-white/70 rounded-2xl p-3 text-center"><div class="text-xl font-extrabold text-slate-800">' + val + '</div><div class="text-[11px] text-slate-500 font-bold">' + label + '</div>' + (sub ? '<div class="text-[10px] text-slate-400">' + sub + '</div>' : '') + '</div>';
+            const daily = d.daily || [];
+            const max = Math.max(1, ...daily.map(x => x.msgs));
+            const bars = daily.map((x, i) => {
+                const h = Math.round(x.msgs / max * 100);
+                const seg = (v, c) => v > 0 ? '<div class="' + c + ' w-full" style="height:' + (v / Math.max(1, x.msgs) * 100) + '%"></div>' : '';
+                const tip = x.day + ' · ' + x.msgs + ' ข้อความ (' + x.calls + ' ครั้ง) · ข้อความ ' + x.text + ' / Flex ' + x.flex + ' / อื่น ๆ ' + x.other + (x.failed ? ' · ล้มเหลว ' + x.failed : '');
+                return '<div class="flex-1 min-w-0 h-full flex flex-col justify-end items-center" title="' + escapeHtml(tip) + '" role="img" aria-label="' + escapeHtml(tip) + '">' +
+                    '<div class="w-full flex flex-col-reverse rounded-t overflow-hidden ' + (x.msgs ? '' : 'bg-slate-100') + '" style="height:' + (x.msgs ? Math.max(h, 3) : 2) + '%">' +
+                    seg(x.text, 'bg-indigo-500') + seg(x.flex, 'bg-amber-400') + seg(x.other, 'bg-slate-400') + '</div></div>';
+            }).join('');
+            const first = daily[0] ? daily[0].day.slice(5) : '', mid = daily[Math.floor(daily.length / 2)] ? daily[Math.floor(daily.length / 2)].day.slice(5) : '', last = daily.length ? daily[daily.length - 1].day.slice(5) : '';
+            const months = (d.months || []).slice().reverse().map(x =>
+                '<tr class="border-t border-slate-100"><td class="py-1 pr-4 text-slate-600">' + escapeHtml(x.month) + '</td><td class="py-1 pr-4 font-bold text-slate-700 text-right">' + n(x.msgs) + '</td><td class="py-1 text-right text-slate-500">' + n(x.calls) + '</td></tr>').join('');
+            return '<div class="glass rounded-3xl p-5 mb-4 border ' + (m.status === 'over' ? 'border-rose-300' : m.status === 'warn' ? 'border-amber-300' : 'border-white/50') + '">' + head(enforce) +
+                '<div class="flex items-end justify-between flex-wrap gap-1 mb-1.5"><div><span class="text-3xl font-extrabold text-' + col + '-600">' + n(m.msgs) + '</span> <span class="text-sm text-slate-500">ข้อความเดือนนี้ / ' + (d.unlimited ? 'ไม่จำกัด' : n(d.limit)) + '</span></div>' +
+                (m.pct != null ? '<div class="text-sm font-bold text-' + col + '-600">' + m.pct + '%</div>' : '') + '</div>' +
+                '<div class="h-3 rounded-full bg-slate-100 overflow-hidden mb-1" role="progressbar" aria-valuenow="' + barW + '" aria-valuemin="0" aria-valuemax="100"><div class="h-full bg-' + col + '-500 rounded-full" style="width:' + barW + '%"></div></div>' +
+                '<div class="text-[11px] text-slate-500 mb-4">คาดการณ์สิ้นเดือน ~' + n(m.projected) + ' ข้อความ' + (m.projectedPct != null ? ' (' + m.projectedPct + '%)' : '') + ' · วันที่ ' + m.dayOfMonth + '/' + m.daysInMonth + '</div>' +
+                (m.status === 'over' ? '<div class="bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl p-3 mb-4">🚨 เกินโควตาฟรีแล้ว — หลัง 1 ก.พ. 2570 ส่วนที่เกินต้องสมัครแพ็กเกจ Unlimited (5,000 บาท/เดือน ผ่าน Agency Partner) หรือลดข้อความตอบกลับ</div>'
+                  : m.status === 'warn' ? '<div class="bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-xl p-3 mb-4">⚠️ ใกล้เต็มโควตา หรือคาดว่าจะเกินภายในเดือนนี้ — รวมคำตอบหลายข้อความเป็น 1, ให้เมนูเปิดหน้า LIFF แทนการตอบในแชท, หรือย้ายคำตอบ keyword ง่าย ๆ ไปตั้งในตอบกลับอัตโนมัติของ LINE OA Manager</div>' : '') +
+                '<div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">' +
+                stat('วันนี้', n(d.todayRow && d.todayRow.msgs), 'ข้อความ') + stat('เดือนนี้', n(m.calls), 'ครั้งที่ตอบ') +
+                stat('ตอบ/วัน (เฉลี่ย)', n(m.dayOfMonth ? Math.round(m.msgs / m.dayOfMonth) : 0), 'ข้อความ') + stat('วันนี้ล้มเหลว', n(d.todayRow && d.todayRow.failed), 'ครั้ง') + '</div>' +
+                '<div class="text-xs font-bold text-slate-600 mb-1.5">ข้อความตอบกลับรายวัน (31 วันล่าสุด)</div>' +
+                '<div class="flex items-stretch gap-[2px] h-28 mb-1">' + bars + '</div>' +
+                '<div class="flex justify-between text-[10px] text-slate-400 mb-2"><span>' + first + '</span><span>' + mid + '</span><span>' + last + '</span></div>' +
+                '<div class="flex gap-3 text-[10px] text-slate-500 mb-4"><span><span class="inline-block w-2 h-2 rounded-sm bg-indigo-500"></span> ข้อความตัวอักษร</span><span><span class="inline-block w-2 h-2 rounded-sm bg-amber-400"></span> Flex</span><span><span class="inline-block w-2 h-2 rounded-sm bg-slate-400"></span> อื่น ๆ</span></div>' +
+                (months ? '<table class="text-xs w-full max-w-sm"><thead><tr class="text-slate-400"><th class="text-left font-bold pb-1">เดือน</th><th class="text-right font-bold pb-1">ข้อความ</th><th class="text-right font-bold pb-1">ครั้ง</th></tr></thead><tbody>' + months + '</tbody></table>' : '') +
+                '<div class="text-[10px] text-slate-400 mt-3">นับเฉพาะบอทนี้ตั้งแต่เริ่มติดตั้งตัวนับ · LINE ยังไม่ระบุว่านับต่อครั้งหรือต่อข้อความ จึงเทียบเพดานด้วยจำนวนข้อความ (ค่าที่สูงกว่า) · ปรับเพดานได้ที่ system_settings key <code>reply_quota_limit</code> (-1 = ไม่จำกัด)</div></div>';
         }
 
         const HEALTH_STATUS_UI = {
