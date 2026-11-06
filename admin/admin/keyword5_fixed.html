@@ -14561,6 +14561,7 @@ async function updateAllUserProfiles() {
             { tab:'repairs',    icon:'🔧', name:'แจ้งซ่อม',                desc:'แจ้งซ่อมพื้นที่ส่วนกลาง',                       alias:['repair'] },
             { tab:'cctv',       icon:'📹', name:'ขอดูกล้องวงจรปิด',        desc:'ยื่นคำขอดูภาพกล้อง',                            alias:['camera'] },
             { tab:'keycard',    icon:'🔑', name:'คีย์การ์ด',               desc:'คีย์การ์ดเข้า-ออกหมู่บ้าน',                     alias:[] },
+            { tab:'housemembers', icon:'👨‍👩‍👧', name:'สมาชิกในบ้าน',        desc:'เจ้าของบ้านดูรายชื่อผู้เช่า/ผู้อาศัยในบ้าน และแจ้งลบ',     alias:[] },
             { tab:'agm',        icon:'🗳️', name:'โหวต AGM',                desc:'ลงคะแนนในวาระประชุมใหญ่',                       alias:[] },
             { tab:'gallery',    icon:'🖼️', name:'แกลเลอรี่หมู่บ้าน',       desc:'รูปภาพกิจกรรม/พื้นที่ส่วนกลาง',                 alias:[] },
             { tab:'news',       icon:'📰', name:'ข่าวสาร & โปรโมชั่น',     desc:'ประกาศ ข่าว และโปรโมชั่น',                      alias:[] },
@@ -14651,6 +14652,16 @@ async function updateAllUserProfiles() {
                         </div>
                     </div>
 
+                    <div class="glass rounded-3xl p-5 mt-4" id="kc-link-box">
+                        <h3 class="font-bold text-slate-800 mb-1 flex items-center gap-2"><span>🪪</span> ลิงก์ยืนยันคีย์การ์ด (ส่งให้ลูกบ้านกดเข้าหน้ายืนยันโดยตรง)</h3>
+                        <p class="text-[11px] text-slate-500 mb-3">ค้นหาบ้าน → เลือกบัตร → คัดลอกลิงก์ หรือกดส่งเข้า LINE สมาชิกบ้านนั้นได้เลย · ลิงก์เปิดหน้ายืนยันของบัตรใบนั้นทันที (เปิดได้เฉพาะสมาชิกของบ้านเดียวกับบัตร)</p>
+                        <div class="flex gap-2 mb-3">
+                            <input id="kc-link-house" type="text" placeholder="บ้านเลขที่ เช่น 998/327" onkeydown="if(event.key==='Enter')kcLinkSearch()" class="flex-1 px-3 py-2 rounded-lg border border-slate-200 text-sm">
+                            <button onclick="kcLinkSearch()" class="px-4 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-lg text-sm font-bold">ค้นหา</button>
+                        </div>
+                        <div id="kc-link-out" class="text-[11px] text-slate-400">พิมพ์บ้านเลขที่เพื่อดูคีย์การ์ดของบ้านนั้น</div>
+                    </div>
+
                     <div class="glass rounded-3xl p-4 mt-4 text-[11px] text-slate-500 leading-relaxed">
                         <b class="text-slate-700">วิธีใช้</b><br>
                         • <b>Rich Menu / ข้อความ LINE</b>: วางลิงก์ LIFF URL ในช่อง URI ของปุ่ม — ลูกบ้านกดแล้วเปิด Mini App ไปที่หน้านั้นทันที<br>
@@ -14708,6 +14719,82 @@ async function updateAllUserProfiles() {
             };
             mk('crm-links-event', 'crm-links-event-out', 'event');
             mk('crm-links-coupon', 'crm-links-coupon-out', 'coupon');
+        }
+
+        // ── 🪪 ลิงก์ยืนยันคีย์การ์ด ──
+        let _kcLinkState = { house: '', cards: [], members: 0, summary: null };
+        const _KC_STATUS = { pending: ['รอยืนยัน', 'bg-amber-100 text-amber-700'], reviewing: ['รอตรวจสอบ', 'bg-blue-100 text-blue-700'], active: ['ใช้งานได้', 'bg-emerald-100 text-emerald-700'], cancelled: ['ระงับ', 'bg-rose-100 text-rose-700'] };
+        function _kcFmtNum(front, back) {
+            const f = String(front == null ? '' : front).replace(/\D/g, '').padEnd(10, '•');
+            const b = String(back == null ? '' : back).replace(/\D/g, '').padEnd(8, '•');
+            return f + '  ' + b.slice(0, 3) + ',' + b.slice(3);
+        }
+        async function kcLinkSearch() {
+            const out = document.getElementById('kc-link-out');
+            const hn = (document.getElementById('kc-link-house')?.value || '').trim();
+            if (!out) return;
+            if (!hn) { out.innerHTML = '<span class="text-rose-500">กรุณาพิมพ์บ้านเลขที่</span>'; return; }
+            out.innerHTML = '<span class="text-slate-400">กำลังค้นหา...</span>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/keycard_house_cards?house=${encodeURIComponent(hn)}`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ค้นหาไม่สำเร็จ');
+                _kcLinkState = { house: d.house, cards: d.cards || [], members: d.members || 0, summary: d.summary };
+                kcLinkRender();
+            } catch (e) {
+                out.innerHTML = '<span class="text-rose-500">' + escapeHtml(e.message) + '</span>';
+            }
+        }
+        function kcLinkRender() {
+            const out = document.getElementById('kc-link-out');
+            if (!out) return;
+            const st = _kcLinkState, sm = st.summary || {};
+            const head = '<div class="flex flex-wrap items-center gap-1.5 mb-2">' +
+                '<span class="text-sm font-extrabold text-slate-800">บ้าน ' + escapeHtml(st.house) + '</span>' +
+                '<span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">บัตรทั้งหมด ' + (sm.total || 0) + ' ใบ</span>' +
+                (sm.cancelled ? '<span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">ระงับ ' + sm.cancelled + ' ใบ</span>' : '') +
+                '<span class="text-[11px] text-slate-400">สมาชิกที่ผูก LINE ' + st.members + ' คน</span></div>';
+            if (!st.cards.length) { out.innerHTML = head + '<div class="text-slate-400">บ้านนี้ยังไม่มีคีย์การ์ดในระบบ</div>'; return; }
+            const canSend = st.members > 0;
+            const house = '<div class="p-3 bg-white border border-slate-200 rounded-xl mb-2 flex items-center gap-2">' +
+                '<div class="flex-1 min-w-0"><div class="text-xs font-bold text-slate-700">ทุกใบของบ้านนี้ <code class="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">?tab=keycard</code></div>' +
+                '<div class="text-[11px] text-blue-600 font-mono truncate cursor-pointer" data-url="' + escapeHtml(_crmLinkFor({ tab: 'keycard' })) + '" onclick="copyToClipboard(this.dataset.url)">' + escapeHtml(_crmLinkFor({ tab: 'keycard' })) + '</div></div>' +
+                '<button data-url="' + escapeHtml(_crmLinkFor({ tab: 'keycard' })) + '" onclick="copyToClipboard(this.dataset.url)" class="px-3 py-1.5 bg-slate-100 hover:bg-sky-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-600">คัดลอก</button>' +
+                '<button ' + (canSend ? '' : 'disabled ') + 'onclick="kcLinkSend(null)" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-300 text-white rounded-lg text-xs font-bold">ส่งเข้า LINE</button></div>';
+            const rows = st.cards.map(c => {
+                const stt = _KC_STATUS[c.status] || [c.status || '-', 'bg-slate-100 text-slate-600'];
+                const url = _crmLinkFor({ keycard: c.id });
+                const dead = c.status === 'cancelled';
+                return '<div class="p-3 bg-white border border-slate-200 rounded-xl mb-2 flex items-center gap-2' + (dead ? ' opacity-60' : '') + '">' +
+                    '<div class="flex-1 min-w-0">' +
+                        '<div class="flex items-center gap-1.5 flex-wrap"><span class="font-mono font-bold text-sm text-slate-800 whitespace-nowrap">' + escapeHtml(_kcFmtNum(c.front_number, c.back_number)) + '</span>' +
+                        '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full ' + stt[1] + '">' + stt[0] + '</span>' +
+                        (c.holder_name ? '<span class="text-[10px] text-slate-400">' + escapeHtml(c.holder_name) + '</span>' : '') + '</div>' +
+                        (dead ? '<div class="text-[10px] text-rose-500 mt-0.5">ระงับเพราะ: ' + escapeHtml(c.cancel_reason || 'ไม่ระบุ') + '</div>'
+                              : '<div class="text-[11px] text-blue-600 font-mono truncate cursor-pointer mt-0.5" data-url="' + escapeHtml(url) + '" onclick="copyToClipboard(this.dataset.url)">' + escapeHtml(url) + '</div>') +
+                    '</div>' +
+                    (dead ? '' :
+                    '<button data-url="' + escapeHtml(url) + '" onclick="copyToClipboard(this.dataset.url)" class="px-3 py-1.5 bg-slate-100 hover:bg-sky-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-600">คัดลอก</button>' +
+                    '<button ' + (canSend ? '' : 'disabled ') + 'data-card="' + escapeHtml(String(c.id)) + '" onclick="kcLinkSend(this.dataset.card)" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-300 text-white rounded-lg text-xs font-bold">ส่งเข้า LINE</button>') +
+                    '</div>';
+            }).join('');
+            out.innerHTML = head + house + rows + (canSend ? '' : '<div class="text-[11px] text-amber-600 mt-1">บ้านนี้ยังไม่มีสมาชิกที่ผูก LINE — คัดลอกลิงก์ไปส่งเองได้</div>');
+        }
+        async function kcLinkSend(cardId) {
+            const st = _kcLinkState;
+            const what = cardId ? 'ลิงก์ยืนยันบัตรใบนี้' : 'ลิงก์คีย์การ์ดของบ้านนี้';
+            if (!confirm('ส่ง' + what + ' เข้า LINE ของสมาชิกบ้าน ' + st.house + ' (' + st.members + ' คน)?')) return;
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/keycard_link_send`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ houseNumber: st.house, cardId: cardId || undefined })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ส่งไม่สำเร็จ');
+                showToast('✅ ส่งแล้ว ' + d.sent + ' คน' + (d.failed ? ' · ไม่สำเร็จ ' + d.failed : ''), d.failed ? 'warning' : 'success');
+            } catch (e) {
+                showToast('❌ ' + e.message, 'error');
+            }
         }
 
         function crmLinksCopyAll() {
