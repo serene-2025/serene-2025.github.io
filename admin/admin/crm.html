@@ -7,7 +7,7 @@
 <script src="config-core.js" charset="utf-8"></script>
 <script>if(!window.appCfg){window.appCfg=function(k,d){return d};window.appCfgIn=function(k,s,d){return d};}</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>SERENE · Member</title>
+    <title>CRM Pro · Member Card</title>
     <link rel="icon" href="https://cdn-icons-png.flaticon.com/128/15267/15267807.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
@@ -4956,12 +4956,17 @@
                         // Upload ถ้ามีรูปใหม่
                         if (this.cardCapturedPhoto) {
                             const compressed = await this.compressImage(this.cardCapturedPhoto, 800, 0.7);
-                            const fileName = `keycard_${this.cardConfirmModal.id}_${Date.now()}.jpg`;
-                            const { error: upErr } = await this.supabase.storage
-                                .from('keycard_images').upload(fileName, compressed, { upsert: true });
-                            if (upErr) throw new Error('อัปโหลดรูปล้มเหลว: ' + upErr.message);
-                            const { data: pub } = this.supabase.storage.from('keycard_images').getPublicUrl(fileName);
-                            imageUrl = pub.publicUrl;
+                            // อัปโหลดผ่าน backend (service role) — สร้าง bucket ให้เองถ้ายังไม่มี และตรวจว่าเป็นบัตรของบ้านตัวเอง
+                            const fd = new FormData();
+                            fd.append('file', compressed, `keycard_${this.cardConfirmModal.id}_${Date.now()}.jpg`);
+                            fd.append('userId', this.userProfile.userId);
+                            fd.append('cardId', String(this.cardConfirmModal.id));
+                            const upRes = await fetch(`${EDGE_FUNCTION_URL}/api/crm/upload_keycard_image`, {
+                                method: 'POST', headers: this.lineAuthHeaders(), body: fd
+                            });
+                            const upD = await upRes.json().catch(() => ({}));
+                            if (!upRes.ok || !upD.url) throw new Error(upD.error || 'อัปโหลดรูปล้มเหลว');
+                            imageUrl = upD.url;
                         }
 
                         // บันทึกผ่าน server — ตรวจสิทธิ์บ้าน + กฎ "เลขเดิมลบ/แก้ไม่ได้ เพิ่มต่อท้ายได้เท่านั้น" ซ้ำอีกชั้น
