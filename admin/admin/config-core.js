@@ -1,6 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════
-7-11-26
-   config-core.js — ตัวช่วยกลาง (ใช้ร่วมกันทุก tenant · ไม่ต้องแก้) 
+   config-core.js — ตัวช่วยกลาง (ใช้ร่วมกันทุก tenant · ไม่ต้องแก้)
    • appCfg()/appCfgIn(): อ่านค่าจาก config.js (ไม่มีคีย์ → ใช้ค่าเดิมที่หน้าส่งมา)
    • แนบ x-tenant และ LINE access token ให้ทุกคำขอไป Edge Function
    • DB_PROXY: ส่งคำสั่งฐานข้อมูลของทุกหน้าผ่าน Edge Function (/api/dbq) แทนการเรียก Supabase ตรง (ดู migration_security_hardening.sql)
@@ -37,7 +36,20 @@
           }
         }
       } catch (e) { /* ไม่ให้การแนบ header ทำให้คำขอพัง */ }
-      return orig(input, init);
+      var p = orig(input, init);
+      // 🏠 server ตอบ 403 not_registered (ยังไม่ได้ลงทะเบียนสมาชิก) จาก /api/crm/* → พาไปหน้าลงทะเบียนทันที (regGate จัดการ + กันวนลูป)
+      try {
+        var u2 = typeof input === 'string' ? input : (input && input.url) || (input && input.href) || '';
+        if (isEdge(u2) && /\/api\/crm\//.test(u2)) {
+          p = p.then(function (res) {
+            if (res && res.status === 403) {
+              try { res.clone().json().then(function (j) { if (j && j.not_registered && typeof window.regGateRedirect === 'function') window.regGateRedirect(); }, function () {}); } catch (e) { /* ignore */ }
+            }
+            return res;
+          });
+        }
+      } catch (e) { /* ไม่ให้การตรวจผลทำให้คำขอพัง */ }
+      return p;
     };
     wrapped.__appCfgWrapped = true;
     window.fetch = wrapped;
@@ -184,11 +196,14 @@
    • ลงทะเบียนแล้ว (มีชื่อ-สกุล + บ้านเลขที่ใน userhome) → คืน true ให้หน้าทำงานต่อ
    • ยังไม่ลงทะเบียน → พาไปหน้า liff_register พร้อมแนบลิงก์หน้าเดิม (?return=) แล้วคืน false · สมัครเสร็จหน้า register พากลับมาเอง
    • ถ้ากลับมาแล้ว (rg=1) ยังไม่ผ่านอีก → ไม่พาไปซ้ำ (กันวนลูป) แสดงข้อความ + ปุ่มลงทะเบียนเอง
+   • ลงทะเบียนแล้วแต่บทบาทไม่มีสิทธิ์ใช้หน้านี้ (สิทธิ์เมนูสมาชิก) → แสดงข้อความ + ปุ่มปิด แล้วคืน false
    • ตรวจไม่ได้ (เน็ต/เซิร์ฟเวอร์ล่ม) → ปล่อยให้หน้าทำงานต่อ (เป็นตัวนำทาง ไม่ใช่ด่านความปลอดภัย)
    • ข้ามบางหน้าได้ใน config.js: REG_GATE_SKIP: ['gallery.html', 'new.html']
    ═════════════════════════════════════════════════════════════════ */
 (function () {
   var passed = {};
+  var lastUid = '';
+  var redirecting = false;
   function lastSeg() { var p = String(location.pathname || '').split('/').filter(Boolean); return p.length ? p[p.length - 1] : ''; }
   function edgeUrl(o) {
     var e = String(o.edge || (window.appCfg ? window.appCfg('EDGE_FUNCTION_URL', '') : '') || '').replace(/\/+$/, '');
@@ -218,9 +233,11 @@
     o = o || {};
     try {
       var uid = String(o.uid || '');
+      if (uid) lastUid = uid;
       var page = o.page || lastSeg();
       var skip = (window.appCfg ? window.appCfg('REG_GATE_SKIP', []) : []) || [];
       if (!uid || !page || (Array.isArray(skip) && skip.indexOf(page) >= 0)) return true;
+      if (o.force) delete passed[uid + '|' + page];
       if (passed[uid + '|' + page]) return true;
       var base = edgeUrl(o);
       if (!base) return true;
@@ -237,6 +254,12 @@
       finally { if (timer) clearTimeout(timer); }
 
       if (!d || typeof d.registered !== 'boolean') return true;
+      if (d.registered && d.denied) {
+        // 🧭 สิทธิ์เมนูตามบทบาท (ตั้งที่หน้าแอดมิน "สิทธิ์เมนูสมาชิก") — บทบาทนี้ใช้หน้านี้ไม่ได้
+        showOverlay('ไม่มีสิทธิ์ใช้เมนูนี้', String(d.denied.message || 'บทบาทของท่านไม่มีสิทธิ์ใช้เมนูนี้ หากคิดว่าผิดพลาดกรุณาติดต่อนิติบุคคล'),
+          [{ id: 'reg-gate-close', label: 'ปิด', primary: true, onclick: closeWin }]);
+        return false;
+      }
       if (d.registered) { passed[uid + '|' + page] = true; return true; }
 
       var looped = false;
@@ -249,9 +272,15 @@
           { id: 'reg-gate-go', label: 'ไปหน้าลงทะเบียน', primary: true, onclick: go }, { id: 'reg-gate-close', label: 'ปิด', onclick: closeWin }]);
       } else {
         showOverlay('ยังไม่ได้ลงทะเบียน', 'กำลังพาไปหน้าลงทะเบียน เมื่อลงทะเบียนเสร็จจะพากลับมาหน้านี้อัตโนมัติ...', [{ id: 'reg-gate-go', label: 'ไปหน้าลงทะเบียนทันที', primary: true, onclick: go }]);
-        setTimeout(go, o.delay == null ? 900 : o.delay);
+        setTimeout(go, o.delay == null ? 150 : o.delay);   // ไปหน้าลงทะเบียนทันที (หน่วงแค่พอให้เห็นข้อความ)
       }
       return false;
     } catch (e) { console.warn('regGate error (ปล่อยผ่าน)', e); return true; }
+  };
+  // server แจ้งว่ายังไม่ได้ลงทะเบียน (403 not_registered) ระหว่างใช้งาน → ตรวจซ้ำแล้วพาไปหน้าลงทะเบียน (เรียกครั้งเดียว)
+  window.regGateRedirect = function () {
+    if (redirecting || !lastUid) return;
+    redirecting = true;
+    window.regGate({ uid: lastUid, force: true }).then(function (okNow) { if (okNow) redirecting = false; }, function () { redirecting = false; });
   };
 })();
