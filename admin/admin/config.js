@@ -13,6 +13,9 @@
     SUPABASE_URL: 'https://zmdywddraaeegzkvpwsw.supabase.co',
     SUPABASE_KEY: 'sb_publishable_v6Srw8MV1VE-K3A8alvqHQ_T_O26qVQ',          // anon/publishable key เท่านั้น
     EDGE_FUNCTION_URL: 'https://zmdywddraaeegzkvpwsw.supabase.co/functions/v1/line-webhook',
+    MERGE_PAGES: false,   // เปิด true เมื่อทดสอบแท็บใน crm.html ครบแล้ว แล้วค่อยลบไฟล์หน้าย่อยทั้ง 7
+    REG_GATE_SKIP: [],   // 🏠 ด่านลงทะเบียน: หน้าที่ "ไม่" ต้องบังคับลงทะเบียน เช่น ['slip.html'] (ว่าง = ทุกหน้าสมาชิกบังคับ · ดู REGISTRATION_GATE.md)
+    DB_PROXY: false,                                          // 🔒 เปลี่ยนเป็น true เมื่อพร้อมใช้ตัวกลางฐานข้อมูล (/api/dbq) แล้วค่อยรัน migration_security_hardening.sql (ดู SECURITY_ROLLOUT.md) · ตั้งเป็น false = เรียก Supabase ตรงแบบเดิม
 
     // ── LIFF ──────────────────────────────────────────────────────────
     MINI_APP_ID: '',                                                         // LIFF Mini App ID เดียวทุกหน้า (ว่าง = อ่านจาก system_settings.liff_mini_app_id)
@@ -22,7 +25,7 @@
     },
 
     // ── LINE OA ───────────────────────────────────────────────────────
-    OA_ADD_FRIEND_URL: 'https://line.me/R/ti/p/@500vulmn',                     // ลิงก์เพิ่มเพื่อน OA (https://line.me/R/ti/p/@<Basic ID>)
+    OA_ADD_FRIEND_URL: 'https://line.me/R/ti/p/@serene',                     // ลิงก์เพิ่มเพื่อน OA (https://line.me/R/ti/p/@<Basic ID>)
     DEFAULT_MEMBER_RICHMENU: 'richmenu-6dbab648fe7753fd311142e0c706ae1f',   // Rich Menu สำรองของสมาชิก (ว่าง = ไม่เปลี่ยนเมนู)
 
     // ── แบรนด์ (ข้อความที่แสดงในหน้า) ────────────────────────────────
