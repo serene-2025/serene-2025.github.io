@@ -6,7 +6,7 @@
 <script src="config-core.js" charset="utf-8"></script>
 <script>if(!window.appCfg){window.appCfg=function(k,d){return d};window.appCfgIn=function(k,s,d){return d};}</script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>ลงทะเบียนสมาชิก</title>
+  <title>ลงทะเบียนสมาชิก Serene</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/versions/2.31.2/sdk.js"></script>
     <script>window.liff||document.write('<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"><\/script>')</script>
@@ -157,6 +157,27 @@
     <button class="btn btn-primary" onclick="showScreen('register')">
       📝 คลิก ลงทะเบียนใหม่
     </button>
+  </div>
+</div>
+
+<!-- ════ SCREEN: ERROR (เชื่อมต่อ LINE/โหลดระบบไม่สำเร็จ — ไม่ใช่ "ยังไม่ลงทะเบียน") ════ -->
+<div id="screen-error" class="screen">
+  <div class="nf-hero">
+    <div class="nf-avatar-placeholder" style="margin:0 auto">⚠️</div>
+    <div class="nf-name">-</div>
+    <div class="nf-label">ระบบตรวจสอบสมาชิก Serene</div>
+  </div>
+  <div class="nf-card">
+    <div class="nf-icon">📶</div>
+    <div class="nf-title" id="err-title">เชื่อมต่อ LINE ไม่สำเร็จ</div>
+    <div class="nf-desc" id="err-desc" style="font-size:15px">โหลดระบบ LINE ไม่สำเร็จ</div>
+    <div class="nf-steps">
+      <div class="nf-step"><div class="nf-step-num">1</div>ตรวจสอบสัญญาณอินเทอร์เน็ต</div>
+      <div class="nf-step"><div class="nf-step-num">2</div>เปิดลิงก์นี้จากแชท LINE ของนิติบุคคล (ไม่ใช่เบราว์เซอร์อื่น)</div>
+      <div class="nf-step"><div class="nf-step-num">3</div>กด "ลองใหม่" ด้านล่าง</div>
+    </div>
+    <button class="btn btn-primary" onclick="location.reload()">🔄 ลองใหม่</button>
+    <button class="btn btn-outline" onclick="try{liff.closeWindow()}catch(e){history.back()}">ปิด</button>
   </div>
 </div>
 
@@ -335,6 +356,7 @@
     ↕ ระบบจะเปลี่ยนเป็นระบบอัตโนมัติ
   </div>
   <div style="margin-top:24px">
+    <button id="welcome-return-btn" class="btn btn-green" style="display:none;margin-bottom:10px" onclick="location.href=returnTarget()">↩️ กลับไปทำรายการต่อ</button>
     <button class="btn btn-outline" style="color:#fff;border-color:rgba(255,255,255,.4);max-width:200px" onclick="liff.closeWindow()">ปิดหน้าต่าง</button>
   </div>
 </div>
@@ -363,6 +385,65 @@ let   LIFF_ID              = DEFAULT_LIFF_ID;
 let   MEMBER_RICHMENU      = DEFAULT_MEMBER_RM;
 
 let db, liffProfile, registeredData;
+
+// ══════════════════════════════════════════════════════
+// 📡 โหลด LIFF SDK ให้ได้ก่อนใช้ (เดิมถ้า SDK โหลดไม่ขึ้น → "liff is not defined" แล้วหน้าบอกผิดว่า "ข้อมูลยังไม่มีในระบบ")
+// ══════════════════════════════════════════════════════
+function loadScriptOnce(src) {
+  return new Promise((resolve) => {
+    const el = document.createElement('script');
+    const t = setTimeout(() => { el.remove(); resolve(false); }, 8000);
+    el.onload = () => { clearTimeout(t); resolve(true); };
+    el.onerror = () => { clearTimeout(t); el.remove(); resolve(false); };
+    el.src = src + (src.includes('?') ? '&' : '?') + '_=' + Date.now();   // กัน cache ที่เสียค้าง
+    document.head.appendChild(el);
+  });
+}
+async function ensureLiffSdk() {
+  if (typeof liff !== 'undefined') return true;
+  const urls = ['https://static.line-scdn.net/liff/edge/2/sdk.js', 'https://static.line-scdn.net/liff/edge/versions/2.31.2/sdk.js'];
+  for (let round = 0; round < 2; round++) {
+    for (const u of urls) { if (await loadScriptOnce(u) && typeof liff !== 'undefined') return true; }
+  }
+  return typeof liff !== 'undefined';
+}
+// ระบบ/เครือข่ายมีปัญหา ≠ ยังไม่ลงทะเบียน → แสดงหน้าแจ้งปัญหา + ลองใหม่ (ไม่พาไปฟอร์มสมัครใหม่)
+function showInitError(title, desc) {
+  const t = document.getElementById('err-title'), d = document.getElementById('err-desc');
+  if (t) t.textContent = title; if (d) d.textContent = desc;
+  showScreen('error');
+}
+
+// ══════════════════════════════════════════════════════
+// 🔁 พากลับหน้าเดิมหลังลงทะเบียน (?return=<ลิงก์ LIFF ของหน้าเดิม>)
+//   หน้าอื่นที่พบว่ายังไม่ลงทะเบียนจะพามาที่นี่พร้อมแนบ return · รับเฉพาะ https://liff.line.me/... เท่านั้น (กัน open redirect)
+// ══════════════════════════════════════════════════════
+function isSafeReturn(u) {
+  try {
+    const x = new URL(String(u));
+    return x.protocol === 'https:' && x.hostname === 'liff.line.me' && !x.username && !x.password && String(u).length <= 1500;
+  } catch (_) { return false; }
+}
+function getReturnUrl() {
+  try {
+    const sp = new URLSearchParams(location.search);
+    let u = sp.get('return') || '';
+    if (!u) { const st = sp.get('liff.state'); if (st) u = new URLSearchParams(st.replace(/^\?/, '')).get('return') || ''; }   // เปิดผ่าน LIFF ID แบบเดิม LINE อาจเก็บ query ไว้ใน liff.state
+    return isSafeReturn(u) ? u : '';
+  } catch (_) { return ''; }
+}
+// ลิงก์ปลายทาง + rg=1 (ตัวบอกหน้าเดิมว่า "เพิ่งกลับมาจากหน้าลงทะเบียน" ถ้ายังไม่ผ่านจะไม่พาวนซ้ำ)
+function returnTarget() {
+  const u = getReturnUrl(); if (!u) return '';
+  try { const x = new URL(u); x.searchParams.set('rg', '1'); return x.toString(); } catch (_) { return ''; }
+}
+// มี return → พากลับหน้าเดิม · ไม่มี → ปิดหน้าต่างเหมือนเดิม
+function goBackOrClose(delay) {
+  const t = returnTarget();
+  if (t) { setTimeout(() => { location.href = t; }, delay == null ? 1500 : delay); return true; }
+  setTimeout(() => { try { liff.closeWindow(); } catch (_) {} }, delay == null ? 4000 : delay);
+  return false;
+}
 
 // ══════════════════════════════════════════════════════
 // INIT
@@ -394,6 +475,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (_) { /* ใช้ค่า default */ }
 
     // Init LIFF ด้วย LIFF_ID ที่โหลดมา
+    if (!(await ensureLiffSdk())) {
+      showInitError('โหลดระบบ LINE ไม่สำเร็จ', 'เปิดหน้านี้จากแชท LINE ของนิติบุคคลอีกครั้ง หรือตรวจสอบอินเทอร์เน็ตแล้วกดลองใหม่');
+      return;
+    }
     await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
 
     if (!liff.isLoggedIn()) {
@@ -417,8 +502,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   } catch (err) {
     console.error(err);
-    showToast('เกิดข้อผิดพลาด: ' + err.message, 'error');
-    showScreen('notfound');
+    // ❗ ข้อผิดพลาดตอนเริ่มระบบ (SDK/เครือข่าย/LIFF ID) ไม่ได้แปลว่า "ยังไม่ลงทะเบียน" → ไม่พาไปฟอร์มสมัครใหม่
+    showInitError('เชื่อมต่อ LINE ไม่สำเร็จ', 'เกิดข้อผิดพลาด: ' + ((err && err.message) || err));
   }
 });
 
@@ -434,7 +519,7 @@ async function checkMember() {
 
     if (error) throw error;
 
-    if (data && data.fullname) {
+    if (data && data.fullname && data.house_no) {   // เกณฑ์เดียวกับด่านลงทะเบียนกลาง (registration_gate): ต้องมีชื่อ-สกุลและบ้านเลขที่
       // พบสมาชิกที่ลงทะเบียนแล้ว → แสดงข้อมูล
       registeredData = { ...data, displayName: liffProfile.displayName, pictureUrl: liffProfile.pictureUrl };
       populateSuccess(registeredData);
@@ -454,6 +539,9 @@ async function checkMember() {
           silent:      true,  // บอก backend ว่าไม่ต้องส่ง Telegram ซ้ำ
         }),
       }).catch(e => console.warn('autolink richmenu:', e));
+
+      // มาจากหน้าอื่นที่ส่งมาลงทะเบียน แต่ลงทะเบียนไว้แล้ว → พากลับหน้าเดิมเลย
+      if (getReturnUrl()) { showToast('ลงทะเบียนไว้แล้ว กำลังพากลับไปทำรายการเดิม...', 'success'); goBackOrClose(1200); }
 
     } else {
       // ไม่พบ → แสดงหน้าไม่พบ
@@ -686,14 +774,22 @@ async function completeRegistration() {
     } catch (e) { console.warn('sendMessages welcome:', e.message); }
 
     showScreen('welcome');
-    setTimeout(() => { try { liff.closeWindow(); } catch(_){} }, 4000);
+    welcomeReturnNote();
+    goBackOrClose();
 
   } catch (err) {
     console.error('complete error:', err);
     if (btn) { btn.disabled = false; btn.innerHTML = '🚀 เข้าสู่ระบบ'; }
     showScreen('welcome');
-    setTimeout(() => { try { liff.closeWindow(); } catch(_){} }, 4000);
+    welcomeReturnNote();
+    goBackOrClose();
   }
+}
+// มีหน้าเดิมรออยู่ → บอกผู้ใช้ + ปุ่มกลับทันที
+function welcomeReturnNote() {
+  const t = returnTarget(); if (!t) return;
+  const m = document.getElementById('welcome-msg'); if (m) m.innerHTML = 'ลงทะเบียนเรียบร้อยแล้ว<br>กำลังพากลับไปทำรายการเดิมของคุณ...';
+  const b = document.getElementById('welcome-return-btn'); if (b) b.style.display = 'block';
 }
 
 // ══════════════════════════════════════════════════════
