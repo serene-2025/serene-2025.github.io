@@ -15143,7 +15143,7 @@ async function updateAllUserProfiles() {
         };
         var _KCM_STATUS_TH = { 'รอยืนยัน': 'pending', 'รอตรวจสอบ': 'reviewing', 'ใช้งานได้': 'active', 'ระงับ': 'cancelled' };
         var _KCM_IMP_MAX = 1000, _KCM_IMP_CHUNK = 60;
-        var _kcmImp = { rows: [], results: [], summary: null, fileName: '', onlyErr: false, busy: false, committed: false };
+        var _kcmImp = { raw: [], rows: [], results: [], summary: null, fileName: '', onlyErr: false, busy: false, committed: false, pad: true };
 
         function _kcmCsvCell(v, kind) {
             let t = v == null ? '' : String(v);
@@ -15184,7 +15184,7 @@ async function updateAllUserProfiles() {
             } catch (e) { console.error('kcmExportCsv failed', e); showToast('❌ ส่งออกไม่สำเร็จ: ' + (e && e.message ? e.message : e), 'error'); }
         }
         function kcmDownloadTemplate() {
-            _kcmDownload('keycards_import_template.csv', 'id,house_number,front_number,back_number,holder_name,status\r\n');
+            _kcmDownload('keycards_import_template.csv', 'house_number,front_number,back_number\r\n');
         }
 
         // อ่าน CSV (รองรับ " ครอบ, , ; หรือ Tab คั่น, CRLF) → [{ line, cells }]
@@ -15235,7 +15235,7 @@ async function updateAllUserProfiles() {
         function kcmOpenImport() {
             try {
                 const old = document.getElementById('kcm-import'); if (old) old.remove();
-                _kcmImp = { rows: [], results: [], summary: null, fileName: '', onlyErr: false, busy: false, committed: false };
+                _kcmImp = { raw: [], rows: [], results: [], summary: null, fileName: '', onlyErr: false, busy: false, committed: false, pad: true };
                 const ov = document.createElement('div'); ov.id = 'kcm-import'; ov.className = 'fixed inset-0 z-[10002] bg-slate-900/50 flex items-center justify-center p-3';
                 ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:10002;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;padding:12px;';
                 ov.innerHTML = '<div class="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col">' +
@@ -15256,23 +15256,27 @@ async function updateAllUserProfiles() {
                 '<div class="rounded-2xl border-2 border-dashed border-slate-200 p-4 text-center">' +
                     '<input type="file" id="kcm-imp-file" accept=".csv,.txt,text/csv" onchange="kcmImportFile(this)" ' + (I.busy ? 'disabled ' : '') + 'class="text-xs">' +
                     '<div class="text-[11px] text-slate-400 mt-2">รองรับไฟล์ .csv (UTF-8 หรือ Excel ไทย) ไม่เกิน ' + _KCM_IMP_MAX + ' แถว</div></div>';
+            const padBox = '<label class="flex items-start gap-2 text-[11px] text-slate-600 bg-amber-50 border border-amber-200 rounded-2xl p-3 cursor-pointer" data-testid="kcm-imp-pad"><input type="checkbox" class="mt-0.5" ' + (I.pad ? 'checked ' : '') + (I.busy || I.committed ? 'disabled ' : '') + 'onchange="kcmImpTogglePad(this.checked)"><span><b>เติมเลข 0 นำหน้าให้ครบ</b> (ชุดหน้า 10 หลัก · ชุดหลัง 8 หลัก · เฉพาะแถวที่ไม่มี id) — เปิดไว้เมื่อเลขเต็มแต่ Excel ตัดเลข 0 ออก เช่น <span class="font-mono">3782718</span> → <span class="font-mono">0003782718</span> · ปิดถ้าตั้งใจใส่เลขไม่ครบให้ลูกบ้านพิมพ์ต่อเอง</span></label>';
             const help =
-                '<div class="text-[11px] text-slate-500 bg-slate-50 rounded-2xl p-3 leading-relaxed">' +
-                    '<b class="text-slate-700">คอลัมน์:</b> <span class="font-mono">id, house_number, front_number, back_number, holder_name, status</span> ' +
-                    '<button onclick="kcmDownloadTemplate()" class="underline text-amber-700 font-bold">ดาวน์โหลดไฟล์ตัวอย่าง</button><br>' +
-                    '• <b>ไม่มี id</b> = เพิ่มบัตรใหม่ (บ้านเดียวกันที่มีเลขเดียวกันอยู่แล้วจะถูกข้าม · เลขซ้ำกับบ้านอื่นที่ใช้งานอยู่จะผิดพลาด)<br>' +
-                    '• <b>มี id</b> = แก้บัตรเดิม (ช่องเลข/ผู้ใช้บัตรที่ว่าง = คงค่าเดิม · ไม่ย้ายบัตรข้ามบ้าน) — ใช้ไฟล์ที่ Export ไปแก้แล้วนำเข้ากลับได้เลย<br>' +
-                    '• <b>status</b> ว่างได้: บัตรใหม่ตั้งได้ pending / active (active ต้องมีเลขครบ) · บัตรเดิมเปลี่ยนได้เฉพาะ pending/reviewing → active (อนุมัติ)<br>' +
-                    '• การนำเข้า<b>ไม่ลบ ไม่ระงับ ไม่ส่ง LINE</b> · แถวที่ผิดพลาดจะถูกข้าม ไม่กระทบแถวอื่น · เลขบัตรควรเป็นข้อความ (Export ไว้ให้แล้ว)</div>';
-            if (!I.rows.length) { box.innerHTML = help + upload; return; }
+                '<div class="text-[11px] text-slate-500 bg-slate-50 rounded-2xl p-3 leading-relaxed" data-testid="kcm-imp-help">' +
+                    '<b class="text-slate-700">ไฟล์ขั้นต่ำ 3 คอลัมน์:</b> <span class="font-mono">house_number, front_number, back_number</span> ' +
+                    '<button onclick="kcmDownloadTemplate()" class="underline text-amber-700 font-bold">⬇️ ดาวน์โหลดไฟล์ตัวอย่าง (.csv)</button><br>' +
+                    '• <b>ค่าเริ่มต้นที่ระบบตั้งให้:</b> สถานะ <b>รอยืนยัน</b> (ลูกบ้านยืนยัน/แนบรูปเอง) · ผู้ใช้บัตรว่าง · ไม่ส่ง LINE<br>' +
+                    '• บ้านเดียวกันที่มีเลขนี้อยู่แล้ว = <b>ข้าม</b> · เลขซ้ำกับบัตรที่ใช้อยู่ของบ้านอื่น = <b>ผิดพลาด</b> · เลขไม่ครบก็เพิ่มได้ (ลูกบ้านพิมพ์ต่อเอง)<br>' +
+                    '• ใน Excel ตั้งคอลัมน์เลขบัตรเป็น "ข้อความ" แล้วบันทึกเป็น <b>CSV UTF-8</b> · วางจากชีตที่คั่นด้วย Tab ก็ได้ (บันทึกเป็นไฟล์ .csv/.txt)<br>' +
+                    '• <span class="text-slate-400">ขั้นสูง (ไม่บังคับ): เพิ่มคอลัมน์ <span class="font-mono">id</span> (แก้บัตรเดิม) · <span class="font-mono">holder_name</span> · <span class="font-mono">status</span> (pending/active) — ไฟล์ที่ Export ไปแก้แล้วนำเข้ากลับได้เลย · การนำเข้าไม่ลบ/ไม่ระงับ/ไม่ย้ายบัตรข้ามบ้าน · แถวผิดพลาดถูกข้ามโดยไม่กระทบแถวอื่น</span></div>';
+            if (!I.rows.length) { box.innerHTML = help + padBox + upload; return; }
             const list = (I.results.length ? I.results : []).map((r, i) => ({ r, row: I.rows[i] })).filter(x => !I.onlyErr || x.r.result === 'error');
             const shown = list.slice(0, 300);
             const chips = S ? ['create', 'update', 'skip', 'error'].map(k => '<div class="rounded-xl border border-slate-200 px-3 py-2 text-center">' + _kcmImpChip(k) + '<div class="text-xl font-extrabold text-slate-700" data-testid="kcm-imp-n-' + k + '">' + (S[k] || 0) + '</div></div>').join('') : '';
             const todo = S ? (S.create || 0) + (S.update || 0) : 0;
+            const incompleteN = I.rows.filter((r, i) => { const x = I.results[i]; if (!x || x.result === 'error' || x.result === 'skip') return false; const f = String(r.front_number || '').replace(/\D/g, ''), b = String(r.back_number || '').replace(/\D/g, ''); return (r.front_number || r.back_number) && (f.length < 10 || b.length < 8); }).length;
             box.innerHTML =
                 '<div class="flex flex-wrap items-center justify-between gap-2"><div class="text-xs text-slate-600">ไฟล์: <b>' + escapeHtml(I.fileName) + '</b> · ' + I.rows.length + ' แถว' + (I.committed ? ' · <span class="text-emerald-600 font-bold">นำเข้าแล้ว</span>' : ' · <span class="text-amber-600 font-bold">ตรวจเบื้องต้น (ยังไม่ได้บันทึก)</span>') + '</div>' +
                     (I.busy ? '' : '<label class="text-xs text-slate-600 cursor-pointer"><input type="checkbox" ' + (I.onlyErr ? 'checked ' : '') + 'onchange="kcmImpToggleErr(this.checked)"> แสดงเฉพาะที่ผิดพลาด</label>') + '</div>' +
                 '<div class="grid grid-cols-4 gap-2" data-testid="kcm-imp-summary">' + chips + '</div>' +
+                (incompleteN ? '<div class="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2" data-testid="kcm-imp-incomplete">⚠️ ' + incompleteN + ' แถวมีเลขไม่ครบ (ชุดหน้า < 10 หรือชุดหลัง < 8 หลัก) — เพิ่มได้ แต่ลูกบ้านต้องพิมพ์ต่อเอง · ถ้า Excel ตัดเลข 0 ให้ติ๊ก "เติมเลข 0 นำหน้า" ด้านล่าง</div>' : '') +
+                (I.committed ? '' : padBox) +
                 '<div class="overflow-x-auto max-h-[40vh] overflow-y-auto border border-slate-100 rounded-2xl"><table class="w-full text-xs" data-testid="kcm-imp-table"><thead class="sticky top-0 bg-white"><tr class="text-left text-[11px] text-slate-400 border-b border-slate-100"><th class="py-2 px-2">แถว</th><th class="pr-2">id</th><th class="pr-2">บ้าน</th><th class="pr-2">เลขบัตร</th><th class="pr-2">ผลลัพธ์</th><th>หมายเหตุ</th></tr></thead><tbody>' +
                     (shown.length ? shown.map(x => '<tr class="border-b border-slate-50"><td class="py-1.5 px-2 text-slate-400">' + Number(x.row.line) + '</td><td class="pr-2 text-slate-500">' + escapeHtml(x.row.id || '') + '</td><td class="pr-2 font-bold text-slate-700 whitespace-nowrap">' + escapeHtml(x.row.house_number || '') + '</td>' +
                         '<td class="pr-2 font-mono whitespace-nowrap">' + escapeHtml((x.row.front_number || x.row.back_number) ? _kcmFmtNum(x.row.front_number, x.row.back_number) : '') + '</td><td class="pr-2">' + _kcmImpChip(x.r.result) + '</td><td class="text-slate-500">' + escapeHtml(x.r.message || '') + '</td></tr>').join('')
@@ -15288,24 +15292,46 @@ async function updateAllUserProfiles() {
         }
         function kcmImpToggleErr(v) { _kcmImp.onlyErr = !!v; _kcmImpRender(); }
 
+        // เติม 0 นำหน้าให้เลขเต็ม (Excel ชอบตัดเลข 0 หน้าตัวเลข เช่น 0003782718 → 3782718)
+        function _kcmPadRows(raw, on) {
+            const pad = (v, len) => { let t = String(v == null ? '' : v).trim(); const m = t.match(/^="(.*)"$/); if (m) t = m[1]; if (t.startsWith("'")) t = t.slice(1); t = t.trim(); return (/^\d+$/.test(t) && t.length < len) ? t.padStart(len, '0') : v; };
+            return raw.map(r => (on && !String(r.id || '').trim()) ? Object.assign({}, r, { front_number: pad(r.front_number, 10), back_number: pad(r.back_number, 8) }) : Object.assign({}, r));
+        }
+        function kcmImpTogglePad(v) {
+            _kcmImp.pad = !!v;
+            if (_kcmImp.raw.length && !_kcmImp.busy && !_kcmImp.committed) _kcmImpRun().catch(e => console.error(e)); else _kcmImpRender();
+        }
+        async function _kcmImpRun() {
+            const I = _kcmImp;
+            I.rows = _kcmPadRows(I.raw, I.pad); I.results = []; I.summary = null; I.committed = false; I.busy = true;
+            const box = document.getElementById('kcm-imp-body'); if (box) box.innerHTML = '<div class="text-center text-slate-400 text-sm py-8">กำลังตรวจไฟล์ ' + I.rows.length + ' แถว...</div>';
+            try {
+                const d = await _kcmImpPost(I.rows, true);
+                if (!Array.isArray(d.results) || d.results.length !== I.rows.length) throw new Error('ผลตรวจจากเซิร์ฟเวอร์ไม่ครบ');
+                I.results = d.results; I.summary = d.summary; I.busy = false;
+            } catch (e) {
+                I.raw = []; I.rows = []; I.busy = false;
+                _kcmImpRender();
+                const b2 = document.getElementById('kcm-imp-body'); if (b2) b2.insertAdjacentHTML('afterbegin', '<div class="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-2xl p-3" data-testid="kcm-imp-error">❌ ' + escapeHtml(e && e.message ? e.message : String(e)) + '</div>');
+                return;
+            }
+            _kcmImpRender();
+        }
+
         async function kcmImportFile(inp) {
             const file = inp && inp.files && inp.files[0]; if (!file) return;
             try {
                 if (file.size > 2 * 1024 * 1024) throw new Error('ไฟล์ใหญ่เกิน 2 MB');
                 const rows = _kcmMapRows(_kcmParseCsv(_kcmDecode(await file.arrayBuffer())));
                 if (rows.length > _KCM_IMP_MAX) throw new Error('ไฟล์มี ' + rows.length + ' แถว เกินกำหนด ' + _KCM_IMP_MAX + ' แถวต่อครั้ง — แบ่งไฟล์แล้วนำเข้าทีละส่วน');
-                _kcmImp.rows = rows; _kcmImp.fileName = file.name; _kcmImp.results = []; _kcmImp.summary = null; _kcmImp.committed = false; _kcmImp.busy = true;
-                const box = document.getElementById('kcm-imp-body'); if (box) box.innerHTML = '<div class="text-center text-slate-400 text-sm py-8">กำลังตรวจไฟล์ ' + rows.length + ' แถว...</div>';
-                const d = await _kcmImpPost(rows, true);
-                if (!Array.isArray(d.results) || d.results.length !== rows.length) throw new Error('ผลตรวจจากเซิร์ฟเวอร์ไม่ครบ');
-                _kcmImp.results = d.results; _kcmImp.summary = d.summary; _kcmImp.busy = false;
+                _kcmImp.raw = rows; _kcmImp.fileName = file.name;
             } catch (e) {
-                _kcmImp.rows = []; _kcmImp.busy = false;
+                _kcmImp.raw = []; _kcmImp.rows = []; _kcmImp.busy = false;
                 _kcmImpRender();
                 const box = document.getElementById('kcm-imp-body'); if (box) box.insertAdjacentHTML('afterbegin', '<div class="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-2xl p-3" data-testid="kcm-imp-error">❌ ' + escapeHtml(e && e.message ? e.message : String(e)) + '</div>');
                 return;
             }
-            _kcmImpRender();
+            await _kcmImpRun();
         }
 
         async function kcmImportCommit() {
