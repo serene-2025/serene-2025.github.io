@@ -325,12 +325,19 @@
                 </div>
 
                 <!-- 🛡️ เมนูเสริมสำหรับแอดมิน — โผล่เฉพาะผู้ที่มีสิทธิ์แอดมิน (ตั้งค่าที่หน้าแอดมิน "สิทธิ์เมนูสมาชิก") -->
-                <div v-if="menuAccess && menuAccess.admin_menus && menuAccess.admin_menus.length" class="mb-6" data-testid="admin-menus">
+                <div v-if="menuAccess && ((menuAccess.admin_menus && menuAccess.admin_menus.length) || (menuAccess.tools && menuAccess.tools.keycard_admin))" class="mb-6" data-testid="admin-menus">
                     <div class="flex items-center gap-2 mb-2">
                         <span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-800 text-white tracking-wider">ADMIN</span>
                         <h3 class="font-bold text-slate-800 text-sm">เมนูสำหรับแอดมิน</h3>
                     </div>
                     <div class="grid grid-cols-3 gap-3">
+                        <!-- 🪪 จัดการคีย์การ์ด (อยู่ในหน้านี้เอง) — เห็นเมื่อบทบาทมีสิทธิ์โมดูล keycardManagement -->
+                        <button v-if="menuAccess.tools && menuAccess.tools.keycard_admin" @click="openKcAdmin()" data-testid="admin-menu-kcadmin"
+                           class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 border border-dashed border-slate-300 relative">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center text-lg" :style="adminMenuStyle('amber')"><i class="fa-solid fa-id-card"></i></div>
+                            <span class="text-xs font-bold text-slate-700 text-center leading-tight">จัดการคีย์การ์ด</span>
+                            <span v-if="kcaPendingBadge > 0" class="absolute top-1.5 right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-rose-500 text-white text-[10px] font-extrabold flex items-center justify-center" data-testid="kca-badge">{{ kcaPendingBadge }}</span>
+                        </button>
                         <a v-for="m in menuAccess.admin_menus" :key="m.key" :href="m.url" :data-testid="'admin-menu-' + m.key"
                            class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 border border-dashed border-slate-300">
                             <div class="w-12 h-12 rounded-full flex items-center justify-center text-lg" :style="adminMenuStyle(m.color)"><i :class="'fa-solid fa-' + m.icon"></i></div>
@@ -2423,6 +2430,225 @@
             </div>
         </div>
 
+
+        <!-- ═══════ 🪪 ADMIN: จัดการคีย์การ์ด ═══════ -->
+        <div v-if="currentTab === 'kcadmin' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-amber-50/40 overflow-y-auto z-20" data-testid="kca-page">
+            <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
+                <div class="mb-4 flex items-center gap-3">
+                    <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2"><span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-800 text-white tracking-wider">ADMIN</span></div>
+                        <h2 class="text-2xl font-extrabold text-slate-800 leading-tight">จัดการคีย์การ์ด</h2>
+                    </div>
+                    <button @click="loadKcAdmin()" :disabled="kcaLoading" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" title="รีเฟรช"><i class="fa-solid fa-rotate" :class="{ 'fa-spin': kcaLoading }"></i></button>
+                </div>
+
+                <button @click="openKcaAdd()" data-testid="kca-add-btn" class="w-full mb-4 py-3.5 rounded-2xl bg-amber-500 text-white font-extrabold shadow-md flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                    <i class="fa-solid fa-plus"></i> เพิ่มคีย์การ์ดให้บ้าน
+                </button>
+
+                <div v-if="kcaError" class="mb-4 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-sm text-rose-700" data-testid="kca-error">
+                    <div class="font-bold mb-1"><i class="fa-solid fa-triangle-exclamation"></i> โหลดข้อมูลไม่สำเร็จ</div>
+                    <div class="text-xs break-words">{{ kcaError }}</div>
+                    <button @click="loadKcAdmin()" class="mt-2 px-3 py-1.5 rounded-xl bg-rose-500 text-white text-xs font-bold">ลองใหม่</button>
+                </div>
+                <div v-if="kcaMigrated === false" class="mb-4 p-3 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800">ยังไม่ได้รัน <b>migration_keycard_mgmt.sql</b> — การระงับ/ขอแก้ไขอาจใช้ไม่ได้จนกว่าจะรัน</div>
+
+                <!-- ตัวกรองสถานะ (กดเพื่อกรอง) -->
+                <div class="grid grid-cols-4 gap-2 mb-3" data-testid="kca-chips">
+                    <button v-for="c in kcaChips" :key="c.key" @click="kcaFilter = c.key; kcaPage = 1" :data-testid="'kca-chip-' + c.key"
+                            class="rounded-2xl py-2 px-1 text-center border-2 transition-all"
+                            :class="kcaFilter === c.key ? c.on : 'bg-white border-transparent shadow-sm'">
+                        <div class="text-lg font-extrabold leading-none" :class="kcaFilter === c.key ? '' : c.text">{{ kcaCount(c.key) }}</div>
+                        <div class="text-[10px] font-bold mt-1 text-slate-500 leading-tight">{{ c.label }}</div>
+                    </button>
+                </div>
+
+                <div class="relative mb-3">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-sm"></i>
+                    <input v-model.trim="kcaQuery" @input="kcaPage = 1" type="search" placeholder="ค้นหา บ้านเลขที่ / ผู้ใช้บัตร / เลขบัตร" data-testid="kca-search"
+                           class="w-full pl-10 pr-3 py-3 rounded-2xl bg-white shadow-sm text-sm outline-none focus:ring-2 focus:ring-amber-300">
+                </div>
+
+                <div v-if="kcaLoading && !kcaCards.length" class="py-16 text-center text-slate-400"><i class="fa-solid fa-spinner fa-spin text-2xl"></i><div class="text-xs mt-2">กำลังโหลด...</div></div>
+                <div v-else-if="!kcaError && !kcaShown.length" class="py-14 text-center text-slate-400" data-testid="kca-empty">
+                    <div class="text-4xl mb-2">🪪</div><div class="text-sm font-bold">ไม่พบคีย์การ์ดในรายการนี้</div>
+                </div>
+
+                <div class="space-y-3" data-testid="kca-list">
+                    <button v-for="c in kcaShown" :key="c.id" @click="openKcaDetail(c)" :data-testid="'kca-card-' + c.id"
+                            class="w-full text-left glass-card p-3 flex gap-3 items-stretch active:scale-[0.99] transition-transform">
+                        <div class="w-20 h-20 rounded-xl bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center text-slate-300">
+                            <img v-if="c.img" :src="c.img" class="w-full h-full object-cover" loading="lazy" alt="">
+                            <i v-else class="fa-solid fa-image text-2xl"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 mb-0.5">
+                                <span class="font-extrabold text-slate-800 truncate">บ้าน {{ c.house_number }}</span>
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0" :class="kcaStatus(c.status)[1]">{{ kcaStatus(c.status)[0] }}</span>
+                            </div>
+                            <div class="font-mono text-[13px] font-bold text-slate-700 whitespace-nowrap overflow-hidden text-ellipsis">{{ formatKeycardNumber(c.front_number, c.back_number) }}</div>
+                            <div class="text-[11px] text-slate-400 truncate">{{ c.holder_name || 'ไม่ระบุผู้ใช้บัตร' }}</div>
+                            <div v-if="(c.flags || []).length" class="flex flex-wrap gap-1 mt-1">
+                                <span v-for="f in c.flags" :key="f" class="text-[9px] font-bold px-1.5 py-0.5 rounded" :class="(kcaFlag(f) || [])[1]">{{ (kcaFlag(f) || [f])[0] }}</span>
+                            </div>
+                        </div>
+                        <i class="fa-solid fa-chevron-right text-slate-300 self-center"></i>
+                    </button>
+                </div>
+                <button v-if="kcaFiltered.length > kcaShown.length" @click="kcaPage++" class="w-full mt-3 py-3 rounded-2xl bg-white shadow-sm text-sm font-bold text-slate-600">แสดงเพิ่ม ({{ kcaFiltered.length - kcaShown.length }})</button>
+                <div v-if="kcaTruncated" class="mt-3 text-[11px] text-amber-700 text-center">แสดงเฉพาะ 10,000 ใบล่าสุด</div>
+            </div>
+        </div>
+
+        <!-- ─── รายละเอียด/จัดการบัตรหนึ่งใบ ─── -->
+        <div v-if="kcaSel && currentTab === 'kcadmin'" class="fixed inset-0 z-[45] bg-black/50 flex items-end justify-center" @click.self="closeKcaDetail()" data-testid="kca-detail">
+            <div class="bg-white w-full max-w-lg rounded-t-3xl max-h-[92vh] overflow-y-auto pb-8">
+                <div class="sticky top-0 bg-white z-10 px-5 pt-4 pb-3 border-b border-slate-100 flex items-center gap-3">
+                    <div class="flex-1 min-w-0">
+                        <div class="font-extrabold text-slate-800 text-lg truncate">บ้าน {{ kcaSel.house_number }}</div>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="kcaStatus(kcaSel.status)[1]">{{ kcaStatus(kcaSel.status)[0] }}</span>
+                        <span class="text-[10px] text-slate-400 ml-1">id {{ kcaSel.id }}</span>
+                    </div>
+                    <button @click="closeKcaDetail()" class="w-9 h-9 rounded-full bg-slate-100 text-slate-500 text-xl leading-none">&times;</button>
+                </div>
+                <div class="px-5 pt-4 space-y-4">
+                    <!-- รูปบัตร -->
+                    <div>
+                        <div class="rounded-2xl bg-slate-100 overflow-hidden flex items-center justify-center min-h-[140px]">
+                            <img v-if="kcaSel.img" :src="kcaSel.img" @click="cardViewerImage = kcaSel.img" class="w-full max-h-64 object-contain cursor-zoom-in" alt="รูปบัตร" data-testid="kca-detail-img">
+                            <div v-else class="text-center text-slate-400 py-8"><i class="fa-solid fa-image text-3xl"></i><div class="text-xs mt-1">ยังไม่มีรูปบัตร</div></div>
+                        </div>
+                        <label class="mt-2 w-full py-2.5 rounded-xl bg-slate-100 text-slate-700 text-sm font-bold flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-transform" :class="{ 'opacity-50 pointer-events-none': kcaBusy }">
+                            <i class="fa-solid fa-camera"></i> {{ kcaSel.img ? 'เปลี่ยนรูปบัตร' : 'เพิ่มรูปบัตร' }}
+                            <input type="file" accept="image/*" class="hidden" @change="kcaReplaceImage($event)" data-testid="kca-detail-file">
+                        </label>
+                    </div>
+
+                    <div v-if="(kcaSel.flags || []).length" class="flex flex-wrap gap-1.5">
+                        <span v-for="f in kcaSel.flags" :key="f" class="text-[11px] font-bold px-2 py-1 rounded-lg" :class="(kcaFlag(f) || [])[1]"><i class="fa-solid fa-triangle-exclamation"></i> {{ (kcaFlag(f) || [f])[0] }}</span>
+                    </div>
+                    <div v-if="kcaSel.status === 'cancelled'" class="p-3 rounded-xl bg-rose-50 text-xs text-rose-700">ระงับเพราะ: <b>{{ kcaSel.cancel_reason || '—' }}</b><span v-if="kcaSel.cancel_note"> · {{ kcaSel.cancel_note }}</span></div>
+                    <div v-else-if="kcaSel.review_reason" class="p-3 rounded-xl bg-violet-50 text-xs text-violet-700">แจ้งให้แก้ไข: <b>{{ kcaSel.review_reason }}</b><span v-if="kcaSel.review_note"> · {{ kcaSel.review_note }}</span></div>
+
+                    <!-- เลขบัตร + ผู้ใช้บัตร -->
+                    <div class="space-y-3">
+                        <div>
+                            <label class="text-xs font-bold text-slate-500">เลขชุดหน้า (10 หลัก)</label>
+                            <input v-model="kcaEdit.front" @input="kcaEdit.front = kcaDigits(kcaEdit.front, 10)" inputmode="numeric" placeholder="0003782718" data-testid="kca-edit-front"
+                                   class="w-full mt-1 px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 font-mono font-bold tracking-wider outline-none focus:border-amber-400">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-500">เลขชุดหลัง (8 หลัก)</label>
+                            <input v-model="kcaEdit.back" @input="kcaEdit.back = kcaDigits(kcaEdit.back, 8)" inputmode="numeric" placeholder="05747166" data-testid="kca-edit-back"
+                                   class="w-full mt-1 px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 font-mono font-bold tracking-wider outline-none focus:border-amber-400">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-500">ผู้ใช้บัตร</label>
+                            <select v-model="kcaEdit.holder" data-testid="kca-edit-holder" class="w-full mt-1 px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-amber-400">
+                                <option value="">— ไม่ระบุ —</option>
+                                <option v-for="r in kcaReasons.roles" :key="r" :value="r">{{ r }}</option>
+                            </select>
+                        </div>
+                        <button v-if="kcaEditDirty" @click="kcaSaveNumbers()" :disabled="kcaBusy" data-testid="kca-save-numbers"
+                                class="w-full py-3 rounded-xl bg-slate-800 text-white font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-floppy-disk"></i> บันทึกเลขบัตร/ผู้ใช้บัตร</button>
+                    </div>
+
+                    <!-- ปุ่มดำเนินการ -->
+                    <div class="grid grid-cols-2 gap-2 pt-1">
+                        <button v-if="kcaSel.status === 'pending' || kcaSel.status === 'reviewing'" @click="kcaApprove()" :disabled="kcaBusy" data-testid="kca-approve"
+                                class="col-span-2 py-3.5 rounded-2xl bg-emerald-500 text-white font-extrabold shadow-md active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-circle-check"></i> ตรวจสอบแล้ว · อนุมัติบัตร</button>
+                        <button v-if="kcaSel.status !== 'cancelled'" @click="kcaRequestFix()" :disabled="kcaBusy" data-testid="kca-fix"
+                                class="py-3 rounded-2xl bg-violet-100 text-violet-700 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-rotate-left"></i> ขอให้แก้ไข</button>
+                        <button v-if="kcaSel.status !== 'cancelled'" @click="kcaSuspend()" :disabled="kcaBusy" data-testid="kca-suspend"
+                                class="py-3 rounded-2xl bg-rose-100 text-rose-700 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-ban"></i> ระงับบัตร</button>
+                        <button v-if="kcaSel.status === 'cancelled'" @click="kcaReactivate()" :disabled="kcaBusy" data-testid="kca-reactivate"
+                                class="col-span-2 py-3.5 rounded-2xl bg-emerald-500 text-white font-extrabold active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-rotate-right"></i> เปิดใช้บัตรอีกครั้ง</button>
+                    </div>
+
+                    <!-- ประวัติ -->
+                    <div>
+                        <button @click="kcaToggleHistory()" class="text-xs font-bold text-slate-500"><i class="fa-solid fa-clock-rotate-left"></i> ประวัติการดำเนินการ <i class="fa-solid" :class="kcaHistOpen ? 'fa-chevron-up' : 'fa-chevron-down'"></i></button>
+                        <div v-if="kcaHistOpen" class="mt-2 space-y-1.5" data-testid="kca-history">
+                            <div v-if="kcaHistLoading" class="text-xs text-slate-400">กำลังโหลด...</div>
+                            <div v-else-if="!kcaHist.length" class="text-xs text-slate-400">ยังไม่มีประวัติ</div>
+                            <div v-for="(a, i) in kcaHist" :key="i" class="text-xs p-2 rounded-lg bg-slate-50">
+                                <div class="font-bold text-slate-700">{{ kcaActionLabel(a.action) }}</div>
+                                <div class="text-slate-400">{{ kcaFmtDate(a.at) }}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ─── เพิ่มคีย์การ์ดให้บ้าน ─── -->
+        <div v-if="kcaAdd.open && currentTab === 'kcadmin'" class="fixed inset-0 z-[45] bg-black/50 flex items-end justify-center" @click.self="closeKcaAdd()" data-testid="kca-add-sheet">
+            <div class="bg-white w-full max-w-lg rounded-t-3xl max-h-[92vh] overflow-y-auto pb-8">
+                <div class="sticky top-0 bg-white z-10 px-5 pt-4 pb-3 border-b border-slate-100 flex items-center gap-3">
+                    <div class="flex-1 font-extrabold text-slate-800 text-lg">เพิ่มคีย์การ์ดให้บ้าน</div>
+                    <button @click="closeKcaAdd()" class="w-9 h-9 rounded-full bg-slate-100 text-slate-500 text-xl leading-none">&times;</button>
+                </div>
+                <div class="px-5 pt-4 space-y-4">
+                    <div>
+                        <label class="text-xs font-bold text-slate-500">บ้านเลขที่ <span class="text-rose-500">*</span></label>
+                        <input v-model.trim="kcaAdd.house" @blur="kcaLookupHouse()" placeholder="เช่น 98/27" data-testid="kca-add-house"
+                               class="w-full mt-1 px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 font-bold outline-none focus:border-amber-400">
+                        <div v-if="kcaAdd.info" class="mt-2 text-xs p-2.5 rounded-xl" :class="kcaAdd.info.members ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'" data-testid="kca-add-info">
+                            <template v-if="kcaAdd.info.error">{{ kcaAdd.info.error }}</template>
+                            <template v-else>
+                                บ้านนี้มีบัตรทั้งหมด <b>{{ kcaAdd.info.summary.total }}</b> ใบ · ใช้งานได้ {{ kcaAdd.info.summary.active }} · รอตรวจสอบ {{ kcaAdd.info.summary.reviewing }} · รอยืนยัน {{ kcaAdd.info.summary.pending }} · ระงับ {{ kcaAdd.info.summary.cancelled }}
+                                <div v-if="!kcaAdd.info.members" class="font-bold mt-0.5">⚠️ ยังไม่พบสมาชิกที่ลงทะเบียนบ้านนี้ (ตรวจบ้านเลขที่อีกครั้ง)</div>
+                                <div v-else class="mt-0.5">สมาชิกที่ลงทะเบียน {{ kcaAdd.info.members }} คน</div>
+                            </template>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-500">เลขชุดหน้า (10 หลัก)</label>
+                        <input v-model="kcaAdd.front" @input="kcaAdd.front = kcaDigits(kcaAdd.front, 10)" inputmode="numeric" placeholder="0003782718" data-testid="kca-add-front"
+                               class="w-full mt-1 px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 font-mono font-bold tracking-wider outline-none focus:border-amber-400">
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-500">เลขชุดหลัง (8 หลัก)</label>
+                        <input v-model="kcaAdd.back" @input="kcaAdd.back = kcaDigits(kcaAdd.back, 8)" inputmode="numeric" placeholder="05747166" data-testid="kca-add-back"
+                               class="w-full mt-1 px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 font-mono font-bold tracking-wider outline-none focus:border-amber-400">
+                        <div class="text-[11px] text-slate-400 mt-1">ถ้ายังไม่ทราบเลขครบ กรอกเท่าที่มีได้ (สมาชิกพิมพ์เพิ่มต่อท้ายเองได้ภายหลัง)</div>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-500">ผู้ใช้บัตร</label>
+                        <select v-model="kcaAdd.holder" data-testid="kca-add-holder" class="w-full mt-1 px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-amber-400">
+                            <option value="">— ไม่ระบุ —</option>
+                            <option v-for="r in kcaReasons.roles" :key="r" :value="r">{{ r }}</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-500">รูปบัตร</label>
+                        <div v-if="kcaAdd.preview" class="mt-1 rounded-2xl bg-slate-100 overflow-hidden relative">
+                            <img :src="kcaAdd.preview" class="w-full max-h-52 object-contain" alt="ตัวอย่างรูปบัตร" data-testid="kca-add-preview">
+                            <button @click="kcaAdd.file = null; kcaAdd.preview = null" class="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/50 text-white">&times;</button>
+                        </div>
+                        <label v-else class="mt-1 w-full py-6 rounded-2xl border-2 border-dashed border-slate-300 text-slate-400 flex flex-col items-center gap-1 cursor-pointer">
+                            <i class="fa-solid fa-camera text-2xl"></i><span class="text-xs font-bold">ถ่ายรูป / เลือกรูปบัตร</span>
+                            <input type="file" accept="image/*" class="hidden" @change="kcaPickAddImage($event)" data-testid="kca-add-file">
+                        </label>
+                    </div>
+                    <label class="flex items-start gap-2.5 p-3 rounded-xl bg-slate-50" :class="kcaAddCanApprove ? '' : 'opacity-50'">
+                        <input type="checkbox" v-model="kcaAdd.approveNow" :disabled="!kcaAddCanApprove" class="mt-0.5 w-4 h-4" data-testid="kca-add-approve">
+                        <span class="text-xs text-slate-600"><b class="text-slate-800">อนุมัติให้ใช้งานทันที</b><br>ทำได้เมื่อกรอกเลขครบ 10 + 8 หลัก และแนบรูปแล้ว · ถ้าไม่ติ๊ก บัตรจะอยู่สถานะ "รอยืนยัน" ให้สมาชิกตรวจ/ยืนยันเอง</span>
+                    </label>
+                    <label class="flex items-start gap-2.5 p-3 rounded-xl bg-slate-50">
+                        <input type="checkbox" v-model="kcaAdd.notify" class="mt-0.5 w-4 h-4" data-testid="kca-add-notify">
+                        <span class="text-xs text-slate-600"><b class="text-slate-800">แจ้งสมาชิกในบ้านทาง LINE</b></span>
+                    </label>
+                    <div v-if="kcaAdd.error" class="p-3 rounded-xl bg-rose-50 text-xs text-rose-700 font-bold" data-testid="kca-add-error">{{ kcaAdd.error }}</div>
+                    <button @click="kcaSubmitAdd()" :disabled="kcaAdd.saving" data-testid="kca-add-submit"
+                            class="w-full py-3.5 rounded-2xl bg-amber-500 text-white font-extrabold shadow-md active:scale-95 transition-transform disabled:opacity-50">
+                        <i class="fa-solid" :class="kcaAdd.saving ? 'fa-spinner fa-spin' : 'fa-plus'"></i> {{ kcaAdd.saving ? 'กำลังบันทึก...' : 'เพิ่มคีย์การ์ด' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Image viewer -->
         <div v-if="cardViewerImage && !loading" @click="cardViewerImage = null" class="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
             <img :src="cardViewerImage" class="max-w-full max-h-full rounded-2xl">
@@ -2597,6 +2823,17 @@
                     keyCards: [], keyCardHouse: null, keyCardLoading: false, keyCardError: null,
                     menuAccess: null,   // สิทธิ์เมนูตามบทบาทจาก server (null = ยังไม่โหลด/โหลดไม่ได้ → แสดงตามเดิม)
                     kcLoadSeq: 0, kcFullStarted: false,
+                    // ─── 🪪 ADMIN: จัดการคีย์การ์ด ───
+                    kcaLoading: false, kcaError: null, kcaCards: [], kcaReasons: { cancel: [], fix: [], roles: [] }, kcaMigrated: null, kcaTruncated: false, kcaLoaded: false, kcaSeq: 0,
+                    kcaFilter: 'reviewing', kcaQuery: '', kcaPage: 1, kcaSel: null, kcaEdit: { front: '', back: '', holder: '' }, kcaBusy: false,
+                    kcaHistOpen: false, kcaHist: [], kcaHistLoading: false, kcaPendingBadge: 0,
+                    kcaAdd: { open: false, house: '', front: '', back: '', holder: '', file: null, preview: null, approveNow: false, notify: true, saving: false, error: null, info: null },
+                    kcaChips: [
+                        { key: 'reviewing', label: 'รอตรวจสอบ', on: 'bg-blue-50 border-blue-400 text-blue-600', text: 'text-blue-600' },
+                        { key: 'pending', label: 'รอยืนยัน', on: 'bg-amber-50 border-amber-400 text-amber-600', text: 'text-amber-600' },
+                        { key: 'active', label: 'ใช้งานได้', on: 'bg-emerald-50 border-emerald-400 text-emerald-600', text: 'text-emerald-600' },
+                        { key: 'all', label: 'ทั้งหมด', on: 'bg-slate-100 border-slate-400 text-slate-700', text: 'text-slate-700' },
+                    ],
                     keycardBackImg: (function () { try { return appCfgIn('BRAND', 'keycard_back_img', 'https://lh3.googleusercontent.com/d/1s17S_3RLuLx0iovtFNZVy2ttEYaHdc1n'); } catch (e) { return 'https://lh3.googleusercontent.com/d/1s17S_3RLuLx0iovtFNZVy2ttEYaHdc1n'; } })(),   // รูปหลังบัตร (เปลี่ยนได้ที่ config: BRAND.keycard_back_img)   // กัน prefetch/โหลดซ้อนกันเขียนทับรายการบัตรเต็ม
                     keyCardPendingCount: 0,
                     flippedCardIds: [],   // เก็บ id ของ card ที่กำลังพลิกอยู่
@@ -2678,6 +2915,26 @@
                     return { total: rows.length, active: c('active'), pending: c('pending'), reviewing: c('reviewing'), cancelled: c('cancelled') };
                 },
                 // เลขเดิมที่ล็อกไว้ (ลบ/แก้ไม่ได้) + เลขเต็มหลังพิมพ์เพิ่ม
+                kcaFiltered() {
+                    const f = this.kcaFilter, q = String(this.kcaQuery || '').trim().toLowerCase();
+                    const digits = q.replace(/\D/g, '');
+                    let rows = this.kcaCards.filter(c => f === 'all' ? true : c.status === f);
+                    if (q) {
+                        rows = rows.filter(c => String(c.house_number || '').toLowerCase().includes(q)
+                            || String(c.holder_name || '').toLowerCase().includes(q)
+                            || (digits.length >= 3 && (this.kcStored(c.front_number, 10) + this.kcStored(c.back_number, 8)).includes(digits)));
+                    }
+                    if (f === 'reviewing') {   // ที่ลูกบ้านยืนยันมาก่อน อยู่บนสุด
+                        rows = rows.slice().sort((a, b) => String(a.submitted_at || a.created_at || '').localeCompare(String(b.submitted_at || b.created_at || '')));
+                    }
+                    return rows;
+                },
+                kcaShown() { return this.kcaFiltered.slice(0, this.kcaPage * 30); },
+                kcaEditDirty() {
+                    const c = this.kcaSel; if (!c) return false;
+                    return this.kcaEdit.front !== this.kcStored(c.front_number, 10) || this.kcaEdit.back !== this.kcStored(c.back_number, 8) || (this.kcaEdit.holder || '') !== (c.holder_name || '');
+                },
+                kcaAddCanApprove() { return this.kcaAdd.front.length === 10 && this.kcaAdd.back.length === 8 && !!this.kcaAdd.file; },
                 cardFrontLocked() { return this.cardConfirmModal ? this.kcStored(this.cardConfirmModal.front_number, 10) : ''; },
                 cardBackLocked() { return this.cardConfirmModal ? this.kcStored(this.cardConfirmModal.back_number, 8) : ''; },
                 cardFrontFull() { return this.cardFrontLocked + (this.cardFrontAdd || ''); },
@@ -3017,7 +3274,7 @@
                         const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/my_menus?userId=${encodeURIComponent(uid)}`, Object.assign({ headers: this.lineAuthHeaders() }, ctl ? { signal: ctl.signal } : {}));
                         if (!res.ok) { console.warn('my_menus HTTP ' + res.status + ' (แสดงเมนูตามเดิม)'); return; }
                         const d = await res.json();
-                        if (d && d.menus && typeof d.menus === 'object') this.menuAccess = d;
+                        if (d && d.menus && typeof d.menus === 'object') { this.menuAccess = d; this.kcaPendingBadge = Number(d.keycard_review_count) || 0; }
                     } catch (e) { console.warn('my_menus ล้มเหลว (แสดงเมนูตามเดิม)', e); }
                     finally { if (timer) clearTimeout(timer); }
                 },
@@ -3193,6 +3450,12 @@
                     const validTabs = ['home', 'rewards', 'coupons', 'news', 'profile', 'history', 'checkin', 'agm', 'payments', 'keycard',
                                        'cars', 'complaints', 'repairs', 'cctv', 'gallery', 'status', 'housemembers'];
                     const tabKey = tabAlias[tabName] || tabName;
+                    // 🪪 ลิงก์ลัดแอดมิน ?tab=kcadmin — เปิดได้เมื่อ server บอกว่าบัญชีนี้ใช้เครื่องมือนี้ได้ (ตัวบังคับจริงอยู่ที่ API)
+                    if (tabKey === 'kcadmin') {
+                        const url = new URL(window.location.href); url.searchParams.delete('tab'); history.replaceState(null, '', url.toString());
+                        if (this.menuAccess && this.menuAccess.tools && this.menuAccess.tools.keycard_admin) await this.openKcAdmin();
+                        return;
+                    }
                     if (tabKey && validTabs.includes(tabKey)) {
                         this.currentTab = tabKey;
                         const url = new URL(window.location.href);
@@ -5107,6 +5370,205 @@
                     } catch (e) {
                         Swal.fire('ไม่สำเร็จ', e.message, 'error');
                     }
+                },
+
+
+                // ═════════ 🪪 ADMIN: จัดการคีย์การ์ด (ใช้ API เดียวกับหน้าแอดมินเว็บ — บังคับสิทธิ์ keycardManagement ที่ server) ═════════
+                kcaHeaders(extra) {
+                    const uid = this.userProfile && this.userProfile.userId;
+                    return this.lineAuthHeaders(Object.assign({}, extra || {}, uid ? { 'x-admin-uid': uid } : {}));
+                },
+                async kcaApi(path, opts) {
+                    const o = Object.assign({}, opts || {});
+                    const isForm = typeof FormData !== 'undefined' && o.body instanceof FormData;
+                    o.headers = this.kcaHeaders(isForm || o.method !== 'POST' ? {} : { 'Content-Type': 'application/json' });
+                    const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/${path}`, o);
+                    const d = await res.json().catch(() => ({}));
+                    if (!res.ok) { const e = new Error(d.error || ('HTTP ' + res.status)); e.status = res.status; e.data = d; throw e; }
+                    return d;
+                },
+                kcaStatus(st) { return ({ pending: ['รอยืนยัน', 'bg-amber-100 text-amber-700'], reviewing: ['รอตรวจสอบ', 'bg-blue-100 text-blue-700'], active: ['ใช้งานได้', 'bg-emerald-100 text-emerald-700'], cancelled: ['ระงับ', 'bg-rose-100 text-rose-700'] })[st] || [st || '—', 'bg-slate-100 text-slate-600']; },
+                kcaFlag(f) {
+                    return ({ incomplete: ['เลขไม่ครบ', 'bg-amber-100 text-amber-800'], duplicate: ['เลขซ้ำ', 'bg-rose-100 text-rose-700'], no_img: ['ไม่มีรูปบัตร', 'bg-orange-100 text-orange-700'],
+                              no_holder: ['ไม่ระบุผู้ใช้บัตร', 'bg-slate-200 text-slate-600'], stale_review: ['ค้างตรวจ', 'bg-violet-100 text-violet-700'],
+                              over_limit: ['บ้านมีบัตรมาก', 'bg-fuchsia-100 text-fuchsia-700'], no_members: ['บ้านไม่มีสมาชิก', 'bg-slate-200 text-slate-600'] })[f];
+                },
+                kcaCount(key) { return key === 'all' ? this.kcaCards.length : this.kcaCards.filter(c => c.status === key).length; },
+                kcaDigits(v, max) { return String(v == null ? '' : v).replace(/\D/g, '').slice(0, max); },
+                kcaFmtDate(v) { try { return new Date(v).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return String(v || ''); } },
+                kcaActionLabel(a) {
+                    const m = { keycard_admin_create: 'แอดมินเพิ่มบัตร', keycard_admin_set_numbers: 'แอดมินแก้เลขบัตร', keycard_admin_set_image: 'แอดมินเปลี่ยนรูปบัตร', keycard_admin_approve: 'แอดมินอนุมัติบัตร',
+                                keycard_admin_request_fix: 'แอดมินขอให้แก้ไข', keycard_admin_suspend: 'แอดมินระงับบัตร', keycard_admin_reactivate: 'แอดมินเปิดใช้บัตร', keycard_confirm: 'ลูกบ้านยืนยัน',
+                                keycard_cancel: 'ลูกบ้านระงับ', keycard_link_send: 'ส่งลิงก์ยืนยัน', keycard_admin_import_create: 'นำเข้า (เพิ่ม)', keycard_admin_import_update: 'นำเข้า (แก้ไข)' };
+                    return m[a] || a;
+                },
+                async openKcAdmin() {
+                    this.currentTab = 'kcadmin';
+                    this.kcaFilter = 'reviewing';
+                    await this.loadKcAdmin();
+                    // ไม่มีรายการรอตรวจสอบ แต่มีรอยืนยัน → เปิดแท็บที่มีงานให้เลย
+                    if (!this.kcaCount('reviewing') && !this.kcaError) this.kcaFilter = this.kcaCount('pending') ? 'pending' : 'all';
+                },
+                async loadKcAdmin() {
+                    const seq = ++this.kcaSeq;
+                    this.kcaLoading = true; this.kcaError = null;
+                    try {
+                        const d = await this.kcaApi('keycard_admin_overview');
+                        if (seq !== this.kcaSeq) return;
+                        this.kcaCards = Array.isArray(d.cards) ? d.cards : [];
+                        this.kcaReasons = Object.assign({ cancel: [], fix: [], roles: [] }, d.reasons || {});
+                        this.kcaMigrated = d.migrated === false ? false : true;
+                        this.kcaTruncated = !!d.truncated;
+                        this.kcaLoaded = true;
+                        this.kcaPendingBadge = this.kcaCount('reviewing');
+                        if (this.kcaSel) { const fresh = this.kcaCards.find(c => String(c.id) === String(this.kcaSel.id)); if (fresh) this.kcaSelect(fresh); }
+                    } catch (e) {
+                        if (seq !== this.kcaSeq) return;
+                        this.kcaError = e.status === 403 ? 'บัญชีนี้ไม่มีสิทธิ์จัดการคีย์การ์ด (' + e.message + ')' : e.message;
+                    } finally { if (seq === this.kcaSeq) this.kcaLoading = false; }
+                },
+                kcaSelect(c) {
+                    this.kcaSel = c;
+                    this.kcaEdit = { front: this.kcStored(c.front_number, 10), back: this.kcStored(c.back_number, 8), holder: c.holder_name || '' };
+                },
+                openKcaDetail(c) { this.kcaSelect(c); this.kcaHistOpen = false; this.kcaHist = []; },
+                closeKcaDetail() { this.kcaSel = null; this.kcaBusy = false; },
+                async kcaToggleHistory() {
+                    this.kcaHistOpen = !this.kcaHistOpen;
+                    if (!this.kcaHistOpen || !this.kcaSel) return;
+                    this.kcaHistLoading = true;
+                    try { const d = await this.kcaApi('keycard_admin_history?id=' + encodeURIComponent(this.kcaSel.id)); this.kcaHist = d.history || []; }
+                    catch (e) { this.kcaHist = []; }
+                    finally { this.kcaHistLoading = false; }
+                },
+                // รันคำสั่งกับบัตรที่เปิดอยู่ แล้วโหลดรายการใหม่ (กันกดซ้ำด้วย kcaBusy)
+                async kcaRun(body, okTitle) {
+                    if (this.kcaBusy || !this.kcaSel) return null;
+                    this.kcaBusy = true;
+                    try {
+                        const d = await this.kcaApi('keycard_admin_action', { method: 'POST', body: JSON.stringify(Object.assign({ cardId: this.kcaSel.id }, body)) });
+                        Swal.fire({ icon: 'success', title: okTitle, timer: 1400, showConfirmButton: false });
+                        await this.loadKcAdmin();
+                        return d;
+                    } catch (e) {
+                        Swal.fire('ไม่สำเร็จ', e.message, 'error');
+                        return null;
+                    } finally { this.kcaBusy = false; }
+                },
+                async kcaSaveNumbers() {
+                    if (this.kcaEdit.front.length > 10 || this.kcaEdit.back.length > 8) return;
+                    await this.kcaRun({ action: 'set_numbers', front_number: this.kcaEdit.front, back_number: this.kcaEdit.back, holder_name: this.kcaEdit.holder || undefined }, 'บันทึกแล้ว');
+                },
+                async kcaApprove() {
+                    const c = this.kcaSel; if (!c) return;
+                    if (this.kcaEditDirty) return Swal.fire('ยังไม่ได้บันทึก', 'กรุณากด "บันทึกเลขบัตร/ผู้ใช้บัตร" ก่อนอนุมัติ', 'warning');
+                    if (!this.cardNumbersFull(c)) return Swal.fire('เลขบัตรยังไม่ครบ', 'ชุดหน้า 10 หลัก · ชุดหลัง 8 หลัก — แก้เลขให้ครบแล้วบันทึกก่อน', 'warning');
+                    const { isConfirmed } = await Swal.fire({
+                        title: 'อนุมัติบัตรใบนี้?', icon: 'question', showCancelButton: true, confirmButtonColor: '#10b981', confirmButtonText: 'อนุมัติ', cancelButtonText: 'ยกเลิก',
+                        html: `<div style="font-weight:800;font-family:monospace;letter-spacing:1px;white-space:nowrap">${this.formatKeycardNumber(c.front_number, c.back_number)}</div><div style="font-size:12px;color:#64748b;margin-top:4px">บ้าน ${this.kcaEsc(c.house_number)} · จะแจ้งสมาชิกในบ้านทาง LINE</div>`
+                    });
+                    if (!isConfirmed) return;
+                    await this.kcaRun({ action: 'approve', notify: true }, 'อนุมัติแล้ว');
+                },
+                kcaEsc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]); },
+                async kcaReasonDialog(title, list, color, btn) {
+                    const opts = list.map(r => `<option value="${this.kcaEsc(r)}">${this.kcaEsc(r)}</option>`).join('');
+                    const { isConfirmed, value } = await Swal.fire({
+                        title, icon: 'warning', showCancelButton: true, focusConfirm: false, confirmButtonColor: color, confirmButtonText: btn, cancelButtonText: 'ยกเลิก',
+                        html: `<div style="text-align:left;font-size:12px;font-weight:700;margin-bottom:4px">เหตุผล <span style="color:#f43f5e">*</span></div>
+                               <select id="kca-reason" class="swal2-select" style="margin:0;width:100%;font-size:14px"><option value="">— เลือกเหตุผล —</option>${opts}</select>
+                               <textarea id="kca-note" class="swal2-textarea" maxlength="200" placeholder="หมายเหตุเพิ่มเติม (ถ้าเลือก อื่น ๆ ต้องระบุ)" style="margin:10px 0 0;width:100%;font-size:13px"></textarea>
+                               <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;text-align:left"><input type="checkbox" id="kca-notify" checked> แจ้งสมาชิกในบ้านทาง LINE</label>`,
+                        preConfirm: () => {
+                            const reason = document.getElementById('kca-reason').value, note = document.getElementById('kca-note').value.trim(), notify = document.getElementById('kca-notify').checked;
+                            if (!reason) { Swal.showValidationMessage('กรุณาเลือกเหตุผล'); return false; }
+                            if (reason === 'อื่น ๆ' && note.length < 3) { Swal.showValidationMessage('เลือก "อื่น ๆ" กรุณาระบุรายละเอียด'); return false; }
+                            return { reason, note, notify };
+                        }
+                    });
+                    return isConfirmed ? value : null;
+                },
+                async kcaRequestFix() {
+                    const v = await this.kcaReasonDialog('ขอให้สมาชิกแก้ไข/ตรวจสอบบัตร', this.kcaReasons.fix, '#7c3aed', 'ส่งให้แก้ไข'); if (!v) return;
+                    await this.kcaRun({ action: 'request_fix', reason: v.reason, note: v.note, notify: v.notify }, 'ส่งให้แก้ไขแล้ว');
+                },
+                async kcaSuspend() {
+                    const v = await this.kcaReasonDialog('ระงับคีย์การ์ดใบนี้?', this.kcaReasons.cancel, '#f43f5e', 'ระงับ'); if (!v) return;
+                    await this.kcaRun({ action: 'suspend', reason: v.reason, note: v.note, notify: v.notify }, 'ระงับแล้ว');
+                },
+                async kcaReactivate() {
+                    const { isConfirmed } = await Swal.fire({ title: 'เปิดใช้บัตรอีกครั้ง?', icon: 'question', showCancelButton: true, confirmButtonColor: '#10b981', confirmButtonText: 'เปิดใช้', cancelButtonText: 'ยกเลิก' });
+                    if (!isConfirmed) return;
+                    await this.kcaRun({ action: 'reactivate', notify: true }, 'เปิดใช้บัตรแล้ว');
+                },
+                // อัปโหลดรูป (ย่อก่อน) → URL
+                async kcaUploadImage(file, cardId) {
+                    const compressed = await this.compressImage(file, 1200, 0.8);
+                    const fd = new FormData();
+                    fd.append('file', compressed, `keycard_admin_${cardId || 'new'}_${Date.now()}.jpg`);
+                    if (cardId) fd.append('cardId', String(cardId));
+                    const d = await this.kcaApi('keycard_admin_upload', { method: 'POST', body: fd });
+                    if (!d.url) throw new Error('อัปโหลดรูปล้มเหลว');
+                    return d.url;
+                },
+                kcaImageOk(file) {
+                    if (!file) return 'ไม่พบไฟล์';
+                    if (!/^image\//i.test(file.type)) return 'กรุณาเลือกไฟล์รูปภาพ';
+                    if (file.size > 10 * 1024 * 1024) return 'ไฟล์ใหญ่เกิน 10MB';
+                    return '';
+                },
+                async kcaReplaceImage(ev) {
+                    const file = ev.target.files && ev.target.files[0]; ev.target.value = '';
+                    const bad = this.kcaImageOk(file); if (bad) return Swal.fire('เลือกรูปไม่ได้', bad, 'warning');
+                    if (this.kcaBusy || !this.kcaSel) return;
+                    this.kcaBusy = true;
+                    try {
+                        const url = await this.kcaUploadImage(file, this.kcaSel.id);
+                        await this.kcaApi('keycard_admin_action', { method: 'POST', body: JSON.stringify({ action: 'set_image', cardId: this.kcaSel.id, img: url }) });
+                        Swal.fire({ icon: 'success', title: 'บันทึกรูปแล้ว', timer: 1200, showConfirmButton: false });
+                        this.kcaBusy = false;
+                        await this.loadKcAdmin();
+                    } catch (e) { Swal.fire('ไม่สำเร็จ', e.message, 'error'); }
+                    finally { this.kcaBusy = false; }
+                },
+                // ── เพิ่มบัตรให้บ้าน ──
+                openKcaAdd() {
+                    this.kcaAdd = { open: true, house: '', front: '', back: '', holder: '', file: null, preview: null, approveNow: false, notify: true, saving: false, error: null, info: null };
+                },
+                closeKcaAdd() { if (!this.kcaAdd.saving) this.kcaAdd.open = false; },
+                kcaPickAddImage(ev) {
+                    const file = ev.target.files && ev.target.files[0]; ev.target.value = '';
+                    const bad = this.kcaImageOk(file); if (bad) { this.kcaAdd.error = bad; return; }
+                    this.kcaAdd.error = null; this.kcaAdd.file = file;
+                    const r = new FileReader(); r.onload = e => { this.kcaAdd.preview = e.target.result; }; r.readAsDataURL(file);
+                },
+                async kcaLookupHouse() {
+                    const hn = this.kcaAdd.house; this.kcaAdd.info = null;
+                    if (!hn) return;
+                    try {
+                        const d = await this.kcaApi('keycard_house_cards?house=' + encodeURIComponent(hn));
+                        if (this.kcaAdd.house !== hn) return;
+                        this.kcaAdd.info = { summary: d.summary || { total: 0, active: 0, pending: 0, reviewing: 0, cancelled: 0 }, members: d.members || 0 };
+                        if (!d.members) this.kcaAdd.notify = false;
+                    } catch (e) { this.kcaAdd.info = { error: 'ตรวจบ้านไม่สำเร็จ: ' + e.message, members: 0, summary: {} }; }
+                },
+                async kcaSubmitAdd() {
+                    const a = this.kcaAdd; if (a.saving) return;
+                    a.error = null;
+                    if (!a.house) { a.error = 'กรุณากรอกบ้านเลขที่'; return; }
+                    if (a.approveNow && !this.kcaAddCanApprove) { a.error = 'อนุมัติทันทีต้องกรอกเลขครบ 10 + 8 หลัก และแนบรูปบัตร'; return; }
+                    a.saving = true;
+                    try {
+                        let img;
+                        if (a.file) img = await this.kcaUploadImage(a.file, 'new');
+                        const d = await this.kcaApi('keycard_admin_action', { method: 'POST', body: JSON.stringify({
+                            action: 'create', houseNumber: a.house, front_number: a.front, back_number: a.back, holder_name: a.holder || undefined,
+                            img, approve_now: !!a.approveNow, notify: !!a.notify }) });
+                        a.saving = false; a.open = false;
+                        Swal.fire({ icon: 'success', title: d.status === 'active' ? 'เพิ่มและอนุมัติแล้ว' : 'เพิ่มคีย์การ์ดแล้ว', text: d.status === 'active' ? '' : 'สถานะ "รอยืนยัน" — สมาชิกตรวจ/ยืนยันได้จากหน้า CRM', timer: 1800, showConfirmButton: false });
+                        this.kcaFilter = d.status === 'active' ? 'active' : 'pending'; this.kcaQuery = ''; this.kcaPage = 1;
+                        await this.loadKcAdmin();
+                    } catch (e) { a.error = e.message; a.saving = false; }
                 },
 
                 viewCardImage(card) {
