@@ -1,5 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   config-core.js — ตัวช่วยกลาง (ใช้ร่วมกันทุก tenant · ไม่ต้องแก้)
+7-11-26
+   config-core.js — ตัวช่วยกลาง (ใช้ร่วมกันทุก tenant · ไม่ต้องแก้) 
    • appCfg()/appCfgIn(): อ่านค่าจาก config.js (ไม่มีคีย์ → ใช้ค่าเดิมที่หน้าส่งมา)
    • แนบ x-tenant และ LINE access token ให้ทุกคำขอไป Edge Function
    • DB_PROXY: ส่งคำสั่งฐานข้อมูลของทุกหน้าผ่าน Edge Function (/api/dbq) แทนการเรียก Supabase ตรง (ดู migration_security_hardening.sql)
