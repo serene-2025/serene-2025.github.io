@@ -2,6 +2,7 @@
    config-core.js — ตัวช่วยกลาง (ใช้ร่วมกันทุก tenant · ไม่ต้องแก้)
    • appCfg()/appCfgIn(): อ่านค่าจาก config.js (ไม่มีคีย์ → ใช้ค่าเดิมที่หน้าส่งมา)
    • แนบ x-tenant และ LINE access token ให้ทุกคำขอไป Edge Function
+   • DB_PROXY: ส่งคำสั่งฐานข้อมูลของทุกหน้าผ่าน Edge Function (/api/dbq) แทนการเรียก Supabase ตรง (ดู migration_security_hardening.sql)
    • แทนชื่อหมู่บ้านเดิมที่ฝังในข้อความด้วย BRAND ใน config.js (เฉพาะเมื่อต่างจากค่าเดิม)
    ═══════════════════════════════════════════════════════════════════════ */
 (function () {
@@ -39,6 +40,96 @@
     };
     wrapped.__appCfgWrapped = true;
     window.fetch = wrapped;
+  }
+
+  // ── 🔒 ตัวกลางฐานข้อมูล (DB_PROXY): ส่งทุก supabaseClient.from()/rpc() ไป Edge Function (/api/dbq) แทนการเรียก Supabase ตรงด้วย anon key ──
+  //    เปิดด้วย DB_PROXY: true ใน config.js · เซิร์ฟเวอร์ตรวจสิทธิ์ราย "ตาราง×การกระทำ" ด้วย LINE token แล้วรันด้วย service_role
+  //    (หลังเปิดแล้วรัน migration_security_hardening.sql เพื่อปิดสิทธิ์ anon ทั้งหมด) · storage/auth ยังเรียกตรงตามเดิม
+  //    ส่วนที่ไม่เปลี่ยน: โค้ดหน้าเว็บเดิม (.from('x').select().eq()... / await / .then) ใช้ได้เหมือนเดิม ผลลัพธ์ { data, error, count }
+  function dbProxyOn() { return !!(window.APP_CONFIG && window.APP_CONFIG.DB_PROXY); }
+  function edgeBase(supabaseUrl) {
+    var e = String(appCfg('EDGE_FUNCTION_URL', '') || '').replace(/\/+$/, '');
+    return e || (String(supabaseUrl || '').replace(/\/+$/, '') + '/functions/v1/line-webhook');
+  }
+  function dbqHeaders() {
+    var h = { 'Content-Type': 'application/json' };
+    var t = String(window.APP_CONFIG && window.APP_CONFIG.TENANT_KEY || '').trim(); if (t) h['x-tenant'] = t;
+    var k = lineToken(); if (k) h['x-line-token'] = k;
+    return h;
+  }
+  function dbqPost(base, body, signal) {
+    return window.fetch(base + '/api/dbq', { method: 'POST', headers: dbqHeaders(), body: JSON.stringify(body), signal: signal })
+      .then(function (res) {
+        return res.json().then(function (j) { return { res: res, j: j }; }, function () { return { res: res, j: null }; });
+      });
+  }
+  function dbqBuilder(base, init) {
+    var st = { body: init, steps: [], throwOn: false, signal: undefined, p: null };
+    function run() {
+      if (st.p) return st.p;
+      var body = st.body.rpc ? { rpc: st.body.rpc, args: st.body.args || {} } : { table: st.body.table, chain: st.steps };
+      st.p = dbqPost(base, body, st.signal).then(function (o) {
+        var j = o.j;
+        var out = (j && typeof j === 'object' && ('data' in j || 'error' in j))
+          ? { data: j.data === undefined ? null : j.data, error: j.error || null, count: j.count == null ? null : j.count, status: j.status || o.res.status, statusText: '' }
+          : { data: null, error: { message: (j && j.error) || ('HTTP ' + o.res.status), code: String(o.res.status), details: null, hint: null }, count: null, status: o.res.status, statusText: '' };
+        if (st.throwOn && out.error) { var er = new Error(out.error.message || 'dbq error'); for (var k in out.error) er[k] = out.error[k]; throw er; }
+        return out;
+      }, function (e) {
+        var out = { data: null, error: { message: (e && e.message) || 'Failed to fetch', code: '', details: null, hint: null }, count: null, status: 0, statusText: '' };
+        if (st.throwOn) throw e; return out;
+      });
+      return st.p;
+    }
+    var p = new Proxy(function () {}, {
+      get: function (_t, prop) {
+        if (prop === 'then') return function (a, b) { return run().then(a, b); };
+        if (prop === 'catch') return function (b) { return run().catch(b); };
+        if (prop === 'finally') return function (f) { return run().finally(f); };
+        if (typeof prop === 'symbol') return undefined;
+        if (prop === 'throwOnError') return function () { st.throwOn = true; return p; };
+        if (prop === 'abortSignal') return function (sig) { st.signal = sig; return p; };
+        if (prop === 'returns' || prop === 'overrideTypes' || prop === 'setHeader') return function () { return p; };
+        return function () { st.steps.push([String(prop), Array.prototype.slice.call(arguments)]); return p; };
+      }
+    });
+    return p;
+  }
+  function installDbProxy(client, supabaseUrl) {
+    if (!client || client.__dbq) return client;
+    var base = edgeBase(supabaseUrl);
+    client.from = function (table) { return dbqBuilder(base, { table: String(table) }); };
+    client.rpc = function (name, args) { return dbqBuilder(base, { rpc: String(name), args: args || {} }); };
+    client.__dbq = true;
+    return client;
+  }
+  // ตรวจรหัส PIN หน้าตรวจค่าส่วนกลางที่เซิร์ฟเวอร์ (เดิมอ่าน admin_pin มาเทียบในเบราว์เซอร์)
+  window.dbqPinCheck = function (pin, supabaseUrl) {
+    return dbqPost(edgeBase(supabaseUrl || (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL)), { pin_check: String(pin) }).then(function (o) {
+      return (o.j && typeof o.j === 'object') ? o.j : { ok: false, admin: false, error: 'HTTP ' + o.res.status };
+    }, function () { return { ok: false, admin: false, error: 'network' }; });
+  };
+  // เรียกตรง (ไม่ผ่าน supabase-js) สำหรับหน้าที่ไม่ได้โหลด SDK เช่น index.html · คืน { data, error, ... } หรือ null ถ้าล้มเหลว
+  window.dbqQuery = function (table, chain, supabaseUrl) {
+    return dbqPost(edgeBase(supabaseUrl || (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL)), { table: String(table), chain: chain || [] })
+      .then(function (o) { return o.j; }, function () { return null; });
+  };
+  window.dbProxyEnabled = dbProxyOn;
+  if (dbProxyOn()) {
+    var patchSb = function (sb) {
+      if (!sb || sb.__dbqPatched || typeof sb.createClient !== 'function') return sb;
+      var copy = Object.assign({}, sb), orig = sb.createClient;
+      copy.createClient = function (url) { return installDbProxy(orig.apply(this, arguments), url); };
+      copy.__dbqPatched = true;
+      return copy;
+    };
+    if (window.supabase) { window.supabase = patchSb(window.supabase); }
+    else {
+      var _sbVal;
+      try {
+        Object.defineProperty(window, 'supabase', { configurable: true, enumerable: true, get: function () { return _sbVal; }, set: function (v) { _sbVal = patchSb(v); } });
+      } catch (e) { /* ถ้า define ไม่ได้ ให้หน้าเว็บทำงานแบบเดิม (เรียกตรง) */ }
+    }
   }
 
   // ── แบรนด์: แทนชื่อหมู่บ้านเดิมที่ฝังในข้อความด้วยชื่อใน BRAND (เฉพาะเมื่อ BRAND ต่างจากค่าเดิม) ──
@@ -84,4 +175,82 @@
   }
   window.appBrandApply = applyRules;   // ใช้ทดสอบ/เรียกเองได้
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', runBrand); else runBrand();
+})();
+
+/* ═════════════════════════════════════════════════════════════════
+   🏠 regGate — ด่านลงทะเบียนกลางของทุกหน้า LIFF
+   ใช้: หลังรู้ LINE userId แล้ว  →  if (!(await regGate({ uid: profile.userId, page: 'car.html' }))) return;
+   • ลงทะเบียนแล้ว (มีชื่อ-สกุล + บ้านเลขที่ใน userhome) → คืน true ให้หน้าทำงานต่อ
+   • ยังไม่ลงทะเบียน → พาไปหน้า liff_register พร้อมแนบลิงก์หน้าเดิม (?return=) แล้วคืน false · สมัครเสร็จหน้า register พากลับมาเอง
+   • ถ้ากลับมาแล้ว (rg=1) ยังไม่ผ่านอีก → ไม่พาไปซ้ำ (กันวนลูป) แสดงข้อความ + ปุ่มลงทะเบียนเอง
+   • ตรวจไม่ได้ (เน็ต/เซิร์ฟเวอร์ล่ม) → ปล่อยให้หน้าทำงานต่อ (เป็นตัวนำทาง ไม่ใช่ด่านความปลอดภัย)
+   • ข้ามบางหน้าได้ใน config.js: REG_GATE_SKIP: ['gallery.html', 'new.html']
+   ═════════════════════════════════════════════════════════════════ */
+(function () {
+  var passed = {};
+  function lastSeg() { var p = String(location.pathname || '').split('/').filter(Boolean); return p.length ? p[p.length - 1] : ''; }
+  function edgeUrl(o) {
+    var e = String(o.edge || (window.appCfg ? window.appCfg('EDGE_FUNCTION_URL', '') : '') || '').replace(/\/+$/, '');
+    if (e) return e;
+    var s = String(o.supabaseUrl || (window.appCfg ? window.appCfg('SUPABASE_URL', '') : '') || '').replace(/\/+$/, '');
+    return s ? s + '/functions/v1/line-webhook' : '';
+  }
+  function closeWin() { try { liff.closeWindow(); } catch (e) { try { history.back(); } catch (e2) { /* ปิดเองไม่ได้ */ } } }
+  function showOverlay(title, text, buttons) {
+    try {
+      var old = document.getElementById('reg-gate-overlay'); if (old) old.remove();
+      var ov = document.createElement('div'); ov.id = 'reg-gate-overlay';
+      ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483000;background:#f8fafc;display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;';
+      var card = document.createElement('div'); card.style.cssText = 'max-width:360px;width:100%;text-align:center;';
+      var ic = document.createElement('div'); ic.style.cssText = 'font-size:52px;margin-bottom:8px;'; ic.textContent = '🏠'; card.appendChild(ic);
+      var h = document.createElement('div'); h.setAttribute('data-testid', 'reg-gate-title'); h.style.cssText = 'font-size:18px;font-weight:800;color:#1e293b;margin-bottom:6px;'; h.textContent = title; card.appendChild(h);
+      var p = document.createElement('div'); p.setAttribute('data-testid', 'reg-gate-text'); p.style.cssText = 'font-size:13px;color:#64748b;line-height:1.6;margin-bottom:16px;'; p.textContent = text; card.appendChild(p);
+      (buttons || []).forEach(function (b) {
+        var el = document.createElement('button'); el.type = 'button'; el.textContent = b.label; el.setAttribute('data-testid', b.id || '');
+        el.style.cssText = 'display:block;width:100%;margin:8px 0;padding:12px;border-radius:14px;font-size:14px;font-weight:700;cursor:pointer;border:' + (b.primary ? '0;background:#06b6d4;color:#fff' : '1px solid #e2e8f0;background:#fff;color:#475569') + ';';
+        el.onclick = b.onclick; card.appendChild(el);
+      });
+      ov.appendChild(card); document.body.appendChild(ov);
+    } catch (e) { /* แสดงข้อความไม่ได้ก็ยังพาไปต่อได้ */ }
+  }
+  window.regGate = async function (o) {
+    o = o || {};
+    try {
+      var uid = String(o.uid || '');
+      var page = o.page || lastSeg();
+      var skip = (window.appCfg ? window.appCfg('REG_GATE_SKIP', []) : []) || [];
+      if (!uid || !page || (Array.isArray(skip) && skip.indexOf(page) >= 0)) return true;
+      if (passed[uid + '|' + page]) return true;
+      var base = edgeUrl(o);
+      if (!base) return true;
+
+      var d = null;
+      var ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+      var timer = ctl ? setTimeout(function () { try { ctl.abort(); } catch (e) { /* ignore */ } }, 8000) : null;
+      try {
+        var qs = String(location.search || '').slice(0, 800);
+        var res = await fetch(base + '/api/admin/audience/registration_gate?uid=' + encodeURIComponent(uid) + '&page=' + encodeURIComponent(page) + '&query=' + encodeURIComponent(qs), ctl ? { signal: ctl.signal } : undefined);
+        if (res.ok) d = await res.json();
+        else console.warn('regGate: HTTP ' + res.status + ' (ปล่อยผ่าน)');
+      } catch (e) { console.warn('regGate: ตรวจไม่ได้ (ปล่อยผ่าน)', e); }
+      finally { if (timer) clearTimeout(timer); }
+
+      if (!d || typeof d.registered !== 'boolean') return true;
+      if (d.registered) { passed[uid + '|' + page] = true; return true; }
+
+      var looped = false;
+      try { looped = new URLSearchParams(location.search).get('rg') === '1'; } catch (e) { /* ignore */ }
+      var go = function () { location.href = d.registerUrl; };
+      if (!d.registerUrl) {
+        showOverlay('ยังไม่ได้ลงทะเบียน', 'กรุณาลงทะเบียนสมาชิกผ่านเมนู "ลงทะเบียน" ในแชท LINE ก่อนใช้งานหน้านี้ (ระบบยังไม่ได้ตั้งค่าหน้าลงทะเบียน กรุณาแจ้งผู้ดูแล)', [{ id: 'reg-gate-close', label: 'ปิด', onclick: closeWin }]);
+      } else if (looped) {
+        showOverlay('ลงทะเบียนยังไม่เสร็จสมบูรณ์', 'ยังไม่พบข้อมูลสมาชิกของคุณ (ชื่อ-สกุลและบ้านเลขที่) กรุณาลงทะเบียนให้ครบ หรือติดต่อนิติบุคคล', [
+          { id: 'reg-gate-go', label: 'ไปหน้าลงทะเบียน', primary: true, onclick: go }, { id: 'reg-gate-close', label: 'ปิด', onclick: closeWin }]);
+      } else {
+        showOverlay('ยังไม่ได้ลงทะเบียน', 'กำลังพาไปหน้าลงทะเบียน เมื่อลงทะเบียนเสร็จจะพากลับมาหน้านี้อัตโนมัติ...', [{ id: 'reg-gate-go', label: 'ไปหน้าลงทะเบียนทันที', primary: true, onclick: go }]);
+        setTimeout(go, o.delay == null ? 900 : o.delay);
+      }
+      return false;
+    } catch (e) { console.warn('regGate error (ปล่อยผ่าน)', e); return true; }
+  };
 })();
