@@ -7,7 +7,7 @@
 <script src="config-core.js" charset="utf-8"></script>
 <script>if(!window.appCfg){window.appCfg=function(k,d){return d};window.appCfgIn=function(k,s,d){return d};}</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Serene · Member</title>
+    <title>CRM Pro · Member Card</title>
     <link rel="icon" href="https://cdn-icons-png.flaticon.com/128/15267/15267807.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
@@ -2573,6 +2573,7 @@
                     // ─── Settings + Key Card ───
                     showSettings: false,
                     keyCards: [], keyCardHouse: null, keyCardLoading: false, keyCardError: null,
+                    kcLoadSeq: 0, kcFullStarted: false,   // กัน prefetch/โหลดซ้อนกันเขียนทับรายการบัตรเต็ม
                     keyCardPendingCount: 0,
                     flippedCardIds: [],   // เก็บ id ของ card ที่กำลังพลิกอยู่
                     // ─── Car Management ───
@@ -3070,8 +3071,12 @@
                             if (home?.[0]?.house_no) {
                                 const { data: cards } = await this.supabase.from('rfid')
                                     .select('id, status').eq('house_number', home[0].house_no.trim());
-                                this.keyCards = cards || [];
-                                this.keyCardPendingCount = (cards || []).filter(c => c.status === 'pending').length;
+                                // ⚠️ ห้ามเขียนทับถ้าหน้าคีย์การ์ดเริ่มโหลดรายการเต็มไปแล้ว (select ตรงนี้ดึงแค่ id/status
+                                //    ถ้าเสร็จทีหลังจะทำให้บัตรไม่มีเลข/รูป/ผู้ถือบัตร — อาการ "เปิดลิงก์แล้วข้อมูลไม่แสดง ต้องเปิดหลายรอบ")
+                                if (!this.kcFullStarted) {
+                                    this.keyCards = cards || [];
+                                    this.keyCardPendingCount = (cards || []).filter(c => c.status === 'pending').length;
+                                }
                             }
                         } catch (e) { /* silent */ }
                     })();
@@ -4833,45 +4838,56 @@
 
                 async loadKeyCardData() {
                     if (!this.userProfile?.userId) return;
+                    this.kcFullStarted = true;
+                    const seq = ++this.kcLoadSeq;           // เฉพาะการโหลด "ล่าสุด" เท่านั้นที่มีสิทธิ์เขียนผลลง state
                     this.keyCardLoading = true;
                     this.keyCardError = null;
-                    try {
+                    const fetchAll = async () => {
                         // 1) หาบ้านของ user จาก userhome
                         const { data: homes, error: hErr } = await this.supabase
                             .from('userhome').select('*').eq('uid', this.userProfile.userId).limit(1);
                         if (hErr) throw new Error('ไม่สามารถโหลดข้อมูลบ้านได้: ' + hErr.message);
-
                         const home = homes?.[0];
-                        if (!home || !home.house_no) {
-                            this.keyCardError = 'ยังไม่ได้ลงทะเบียนบ้าน';
-                            this.keyCardHouse = null;
-                            this.keyCards = [];
-                            return;
-                        }
-
+                        if (!home || !home.house_no) return { home: null, cards: [] };
                         const houseNo = home.house_no.trim();
-                        this.keyCardHouse = {
-                            house_number: houseNo,
-                            owner_name: home.fullname || '',
-                            phone: home.phone || '',
-                            members_count: home.member_count || 1,
-                            _userhome_id: home.id
-                        };
-
                         // 2) ดึงคีย์การ์ดของบ้านนี้
                         const { data: cards, error: cErr } = await this.supabase
                             .from('rfid').select('*')
                             .eq('house_number', houseNo)
                             .order('created_at', { ascending: false });
                         if (cErr) throw new Error('ไม่สามารถโหลดคีย์การ์ดได้: ' + cErr.message);
-
-                        this.keyCards = cards || [];
+                        return { home, houseNo, cards: cards || [] };
+                    };
+                    try {
+                        // เครือข่าย/Edge Function เพิ่งตื่น (cold start) มักล้มครั้งแรก → ลองซ้ำเงียบๆ อีก 2 ครั้งก่อนแจ้ง error
+                        let r = null, lastErr = null;
+                        for (let attempt = 0; attempt < 3; attempt++) {
+                            try { r = await fetchAll(); lastErr = null; break; }
+                            catch (e) { lastErr = e; if (attempt < 2) await new Promise(res => setTimeout(res, 700 * (attempt + 1))); }
+                        }
+                        if (seq !== this.kcLoadSeq) return;  // มีการโหลดใหม่กว่าแล้ว — ทิ้งผลเก่า
+                        if (lastErr) throw lastErr;
+                        if (!r.home) {
+                            this.keyCardError = 'ยังไม่ได้ลงทะเบียนบ้าน';
+                            this.keyCardHouse = null;
+                            this.keyCards = [];
+                            return;
+                        }
+                        this.keyCardHouse = {
+                            house_number: r.houseNo,
+                            owner_name: r.home.fullname || '',
+                            phone: r.home.phone || '',
+                            members_count: r.home.member_count || 1,
+                            _userhome_id: r.home.id
+                        };
+                        this.keyCards = r.cards;
                         this.keyCardPendingCount = this.keyCards.filter(c => c.status === 'pending').length;
                     } catch (e) {
+                        if (seq !== this.kcLoadSeq) return;
                         console.error('loadKeyCardData', e);
                         this.keyCardError = e.message;
                     } finally {
-                        this.keyCardLoading = false;
+                        if (seq === this.kcLoadSeq) this.keyCardLoading = false;
                     }
                 },
 
