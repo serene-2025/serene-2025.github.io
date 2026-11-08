@@ -16761,8 +16761,8 @@ async function savePaymentSettings(btn) {
    // ============================================================================
 // 🚗 จัดการทะเบียนรถ (Car Management)
 // ============================================================================
-const CAR_STATUS_COLOR = { pending: 'amber', approved: 'emerald', rejected: 'rose', renewal_pending: 'sky' };
-const CAR_STATUS_LABEL = { pending: 'รอตรวจ', approved: 'อนุมัติ', rejected: 'ไม่อนุมัติ', renewal_pending: '🔁 รอต่ออายุ' };
+const CAR_STATUS_COLOR = { pending: 'amber', approved: 'emerald', rejected: 'rose', renewal_pending: 'sky', delete_pending: 'orange' };
+const CAR_STATUS_LABEL = { pending: 'รอตรวจ', approved: 'อนุมัติ', rejected: 'ไม่อนุมัติ', renewal_pending: '🔁 รอต่ออายุ', delete_pending: '🗑️ ขอลบ' };
 let carData = [], carFiltered = [], carPage = 1;
 const CAR_PER_PAGE = 30;
 
@@ -18979,11 +18979,12 @@ async function renderCarManagementView() {
             </div>
 
             <!-- Stats -->
-            <div id="car-stats" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+            <div id="car-stats" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
                 <div class="bg-white rounded-2xl p-4 text-center border border-slate-100"><div class="text-xs text-slate-500 font-bold">ทั้งหมด</div><div class="text-3xl font-extrabold text-slate-800 mt-1" id="car-stat-total">—</div></div>
                 <div class="bg-amber-50 rounded-2xl p-4 text-center border border-amber-100"><div class="text-xs text-amber-700 font-bold">รอตรวจ</div><div class="text-3xl font-extrabold text-amber-600 mt-1" id="car-stat-pending">—</div></div>
                 <div class="bg-emerald-50 rounded-2xl p-4 text-center border border-emerald-100"><div class="text-xs text-emerald-700 font-bold">อนุมัติ</div><div class="text-3xl font-extrabold text-emerald-600 mt-1" id="car-stat-approved">—</div></div>
                 <div class="bg-rose-50 rounded-2xl p-4 text-center border border-rose-100"><div class="text-xs text-rose-700 font-bold">ไม่อนุมัติ</div><div class="text-3xl font-extrabold text-rose-600 mt-1" id="car-stat-rejected">—</div></div>
+                <div class="bg-orange-50 rounded-2xl p-4 text-center border border-orange-100 cursor-pointer" onclick="document.getElementById('car-status-filter').value='delete_pending';applyCarFilters()" title="กดเพื่อดูเฉพาะคำขอลบ"><div class="text-xs text-orange-700 font-bold">🗑️ ขอลบ</div><div class="text-3xl font-extrabold text-orange-600 mt-1" id="car-stat-delete">—</div></div>
             </div>
 
             <!-- Filters -->
@@ -18996,6 +18997,7 @@ async function renderCarManagementView() {
                     <option value="approved">อนุมัติ</option>
                     <option value="rejected">ไม่อนุมัติ</option>
                         <option value="renewal_pending">🔁 รอต่ออายุ</option>
+                        <option value="delete_pending">🗑️ ขอลบ (รออนุมัติ)</option>
                 </select>
                 <select id="car-type-filter" onchange="applyCarFilters()" class="rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
                     <option value="">ทุกประเภท</option>
@@ -19042,6 +19044,7 @@ async function loadCarData() {
         document.getElementById('car-stat-pending').innerText = carData.filter(r => r.status === 'pending' || r.status === 'renewal_pending').length;
         document.getElementById('car-stat-approved').innerText = carData.filter(r => r.status === 'approved').length;
         document.getElementById('car-stat-rejected').innerText = carData.filter(r => r.status === 'rejected').length;
+        const delEl = document.getElementById('car-stat-delete'); if (delEl) delEl.innerText = carData.filter(r => r.status === 'delete_pending').length;
         applyCarFilters();
     } catch (e) {
         document.getElementById('car-tbody').innerHTML = `<tr><td colspan="6" class="p-12 text-center text-rose-500">${escapeHtml(e.message)}</td></tr>`;
@@ -19094,6 +19097,8 @@ function renderCarTable() {
             <td class="p-3 text-sm font-bold text-slate-700">${escapeHtml(r.house_number || '—')}</td>
             <td class="p-3 text-center">
                 <span class="px-2 py-1 rounded-full text-[11px] font-bold bg-${sc}-100 text-${sc}-700">${sl}</span>
+                ${r.status === 'delete_pending' ? `<div class="mt-1 text-[10px] text-orange-700 max-w-[150px] mx-auto leading-snug" title="${escapeHtml(r.delete_note || '')}">${escapeHtml(r.delete_reason || '—')}${r.delete_note ? ' · ' + escapeHtml(String(r.delete_note).slice(0, 40)) : ''}<br><span class="text-slate-400">โดย ${escapeHtml(r.delete_requested_name || '—')}${r.delete_requested_at ? ' · ' + new Date(r.delete_requested_at).toLocaleDateString('th-TH') : ''}</span></div>` : ''}
+                ${r.status !== 'delete_pending' && r.delete_response ? `<div class="mt-1 text-[10px] text-slate-400 max-w-[150px] mx-auto leading-snug">ปฏิเสธลบ: ${escapeHtml(r.delete_response)}</div>` : ''}
             </td>
             <td class="p-3 text-center">
                 ${(() => {
@@ -19114,8 +19119,10 @@ function renderCarTable() {
             </td>
             <td class="p-3 text-center">
                 <div class="flex gap-1 justify-center flex-wrap">
+                    ${r.status === 'delete_pending' ? `<button onclick="approveCarDelete('${r.id}')" class="px-2 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-[11px] font-bold">🗑️ อนุมัติลบ</button>
+                    <button onclick="rejectCarDelete('${r.id}')" class="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-bold">↩️ ปฏิเสธคำขอลบ</button>` : `
                     ${r.status !== 'approved' ? `<button onclick="updateCarStatus('${r.id}', 'approved')" class="px-2 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[11px] font-bold">✅ ${r.status === 'renewal_pending' ? 'อนุมัติต่ออายุ' : 'อนุมัติ'}</button>` : ''}
-                    ${r.status !== 'rejected' ? `<button onclick="updateCarStatus('${r.id}', 'rejected')" class="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-bold">❌ ปฏิเสธ</button>` : ''}
+                    ${r.status !== 'rejected' ? `<button onclick="updateCarStatus('${r.id}', 'rejected')" class="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-bold">❌ ปฏิเสธ</button>` : ''}`}
                     <button onclick="openCarEditor('${r.id}')" title="แก้ไขข้อมูลรถ" class="px-2 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-[11px] font-bold">✏️</button>
                     <button onclick="deleteCarAdmin('${r.id}', '${escapeHtml(r.plate_number).replace(/'/g,"&apos;")}')" class="px-2 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg text-[11px] font-bold">🗑</button>
                 </div>
@@ -19380,6 +19387,9 @@ async function updateCarStatus(carId, status) {
             .from('car_registrations').select('*').eq('id', carId).maybeSingle();
         if (fetchErr) throw fetchErr;
 
+        // 🗑️ คำขอลบจากสมาชิก — ห้ามผ่านปุ่มอนุมัติ/ปฏิเสธปกติ (จะเปลี่ยนสถานะโดยไม่ลบ/ถอดจาก allowed_cars)
+        if (car && car.status === 'delete_pending') { showToast('รถคันนี้ถูกขอลบ — ใช้ปุ่ม "อนุมัติลบ" หรือ "ปฏิเสธคำขอลบ"', 'error'); return; }
+
         // 🔁 คำขอต่ออายุ (สมาชิกกดยืนยันการใช้งานต่อจาก CRM) — ห้ามใช้ flow อนุมัติปกติ:
         // flow นั้น "ไม่เปลี่ยน end_date ถ้ามีอยู่แล้ว" แปลว่าอนุมัติแล้วรถก็ยังหมดอายุเหมือนเดิม
         if (car && car.status === 'renewal_pending') {
@@ -19451,6 +19461,73 @@ async function updateCarStatus(carId, status) {
     } catch (e) { showToast(e.message, 'error'); }
 }
 
+
+// ─── 🗑️ คำขอลบรถจากสมาชิก (CRM → "รถของฉัน" → ขอลบ) ───
+// อนุมัติ: ถอดทะเบียนออกจาก allowed_cars (ตั้ง status = pending_delete ให้ระบบกล้อง/LPR ลบตามรอบ sync) แล้วลบรายการรถ
+//   ลำดับสำคัญ: แก้ allowed_cars ก่อน — ถ้าขั้นนี้ล้มจะหยุด ไม่ลบรายการรถ (กันรถหลุดจากทะเบียนแต่ยังผ่านด่านได้)
+async function approveCarDelete(carId) {
+    const car = carData.find(c => String(c.id) === String(carId));
+    if (!car) return showToast('ไม่พบข้อมูลรถ — กดรีเฟรชแล้วลองใหม่', 'error');
+    const { isConfirmed } = await Swal.fire({
+        title: 'อนุมัติลบรถ?',
+        html: `<div style="font-size:13px;text-align:left">
+            <div style="font-weight:800;font-size:16px;letter-spacing:1px">${escapeHtml(car.plate_number)} <span style="font-weight:500;font-size:12px;color:#64748b">${escapeHtml(car.province || '')}</span></div>
+            <div style="color:#64748b;margin:2px 0 8px">บ้าน ${escapeHtml(car.house_number || '—')} · ${escapeHtml(car.fullname || '—')}</div>
+            <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:8px;font-size:12px">
+              <b>เหตุผล:</b> ${escapeHtml(car.delete_reason || '—')}${car.delete_note ? '<br>' + escapeHtml(car.delete_note) : ''}<br>
+              <span style="color:#9a3412">ขอโดย ${escapeHtml(car.delete_requested_name || '—')}${car.delete_requested_at ? ' · ' + new Date(car.delete_requested_at).toLocaleString('th-TH') : ''}</span></div>
+            <div style="margin-top:8px;font-size:12px;color:#475569">ระบบจะ <b>ถอดทะเบียนนี้ออกจาก allowed_cars</b> (สั่งลบออกจากระบบกล้อง) และลบรายการรถนี้ออกจากทะเบียน</div></div>`,
+        icon: 'warning', showCancelButton: true, confirmButtonText: 'อนุมัติลบ', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#f97316'
+    });
+    if (!isConfirmed) return;
+    try {
+        const key = (v) => String(v ?? '').replace(/\s+/g, '').toUpperCase();
+        // หาแถว allowed_cars: ตาม allowed_car_id ก่อน ไม่มีค่อย match ทะเบียน (ไม่สนช่องว่าง/ตัวพิมพ์) + บ้าน
+        let rows = [];
+        if (car.allowed_car_id) {
+            const { data, error } = await supabaseClient.from('allowed_cars').select('id, plate_number, house_number, status').eq('id', car.allowed_car_id);
+            if (error) throw error; rows = data || [];
+        }
+        if (!rows.length) {
+            const { data, error } = await supabaseClient.from('allowed_cars').select('id, plate_number, house_number, status').eq('house_number', car.house_number);
+            if (error) throw error;
+            rows = (data || []).filter(a => key(a.plate_number) === key(car.plate_number));
+        }
+        for (const a of rows) {
+            if (a.status === 'pending_delete') continue;
+            const { error } = await supabaseClient.from('allowed_cars').update({ status: 'pending_delete' }).eq('id', a.id);
+            if (error) throw new Error('ถอดออกจาก allowed_cars ไม่สำเร็จ (ยังไม่ได้ลบรายการรถ): ' + error.message);
+        }
+        const { error: dErr } = await supabaseClient.from('car_registrations').delete().eq('id', car.id);
+        if (dErr) throw dErr;
+        showToast('🗑️ อนุมัติลบแล้ว' + (rows.length ? ' · ถอดออกจาก allowed_cars แล้ว (รอระบบกล้อง sync)' : ' · ไม่พบรถนี้ใน allowed_cars'), 'success');
+        loadCarData();
+    } catch (e) { showToast('❌ ' + (e.message || e), 'error'); }
+}
+
+// ปฏิเสธคำขอลบ — รถกลับสถานะเดิม (ก่อนขอลบ) พร้อมข้อความแจ้งสมาชิกที่การ์ดรถ
+async function rejectCarDelete(carId) {
+    const car = carData.find(c => String(c.id) === String(carId));
+    if (!car) return showToast('ไม่พบข้อมูลรถ — กดรีเฟรชแล้วลองใหม่', 'error');
+    const { value: note, isConfirmed } = await Swal.fire({
+        title: 'ปฏิเสธคำขอลบ?',
+        html: `<div style="font-size:13px">ทะเบียน <b>${escapeHtml(car.plate_number)}</b><br><span style="color:#64748b">รถจะกลับเป็นสถานะเดิม ไม่ถูกลบ</span></div>`,
+        input: 'textarea', inputPlaceholder: 'ข้อความถึงสมาชิก (ถ้ามี) เช่น "ยังพบการใช้งานรถคันนี้ในหมู่บ้าน"', inputAttributes: { maxlength: 200 },
+        icon: 'question', showCancelButton: true, confirmButtonText: 'ปฏิเสธคำขอลบ', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#64748b'
+    });
+    if (!isConfirmed) return;
+    try {
+        const back = ['approved', 'active', 'renewal_pending', 'pending', 'rejected'].includes(car.delete_prev_status) ? car.delete_prev_status : 'approved';
+        const { error } = await supabaseClient.from('car_registrations').update({
+            status: back, delete_prev_status: null, delete_reason: null, delete_note: null,
+            delete_requested_at: null, delete_requested_by: null, delete_requested_name: null,
+            delete_response: (note || '').trim() || 'นิติบุคคลไม่อนุมัติคำขอลบ'
+        }).eq('id', car.id);
+        if (error) throw error;
+        showToast('↩️ ปฏิเสธคำขอลบแล้ว — รถกลับเป็นสถานะเดิม', 'success');
+        loadCarData();
+    } catch (e) { showToast('❌ ' + (e.message || e), 'error'); }
+}
 
 // ─── ✏️ แอดมินแก้ไขข้อมูลรถ (ทะเบียน/จังหวัด/ประเภท/ชื่อ/บ้าน/เบอร์) — ถ้ารถอนุมัติแล้วจะ sync allowed_cars ให้ ───
 function openCarEditor(carId) {
