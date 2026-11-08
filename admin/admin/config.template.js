@@ -11,6 +11,9 @@
     SUPABASE_URL: 'https://YOUR-PROJECT.supabase.co',         // Project URL ของ tenant
     SUPABASE_KEY: 'sb_publishable_xxxxxxxxxxxxxxxxxxxxxxxx',  // anon/publishable key ของ tenant
     EDGE_FUNCTION_URL: 'https://MAIN-PROJECT.supabase.co/functions/v1/line-webhook',   // Edge Function ตัวกลาง (project หลัก)
+    MERGE_PAGES: true,   // true = หน้า car/complaint/maintenance/cctv/gallery/new/confirm-status เปิดเป็นแท็บใน crm.html (ไม่ต้องใช้ไฟล์แยก)
+    REG_GATE_SKIP: [],   // 🏠 ด่านลงทะเบียน: หน้าที่ "ไม่" ต้องบังคับลงทะเบียน เช่น ['slip.html'] (ว่าง = ทุกหน้าสมาชิกบังคับ · ดู REGISTRATION_GATE.md)
+    DB_PROXY: true,                                           // 🔒 ส่งคำสั่งฐานข้อมูลของทุกหน้าผ่าน Edge Function (/api/dbq) — เปิดไว้เสมอสำหรับ tenant ใหม่ (ฐานข้อมูลถูกปิดจาก anon key โดย CLIENT_DATABASE_SETUP.sql)
 
     // ── LIFF ─────────────────────────────────────────────────────────
     MINI_APP_ID: '',                                          // LIFF Mini App ID ของ tenant (ว่าง = อ่านจาก system_settings.liff_mini_app_id)
@@ -22,7 +25,7 @@
     DEFAULT_MEMBER_RICHMENU: '',                              // Rich Menu สมาชิก (ว่าง = ไม่เปลี่ยนเมนูให้อัตโนมัติจากหน้าลงทะเบียน)
 
     // ── แบรนด์ ───────────────────────────────────────────────────────
-    BRAND: { village_th: 'ชื่อหมู่บ้านภาษาไทย', village_en: 'Village Name', short: 'Village', contact_email: '' },
+    BRAND: { village_th: 'ชื่อหมู่บ้านภาษาไทย', village_en: 'Village Name', short: 'Village', contact_email: '', keycard_contact_house: '' },  // keycard_contact_house = บ้านเลขที่ที่สมาชิกติดต่อ/ฝากบัตรเรื่องคีย์การ์ด (เว้นว่าง = แสดงว่า "ติดต่อนิติบุคคล")
 
     // ── ค่าเริ่มต้นเอกสาร/ใบแจ้งหนี้ในหน้าแอดมิน ─────────────────────
     VILLAGE_DEFAULTS: { village_name: '', juristic_name: '', juristic_name_th: '', bank_name: '', account_name: '', account_no: '' },
