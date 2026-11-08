@@ -344,6 +344,12 @@
                             <span class="text-xs font-bold text-slate-700 text-center leading-tight">จัดการคีย์การ์ด</span>
                             <span v-if="kcaPendingBadge > 0" class="absolute top-1.5 right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-rose-500 text-white text-[10px] font-extrabold flex items-center justify-center" data-testid="kca-badge">{{ kcaPendingBadge }}</span>
                         </button>
+                        <!-- 🏘️ ทะเบียนบ้าน & สมาชิก (ค้นหา · อ่านอย่างเดียว) — เห็นเมื่อบทบาทมีสิทธิ์โมดูล userhome -->
+                        <button v-if="menuAccess.tools && menuAccess.tools.member_registry" @click="openMrg()" data-testid="admin-menu-mrg"
+                           class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 border border-dashed border-slate-300">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center text-lg" :style="adminMenuStyle('teal')"><i class="fa-solid fa-house-user"></i></div>
+                            <span class="text-xs font-bold text-slate-700 text-center leading-tight">ทะเบียนบ้าน &amp; สมาชิก</span>
+                        </button>
                         <a v-for="m in menuAccess.admin_menus" :key="m.key" :href="m.url" :data-testid="'admin-menu-' + m.key"
                            class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 border border-dashed border-slate-300">
                             <div class="w-12 h-12 rounded-full flex items-center justify-center text-lg" :style="adminMenuStyle(m.color)"><i :class="'fa-solid fa-' + m.icon"></i></div>
@@ -2604,6 +2610,179 @@
             </div>
         </div>
 
+        <!-- ═════════ 🏘️ ADMIN: ทะเบียนบ้าน & สมาชิก (ค้นหา · อ่านอย่างเดียว) ═════════ -->
+        <div v-if="currentTab === 'mrgadmin' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-teal-50/40 overflow-y-auto z-20" data-testid="mrg-page">
+            <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
+                <div class="mb-4 flex items-center gap-3">
+                    <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2"><span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-800 text-white tracking-wider">ADMIN</span></div>
+                        <h2 class="text-2xl font-extrabold text-slate-800 leading-tight">ทะเบียนบ้าน &amp; สมาชิก</h2>
+                    </div>
+                    <button @click="loadMrg()" :disabled="mrgLoading" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" title="รีเฟรช"><i class="fa-solid fa-rotate" :class="{ 'fa-spin': mrgLoading }"></i></button>
+                </div>
+
+                <div v-if="mrgData" class="grid grid-cols-4 gap-1.5 mb-3" data-testid="mrg-stats">
+                    <button @click="mrgSetFilter('all')" class="rounded-2xl py-2 text-center bg-white shadow-sm"><div class="text-lg font-extrabold leading-none text-slate-700">{{ mrgData.stats.houses }}</div><div class="text-[10px] font-bold mt-1 text-slate-500">บ้านทั้งหมด</div></button>
+                    <button @click="mrgSetFilter('with_members')" class="rounded-2xl py-2 text-center bg-white shadow-sm"><div class="text-lg font-extrabold leading-none text-teal-600">{{ mrgData.stats.houses_with_members }}</div><div class="text-[10px] font-bold mt-1 text-slate-500">มีสมาชิก</div></button>
+                    <button @click="mrgSetFilter('no_members')" class="rounded-2xl py-2 text-center bg-white shadow-sm"><div class="text-lg font-extrabold leading-none text-amber-600">{{ mrgData.stats.houses_no_members }}</div><div class="text-[10px] font-bold mt-1 text-slate-500">ยังไม่มีสมาชิก</div></button>
+                    <div class="rounded-2xl py-2 text-center bg-white shadow-sm"><div class="text-lg font-extrabold leading-none text-sky-600">{{ mrgData.stats.members }}</div><div class="text-[10px] font-bold mt-1 text-slate-500">สมาชิก</div></div>
+                </div>
+
+                <div class="relative mb-2">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-sm"></i>
+                    <input v-model="mrgQuery" @input="mrgOnQuery()" @keyup.enter="mrgRunNow()" type="search" placeholder="ค้นหา บ้านเลขที่ / ชื่อ / ชื่อ LINE / เบอร์ / อีเมล" data-testid="mrg-search" autocomplete="off"
+                           class="w-full pl-10 pr-3 py-3 rounded-2xl bg-white shadow-sm text-sm outline-none focus:ring-2 focus:ring-teal-300">
+                </div>
+                <div class="grid grid-cols-2 gap-2 mb-2">
+                    <select v-model="mrgSoi" @change="mrgRunNow()" data-testid="mrg-soi" class="rounded-2xl bg-white shadow-sm px-3 py-2.5 text-sm text-slate-600 outline-none">
+                        <option value="">ทุกซอย</option>
+                        <option v-for="s in (mrgData ? mrgData.sois : [])" :key="s" :value="s">ซอย {{ s }}</option>
+                    </select>
+                    <select v-model="mrgLiving" @change="mrgRunNow()" data-testid="mrg-living" class="rounded-2xl bg-white shadow-sm px-3 py-2.5 text-sm text-slate-600 outline-none">
+                        <option value="">ทุกสถานะผู้อยู่อาศัย</option>
+                        <option v-for="l in mrgLivingOptions" :key="l" :value="l">{{ l }}</option>
+                    </select>
+                </div>
+                <div class="flex gap-1.5 overflow-x-auto pb-2 mb-2 -mx-1 px-1" data-testid="mrg-chips">
+                    <button v-for="c in mrgChips" :key="c.key" @click="mrgSetFilter(c.key)" :data-testid="'mrg-chip-' + c.key"
+                            class="shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-all"
+                            :class="mrgFilter === c.key ? 'bg-teal-500 text-white border-teal-500' : 'bg-white text-slate-600 border-slate-200'">{{ c.label }}</button>
+                </div>
+
+                <div v-if="mrgError" class="mb-4 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-sm text-rose-700" data-testid="mrg-error">
+                    <div class="font-bold mb-1"><i class="fa-solid fa-triangle-exclamation"></i> โหลดข้อมูลไม่สำเร็จ</div>
+                    <div class="text-xs break-words">{{ mrgError }}</div>
+                    <button @click="loadMrg()" class="mt-2 px-3 py-1.5 rounded-xl bg-rose-500 text-white text-xs font-bold">ลองใหม่</button>
+                </div>
+                <div v-if="mrgData && !mrgData.has_registry" class="mb-3 p-3 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800">ยังไม่มีข้อมูลโฉนด (ฐานข้อมูลกลางที่ดิน) — แสดงเฉพาะบ้านที่มีสมาชิกลงทะเบียน</div>
+                <div v-if="mrgData && mrgData.truncated" class="mb-3 p-3 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800">แสดงสมาชิกเพียง 20,000 รายแรก — ผลลัพธ์อาจไม่ครบ</div>
+
+                <div v-if="mrgLoading && !mrgData" class="py-16 text-center text-slate-400"><i class="fa-solid fa-spinner fa-spin text-2xl"></i><div class="text-xs mt-2">กำลังโหลด...</div></div>
+                <div v-else-if="mrgData && !mrgError && !mrgData.items.length" class="py-14 text-center text-slate-400" data-testid="mrg-empty">
+                    <div class="text-4xl mb-2">🏘️</div><div class="text-sm font-bold">ไม่พบข้อมูลที่ค้นหา</div>
+                </div>
+
+                <div v-if="mrgData && mrgData.items.length" class="text-[11px] text-slate-400 mb-2 px-1" data-testid="mrg-count">พบ {{ mrgData.total }} บ้าน · หน้า {{ mrgData.page }}/{{ mrgData.pages }}</div>
+                <div class="space-y-2.5" :class="{ 'opacity-60': mrgLoading }">
+                    <button v-for="it in (mrgData ? mrgData.items : [])" :key="(it.house_no || '-') + '|' + it.soi" @click="openMrgHouse(it)" :data-testid="'mrg-house-' + (it.house_no || 'none')"
+                            class="w-full text-left bg-white rounded-2xl shadow-sm p-3.5 active:scale-[.99] transition-transform">
+                        <div class="flex items-start gap-3">
+                            <div class="min-w-[64px] px-2 py-1.5 rounded-xl bg-teal-50 text-teal-700 text-center">
+                                <div class="text-[9px] font-bold text-teal-500 leading-none">บ้านเลขที่</div>
+                                <div class="text-base font-extrabold leading-tight break-all">{{ it.house_no || '—' }}</div>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <div class="flex flex-wrap items-center gap-1 mb-0.5">
+                                    <span v-if="it.soi" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">ซอย {{ it.soi }}</span>
+                                    <span v-if="!it.house_no" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">ไม่ระบุบ้านเลขที่</span>
+                                    <span v-else-if="!it.in_registry" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">ไม่อยู่ในโฉนด</span>
+                                    <span v-if="!it.member_count && it.house_no" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">ยังไม่มีสมาชิก</span>
+                                    <span v-else-if="it.member_count && !it.owners_confirmed" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">ยังไม่มีเจ้าของยืนยัน</span>
+                                </div>
+                                <div v-if="it.owner_name" class="text-xs text-slate-500 truncate"><i class="fa-solid fa-file-signature text-slate-300"></i> {{ it.owner_name }}</div>
+                            </div>
+                            <i class="fa-solid fa-chevron-right text-slate-300 self-center"></i>
+                        </div>
+                        <div v-if="it.members.length" class="mt-2.5 space-y-1.5">
+                            <div v-for="(m, i) in it.members" :key="i" class="flex items-center gap-2 text-xs rounded-xl px-2 py-1.5" :class="m.hit ? 'bg-yellow-50 ring-1 ring-yellow-300' : 'bg-slate-50'">
+                                <img v-if="m.pic" :src="m.pic" @error="mrgPicErr($event, m)" class="w-6 h-6 rounded-full object-cover shrink-0 bg-slate-100" alt="" decoding="async" width="24" height="24" referrerpolicy="no-referrer">
+                                <span v-else class="w-6 h-6 rounded-full bg-slate-200 text-slate-400 flex items-center justify-center shrink-0 text-[10px]"><i class="fa-solid fa-user"></i></span>
+                                <div class="flex-1 min-w-0">
+                                    <div class="font-bold text-slate-700 truncate">{{ m.name || m.line_name || '—' }}<i v-if="m.owner_verified" class="fa-solid fa-circle-check text-emerald-500 ml-1" title="ยืนยันสิทธิ์เจ้าของแล้ว"></i></div>
+                                    <div class="text-[10px] text-slate-400 truncate">{{ m.name && m.line_name ? 'LINE: ' + m.line_name : '' }}{{ m.phone_masked ? (m.name && m.line_name ? ' · ' : '') + m.phone_masked : '' }}</div>
+                                </div>
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" :class="mrgLivingClass(m)">{{ m.living_status || 'ไม่ระบุ' }}{{ m.status_confirmed ? '' : ' · รอยืนยัน' }}</span>
+                            </div>
+                        </div>
+                    </button>
+                </div>
+                <div v-if="mrgData && mrgData.pages > 1" class="mt-4 flex items-center gap-2" data-testid="mrg-pager">
+                    <button @click="mrgGo(mrgData.page - 1)" :disabled="mrgData.page <= 1 || mrgLoading" data-testid="mrg-prev" class="flex-1 py-3 rounded-2xl bg-white shadow-sm text-sm font-bold text-slate-600 disabled:opacity-40"><i class="fa-solid fa-chevron-left"></i> ก่อนหน้า</button>
+                    <button @click="mrgGo(mrgData.page + 1)" :disabled="mrgData.page >= mrgData.pages || mrgLoading" data-testid="mrg-next" class="flex-1 py-3 rounded-2xl bg-white shadow-sm text-sm font-bold text-slate-600 disabled:opacity-40">ถัดไป <i class="fa-solid fa-chevron-right"></i></button>
+                </div>
+                <div class="mt-5 text-[10px] text-slate-400 text-center leading-relaxed px-4">🔐 เบอร์โทรถูกซ่อนในรายการ · การเปิดดูรายละเอียดบ้านจะถูกบันทึกประวัติ (ใคร/เมื่อไร) เพื่อความเป็นส่วนตัวของลูกบ้าน</div>
+            </div>
+        </div>
+
+        <!-- ─── รายละเอียดบ้าน (ทะเบียนบ้าน & สมาชิก) ─── -->
+        <div v-if="mrgSel && currentTab === 'mrgadmin'" class="fixed inset-0 z-[45] bg-black/50 flex items-end justify-center" @click.self="closeMrgHouse()" data-testid="mrg-detail">
+            <div class="bg-white w-full max-w-lg rounded-t-3xl max-h-[92vh] overflow-y-auto pb-8">
+                <div class="sticky top-0 bg-white z-10 px-5 pt-4 pb-3 border-b border-slate-100 flex items-center gap-3">
+                    <div class="flex-1 min-w-0">
+                        <div class="text-[11px] text-slate-400 font-bold">บ้านเลขที่</div>
+                        <div class="text-xl font-extrabold text-slate-800 leading-tight break-all" data-testid="mrg-detail-house">{{ mrgSel.house_no || '— (ไม่ระบุ)' }}<span v-if="mrgSel.soi" class="text-sm font-bold text-slate-400"> · ซอย {{ mrgSel.soi }}</span></div>
+                    </div>
+                    <button @click="closeMrgHouse()" class="w-9 h-9 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center" data-testid="mrg-detail-close"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div v-if="mrgDetailLoading" class="py-12 text-center text-slate-400"><i class="fa-solid fa-spinner fa-spin text-2xl"></i></div>
+                <div v-else-if="mrgDetailError" class="m-5 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-sm text-rose-700" data-testid="mrg-detail-error">{{ mrgDetailError }}</div>
+                <div v-else-if="mrgDetail" class="px-5 pt-4 space-y-4">
+                    <div v-if="mrgDetail.land" class="rounded-2xl bg-slate-50 p-3.5 text-xs text-slate-600 space-y-1" data-testid="mrg-land">
+                        <div class="text-[11px] font-extrabold text-slate-400 tracking-wide">ข้อมูลโฉนด</div>
+                        <div><b>เจ้าของตามโฉนด:</b> {{ mrgDetail.land.owner_name || '—' }}</div>
+                        <div v-if="mrgDetail.land.house_type"><b>ประเภทบ้าน:</b> {{ mrgDetail.land.house_type }}<span v-if="mrgDetail.land.convert_no"> · รหัส {{ mrgDetail.land.convert_no }}</span></div>
+                        <div v-if="mrgDetail.land.status"><b>สถานะ:</b> {{ mrgDetail.land.status }}</div>
+                        <div v-if="mrgDetail.land.transfer_date"><b>วันที่โอน:</b> {{ mrgDetail.land.transfer_date }}</div>
+                        <div v-if="mrgDetail.owner_history.length" class="pt-1 text-slate-400">เจ้าของเดิม: {{ mrgDetail.owner_history.map(h => h.full_name).filter(Boolean).join(' → ') }}</div>
+                    </div>
+                    <div v-else class="rounded-2xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800" data-testid="mrg-no-land">ไม่พบบ้านเลขที่นี้ในฐานข้อมูลโฉนด</div>
+
+                    <div>
+                        <div class="text-[11px] font-extrabold text-slate-400 tracking-wide mb-2">สมาชิก ({{ mrgDetail.members.length }})</div>
+                        <div v-if="!mrgDetail.members.length" class="text-xs text-slate-400 py-2" data-testid="mrg-no-members">ยังไม่มีสมาชิกลงทะเบียนบ้านนี้</div>
+                        <div v-for="(m, i) in mrgDetail.members" :key="i" class="rounded-2xl border border-slate-100 p-3 mb-2" data-testid="mrg-member">
+                            <div class="flex items-center gap-2.5">
+                                <img v-if="m.pic" :src="m.pic" @error="mrgPicErr($event, m)" class="w-10 h-10 rounded-full object-cover bg-slate-100" alt="" decoding="async" width="40" height="40" referrerpolicy="no-referrer">
+                                <span v-else class="w-10 h-10 rounded-full bg-slate-100 text-slate-300 flex items-center justify-center"><i class="fa-solid fa-user"></i></span>
+                                <div class="flex-1 min-w-0">
+                                    <div class="font-bold text-slate-800 text-sm truncate">{{ m.name || m.line_name || '—' }}</div>
+                                    <div v-if="m.line_name && m.name" class="text-[11px] text-slate-400 truncate">LINE: {{ m.line_name }}</div>
+                                </div>
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" :class="mrgLivingClass(m)">{{ m.living_status || 'ไม่ระบุ' }}</span>
+                            </div>
+                            <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-600">
+                                <div><span class="text-slate-400">เบอร์:</span> {{ m.phone || '—' }}</div>
+                                <div class="truncate"><span class="text-slate-400">อีเมล:</span> {{ m.email || '—' }}</div>
+                                <div class="truncate"><span class="text-slate-400">LINE ID:</span> {{ m.line_id || '—' }}</div>
+                                <div><span class="text-slate-400">จำนวนผู้อยู่:</span> {{ m.member_count != null ? m.member_count : '—' }}</div>
+                                <div><span class="text-slate-400">ลงทะเบียน:</span> {{ m.created_at ? kcaFmtDate(m.created_at) : '—' }}</div>
+                                <div><span class="text-slate-400">เข้าใช้:</span> {{ m.visit_count != null ? m.visit_count + ' ครั้ง' : '—' }}</div>
+                            </div>
+                            <div class="mt-2 flex flex-wrap gap-1.5">
+                                <span v-if="m.status_confirmed" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700"><i class="fa-solid fa-check"></i> ยืนยันสถานะแล้ว{{ m.status_confirmed_at ? ' · ' + kcaFmtDate(m.status_confirmed_at) : '' }}</span>
+                                <span v-else class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">ยังไม่ยืนยันสถานะ</span>
+                                <span v-if="m.owner_verification" class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="m.owner_verification.status === 'verified' ? 'bg-emerald-100 text-emerald-700' : m.owner_verification.status === 'rejected' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'">ยืนยันสิทธิ์เจ้าของ: {{ ({ verified: 'ผ่านแล้ว', pending: 'รอตรวจ', rejected: 'ไม่ผ่าน' })[m.owner_verification.status] || m.owner_verification.status }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="rounded-2xl bg-amber-50/60 border border-amber-100 p-3" data-testid="mrg-keycards">
+                            <div class="text-[11px] font-extrabold text-amber-600 tracking-wide mb-1"><i class="fa-solid fa-id-card"></i> คีย์การ์ด</div>
+                            <div v-if="!mrgDetail.keycards.summary.total" class="text-xs text-slate-400">ไม่มีบัตร</div>
+                            <div v-else class="text-[11px] text-slate-600 space-y-0.5">
+                                <div>ทั้งหมด <b>{{ mrgDetail.keycards.summary.total }}</b> ใบ</div>
+                                <div v-if="mrgDetail.keycards.summary.uploaded">อัพลงบอร์ดแล้ว {{ mrgDetail.keycards.summary.uploaded }}</div>
+                                <div v-if="mrgDetail.keycards.summary.active">รออัพลงบอร์ด {{ mrgDetail.keycards.summary.active }}</div>
+                                <div v-if="mrgDetail.keycards.summary.reviewing">รอตรวจสอบ {{ mrgDetail.keycards.summary.reviewing }}</div>
+                                <div v-if="mrgDetail.keycards.summary.pending">รอยืนยัน {{ mrgDetail.keycards.summary.pending }}</div>
+                                <div v-if="mrgDetail.keycards.summary.cancelled">ระงับ {{ mrgDetail.keycards.summary.cancelled }}</div>
+                            </div>
+                        </div>
+                        <div class="rounded-2xl bg-sky-50/60 border border-sky-100 p-3" data-testid="mrg-cars">
+                            <div class="text-[11px] font-extrabold text-sky-600 tracking-wide mb-1"><i class="fa-solid fa-car"></i> ทะเบียนรถ</div>
+                            <div v-if="!mrgDetail.cars.length" class="text-xs text-slate-400">ไม่มีรถ</div>
+                            <div v-else class="text-[11px] text-slate-600 space-y-0.5">
+                                <div v-for="(c, i) in mrgDetail.cars" :key="i" class="flex items-center justify-between gap-1"><span class="truncate font-bold">{{ c.plate }}</span><span class="text-[9px] px-1.5 rounded-full whitespace-nowrap" :class="c.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : c.status === 'rejected' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'">{{ ({ approved: 'อนุมัติ', pending: 'รอตรวจ', rejected: 'ไม่อนุมัติ' })[c.status] || c.status }}</span></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-[10px] text-slate-400 text-center">🔐 การเปิดดูหน้านี้ถูกบันทึกในประวัติระบบ</div>
+                </div>
+            </div>
+        </div>
+
         <!-- ─── รายละเอียด/จัดการบัตรหนึ่งใบ ─── -->
         <div v-if="kcaSel && currentTab === 'kcadmin'" class="fixed inset-0 z-[45] bg-black/50 flex items-end justify-center" @click.self="closeKcaDetail()" data-testid="kca-detail">
             <div class="bg-white w-full max-w-lg rounded-t-3xl max-h-[92vh] overflow-y-auto pb-8">
@@ -2974,6 +3153,13 @@
                     kcaLoading: false, kcaError: null, kcaCards: [], kcaReasons: { cancel: [], fix: [], reconfirm: [], roles: [] }, kcaMigrated: null, kcaTruncated: false, kcaLoaded: false, kcaSeq: 0,
                     kcaFilter: 'reviewing', kcaQuery: '', kcaPage: 1, kcaSel: null, kcaEdit: { front: '', back: '', holder: '' }, kcaBusy: false,
                     kcaHistOpen: false, kcaHist: [], kcaHistLoading: false, kcaPendingBadge: 0,
+                    // ─── 🏘️ ADMIN: ทะเบียนบ้าน & สมาชิก ───
+                    mrgQuery: '', mrgSoi: '', mrgLiving: '', mrgFilter: 'all', mrgPage: 1, mrgLoading: false, mrgError: null, mrgData: null, mrgSeq: 0, mrgTimer: null,
+                    mrgSel: null, mrgDetail: null, mrgDetailLoading: false, mrgDetailError: null, mrgDetailSeq: 0,
+                    mrgChips: [
+                        { key: 'all', label: 'ทั้งหมด' }, { key: 'with_members', label: 'มีสมาชิก' }, { key: 'no_members', label: 'ยังไม่มีสมาชิก' },
+                        { key: 'unconfirmed', label: 'มีคนยังไม่ยืนยัน' }, { key: 'no_owner', label: 'ไม่มีเจ้าของยืนยัน' }, { key: 'orphan', label: 'ไม่อยู่ในโฉนด' },
+                    ],
                     kcaAdd: { open: false, house: '', front: '', back: '', holder: '', file: null, preview: null, approveNow: false, saving: false, error: null, info: null },
                     kcaChips: [
                         { key: 'reviewing', label: 'รอตรวจสอบ', on: 'bg-blue-50 border-blue-400 text-blue-600', text: 'text-blue-600' },
@@ -3058,6 +3244,7 @@
                 }
             },
             computed: {
+                mrgLivingOptions() { return (this.mrgData && this.mrgData.living_options) || ['เจ้าของบ้าน', 'เจ้าของร่วม', 'ผู้เช่า', 'ผู้อาศัย', 'ญาติ', 'อื่นๆ']; },
                 // 🚗 สรุปสถานะรถของบ้าน (แถบด้านบนหน้า "รถของฉัน")
                 carStats() {
                     const rows = this.myCars || [];
@@ -3618,6 +3805,11 @@
                     if (tabKey === 'kcadmin') {
                         const url = new URL(window.location.href); url.searchParams.delete('tab'); history.replaceState(null, '', url.toString());
                         if (this.menuAccess && this.menuAccess.tools && this.menuAccess.tools.keycard_admin) await this.openKcAdmin();
+                        return;
+                    }
+                    if (tabKey === 'mrgadmin') {
+                        const url = new URL(window.location.href); url.searchParams.delete('tab'); history.replaceState(null, '', url.toString());
+                        if (this.menuAccess && this.menuAccess.tools && this.menuAccess.tools.member_registry) await this.openMrg();
                         return;
                     }
                     if (tabKey && validTabs.includes(tabKey)) {
@@ -5681,6 +5873,82 @@
                     }
                 },
 
+
+                // ═════════ 🏘️ ADMIN: ทะเบียนบ้าน & สมาชิก (อ่านอย่างเดียว · สิทธิ์ userhome ตรวจที่ server) ═════════
+                async openMrg() {
+                    this.currentTab = 'mrgadmin';
+                    await this.loadMrg();   // เปิดทุกครั้ง = โหลดใหม่ (ข้อมูลสมาชิกเปลี่ยนตลอด) · คงคำค้น/ตัวกรองเดิมไว้
+                },
+                mrgOnQuery() {   // พิมพ์แล้วรอ 350ms ค่อยค้น (กันยิง API ทุกตัวอักษร)
+                    if (this.mrgTimer) clearTimeout(this.mrgTimer);
+                    this.mrgTimer = setTimeout(() => { this.mrgTimer = null; this.mrgPage = 1; this.loadMrg(); }, 350);
+                },
+                mrgRunNow() { if (this.mrgTimer) { clearTimeout(this.mrgTimer); this.mrgTimer = null; } this.mrgPage = 1; return this.loadMrg(); },
+                mrgSetFilter(k) { this.mrgFilter = k; return this.mrgRunNow(); },
+                mrgGo(p) { if (this.mrgLoading) return; this.mrgPage = Math.max(1, p); return this.loadMrg().then(() => { try { const el = document.querySelector('[data-testid="mrg-page"]'); if (el) el.scrollTo({ top: 0 }); } catch (e) { /* ignore */ } }); },
+                async loadMrg() {
+                    const seq = ++this.mrgSeq;
+                    this.mrgLoading = true; this.mrgError = null;
+                    try {
+                        const qs = new URLSearchParams();
+                        if (String(this.mrgQuery || '').trim()) qs.set('q', String(this.mrgQuery).trim());
+                        if (this.mrgSoi) qs.set('soi', this.mrgSoi);
+                        if (this.mrgLiving) qs.set('living', this.mrgLiving);
+                        if (this.mrgFilter && this.mrgFilter !== 'all') qs.set('filter', this.mrgFilter);
+                        if (this.mrgPage > 1) qs.set('page', String(this.mrgPage));
+                        const d = await this.kcaApi('member_registry' + (qs.toString() ? '?' + qs.toString() : ''));
+                        if (seq !== this.mrgSeq) return;   // มีคำค้นใหม่กว่า → ทิ้งผลเก่า
+                        this.mrgFixPics((d.items || []).flatMap(i => i.members || []));
+                        this.mrgData = d;
+                        this.mrgPage = d.page || 1;
+                    } catch (e) {
+                        if (seq !== this.mrgSeq) return;
+                        this.mrgError = e.status === 403 ? 'บัญชีนี้ไม่มีสิทธิ์ดูทะเบียนบ้านและสมาชิก (' + e.message + ')' : e.message;
+                    } finally { if (seq === this.mrgSeq) this.mrgLoading = false; }
+                },
+                mrgLivingClass(m) {
+                    if (!m.status_confirmed) return 'bg-amber-100 text-amber-700';
+                    return ({ 'เจ้าของบ้าน': 'bg-emerald-100 text-emerald-700', 'เจ้าของร่วม': 'bg-teal-100 text-teal-700', 'ผู้เช่า': 'bg-violet-100 text-violet-700', 'ผู้อาศัย': 'bg-sky-100 text-sky-700' })[m.living_status] || 'bg-slate-100 text-slate-600';
+                },
+                async openMrgHouse(it) {
+                    if (!it || !it.house_no) {   // กลุ่ม "ไม่ระบุบ้านเลขที่" ไม่มีรายละเอียดรายบ้านให้เปิด
+                        this.mrgSel = it || null; this.mrgDetail = { land: null, owner_history: [], members: (it && it.members || []).map(m => Object.assign({ phone: m.phone_masked, email: '' }, m)), keycards: { summary: { total: 0 } }, cars: [] };
+                        this.mrgDetailError = null; this.mrgDetailLoading = false; return;
+                    }
+                    const seq = ++this.mrgDetailSeq;
+                    this.mrgSel = it; this.mrgDetail = null; this.mrgDetailError = null; this.mrgDetailLoading = true;
+                    try {
+                        const d = await this.kcaApi('member_registry_house?house=' + encodeURIComponent(it.house_no));
+                        if (seq !== this.mrgDetailSeq) return;
+                        this.mrgFixPics(d.members || []);
+                        this.mrgDetail = d;
+                    } catch (e) {
+                        if (seq !== this.mrgDetailSeq) return;
+                        this.mrgDetailError = e.message;
+                    } finally { if (seq === this.mrgDetailSeq) this.mrgDetailLoading = false; }
+                },
+                // รูปโปรไฟล์ LINE โหลดพลาดชั่วคราวบนมือถือบ่อย → ลองใหม่ 1 ครั้ง → รูปสำรอง (pic_alt) → ไอคอนคน · จำ URL ที่พังไว้ ไม่ลองซ้ำเมื่อค้นหาใหม่
+                // รูปที่เคยพังในเซสชันนี้ไม่ต้องลองซ้ำ (ค้นหา/เปิดรายละเอียดใหม่แล้วไม่กะพริบ) → ใช้รูปสำรอง/ไอคอนทันที
+                mrgFixPics(list) {
+                    const bad = this._mrgBad; if (!bad || !bad.size) return;
+                    (list || []).forEach(m => {
+                        if (m.pic && bad.has(m.pic)) { m.pic = (m.pic_alt && !bad.has(m.pic_alt)) ? m.pic_alt : null; m.pic_alt = null; }
+                    });
+                },
+                mrgPicErr(ev, m) {
+                    const img = ev && ev.target; if (!img || !m) return;
+                    const cur = m.pic; if (!cur) return;
+                    if (!this._mrgBad) this._mrgBad = new Set();
+                    if (!img.dataset.retry) {
+                        img.dataset.retry = '1';
+                        setTimeout(() => { if (img.isConnected && img.getAttribute('src') === cur) { img.removeAttribute('src'); img.src = cur; } }, 1200);
+                        return;
+                    }
+                    this._mrgBad.add(cur);
+                    m.pic = (m.pic_alt && !this._mrgBad.has(m.pic_alt) && m.pic_alt !== cur) ? m.pic_alt : null;
+                    m.pic_alt = null;
+                },
+                closeMrgHouse() { this.mrgDetailSeq++; this.mrgSel = null; this.mrgDetail = null; this.mrgDetailError = null; this.mrgDetailLoading = false; },
 
                 // ═════════ 🪪 ADMIN: จัดการคีย์การ์ด (ใช้ API เดียวกับหน้าแอดมินเว็บ — บังคับสิทธิ์ keycardManagement ที่ server) ═════════
                 kcaHeaders(extra) {
