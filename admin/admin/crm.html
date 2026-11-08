@@ -2660,6 +2660,8 @@
                                 class="col-span-2 py-3.5 rounded-2xl bg-emerald-500 text-white font-extrabold shadow-md active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-circle-check"></i> ตรวจสอบแล้ว · อนุมัติบัตร</button>
                         <button v-if="kcaSel.status !== 'cancelled'" @click="kcaRequestFix()" :disabled="kcaBusy" data-testid="kca-fix"
                                 class="py-3 rounded-2xl bg-violet-100 text-violet-700 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-rotate-left"></i> ขอให้แก้ไข</button>
+                        <button v-if="kcaSel.status === 'active' || kcaSel.status === 'reviewing'" @click="kcaReconfirm()" :disabled="kcaBusy" data-testid="kca-reconfirm"
+                                class="col-span-2 py-3 rounded-2xl bg-indigo-100 text-indigo-700 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-arrows-rotate"></i> ให้ยืนยันใหม่ <span class="text-[10px] font-normal">(กลับเป็น "รอยืนยัน" · ไม่ส่ง LINE)</span></button>
                         <button v-if="kcaSel.status !== 'cancelled'" @click="kcaSuspend()" :disabled="kcaBusy" data-testid="kca-suspend"
                                 class="py-3 rounded-2xl bg-rose-100 text-rose-700 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-ban"></i> ระงับบัตร</button>
                         <button v-if="kcaSel.status === 'cancelled'" @click="kcaReactivate()" :disabled="kcaBusy" data-testid="kca-reactivate"
@@ -2955,7 +2957,7 @@
                     kcNoticeOpen: false,
                     keycardContactHouse: (function () { try { return String(appCfgIn('BRAND', 'keycard_contact_house', '998/5') || '').trim(); } catch (e) { return '998/5'; } })(),
                     // ─── 🪪 ADMIN: จัดการคีย์การ์ด ───
-                    kcaLoading: false, kcaError: null, kcaCards: [], kcaReasons: { cancel: [], fix: [], roles: [] }, kcaMigrated: null, kcaTruncated: false, kcaLoaded: false, kcaSeq: 0,
+                    kcaLoading: false, kcaError: null, kcaCards: [], kcaReasons: { cancel: [], fix: [], reconfirm: [], roles: [] }, kcaMigrated: null, kcaTruncated: false, kcaLoaded: false, kcaSeq: 0,
                     kcaFilter: 'reviewing', kcaQuery: '', kcaPage: 1, kcaSel: null, kcaEdit: { front: '', back: '', holder: '' }, kcaBusy: false,
                     kcaHistOpen: false, kcaHist: [], kcaHistLoading: false, kcaPendingBadge: 0,
                     kcaAdd: { open: false, house: '', front: '', back: '', holder: '', file: null, preview: null, approveNow: false, saving: false, error: null, info: null },
@@ -5690,7 +5692,7 @@
                 kcaFmtDate(v) { try { return new Date(v).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return String(v || ''); } },
                 kcaActionLabel(a) {
                     const m = { keycard_admin_create: 'แอดมินเพิ่มบัตร', keycard_admin_set_numbers: 'แอดมินแก้เลขบัตร', keycard_admin_set_image: 'แอดมินเปลี่ยนรูปบัตร', keycard_admin_approve: 'แอดมินอนุมัติบัตร',
-                                keycard_admin_request_fix: 'แอดมินขอให้แก้ไข', keycard_admin_suspend: 'แอดมินระงับบัตร', keycard_admin_reactivate: 'แอดมินเปิดใช้บัตร', keycard_confirm: 'ลูกบ้านยืนยัน',
+                                keycard_admin_request_fix: 'แอดมินขอให้แก้ไข', keycard_admin_reconfirm: 'แอดมินให้ยืนยันใหม่', keycard_admin_suspend: 'แอดมินระงับบัตร', keycard_admin_reactivate: 'แอดมินเปิดใช้บัตร', keycard_confirm: 'ลูกบ้านยืนยัน',
                                 keycard_cancel: 'ลูกบ้านระงับ', keycard_link_send: 'ส่งลิงก์ยืนยัน', keycard_admin_import_create: 'นำเข้า (เพิ่ม)', keycard_admin_import_update: 'นำเข้า (แก้ไข)' };
                     return m[a] || a;
                 },
@@ -5708,7 +5710,7 @@
                         const d = await this.kcaApi('keycard_admin_overview');
                         if (seq !== this.kcaSeq) return;
                         this.kcaCards = Array.isArray(d.cards) ? d.cards : [];
-                        this.kcaReasons = Object.assign({ cancel: [], fix: [], roles: [] }, d.reasons || {});
+                        this.kcaReasons = Object.assign({ cancel: [], fix: [], reconfirm: [], roles: [] }, d.reasons || {});
                         this.kcaMigrated = d.migrated === false ? false : true;
                         this.kcaTruncated = !!d.truncated;
                         this.kcaLoaded = true;
@@ -5782,6 +5784,10 @@
                 async kcaRequestFix() {
                     const v = await this.kcaReasonDialog('ขอให้สมาชิกแก้ไข/ตรวจสอบบัตร', this.kcaReasons.fix, '#7c3aed', 'ส่งให้แก้ไข'); if (!v) return;
                     await this.kcaRun({ action: 'request_fix', reason: v.reason, note: v.note, notify: false }, 'ส่งให้แก้ไขแล้ว');
+                },
+                async kcaReconfirm() {
+                    const v = await this.kcaReasonDialog('ให้ลูกบ้านยืนยันบัตรใหม่?', (this.kcaReasons.reconfirm && this.kcaReasons.reconfirm.length) ? this.kcaReasons.reconfirm : this.kcaReasons.fix, '#4f46e5', 'ให้ยืนยันใหม่'); if (!v) return;
+                    await this.kcaRun({ action: 'reconfirm', reason: v.reason, note: v.note, notify: false }, 'ส่งกลับเป็น "รอยืนยัน" แล้ว');
                 },
                 async kcaSuspend() {
                     const v = await this.kcaReasonDialog('ระงับคีย์การ์ดใบนี้?', this.kcaReasons.cancel, '#f43f5e', 'ระงับ'); if (!v) return;
