@@ -3423,8 +3423,7 @@
                         try {
                             const { data: home } = await this.supabase.from('userhome').select('house_no').eq('uid', profile.userId).limit(1);
                             if (home?.[0]?.house_no) {
-                                const { data: cards } = await this.supabase.from('rfid')
-                                    .select('id, status').eq('house_number', home[0].house_no.trim());
+                                const cards = (await this.fetchMyKeycards(profile.userId, home[0].house_no.trim())).cards;
                                 // ⚠️ ห้ามเขียนทับถ้าหน้าคีย์การ์ดเริ่มโหลดรายการเต็มไปแล้ว (select ตรงนี้ดึงแค่ id/status
                                 //    ถ้าเสร็จทีหลังจะทำให้บัตรไม่มีเลข/รูป/ผู้ถือบัตร — อาการ "เปิดลิงก์แล้วข้อมูลไม่แสดง ต้องเปิดหลายรอบ")
                                 if (!this.kcFullStarted) {
@@ -5197,6 +5196,25 @@
                     await this.loadKeyCardData();
                 },
 
+                // คีย์การ์ดของบ้านฉัน — ให้เซิร์ฟเวอร์ค้นแบบไม่สนเลข 0 นำหน้า (userhome "998/42" = rfid "998/042")
+                //   ถ้าเซิร์ฟเวอร์ยังเป็นรุ่นเก่า (ไม่มี endpoint นี้ → 404) ถอยไปค้นตรงตัวแบบเดิม
+                async fetchMyKeycards(userId, houseNo) {
+                    let res = null;
+                    try { res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/keycard_my?userId=${encodeURIComponent(userId)}`); } catch (e) { res = null; }
+                    if (res && res.ok) {
+                        const d = await res.json();
+                        return { cards: Array.isArray(d.cards) ? d.cards : [] };
+                    }
+                    if (res && res.status !== 404) {
+                        let msg = ''; try { msg = (await res.json()).error || ''; } catch (_) {}
+                        throw new Error('ไม่สามารถโหลดคีย์การ์ดได้' + (msg ? ': ' + msg : ''));
+                    }
+                    const { data, error } = await this.supabase.from('rfid').select('*')
+                        .eq('house_number', houseNo).order('created_at', { ascending: false });
+                    if (error) throw new Error('ไม่สามารถโหลดคีย์การ์ดได้: ' + error.message);
+                    return { cards: data || [] };
+                },
+
                 async loadKeyCardData() {
                     if (!this.userProfile?.userId) return;
                     this.kcFullStarted = true;
@@ -5212,11 +5230,7 @@
                         if (!home || !home.house_no) return { home: null, cards: [] };
                         const houseNo = home.house_no.trim();
                         // 2) ดึงคีย์การ์ดของบ้านนี้
-                        const { data: cards, error: cErr } = await this.supabase
-                            .from('rfid').select('*')
-                            .eq('house_number', houseNo)
-                            .order('created_at', { ascending: false });
-                        if (cErr) throw new Error('ไม่สามารถโหลดคีย์การ์ดได้: ' + cErr.message);
+                        const { cards } = await this.fetchMyKeycards(this.userProfile.userId, houseNo);
                         return { home, houseNo, cards: cards || [] };
                     };
                     try {
