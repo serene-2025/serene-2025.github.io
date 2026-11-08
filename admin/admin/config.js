@@ -32,7 +32,8 @@
     //   หน้า tenant: กรอกชื่อของตัวเอง → config.js จะแทนชื่อหมู่บ้านเดิมที่ฝังในหน้าให้อัตโนมัติ (best-effort)
     BRAND: {
       village_th: 'โกลเด้นแลนด์ ซีรีน', village_en: 'Golden Land Serene', short: 'Serene',
-      contact_email: 'goldenland.serene@gmail.com'
+      contact_email: 'goldenland.serene@gmail.com',
+      keycard_contact_house: '998/5'   // บ้านเลขที่ที่สมาชิกติดต่อ/ฝากบัตรเรื่องคีย์การ์ด (แสดงในข้อความแจ้งเตือนหน้ายืนยันคีย์การ์ด)
     },
 
     // ── ค่าเริ่มต้นเอกสาร/ใบแจ้งหนี้ในหน้าแอดมิน (ก่อนมีค่าใน payment_settings) ──
