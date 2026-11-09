@@ -15125,7 +15125,7 @@ async function updateAllUserProfiles() {
                         '<td class="py-2 pr-3 font-mono font-bold text-slate-800 whitespace-nowrap">' + escapeHtml(_kcmFmtNum(c.front_number, c.back_number)) + '</td>' +
                         '<td class="pr-3 font-bold text-slate-700 whitespace-nowrap">' + escapeHtml(c.house_number || '-') + '</td>' +
                         '<td class="pr-3 text-slate-600">' + escapeHtml(c.holder_name || '-') + '</td>' +
-                        '<td class="pr-3">' + _kcmChip(_KCM_STATUS, c.status) + (c.review_reason && c.status !== 'cancelled' ? ' <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700" title="' + escapeHtml(c.review_reason) + '">แจ้งกลับแล้ว</span>' : '') + '</td>' +
+                        '<td class="pr-3">' + _kcmChip(_KCM_STATUS, c.status) + (c.review_reason && c.status !== 'cancelled' ? ' <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700" title="' + escapeHtml(c.review_reason) + '">แจ้งกลับแล้ว</span>' : '') + (c.member_correction ? ' <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800" title="สมาชิกแก้ไขรหัสบัตร รอตรวจสอบ">✏️ แก้เลข</span>' : '') + '</td>' +
                         '<td class="pr-3"><div class="flex flex-wrap gap-1">' + (c.flags || []).map(f => _kcmChip(_KCM_FLAGS, f)).join('') + '</div></td>' +
                         '<td class="pr-3 text-[11px] text-slate-400 whitespace-nowrap">' + escapeHtml(_kcmDT(c.submitted_at)) + '</td>' +
                         '<td class="text-right"><button type="button" data-id="' + escapeHtml(String(c.id)) + '" onclick="kcmOpen(this.getAttribute(\'data-id\'))" class="px-3 py-1.5 bg-slate-100 hover:bg-amber-50 hover:text-amber-700 border border-slate-200 rounded-lg text-xs font-bold text-slate-600">จัดการ</button></td></tr>').join('')
@@ -15189,6 +15189,12 @@ async function updateAllUserProfiles() {
                             '<input type="file" accept="image/*" class="hidden" id="kcm-img-file" onchange="kcmPickImage(this)"></label></div>' +
                     '</div>' + flagsHtml +
                     '<div class="grid grid-cols-2 gap-2 text-[11px] text-slate-500"><div>สร้างเมื่อ: <b class="text-slate-700">' + escapeHtml(_kcmDT(c.created_at)) + '</b></div><div>ส่งยืนยันล่าสุด: <b class="text-slate-700">' + escapeHtml(_kcmDT(c.submitted_at)) + '</b></div></div>' +
+                    (c.member_correction ? '<div class="text-[11px] bg-amber-50 border border-amber-200 text-amber-900 rounded-xl px-3 py-2 space-y-0.5" data-testid="kcm-correction"><div class="font-extrabold">✏️ สมาชิกแก้ไขรหัสบัตร — รอตรวจสอบ</div>' +
+                        '<div>เลขเดิม: <span class="font-mono line-through text-slate-500">' + escapeHtml(_kcmFmtNum(c.member_correction.old_front, c.member_correction.old_back)) + '</span></div>' +
+                        '<div>เลขใหม่: <span class="font-mono font-bold">' + escapeHtml(_kcmFmtNum(c.front_number, c.back_number)) + '</span></div>' +
+                        '<div>เหตุผล: <b>' + escapeHtml(c.member_correction.reason || '—') + '</b>' + (c.member_correction.note ? ' — ' + escapeHtml(c.member_correction.note) : '') + ' · ' + escapeHtml(_kcmDT(c.member_correction.at)) + '</div>' +
+                        ((c.member_correction.previous_status === 'active' || c.member_correction.previous_status === 'uploaded') ? '<div class="font-bold text-orange-700">⚠️ บัตรนี้เคยอนุมัติ/อัพลงบอร์ดแล้ว — ตรวจเลขใหม่กับรูป แล้วแก้เลขบนบอร์ดระบบให้ตรงกัน</div>' : '') +
+                        '<div class="text-amber-700">เทียบเลขใหม่กับรูปบัตร แล้วกด "อนุมัติ" หรือ "ขอให้แก้ไข"</div></div>' : '') +
                     (c.review_reason ? '<div class="text-[11px] bg-orange-50 border border-orange-200 text-orange-800 rounded-xl px-3 py-2">⚠️ แจ้งกลับล่าสุด: <b>' + escapeHtml(c.review_reason) + '</b>' + (c.review_note ? ' — ' + escapeHtml(c.review_note) : '') + ' <span class="text-orange-400">(' + escapeHtml(_kcmDT(c.reviewed_at)) + ')</span></div>' : '') +
                     (st === 'cancelled' ? '<div class="text-[11px] bg-rose-50 border border-rose-200 text-rose-700 rounded-xl px-3 py-2">🚫 ระงับเพราะ: <b>' + escapeHtml(c.cancel_reason || 'ไม่ระบุ') + '</b>' + (c.cancel_note ? ' — ' + escapeHtml(c.cancel_note) : '') + '<br><span class="text-rose-400">' + escapeHtml(_kcmDT(c.cancelled_at)) + ' · โดย ' + escapeHtml(c.cancelled_by || '-') + '</span></div>' : '') +
                     '<div class="flex flex-wrap gap-2" id="kcm-buttons">' + actions + '</div>' +
@@ -15203,11 +15209,11 @@ async function updateAllUserProfiles() {
             try {
                 const res = await fetch(`${API_BASE_URL}/api/admin/audience/keycard_admin_history?id=${encodeURIComponent(id)}`);
                 const d = await res.json(); if (!res.ok) throw new Error(d.error || 'โหลดประวัติไม่สำเร็จ');
-                const label = { keycard_confirm: 'ลูกบ้านยืนยัน', keycard_cancel: 'ลูกบ้านระงับ', keycard_link_send: 'ส่งลิงก์ยืนยัน', keycard_admin_approve: 'แอดมินอนุมัติ', keycard_admin_set_image: 'แอดมินเปลี่ยนรูปบัตร', keycard_admin_request_fix: 'แอดมินแจ้งกลับ', keycard_admin_reconfirm: 'แอดมินให้ยืนยันใหม่', keycard_admin_mark_uploaded: 'แอดมินอัพลงบอร์ดแล้ว', keycard_admin_unmark_uploaded: 'แอดมินยกเลิกอัพลงบอร์ด', keycard_admin_suspend: 'แอดมินระงับ', keycard_admin_reactivate: 'แอดมินเปิดบัตร', keycard_admin_set_numbers: 'แอดมินแก้เลข/ผู้ใช้', keycard_admin_create: 'แอดมินเพิ่มบัตร' };
+                const label = { keycard_member_correct: 'ลูกบ้านแก้ไขรหัสบัตร', keycard_confirm: 'ลูกบ้านยืนยัน', keycard_cancel: 'ลูกบ้านระงับ', keycard_link_send: 'ส่งลิงก์ยืนยัน', keycard_admin_approve: 'แอดมินอนุมัติ', keycard_admin_set_image: 'แอดมินเปลี่ยนรูปบัตร', keycard_admin_request_fix: 'แอดมินแจ้งกลับ', keycard_admin_reconfirm: 'แอดมินให้ยืนยันใหม่', keycard_admin_mark_uploaded: 'แอดมินอัพลงบอร์ดแล้ว', keycard_admin_unmark_uploaded: 'แอดมินยกเลิกอัพลงบอร์ด', keycard_admin_suspend: 'แอดมินระงับ', keycard_admin_reactivate: 'แอดมินเปิดบัตร', keycard_admin_set_numbers: 'แอดมินแก้เลข/ผู้ใช้', keycard_admin_create: 'แอดมินเพิ่มบัตร' };
                 const rows = d.history || [];
                 box.innerHTML = rows.length ? rows.map(h => {
                     const x = h.detail || {};
-                    const extra = [x.reason, x.note, x.from && x.to ? x.from + '→' + x.to : '', x.new ? 'เลขใหม่ ' + _kcmFmtNum(x.new.front, x.new.back) : ''].filter(Boolean).join(' · ');
+                    const extra = [x.reason, x.note, x.from && x.to ? x.from + '→' + x.to : '', x.new ? 'เลขใหม่ ' + _kcmFmtNum(x.new.front, x.new.back) : '', x.old_front && x.new_front ? _kcmFmtNum(x.old_front, x.old_back) + ' → ' + _kcmFmtNum(x.new_front, x.new_back) : ''].filter(Boolean).join(' · ');
                     return '<div class="py-1 border-b border-slate-50"><span class="text-slate-400">' + escapeHtml(_kcmDT(h.at)) + '</span> <b class="text-slate-700">' + escapeHtml(label[h.action] || h.action) + '</b>' + (extra ? ' <span>' + escapeHtml(extra) + '</span>' : '') + '</div>';
                 }).join('') : 'ยังไม่มีประวัติ';
             } catch (e) { box.textContent = e.message; }
@@ -20529,7 +20535,8 @@ function viewUserhomeDetail(uid) {
                 ${detailRow('🆔 LINE ID', r.line_id)}
                 ${detailRow('📅 ลงทะเบียน', r.created_at ? new Date(r.created_at).toLocaleString('th-TH') : '—')}
                 ${detailRow('🔄 อัปเดต', r.updated_at ? new Date(r.updated_at).toLocaleString('th-TH') : '—')}
-                ${detailRow('🌐 เข้าใช้', `${(r.visit_count || 0).toLocaleString()} ครั้ง`)}
+                ${detailRow('🌐 เข้าใช้ CRM', `${(r.visit_count || 0).toLocaleString()} ครั้ง`)}
+                ${detailRow('🕒 เข้าใช้ล่าสุด', r.last_visit_at ? new Date(r.last_visit_at).toLocaleString('th-TH') : '—')}
                 ${detailRow('🤖 AI Mode', r.check_mode || 'ออโต้')}
             </div>
             <details class="bg-slate-50 rounded-xl">
