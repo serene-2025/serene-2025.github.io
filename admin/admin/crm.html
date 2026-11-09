@@ -2777,6 +2777,11 @@
                     <button @click="kcaBulkUploaded()" :disabled="kcaBusy" data-testid="kca-bulk-upload" class="px-3 py-2 rounded-xl bg-sky-500 text-white text-xs font-bold active:scale-95 disabled:opacity-50 whitespace-nowrap"><i class="fa-solid fa-tower-broadcast"></i> อัพลงบอร์ดแล้วทั้งหมด</button>
                 </div>
 
+                <div v-if="kcaPickable.length" class="mb-3 flex items-center gap-2 text-xs" data-testid="kca-pick-row">
+                    <button @click="kcaPickAll()" data-testid="kca-pick-all" class="px-3 py-2 rounded-xl bg-white shadow-sm font-bold text-emerald-700 border border-emerald-200 active:scale-95"><i class="fa-solid fa-check-double"></i> {{ kcaAllPicked ? 'ยกเลิกเลือกทั้งหมด' : 'เลือกทั้งหมดที่รออนุมัติ (' + kcaPickable.length + ')' }}</button>
+                    <span class="text-slate-400">ติ๊กช่องซ้ายของบัตร หรือกดดูรูปแล้วกด "เลือกไว้อนุมัติ"</span>
+                </div>
+
                 <div class="relative mb-3">
                     <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-sm"></i>
                     <input v-model.trim="kcaQuery" @input="kcaPage = 1" type="search" placeholder="ค้นหา บ้านเลขที่ / ผู้ใช้บัตร / เลขบัตร" data-testid="kca-search"
@@ -2789,8 +2794,11 @@
                 </div>
 
                 <div class="space-y-3" data-testid="kca-list">
-                    <button v-for="c in kcaShown" :key="c.id" @click="openKcaDetail(c)" :data-testid="'kca-card-' + c.id"
-                            class="w-full text-left glass-card p-3 flex gap-3 items-stretch active:scale-[0.99] transition-transform">
+                    <div v-for="c in kcaShown" :key="c.id" class="flex items-center gap-2">
+                    <button v-if="kcaCanPick(c)" @click.stop="kcaTogglePick(c)" :data-testid="'kca-pick-' + c.id" :aria-pressed="!!kcaPick[c.id]" :aria-label="'เลือกบัตรบ้าน ' + c.house_number"
+                            class="w-9 h-9 flex-shrink-0 rounded-xl border-2 flex items-center justify-center text-base active:scale-90 transition" :class="kcaPick[c.id] ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-300 text-transparent'"><i class="fa-solid fa-check"></i></button>
+                    <button @click="openKcaDetail(c)" :data-testid="'kca-card-' + c.id"
+                            class="flex-1 min-w-0 text-left glass-card p-3 flex gap-3 items-stretch active:scale-[0.99] transition-transform" :class="kcaPick[c.id] ? 'ring-2 ring-emerald-400' : ''">
                         <div class="w-20 h-20 rounded-xl bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center text-slate-300">
                             <img v-if="c.img" :src="c.img" class="w-full h-full object-cover" loading="lazy" alt="">
                             <i v-else class="fa-solid fa-image text-2xl"></i>
@@ -2809,9 +2817,11 @@
                         </div>
                         <i class="fa-solid fa-chevron-right text-slate-300 self-center"></i>
                     </button>
+                    </div>
                 </div>
                 <button v-if="kcaFiltered.length > kcaShown.length" @click="kcaPage++" class="w-full mt-3 py-3 rounded-2xl bg-white shadow-sm text-sm font-bold text-slate-600">แสดงเพิ่ม ({{ kcaFiltered.length - kcaShown.length }})</button>
                 <div v-if="kcaTruncated" class="mt-3 text-[11px] text-amber-700 text-center">แสดงเฉพาะ 10,000 ใบล่าสุด</div>
+                <div v-if="kcaPickIds.length" class="h-24" aria-hidden="true"></div>
             </div>
         </div>
 
@@ -3262,6 +3272,15 @@
             </div>
         </div>
 
+        <!-- ✅ แถบอนุมัติหลายใบ (เลือกจากรายการ/จากหน้ารูปบัตร) -->
+        <div v-if="currentTab === 'kcadmin' && kcaPickIds.length && !kcaSel" class="fixed left-0 right-0 bottom-4 z-[44] px-4" data-testid="kca-pick-bar">
+            <div class="max-w-lg mx-auto bg-slate-900 text-white rounded-2xl shadow-2xl p-3 flex items-center gap-2">
+                <div class="flex-1 min-w-0 text-sm font-bold">เลือกแล้ว <span data-testid="kca-pick-count">{{ kcaPickIds.length }}</span> ใบ</div>
+                <button @click="kcaClearPick()" data-testid="kca-pick-clear" class="px-3 py-2 rounded-xl bg-white/10 text-xs font-bold active:scale-95">ล้าง</button>
+                <button @click="kcaBulkApprove()" :disabled="kcaBusy" data-testid="kca-bulk-approve" class="px-4 py-2.5 rounded-xl bg-emerald-500 text-white text-sm font-extrabold active:scale-95 disabled:opacity-50 whitespace-nowrap"><i class="fa-solid fa-circle-check"></i> อนุมัติที่เลือก</button>
+            </div>
+        </div>
+
         <!-- ─── รายละเอียด/จัดการบัตรหนึ่งใบ ─── -->
         <div v-if="kcaSel && currentTab === 'kcadmin'" class="fixed inset-0 z-[45] bg-black/50 flex items-end justify-center" @click.self="closeKcaDetail()" data-testid="kca-detail">
             <div class="bg-white w-full max-w-lg rounded-t-3xl max-h-[92vh] overflow-y-auto pb-8">
@@ -3271,6 +3290,9 @@
                         <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="kcaStatus(kcaSel.status)[1]">{{ kcaStatus(kcaSel.status)[0] }}</span>
                         <span class="text-[10px] text-slate-400 ml-1">id {{ kcaSel.id }}</span>
                     </div>
+                    <button v-if="kcaCanPick(kcaSel)" @click="kcaTogglePick(kcaSel)" data-testid="kca-detail-pick" :aria-pressed="!!kcaPick[kcaSel.id]"
+                            class="px-3 py-2 rounded-full text-[11px] font-bold border-2 whitespace-nowrap active:scale-95 transition" :class="kcaPick[kcaSel.id] ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-300 text-slate-600'">
+                        <i class="fa-solid" :class="kcaPick[kcaSel.id] ? 'fa-square-check' : 'fa-square'"></i> {{ kcaPick[kcaSel.id] ? 'เลือกไว้แล้ว' : 'เลือกไว้อนุมัติ' }}</button>
                     <button @click="closeKcaDetail()" class="w-9 h-9 rounded-full bg-slate-100 text-slate-500 text-xl leading-none">&times;</button>
                 </div>
                 <div class="px-5 pt-4 space-y-4">
@@ -3333,7 +3355,7 @@
                     <!-- ปุ่มดำเนินการ -->
                     <div class="grid grid-cols-2 gap-2 pt-1">
                         <button v-if="kcaSel.status === 'pending' || kcaSel.status === 'reviewing'" @click="kcaApprove()" :disabled="kcaBusy" data-testid="kca-approve"
-                                class="col-span-2 py-3.5 rounded-2xl bg-emerald-500 text-white font-extrabold shadow-md active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-circle-check"></i> ตรวจสอบแล้ว · อนุมัติบัตร</button>
+                                class="col-span-2 py-3.5 rounded-2xl bg-emerald-500 text-white font-extrabold shadow-md active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-circle-check"></i> {{ kcaEditDirty ? 'บันทึกและอนุมัติบัตร' : 'ตรวจสอบแล้ว · อนุมัติบัตร' }}</button>
                         <button v-if="kcaSel.status !== 'cancelled'" @click="kcaRequestFix()" :disabled="kcaBusy" data-testid="kca-fix"
                                 class="py-3 rounded-2xl bg-violet-100 text-violet-700 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-rotate-left"></i> ขอให้แก้ไข</button>
                         <button v-if="kcaSel.status === 'active'" @click="kcaMarkUploaded()" :disabled="kcaBusy" data-testid="kca-uploaded"
@@ -3341,7 +3363,7 @@
                         <button v-if="kcaSel.status === 'uploaded'" @click="kcaUnmarkUploaded()" :disabled="kcaBusy" data-testid="kca-unupload"
                                 class="col-span-2 py-2.5 rounded-2xl bg-sky-50 text-sky-700 font-bold text-xs active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-rotate-left"></i> ยกเลิกสถานะ "อัพลงบอร์ดแล้ว" <span class="font-normal">(กลับเป็นรออัพ)</span></button>
                         <button v-if="kcaSel.status === 'active' || kcaSel.status === 'reviewing' || kcaSel.status === 'uploaded'" @click="kcaReconfirm()" :disabled="kcaBusy" data-testid="kca-reconfirm"
-                                class="col-span-2 py-3 rounded-2xl bg-indigo-100 text-indigo-700 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-arrows-rotate"></i> ให้ยืนยันใหม่ <span class="text-[10px] font-normal">(กลับเป็น "รอยืนยัน" · ไม่ส่ง LINE)</span></button>
+                                class="col-span-2 py-3 rounded-2xl bg-indigo-100 text-indigo-700 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-arrows-rotate"></i> ให้ยืนยันใหม่ <span class="text-[10px] font-normal">(กลับเป็น "รอยืนยัน" · เลือกส่ง LINE ได้)</span></button>
                         <button v-if="kcaSel.status !== 'cancelled'" @click="kcaSuspend()" :disabled="kcaBusy" data-testid="kca-suspend"
                                 class="py-3 rounded-2xl bg-rose-100 text-rose-700 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-ban"></i> ระงับบัตร</button>
                         <button v-if="kcaSel.status === 'cancelled'" @click="kcaReactivate()" :disabled="kcaBusy" data-testid="kca-reactivate"
@@ -3720,7 +3742,7 @@
                     keycardContactHouse: (function () { try { return String(appCfgIn('BRAND', 'keycard_contact_house', '998/5') || '').trim(); } catch (e) { return '998/5'; } })(),
                     // ─── 🪪 ADMIN: จัดการคีย์การ์ด ───
                     kcaLoading: false, kcaError: null, kcaCards: [], kcaReasons: { cancel: [], fix: [], reconfirm: [], roles: [], delete: [], move: [] }, kcaMigrated: null, kcaTruncated: false, kcaLoaded: false, kcaSeq: 0,
-                    kcaFilter: 'reviewing', kcaQuery: '', kcaPage: 1, kcaSel: null, kcaEdit: { front: '', back: '', holder: '' }, kcaBusy: false,
+                    kcaFilter: 'reviewing', kcaQuery: '', kcaPage: 1, kcaPick: {}, kcaSel: null, kcaEdit: { front: '', back: '', holder: '' }, kcaBusy: false,
                     kcaHistOpen: false, kcaHist: [], kcaHistLoading: false, kcaPendingBadge: 0,
                     // ─── 🏘️ ADMIN: ทะเบียนบ้าน & สมาชิก ───
                     mrgQuery: '', mrgSoi: '', mrgLiving: '', mrgFilter: 'all', mrgPage: 1, mrgLoading: false, mrgError: null, mrgData: null, mrgSeq: 0, mrgTimer: null,
@@ -3896,6 +3918,10 @@
                     return rows;
                 },
                 kcaShown() { return this.kcaFiltered.slice(0, this.kcaPage * 30); },
+                // ✅ เลือกหลายใบเพื่ออนุมัติ: เฉพาะบัตร "รอยืนยัน/รอตรวจสอบ"
+                kcaPickable() { return this.kcaFiltered.filter(c => this.kcaCanPick(c)); },
+                kcaPickIds() { const ok = new Set(this.kcaCards.filter(c => this.kcaCanPick(c)).map(c => String(c.id))); return Object.keys(this.kcaPick).filter(id => this.kcaPick[id] && ok.has(id)); },
+                kcaAllPicked() { return this.kcaPickable.length > 0 && this.kcaPickable.every(c => this.kcaPick[c.id]); },
                 kcaEditDirty() {
                     const c = this.kcaSel; if (!c) return false;
                     return this.kcaEdit.front !== this.kcStored(c.front_number, 10) || this.kcaEdit.back !== this.kcStored(c.back_number, 8) || (this.kcaEdit.holder || '') !== (c.holder_name || '');
@@ -7024,7 +7050,12 @@
                     this.kcaBusy = true;
                     try {
                         const d = await this.kcaApi('keycard_admin_action', { method: 'POST', body: JSON.stringify(Object.assign({ cardId: this.kcaSel.id }, body)) });
-                        Swal.fire({ icon: 'success', title: okTitle, timer: 1400, showConfirmButton: false });
+                        if (body && body.notify === true) {
+                            // ติ๊กส่ง LINE → บอกผลการส่งจริง (ส่งไม่ถึงใคร = เตือน แต่รายการถูกบันทึกแล้ว)
+                            const ok = d && d.sent > 0;
+                            Swal.fire({ icon: ok ? 'success' : 'warning', title: okTitle, timer: ok ? 1800 : undefined, showConfirmButton: !ok,
+                                text: ok ? `แจ้ง LINE ถึงลูกบ้านแล้ว ${d.sent} คน${d.failed ? ` (ส่งไม่สำเร็จ ${d.failed})` : ''}` : 'บันทึกแล้ว แต่ส่ง LINE ไม่ถึงลูกบ้าน (ไม่พบสมาชิกที่ผูก LINE หรือส่งไม่สำเร็จ)' });
+                        } else Swal.fire({ icon: 'success', title: okTitle, timer: 1400, showConfirmButton: false });
                         await this.loadKcAdmin();
                         return d;
                     } catch (e) {
@@ -7095,37 +7126,82 @@
                     if (this.kcaEdit.front.length > 10 || this.kcaEdit.back.length > 8) return;
                     await this.kcaRun({ action: 'set_numbers', front_number: this.kcaEdit.front, back_number: this.kcaEdit.back, holder_name: this.kcaEdit.holder || undefined }, 'บันทึกแล้ว');
                 },
-                async kcaApprove() {
-                    const c = this.kcaSel; if (!c) return;
-                    if (this.kcaEditDirty) return Swal.fire('ยังไม่ได้บันทึก', 'กรุณากด "บันทึกเลขบัตร/ผู้ใช้บัตร" ก่อนอนุมัติ', 'warning');
-                    if (!this.cardNumbersFull(c)) return Swal.fire('เลขบัตรยังไม่ครบ', 'ชุดหน้า 10 หลัก · ชุดหลัง 8 หลัก — แก้เลขให้ครบแล้วบันทึกก่อน', 'warning');
+                kcaCanPick(c) { return !!c && (c.status === 'pending' || c.status === 'reviewing'); },
+                kcaTogglePick(c) { if (!this.kcaCanPick(c)) return; const m = Object.assign({}, this.kcaPick); if (m[c.id]) delete m[c.id]; else m[c.id] = true; this.kcaPick = m; },
+                kcaPickAll() { const m = Object.assign({}, this.kcaPick); if (this.kcaAllPicked) this.kcaPickable.forEach(c => { delete m[c.id]; }); else this.kcaPickable.forEach(c => { m[c.id] = true; }); this.kcaPick = m; },
+                kcaClearPick() { this.kcaPick = {}; },
+                // ✅ อนุมัติทุกใบที่เลือก (server ข้ามใบที่เลขไม่ครบ/ซ้ำ/สถานะเปลี่ยน แล้วบอกเหตุผล) — ไม่ส่ง LINE
+                async kcaBulkApprove() {
+                    if (this.kcaBusy) return;
+                    const picked = this.kcaCards.filter(c => this.kcaCanPick(c) && this.kcaPick[c.id]);
+                    if (!picked.length) return;
+                    const incomplete = picked.filter(c => !this.cardNumbersFull(c)).length;
                     const { isConfirmed } = await Swal.fire({
-                        title: 'อนุมัติบัตรใบนี้?', icon: 'question', showCancelButton: true, confirmButtonColor: '#10b981', confirmButtonText: 'อนุมัติ', cancelButtonText: 'ยกเลิก',
-                        html: `<div style="font-weight:800;font-family:monospace;letter-spacing:1px;white-space:nowrap">${this.formatKeycardNumber(c.front_number, c.back_number)}</div><div style="font-size:12px;color:#64748b;margin-top:4px">บ้าน ${this.kcaEsc(c.house_number)} </div><div style="font-size:11px;color:#0369a1;margin-top:6px">หลังอนุมัติ บัตรจะเป็น "รออัพลงบอร์ด" — อัพลงบอร์ดเสร็จแล้วกด "อัพลงบอร์ดแล้ว" จึงจะใช้งานได้</div>`
+                        title: `อนุมัติ ${picked.length} ใบ?`, icon: 'question', showCancelButton: true, confirmButtonColor: '#10b981', confirmButtonText: 'อนุมัติทั้งหมด', cancelButtonText: 'ยกเลิก',
+                        html: `<div style="font-size:13px;color:#475569;text-align:left;line-height:1.6">บัตรที่เลือกจะเป็น "อนุมัติแล้ว (รออัพลงบอร์ด)" — ไม่ส่ง LINE ถึงลูกบ้าน${incomplete ? `<br><b style="color:#d97706">มี ${incomplete} ใบเลขไม่ครบ — จะถูกข้ามอัตโนมัติ</b>` : ''}</div>`
                     });
                     if (!isConfirmed) return;
-                    await this.kcaRun({ action: 'approve', notify: false }, 'อนุมัติแล้ว');
+                    this.kcaBusy = true;
+                    try {
+                        const d = await this.kcaApi('keycard_admin_action', { method: 'POST', body: JSON.stringify({ action: 'approve_bulk', ids: picked.map(c => c.id).slice(0, 200), notify: false }) });
+                        const m = Object.assign({}, this.kcaPick); (d.approved_ids || []).forEach(id => { delete m[id]; }); this.kcaPick = m;   // ใบที่ถูกข้ามยังคงติ๊กไว้ให้เห็น
+                        const why = (d.skipped_detail || []).slice(0, 6).map(x => `• ${this.kcaEsc(x.house ? 'บ้าน ' + x.house : 'id ' + x.id)}: ${this.kcaEsc(x.reason)}`).join('<br>');
+                        await Swal.fire({ icon: d.skipped ? 'warning' : 'success', title: `อนุมัติแล้ว ${d.approved} ใบ`, timer: d.skipped ? undefined : 1800, showConfirmButton: !!d.skipped,
+                            html: d.skipped ? `<div style="font-size:13px;text-align:left;line-height:1.6"><b>ข้าม ${d.skipped} ใบ</b><br>${why}${d.skipped > 6 ? '<br>…' : ''}</div>` : '' });
+                        this.kcaBusy = false;
+                        await this.loadKcAdmin();
+                    } catch (e) { Swal.fire('ไม่สำเร็จ', e.message, 'error'); }
+                    finally { this.kcaBusy = false; }
+                },
+                async kcaApprove() {
+                    const c = this.kcaSel; if (!c || this.kcaBusy) return;
+                    // แก้เลข/ผู้ใช้บัตรไว้แล้วยังไม่กดบันทึก → "บันทึกแล้วอนุมัติ" ในขั้นตอนเดียว
+                    const dirty = this.kcaEditDirty;
+                    const front = dirty ? this.kcaEdit.front : this.kcStored(c.front_number, 10), back = dirty ? this.kcaEdit.back : this.kcStored(c.back_number, 8);
+                    if (front.length !== 10 || back.length !== 8) return Swal.fire('เลขบัตรยังไม่ครบ', 'ชุดหน้า 10 หลัก · ชุดหลัง 8 หลัก — แก้เลขให้ครบก่อนอนุมัติ', 'warning');
+                    const { isConfirmed } = await Swal.fire({
+                        title: dirty ? 'บันทึกและอนุมัติบัตรใบนี้?' : 'อนุมัติบัตรใบนี้?', icon: 'question', showCancelButton: true, confirmButtonColor: '#10b981', confirmButtonText: dirty ? 'บันทึก + อนุมัติ' : 'อนุมัติ', cancelButtonText: 'ยกเลิก',
+                        html: `<div style="font-weight:800;font-family:monospace;letter-spacing:1px;white-space:nowrap">${this.formatKeycardNumber(front, back)}</div><div style="font-size:12px;color:#64748b;margin-top:4px">บ้าน ${this.kcaEsc(c.house_number)}${dirty ? ' · <b style="color:#d97706">มีการแก้ไขที่จะถูกบันทึกพร้อมกัน</b>' : ''}</div>`
+                    });
+                    if (!isConfirmed) return;
+                    // ใบถัดไปในคิว (รอตรวจสอบ/รอยืนยัน) — อนุมัติเสร็จเปิดให้ต่อเลย
+                    const queue = this.kcaFiltered.filter(x => this.kcaCanPick(x));
+                    const at = queue.findIndex(x => String(x.id) === String(c.id));
+                    const nextId = at >= 0 && queue[at + 1] ? queue[at + 1].id : null;
+                    const body = { action: 'approve', notify: false, ...(dirty ? { front_number: front, back_number: back, holder_name: this.kcaEdit.holder || undefined } : {}) };
+                    const d = await this.kcaRun(body, dirty ? 'บันทึกและอนุมัติแล้ว' : 'อนุมัติแล้ว');
+                    if (d) {
+                        const m = Object.assign({}, this.kcaPick); delete m[c.id]; this.kcaPick = m;
+                        const nx = nextId != null ? this.kcaCards.find(x => String(x.id) === String(nextId) && this.kcaCanPick(x)) : null;
+                        if (nx) this.openKcaDetail(nx);
+                    }
                 },
                 kcaEsc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]); },
-                async kcaReasonDialog(title, list, color, btn) {
+                // opts.notifyHint → แสดงช่องติ๊ก "ส่งแจ้งเตือน LINE ถึงลูกบ้าน" (ค่าเริ่มต้น: ไม่ติ๊ก) แล้วคืนค่า notify ใน value
+                async kcaReasonDialog(title, list, color, btn, opts2) {
+                    const withNotify = !!(opts2 && opts2.notifyHint);
                     const opts = list.map(r => `<option value="${this.kcaEsc(r)}">${this.kcaEsc(r)}</option>`).join('');
                     const { isConfirmed, value } = await Swal.fire({
                         title, icon: 'warning', showCancelButton: true, focusConfirm: false, confirmButtonColor: color, confirmButtonText: btn, cancelButtonText: 'ยกเลิก',
                         html: `<div style="text-align:left;font-size:12px;font-weight:700;margin-bottom:4px">เหตุผล <span style="color:#f43f5e">*</span></div>
                                <select id="kca-reason" class="swal2-select" style="margin:0;width:100%;font-size:14px"><option value="">— เลือกเหตุผล —</option>${opts}</select>
-                               <textarea id="kca-note" class="swal2-textarea" maxlength="200" placeholder="หมายเหตุเพิ่มเติม (ถ้าเลือก อื่น ๆ ต้องระบุ)" style="margin:10px 0 0;width:100%;font-size:13px"></textarea>`,
+                               <textarea id="kca-note" class="swal2-textarea" maxlength="200" placeholder="หมายเหตุเพิ่มเติม (ถ้าเลือก อื่น ๆ ต้องระบุ)" style="margin:10px 0 0;width:100%;font-size:13px"></textarea>
+                               ${withNotify ? `<label style="display:flex;align-items:flex-start;gap:10px;margin-top:12px;padding:10px 12px;border:1px solid #c7d2fe;background:#eef2ff;border-radius:12px;text-align:left;cursor:pointer">
+                                   <input type="checkbox" id="kca-notify" data-testid="kca-notify" style="width:20px;height:20px;margin-top:1px;accent-color:#4f46e5;flex:none">
+                                   <span style="font-size:13px;line-height:1.45"><b>ส่งแจ้งเตือน LINE ถึงลูกบ้าน</b><br><span style="font-size:11.5px;color:#64748b">${this.kcaEsc(opts2.notifyHint)}</span></span></label>` : ''}`,
                         preConfirm: () => {
                             const reason = document.getElementById('kca-reason').value, note = document.getElementById('kca-note').value.trim();
                             if (!reason) { Swal.showValidationMessage('กรุณาเลือกเหตุผล'); return false; }
                             if (reason === 'อื่น ๆ' && note.length < 3) { Swal.showValidationMessage('เลือก "อื่น ๆ" กรุณาระบุรายละเอียด'); return false; }
-                            return { reason, note };
+                            const nf = document.getElementById('kca-notify');
+                            return { reason, note, notify: !!(nf && nf.checked) };
                         }
                     });
                     return isConfirmed ? value : null;
                 },
                 async kcaRequestFix() {
-                    const v = await this.kcaReasonDialog('ขอให้สมาชิกแก้ไข/ตรวจสอบบัตร', this.kcaReasons.fix, '#7c3aed', 'ส่งให้แก้ไข'); if (!v) return;
-                    await this.kcaRun({ action: 'request_fix', reason: v.reason, note: v.note, notify: false }, 'ส่งให้แก้ไขแล้ว');
+                    const v = await this.kcaReasonDialog('ขอให้สมาชิกแก้ไข/ตรวจสอบบัตร', this.kcaReasons.fix, '#7c3aed', 'ส่งให้แก้ไข', { notifyHint: 'ส่งเหตุผลพร้อมลิงก์ให้ลูกบ้านเปิดแก้ไขบัตรได้ทันที (ไม่ติ๊ก = ลูกบ้านเห็นในแอปเท่านั้น)' }); if (!v) return;
+                    await this.kcaRun({ action: 'request_fix', reason: v.reason, note: v.note, notify: !!v.notify }, 'ส่งให้แก้ไขแล้ว');
                 },
                 async kcaMarkUploaded() {
                     const c = this.kcaSel; if (!c) return;
@@ -7165,8 +7241,8 @@
                     finally { this.kcaBusy = false; }
                 },
                 async kcaReconfirm() {
-                    const v = await this.kcaReasonDialog('ให้ลูกบ้านยืนยันบัตรใหม่?', (this.kcaReasons.reconfirm && this.kcaReasons.reconfirm.length) ? this.kcaReasons.reconfirm : this.kcaReasons.fix, '#4f46e5', 'ให้ยืนยันใหม่'); if (!v) return;
-                    await this.kcaRun({ action: 'reconfirm', reason: v.reason, note: v.note, notify: false }, 'ส่งกลับเป็น "รอยืนยัน" แล้ว');
+                    const v = await this.kcaReasonDialog('ให้ลูกบ้านยืนยันบัตรใหม่?', (this.kcaReasons.reconfirm && this.kcaReasons.reconfirm.length) ? this.kcaReasons.reconfirm : this.kcaReasons.fix, '#4f46e5', 'ให้ยืนยันใหม่', { notifyHint: 'ส่งเหตุผลพร้อมลิงก์ให้ลูกบ้านเปิดยืนยันบัตรใหม่ได้ทันที (ไม่ติ๊ก = ลูกบ้านเห็นในแอปเท่านั้น)' }); if (!v) return;
+                    await this.kcaRun({ action: 'reconfirm', reason: v.reason, note: v.note, notify: !!v.notify }, 'ส่งกลับเป็น "รอยืนยัน" แล้ว');
                 },
                 async kcaSuspend() {
                     const v = await this.kcaReasonDialog('ระงับคีย์การ์ดใบนี้?', this.kcaReasons.cancel, '#f43f5e', 'ระงับ'); if (!v) return;
