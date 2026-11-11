@@ -2720,9 +2720,15 @@
                     <label class="block text-xs font-bold text-slate-700 mb-1.5">{{ cardConfirmIsEdit ? 'อัปโหลดรูปใหม่ (ถ้าต้องการเปลี่ยน)' : 'รูปถ่ายหน้ารหัสคีย์การ์ด *' }}</label>
                     <div v-if="cardPhotoPreview || cardConfirmModal?.img" class="relative mb-2">
                         <img :src="cardPhotoPreview || cardConfirmModal?.img" class="w-full max-h-48 object-cover rounded-xl">
-                        <button @click="cardPhotoPreview = null; cardCapturedPhoto = null" class="absolute top-2 right-2 w-7 h-7 bg-rose-500 text-white rounded-full text-xs">&times;</button>
+                        <button type="button" data-testid="kc-photo-remove" @click="cardPhotoPreview = null; cardCapturedPhoto = null" class="absolute top-2 right-2 w-7 h-7 bg-rose-500 text-white rounded-full text-xs">&times;</button>
                     </div>
-                    <input ref="cardPhotoInput" type="file" accept="image/*" capture="environment" @change="onCardPhotoSelect" class="w-full text-xs file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:bg-cyan-500 file:text-white file:font-bold">
+                    <!-- ปุ่มแยก 2 อัน: ถ่ายรูป (capture = เปิดกล้องตรง) / เลือกจากอัลบั้ม (ไม่ใส่ capture — iOS จึงเลือกรูปที่ถ่ายไว้ได้) -->
+                    <div class="grid grid-cols-2 gap-2">
+                        <button type="button" @click="openCardPhotoPicker('cardPhotoCam')" data-testid="kc-photo-cam-btn" class="py-2.5 rounded-2xl bg-cyan-500 hover:bg-cyan-600 text-white text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition"><i class="fa-solid fa-camera"></i> ถ่ายรูป</button>
+                        <button type="button" @click="openCardPhotoPicker('cardPhotoInput')" data-testid="kc-photo-file-btn" class="py-2.5 rounded-2xl bg-white border border-slate-200 text-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition"><i class="fa-solid fa-image"></i> เลือกจากอัลบั้ม</button>
+                    </div>
+                    <input ref="cardPhotoCam" data-testid="kc-photo-cam" type="file" accept="image/*" capture="environment" @change="onCardPhotoSelect" class="hidden">
+                    <input ref="cardPhotoInput" data-testid="kc-photo-file" type="file" accept="image/*" @change="onCardPhotoSelect" class="hidden">
                     <p class="text-[10px] text-rose-500 mt-1" v-if="cardPhotoError">{{ cardPhotoError }}</p>
                     <p class="text-[10px] text-slate-400 mt-1">รูปจะถูกบีบอัดเหลือ ≤800px เพื่อประหยัดพื้นที่</p>
                 </div>
@@ -3823,7 +3829,7 @@
                     cardFrontAdd: '', cardBackAdd: '', cardNumberError: null,
                     cardCorrect: false, cardCorrectFront: '', cardCorrectBack: '', cardCorrectReason: 'พิมพ์เลขผิด/ตกหล่น', cardCorrectNote: '',
                     kcCorrectReasons: ['พิมพ์เลขผิด/ตกหล่น', 'ดูเลขจากหน้าบัตรผิด', 'เปลี่ยนใช้บัตรใบใหม่', 'อื่น ๆ'],
-                    cardPhotoPreview: null, cardCapturedPhoto: null, cardPhotoError: null,
+                    cardPhotoPreview: null, cardCapturedPhoto: null, cardPhotoError: null, cardPhotoBusy: false,
                     cardConfirmSaving: false,
                     cardViewerImage: null,
                     houseEditModal: false, houseEditForm: { fullname: '', phone: '', member_count: 1 }, houseEditSaving: false,
@@ -6744,49 +6750,91 @@
                     this.cardConfirmSaving = false;
                 },
 
-                onCardPhotoSelect(event) {
-                    const file = event.target.files?.[0];
+                // เปิดตัวเลือกรูป: ล้างค่าเดิมตอน "ก่อนเปิด" (ไม่ล้างทันทีหลังเลือก — iOS อาจลบไฟล์ชั่วคราวก่อนอ่านเสร็จ)
+                openCardPhotoPicker(refName) {
+                    const el = this.$refs[refName]; if (!el) return;
+                    try { el.value = ''; } catch (e) { /* ignore */ }
+                    el.click();
+                },
+                // รูปที่ iOS ส่งมาบางครั้งไม่มี type (เช่นเลือกจากแอป "ไฟล์") หรือเป็น HEIC — ดูนามสกุลประกอบ
+                isImageFile(file) {
+                    if (!file) return false;
+                    if (/^image\//i.test(file.type || '')) return true;
+                    return (!file.type || file.type === 'application/octet-stream') && /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(file.name || '');
+                },
+                photoDecodeError() {
+                    return 'อ่านรูปนี้ไม่ได้ (iPhone บางรุ่นใช้รูปแบบ HEIC) — ลองเลือกรูปอื่น หรือกด "ถ่ายรูป" ใหม่';
+                },
+
+                async onCardPhotoSelect(event) {
+                    const input = event.target;
+                    const file = input.files && input.files[0];
                     if (!file) return;
-                    if (!file.type.startsWith('image/')) {
+                    if (!this.isImageFile(file)) {
                         this.cardPhotoError = 'กรุณาเลือกไฟล์รูปภาพ';
+                        try { input.value = ''; } catch (e) { /* ignore */ }
                         return;
                     }
-                    if (file.size > 10 * 1024 * 1024) {
-                        this.cardPhotoError = 'ไฟล์ใหญ่เกิน 10MB';
+                    if (file.size > 30 * 1024 * 1024) {
+                        this.cardPhotoError = 'ไฟล์ใหญ่เกิน 30MB';
+                        try { input.value = ''; } catch (e) { /* ignore */ }
                         return;
                     }
                     this.cardPhotoError = null;
-                    this.cardCapturedPhoto = file;
-                    const reader = new FileReader();
-                    reader.onload = e => { this.cardPhotoPreview = e.target.result; };
-                    reader.readAsDataURL(file);
+                    this.cardPhotoBusy = true;
+                    try {
+                        // ย่อ/แปลงเป็น JPEG ทันทีที่เลือก → เก็บในหน่วยความจำ (ไม่พึ่งไฟล์ต้นฉบับของ iOS อีก) + เห็นข้อผิดพลาดตั้งแต่ตอนเลือก
+                        const small = await this.compressImage(file, 800, 0.7);
+                        this.cardCapturedPhoto = small;
+                        const dataUrl = await new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = e => resolve(e.target.result);
+                            reader.onerror = () => reject(new Error('FileReader failed'));
+                            reader.readAsDataURL(small);
+                        });
+                        this.cardPhotoPreview = dataUrl;
+                    } catch (e) {
+                        this.cardCapturedPhoto = null; this.cardPhotoPreview = null;
+                        this.cardPhotoError = this.photoDecodeError();
+                    } finally {
+                        this.cardPhotoBusy = false;
+                        try { input.value = ''; } catch (e) { /* ignore */ }   // ย่อเสร็จแล้วค่อยล้าง → เลือกไฟล์เดิมซ้ำได้
+                    }
                 },
 
+                // ย่อรูป → JPEG (ลองเดโค้ดด้วย createImageBitmap ก่อน แล้วค่อย <img> ผ่าน object URL — ไม่แปลงเป็น dataURL ทั้งไฟล์ ประหยัดหน่วยความจำบน iPhone)
                 async compressImage(file, maxWidth = 800, quality = 0.7) {
-                    return new Promise((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onload = e => {
-                            const img = new Image();
-                            img.onload = () => {
-                                let { width, height } = img;
-                                if (width > maxWidth) {
-                                    height = (height * maxWidth) / width;
-                                    width = maxWidth;
-                                }
-                                const canvas = document.createElement('canvas');
-                                canvas.width = width; canvas.height = height;
-                                canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-                                canvas.toBlob(blob => {
-                                    if (!blob) return reject(new Error('Compress failed'));
-                                    resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
-                                }, 'image/jpeg', quality);
-                            };
-                            img.onerror = () => reject(new Error('Image load failed'));
-                            img.src = e.target.result;
-                        };
-                        reader.onerror = () => reject(new Error('FileReader failed'));
-                        reader.readAsDataURL(file);
+                    const baseName = String((file && file.name) || 'photo').replace(/\.[^.]+$/, '') || 'photo';
+                    const draw = (src, w, h) => new Promise((resolve, reject) => {
+                        if (!w || !h) return reject(new Error('Image has no size'));
+                        let tw = w, th = h;
+                        if (tw > maxWidth) { th = (th * maxWidth) / tw; tw = maxWidth; }
+                        const canvas = document.createElement('canvas');
+                        canvas.width = Math.max(1, Math.round(tw)); canvas.height = Math.max(1, Math.round(th));
+                        const ctx = canvas.getContext('2d');
+                        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);   // PNG โปร่งใส → พื้นขาว
+                        ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+                        canvas.toBlob(blob => {
+                            if (!blob) return reject(new Error('Compress failed'));
+                            resolve(new File([blob], baseName + '.jpg', { type: 'image/jpeg', lastModified: Date.now() }));
+                        }, 'image/jpeg', quality);
                     });
+                    if (typeof createImageBitmap === 'function') {
+                        try {
+                            const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+                            try { return await draw(bmp, bmp.width, bmp.height); } finally { if (bmp.close) bmp.close(); }
+                        } catch (e) { /* เบราว์เซอร์รุ่นเก่า/ไม่รองรับ option → ลองทาง <img> */ }
+                    }
+                    const url = URL.createObjectURL(file);
+                    try {
+                        const img = await new Promise((resolve, reject) => {
+                            const im = new Image();
+                            im.onload = () => resolve(im);
+                            im.onerror = () => reject(new Error('Image load failed'));
+                            im.src = url;
+                        });
+                        return await draw(img, img.naturalWidth || img.width, img.naturalHeight || img.height);
+                    } finally { URL.revokeObjectURL(url); }
                 },
 
                 async submitCardConfirm() {
@@ -6796,7 +6844,7 @@
                         return;
                     }
                     if (!this.cardConfirmIsEdit && !this.cardCapturedPhoto) {
-                        this.cardPhotoError = 'กรุณาถ่ายรูป/อัปโหลดบัตรประชาชน';
+                        this.cardPhotoError = this.cardPhotoBusy ? 'กำลังประมวลผลรูป รอสักครู่แล้วกดบันทึกอีกครั้ง' : 'กรุณาถ่ายรูปรหัสคีย์การ์ด หรือเลือกรูปจากอัลบั้ม';
                         return;
                     }
                     if (this.cardCorrect) {
@@ -7268,14 +7316,15 @@
                 },
                 kcaImageOk(file) {
                     if (!file) return 'ไม่พบไฟล์';
-                    if (!/^image\//i.test(file.type)) return 'กรุณาเลือกไฟล์รูปภาพ';
-                    if (file.size > 10 * 1024 * 1024) return 'ไฟล์ใหญ่เกิน 10MB';
+                    if (!this.isImageFile(file)) return 'กรุณาเลือกไฟล์รูปภาพ';
+                    if (file.size > 30 * 1024 * 1024) return 'ไฟล์ใหญ่เกิน 30MB';
                     return '';
                 },
                 async kcaReplaceImage(ev) {
-                    const file = ev.target.files && ev.target.files[0]; ev.target.value = '';
-                    const bad = this.kcaImageOk(file); if (bad) return Swal.fire('เลือกรูปไม่ได้', bad, 'warning');
-                    if (this.kcaBusy || !this.kcaSel) return;
+                    const input = ev.target;
+                    const file = input.files && input.files[0];
+                    const bad = this.kcaImageOk(file); if (bad) { try { input.value = ''; } catch (e) { /* ignore */ } return Swal.fire('เลือกรูปไม่ได้', bad, 'warning'); }
+                    if (this.kcaBusy || !this.kcaSel) { try { input.value = ''; } catch (e) { /* ignore */ } return; }
                     this.kcaBusy = true;
                     try {
                         const url = await this.kcaUploadImage(file, this.kcaSel.id);
@@ -7283,19 +7332,25 @@
                         Swal.fire({ icon: 'success', title: 'บันทึกรูปแล้ว', timer: 1200, showConfirmButton: false });
                         this.kcaBusy = false;
                         await this.loadKcAdmin();
-                    } catch (e) { Swal.fire('ไม่สำเร็จ', e.message, 'error'); }
-                    finally { this.kcaBusy = false; }
+                    } catch (e) { Swal.fire('ไม่สำเร็จ', /Image load failed|Image has no size|Compress failed/.test(e.message) ? this.photoDecodeError() : e.message, 'error'); }
+                    finally { this.kcaBusy = false; try { input.value = ''; } catch (e) { /* ignore */ } }   // ล้างหลังอัปโหลดเสร็จ (ไม่ล้างก่อน — iOS)
                 },
                 // ── เพิ่มบัตรให้บ้าน ──
                 openKcaAdd() {
                     this.kcaAdd = { open: true, house: '', front: '', back: '', holder: '', file: null, preview: null, approveNow: false, saving: false, error: null, info: null };
                 },
                 closeKcaAdd() { if (!this.kcaAdd.saving) this.kcaAdd.open = false; },
-                kcaPickAddImage(ev) {
-                    const file = ev.target.files && ev.target.files[0]; ev.target.value = '';
-                    const bad = this.kcaImageOk(file); if (bad) { this.kcaAdd.error = bad; return; }
-                    this.kcaAdd.error = null; this.kcaAdd.file = file;
-                    const r = new FileReader(); r.onload = e => { this.kcaAdd.preview = e.target.result; }; r.readAsDataURL(file);
+                async kcaPickAddImage(ev) {
+                    const input = ev.target;
+                    const file = input.files && input.files[0];
+                    const bad = this.kcaImageOk(file); if (bad) { this.kcaAdd.error = bad; try { input.value = ''; } catch (e) { /* ignore */ } return; }
+                    this.kcaAdd.error = null;
+                    try {
+                        const small = await this.compressImage(file, 1200, 0.8);   // เก็บฉบับย่อในหน่วยความจำ ไม่พึ่งไฟล์ต้นฉบับของ iOS ตอนกดบันทึกทีหลัง
+                        this.kcaAdd.file = small;
+                        this.kcaAdd.preview = await new Promise((resolve, reject) => { const r = new FileReader(); r.onload = e => resolve(e.target.result); r.onerror = () => reject(new Error('FileReader failed')); r.readAsDataURL(small); });
+                    } catch (e) { this.kcaAdd.file = null; this.kcaAdd.preview = null; this.kcaAdd.error = this.photoDecodeError(); }
+                    finally { try { input.value = ''; } catch (e) { /* ignore */ } }
                 },
                 async kcaLookupHouse() {
                     const hn = this.kcaAdd.house; this.kcaAdd.info = null;
