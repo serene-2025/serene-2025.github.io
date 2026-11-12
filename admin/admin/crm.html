@@ -3460,6 +3460,8 @@
                                 <i class="fa-solid fa-image"></i> {{ kcaSel.img ? 'เลือกรูปใหม่' : 'เลือกจากอัลบั้ม' }}
                                 <input type="file" accept="image/*" class="hidden" @change="kcaReplaceImage($event)" data-testid="kca-detail-file">
                             </label>
+                            <button v-if="kcaSel.img" type="button" @click="kcaRemoveImage()" data-testid="kca-remove-img"
+                                    class="col-span-2 py-2 rounded-xl bg-white border border-rose-300 text-rose-600 text-xs font-bold active:scale-95 transition-transform"><i class="fa-solid fa-trash-can"></i> ลบรูปบัตร</button>
                         </div>
                     </div>
 
@@ -3566,6 +3568,34 @@
                                 class="py-3 rounded-2xl bg-slate-100 text-slate-700 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-house-circle-check"></i> ย้ายไปบ้านอื่น</button>
                         <button @click="kcaDelete()" :disabled="kcaBusy" data-testid="kca-delete"
                                 class="py-3 rounded-2xl bg-white border border-rose-300 text-rose-600 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-trash-can"></i> ลบถาวร</button>
+                    </div>
+
+                    <!-- log การแจ้งเตือน LINE -->
+                    <div data-testid="kca-nl">
+                        <button @click="kcaNl.open = !kcaNl.open" class="w-full text-left text-xs font-bold text-slate-500" data-testid="kca-nl-toggle"><i class="fa-solid fa-bell"></i> log การแจ้งเตือนลูกบ้าน
+                            <span v-if="kcaNl.loading" class="font-normal text-slate-400">กำลังโหลด...</span>
+                            <span v-else-if="kcaNlLine.text" class="font-bold" :class="kcaNlLine.cls" data-testid="kca-nl-line">· {{ kcaNlLine.text }}</span>
+                            <i class="fa-solid" :class="kcaNl.open ? 'fa-chevron-up' : 'fa-chevron-down'"></i></button>
+                        <div v-if="kcaNl.open" class="mt-2 space-y-2" data-testid="kca-nl-body">
+                            <div v-if="kcaNl.err" class="text-xs p-2 rounded-lg bg-rose-50 text-rose-700">{{ kcaNl.err }}</div>
+                            <div v-else-if="kcaNl.data && kcaNl.data.table_missing" class="text-xs p-2.5 rounded-lg bg-amber-50 text-amber-800" data-testid="kca-nl-missing">ยังไม่ได้สร้างตารางเก็บ log — รันไฟล์ <b>migration_keycard_notify_log.sql</b> ใน Supabase ก่อน จึงจะเห็นประวัติการส่ง</div>
+                            <template v-else-if="kcaNl.data">
+                                <div class="text-[11px] text-slate-500" data-testid="kca-nl-summary">ส่งแล้ว <b class="text-emerald-600">{{ kcaNl.data.summary.sent }}</b> · ส่งไม่สำเร็จ <b class="text-rose-600">{{ kcaNl.data.summary.failed }}</b> · ไม่ได้ติ๊กแจ้ง <b>{{ kcaNl.data.summary.skipped }}</b><span v-if="kcaNl.data.summary.no_recipient"> · ไม่มีผู้รับ <b>{{ kcaNl.data.summary.no_recipient }}</b></span></div>
+                                <div v-if="!(kcaNl.data.recipients || []).length" class="text-xs p-2 rounded-lg bg-amber-50 text-amber-700" data-testid="kca-nl-norecip">บ้านนี้ไม่มีสมาชิกที่ผูก LINE — แจ้งเตือนไปไม่ถึงใคร</div>
+                                <div v-for="r in (kcaNl.data.recipients || [])" :key="r.uid" class="text-xs p-2 rounded-lg bg-slate-50 flex items-start gap-2" data-testid="kca-nl-recipient">
+                                    <div class="flex-1 min-w-0"><div class="font-bold text-slate-700 truncate">{{ r.name || 'สมาชิก' }}</div>
+                                        <div v-if="r.last_at" class="text-[11px] text-slate-400">ล่าสุด {{ kcaNlAction(r.last_action) }} · {{ kcaFmtDate(r.last_at) }}</div></div>
+                                    <span class="text-[11px] font-bold whitespace-nowrap" :class="!r.last_at ? 'text-slate-400' : r.last_ok ? 'text-emerald-600' : 'text-rose-600'">{{ !r.last_at ? '— ยังไม่เคยแจ้ง' : r.last_ok ? '✅ ส่งแล้ว' : '❌ ส่งไม่สำเร็จ' }}</span>
+                                </div>
+                                <div v-if="!(kcaNl.data.rows || []).length" class="text-xs text-slate-400" data-testid="kca-nl-empty">ยังไม่มีบันทึกการแจ้งเตือนของบัตรใบนี้</div>
+                                <div v-for="(n, i) in (kcaNl.data.rows || [])" :key="i" class="text-xs p-2 rounded-lg bg-slate-50" data-testid="kca-nl-row">
+                                    <div class="flex items-start gap-2"><div class="flex-1 min-w-0 font-bold text-slate-700">{{ kcaNlAction(n.action) }}</div>
+                                        <span class="text-[11px] font-bold whitespace-nowrap" :class="n.kind === 'push' ? (n.ok ? 'text-emerald-600' : 'text-rose-600') : 'text-slate-500'">{{ kcaNlResult(n) }}</span></div>
+                                    <div v-if="n.kind === 'push'" class="text-[11px] text-slate-500">ถึง {{ n.to_name || 'สมาชิก' }}<span v-if="!n.ok && n.error" class="text-rose-600"> · {{ n.error }}</span></div>
+                                    <div class="text-[11px] text-slate-400">{{ kcaFmtDate(n.at) }}</div>
+                                </div>
+                            </template>
+                        </div>
                     </div>
 
                     <!-- ประวัติ -->
@@ -3938,7 +3968,7 @@
                     kcaLoading: false, kcaError: null, kcaCards: [], kcaReasons: { cancel: [], fix: [], reconfirm: [], roles: [], delete: [], move: [] }, kcaMigrated: null, kcaTruncated: false, kcaLoaded: false, kcaSeq: 0,
                     kcaFee: { checked: null, threshold: 3, migrated: null }, kcaFeeSub: 'all',
                     kcaFilter: 'all', kcaQuery: '', kcaPage: 1, kcaPick: {}, kcaSel: null, kcaEdit: { front: '', back: '', holder: '' }, kcaBusy: false,
-                    kcaHistOpen: false, kcaHist: [], kcaHistLoading: false, kcaPendingBadge: 0, kcaDupSheet: false, kcaDupTab: 'front', kcaDupCancelled: false,
+                    kcaHistOpen: false, kcaHist: [], kcaHistLoading: false, kcaNl: { open: false, loading: false, data: null, err: null, id: null }, kcaPendingBadge: 0, kcaDupSheet: false, kcaDupTab: 'front', kcaDupCancelled: false,
                     // ─── 🏘️ ADMIN: ทะเบียนบ้าน & สมาชิก ───
                     mrgQuery: '', mrgSoi: '', mrgLiving: '', mrgFilter: 'all', mrgPage: 1, mrgLoading: false, mrgError: null, mrgData: null, mrgSeq: 0, mrgTimer: null,
                     mrgSel: null, mrgSub: null, mrgDetail: null, mrgDetailLoading: false, mrgDetailError: null, mrgDetailSeq: 0,
@@ -4036,6 +4066,17 @@
                 }
             },
             computed: {
+                // บรรทัดสรุปหลังหัวข้อ: รู้ทันทีว่าแจ้งไปแล้วหรือยัง
+                kcaNlLine() {
+                    const d = this.kcaNl.data;
+                    if (this.kcaNl.err) return { text: 'โหลดไม่สำเร็จ', cls: 'text-rose-600' };
+                    if (!d) return { text: '', cls: '' };
+                    if (d.table_missing) return { text: 'ยังไม่ได้สร้างตาราง log', cls: 'text-amber-600' };
+                    const s = d.summary || {};
+                    if (s.last_sent_at) return { text: 'ส่งล่าสุด ' + this.kcaFmtDate(s.last_sent_at), cls: 'text-emerald-600' };
+                    if (s.last_attempt_at) return { text: s.last_attempt_kind === 'skipped' ? 'ยังไม่เคยส่ง (ไม่ได้ติ๊กแจ้ง)' : s.last_attempt_kind === 'no_recipient' ? 'ยังไม่เคยส่ง (ไม่มีสมาชิกผูก LINE)' : 'ส่งไม่สำเร็จ', cls: 'text-rose-600' };
+                    return { text: 'ยังไม่เคยแจ้ง', cls: 'text-slate-400' };
+                },
                 // 🔴 แถบเตือนยังไม่ยืนยันสิทธิ์: แสดงทุกหน้ายกเว้นหน้ายืนยันสิทธิ์เอง/ตอนถูกล็อกอยู่แล้ว · ฟีเจอร์/เมนูยืนยันสิทธิ์ปิด = ไม่แสดง
                 showStatusBanner() { return !!this.statusUnconfirmed && !this.statusGate.active && this.currentTab !== 'status' && this.fOn('ownership') && this.mOn('status'); },
                 hasAdminTools() {
@@ -7382,7 +7423,7 @@
                 kcaFmtDay(v) { try { const d = new Date(String(v).slice(0, 10) + 'T00:00:00'); return isNaN(d) ? String(v || '') : d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }); } catch (e) { return String(v || ''); } },
                 kcaFmtDate(v) { try { return new Date(v).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return String(v || ''); } },
                 kcaActionLabel(a) {
-                    const m = { keycard_admin_create: 'แอดมินเพิ่มบัตร', keycard_admin_set_numbers: 'แอดมินแก้เลขบัตร', keycard_admin_set_image: 'แอดมินเปลี่ยนรูปบัตร', keycard_admin_approve: 'แอดมินอนุมัติบัตร',
+                    const m = { keycard_admin_create: 'แอดมินเพิ่มบัตร', keycard_admin_set_numbers: 'แอดมินแก้เลขบัตร', keycard_admin_set_image: 'แอดมินเปลี่ยนรูปบัตร', keycard_admin_remove_image: 'แอดมินลบรูปบัตร', keycard_admin_approve: 'แอดมินอนุมัติบัตร',
                                 keycard_admin_request_fix: 'แอดมินขอให้แก้ไข', keycard_admin_reconfirm: 'แอดมินให้ยืนยันใหม่', keycard_admin_mark_uploaded: 'แอดมินอัพลงบอร์ดแล้ว', keycard_admin_unmark_uploaded: 'แอดมินยกเลิกสถานะอัพลงบอร์ด', keycard_admin_suspend: 'แอดมินระงับบัตร', keycard_admin_move_house: 'แอดมินย้ายบ้าน', keycard_admin_delete: 'แอดมินลบบัตร', keycard_admin_reactivate: 'แอดมินเปิดใช้บัตร', keycard_confirm: 'ลูกบ้านยืนยัน',
                                 keycard_member_correct: 'สมาชิกแก้ไขรหัสบัตร', keycard_cancel: 'ลูกบ้านระงับ', keycard_link_send: 'ส่งลิงก์ยืนยัน', keycard_admin_import_create: 'นำเข้า (เพิ่ม)', keycard_admin_import_update: 'นำเข้า (แก้ไข)' };
                     return m[a] || a;
@@ -7416,7 +7457,7 @@
                     this.kcaSel = c;
                     this.kcaEdit = { front: this.kcStored(c.front_number, 10), back: this.kcStored(c.back_number, 8), holder: c.holder_name || '' };
                 },
-                openKcaDetail(c) { this.kcaSelect(c); this.kcaHistOpen = false; this.kcaHist = []; },
+                openKcaDetail(c) { this.kcaSelect(c); this.kcaHistOpen = false; this.kcaHist = []; this.kcaNl = { open: false, loading: false, data: null, err: null, id: c && c.id }; this.kcaLoadNotifyLog(); },
                 closeKcaDetail() { this.kcaSel = null; this.kcaBusy = false; },
                 kcaOpenDupCheck() { this.kcaDupSheet = true; this.kcaDupTab = this.kcaDupSummary.front || !this.kcaDupSummary.back ? 'front' : 'back'; },
                 kcaOpenFromDupSheet(c) { this.kcaDupSheet = false; this.openKcaDetail(c); },
@@ -7428,6 +7469,35 @@
                     try { const d = await this.kcaApi('keycard_admin_history?id=' + encodeURIComponent(this.kcaSel.id)); this.kcaHist = d.history || []; }
                     catch (e) { this.kcaHist = []; }
                     finally { this.kcaHistLoading = false; }
+                },
+                kcaNlAction(a) {
+                    const m = { approve: 'อนุมัติบัตร', request_fix: 'ขอให้แก้ไข', mark_uploaded: 'อัพลงบอร์ดแล้ว', reconfirm: 'ให้ยืนยันใหม่', fee_block: 'บล็อกบัตร (ค้างส่วนกลาง)', fee_unblock: 'ปลดบล็อกบัตร', suspend: 'ระงับบัตร', reactivate: 'เปิดใช้บัตร', move_house: 'ย้ายบ้าน', renewal_approve: 'อนุมัติต่ออายุ', renewal_reject: 'ปฏิเสธต่ออายุ' };
+                    return m[a] || a || '—';
+                },
+                kcaNlResult(n) { return n.kind === 'skipped' ? 'ไม่ได้ติ๊กแจ้ง' : n.kind === 'no_recipient' ? 'บ้านนี้ไม่มีสมาชิกผูก LINE' : n.ok ? '✅ ส่งแล้ว' : '❌ ส่งไม่สำเร็จ' + (n.http_status ? ' (' + n.http_status + ')' : ''); },
+                async kcaLoadNotifyLog() {
+                    const c = this.kcaSel; if (!c) return;
+                    const id = c.id;
+                    this.kcaNl.loading = true; this.kcaNl.err = null; this.kcaNl.id = id;
+                    try {
+                        const d = await this.kcaApi('keycard_admin_notify_log?id=' + encodeURIComponent(id));
+                        if (!this.kcaSel || String(this.kcaSel.id) !== String(id)) return;
+                        d.summary = d.summary || { sent: 0, failed: 0, skipped: 0, no_recipient: 0 };
+                        this.kcaNl.data = d;
+                    } catch (e) { if (this.kcaSel && String(this.kcaSel.id) === String(id)) { this.kcaNl.data = null; this.kcaNl.err = 'โหลด log ไม่สำเร็จ: ' + e.message; } }
+                    finally { if (this.kcaSel && String(this.kcaSel.id) === String(id)) this.kcaNl.loading = false; }
+                },
+                // 🗑 ลบรูปบัตร (สมาชิกจะต้องอัปโหลดใหม่) — ไฟล์ในที่เก็บถูกลบด้วย กู้คืนไม่ได้
+                async kcaRemoveImage() {
+                    const c = this.kcaSel; if (!c || !c.img || this.kcaBusy) return;
+                    const { isConfirmed, value } = await Swal.fire({
+                        title: 'ลบรูปบัตรใบนี้?', icon: 'warning', showCancelButton: true, focusConfirm: false, confirmButtonColor: '#e11d48', confirmButtonText: 'ลบรูป', cancelButtonText: 'ยกเลิก',
+                        html: `<div style="text-align:left;font-size:13px;line-height:1.55">รูปบัตรของบ้าน <b>${this.kcaEsc(c.house_number)}</b> จะถูกลบออกจากระบบ (กู้คืนไม่ได้) เลขบัตรและสถานะไม่เปลี่ยน — ลูกบ้านต้องถ่ายรูปส่งใหม่</div>
+                               <input id="kca-rmimg-reason" class="swal2-input" style="margin:10px 0 0;width:100%;font-size:14px" maxlength="200" placeholder="เหตุผล (ไม่บังคับ) เช่น รูปไม่ชัด">`,
+                        preConfirm: () => (document.getElementById('kca-rmimg-reason').value || '').trim()
+                    });
+                    if (!isConfirmed) return;
+                    await this.kcaRun({ action: 'remove_image', reason: value || '' }, 'ลบรูปแล้ว');
                 },
                 // รันคำสั่งกับบัตรที่เปิดอยู่ แล้วโหลดรายการใหม่ (กันกดซ้ำด้วย kcaBusy)
                 async kcaRun(body, okTitle) {
@@ -7442,6 +7512,7 @@
                                 text: ok ? `แจ้ง LINE ถึงลูกบ้านแล้ว ${d.sent} คน${d.failed ? ` (ส่งไม่สำเร็จ ${d.failed})` : ''}` : 'บันทึกแล้ว แต่ส่ง LINE ไม่ถึงลูกบ้าน (ไม่พบสมาชิกที่ผูก LINE หรือส่งไม่สำเร็จ)' });
                         } else Swal.fire({ icon: 'success', title: okTitle, timer: 1400, showConfirmButton: false });
                         await this.loadKcAdmin();
+                        this.kcaLoadNotifyLog();
                         return d;
                     } catch (e) {
                         if (e.status === 409 && e.data && e.data.duplicate) { this.kcaBusy = false; this.kcaDupDialog(e.data.duplicate, e.message); return null; }
@@ -7566,7 +7637,7 @@
                 kcaEsc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]); },
                 // opts.notifyHint → แสดงช่องติ๊ก "ส่งแจ้งเตือน LINE ถึงลูกบ้าน" (ค่าเริ่มต้น: ไม่ติ๊ก) แล้วคืนค่า notify ใน value
                 async kcaReasonDialog(title, list, color, btn, opts2) {
-                    const withNotify = !!(opts2 && opts2.notifyHint);
+                    const withNotify = !!(opts2 && opts2.notifyHint), withRmImg = !!(opts2 && opts2.removeImage);
                     const opts = list.map(r => `<option value="${this.kcaEsc(r)}">${this.kcaEsc(r)}</option>`).join('');
                     const { isConfirmed, value } = await Swal.fire({
                         title, icon: 'warning', showCancelButton: true, focusConfirm: false, confirmButtonColor: color, confirmButtonText: btn, cancelButtonText: 'ยกเลิก',
@@ -7575,13 +7646,17 @@
                                <textarea id="kca-note" class="swal2-textarea" maxlength="200" placeholder="หมายเหตุเพิ่มเติม (ถ้าเลือก อื่น ๆ ต้องระบุ)" style="margin:10px 0 0;width:100%;font-size:13px"></textarea>
                                ${withNotify ? `<label style="display:flex;align-items:flex-start;gap:10px;margin-top:12px;padding:10px 12px;border:1px solid #c7d2fe;background:#eef2ff;border-radius:12px;text-align:left;cursor:pointer">
                                    <input type="checkbox" id="kca-notify" data-testid="kca-notify" style="width:20px;height:20px;margin-top:1px;accent-color:#4f46e5;flex:none">
-                                   <span style="font-size:13px;line-height:1.45"><b>ส่งแจ้งเตือน LINE ถึงลูกบ้าน</b><br><span style="font-size:11.5px;color:#64748b">${this.kcaEsc(opts2.notifyHint)}</span></span></label>` : ''}`,
+                                   <span style="font-size:13px;line-height:1.45"><b>ส่งแจ้งเตือน LINE ถึงลูกบ้าน</b><br><span style="font-size:11.5px;color:#64748b">${this.kcaEsc(opts2.notifyHint)}</span></span></label>` : ''}
+                               ${withRmImg ? `<label style="display:flex;align-items:flex-start;gap:10px;margin-top:10px;padding:10px 12px;border:1px solid #fecdd3;background:#fff1f2;border-radius:12px;text-align:left;cursor:pointer">
+                                   <input type="checkbox" id="kca-rmimg" data-testid="kca-rmimg" style="width:20px;height:20px;margin-top:1px;accent-color:#e11d48;flex:none">
+                                   <span style="font-size:13px;line-height:1.45"><b>ลบรูปเดิมออกด้วย</b><br><span style="font-size:11.5px;color:#64748b">ลูกบ้านต้องถ่ายรูปบัตรส่งใหม่ (ลบแล้วกู้คืนไม่ได้)</span></span></label>` : ''}`,
                         preConfirm: () => {
                             const reason = document.getElementById('kca-reason').value, note = document.getElementById('kca-note').value.trim();
                             if (!reason) { Swal.showValidationMessage('กรุณาเลือกเหตุผล'); return false; }
                             if (reason === 'อื่น ๆ' && note.length < 3) { Swal.showValidationMessage('เลือก "อื่น ๆ" กรุณาระบุรายละเอียด'); return false; }
                             const nf = document.getElementById('kca-notify');
-                            return { reason, note, notify: !!(nf && nf.checked) };
+                            const ri = document.getElementById('kca-rmimg');
+                            return { reason, note, notify: !!(nf && nf.checked), removeImage: !!(ri && ri.checked) };
                         }
                     });
                     return isConfirmed ? value : null;
@@ -7628,8 +7703,8 @@
                     finally { this.kcaBusy = false; }
                 },
                 async kcaReconfirm() {
-                    const v = await this.kcaReasonDialog('ให้ลูกบ้านยืนยันบัตรใหม่?', (this.kcaReasons.reconfirm && this.kcaReasons.reconfirm.length) ? this.kcaReasons.reconfirm : this.kcaReasons.fix, '#4f46e5', 'ให้ยืนยันใหม่', { notifyHint: 'ส่งเหตุผลพร้อมลิงก์ให้ลูกบ้านเปิดยืนยันบัตรใหม่ได้ทันที (ไม่ติ๊ก = ลูกบ้านเห็นในแอปเท่านั้น)' }); if (!v) return;
-                    await this.kcaRun({ action: 'reconfirm', reason: v.reason, note: v.note, notify: !!v.notify }, 'ส่งกลับเป็น "รอยืนยัน" แล้ว');
+                    const v = await this.kcaReasonDialog('ให้ลูกบ้านยืนยันบัตรใหม่?', (this.kcaReasons.reconfirm && this.kcaReasons.reconfirm.length) ? this.kcaReasons.reconfirm : this.kcaReasons.fix, '#4f46e5', 'ให้ยืนยันใหม่', { notifyHint: 'ส่งเหตุผลพร้อมลิงก์ให้ลูกบ้านเปิดยืนยันบัตรใหม่ได้ทันที (ไม่ติ๊กแจ้ง = ลูกบ้านเห็นในแอปเท่านั้น)', removeImage: !!(this.kcaSel && this.kcaSel.img) }); if (!v) return;
+                    await this.kcaRun(Object.assign({ action: 'reconfirm', reason: v.reason, note: v.note, notify: !!v.notify }, v.removeImage ? { remove_image: true } : {}), 'ส่งกลับเป็น "รอยืนยัน" แล้ว');
                 },
                 kcaFeeCanBlock(c) { return !!c && ['pending', 'reviewing', 'active', 'uploaded'].includes(c.status); },
                 // ⛔ บล็อกคีย์การ์ด (ค้างค่าส่วนกลาง) — ติ๊กส่ง LINE ได้ · ยังไม่ถึงเกณฑ์/ตรวจไม่ได้ → ยืนยันซ้ำแล้วส่ง force
