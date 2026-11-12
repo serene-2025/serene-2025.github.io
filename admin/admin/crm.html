@@ -4290,36 +4290,44 @@
                     if (typeof liff === 'undefined') {
                         throw new Error('LIFF SDK ไม่ได้โหลด — ตรวจ network');
                     }
-                    // โหลด LIFF_ID จาก system_settings — ใช้ liff_crm_id ก่อน ถ้าไม่มีใช้ liff_id
-                    try {
-                        // ใช้ supabase instance ที่สร้างไว้แล้ว หรือสร้างชั่วคราวถ้ายังไม่มี
-                        const db0 = this?.supabase || window._crmSupabase || (() => {
-                            const t = createClient(SUPABASE_URL, SUPABASE_KEY);
-                            window._crmSupabase = t;
-                            return t;
-                        })();
-                        const { data: settingRows } = await db0
-                            .from('system_settings').select('key,value')
-                            .in('key', ['liff_mini_app_id','liff_crm_id','liff_id']);
-                        const sc = {};
-                        (settingRows||[]).forEach(r => { sc[r.key]=r.value; });
-                        if (sc.liff_mini_app_id) LIFF_ID = String(sc.liff_mini_app_id).trim();   // Mini App ID เดียวทุกหน้า
-                        else if (sc.liff_crm_id) LIFF_ID = sc.liff_crm_id;
-                        else if (sc.liff_id) LIFF_ID = sc.liff_id;
-                    } catch(_) {}
+                    // ⚡ ดึง manifest ของ LIFF ล่วงหน้า "พร้อมกัน" กับการอ่าน LIFF ID (เดิมทำต่อกันทีละขั้น)
+                    const manifestP = fetch('https://liffsdk.line-scdn.net/xlt/manifest.json', { cache: 'reload' })
+                        .catch(preloadErr => { console.warn('Manifest preload failed (continuing):', preloadErr); });
+                    // โหลด LIFF_ID จาก system_settings — ใช้ liff_mini_app_id ก่อน แล้ว liff_crm_id แล้ว liff_id
+                    const loadLiffId = async () => {
+                        try {
+                            const db0 = this?.supabase || window._crmSupabase || (() => {
+                                const t = createClient(SUPABASE_URL, SUPABASE_KEY);
+                                window._crmSupabase = t;
+                                return t;
+                            })();
+                            const { data: settingRows } = await db0
+                                .from('system_settings').select('key,value')
+                                .in('key', ['liff_mini_app_id','liff_crm_id','liff_id']);
+                            const sc = {};
+                            (settingRows||[]).forEach(r => { sc[r.key]=r.value; });
+                            let id = '';
+                            if (sc.liff_mini_app_id) id = String(sc.liff_mini_app_id).trim();   // Mini App ID เดียวทุกหน้า
+                            else if (sc.liff_crm_id) id = String(sc.liff_crm_id).trim();
+                            else if (sc.liff_id) id = String(sc.liff_id).trim();
+                            if (id) { try { localStorage.setItem('crm_liff_id', id); } catch (_) {} }
+                            return id;
+                        } catch (_) { return ''; }
+                    };
+                    // ⚡ เคยเปิดแล้ว → ใช้ LIFF ID ที่จำไว้ทันที (ไม่รอฐานข้อมูล) แล้วรีเฟรชค่าเบื้องหลังไว้ใช้ครั้งหน้า
+                    let _cachedLiffId = '';
+                    try { _cachedLiffId = (localStorage.getItem('crm_liff_id') || '').trim(); } catch (_) {}
+                    let liffIdFreshP = null;
+                    if (_cachedLiffId) { LIFF_ID = _cachedLiffId; liffIdFreshP = loadLiffId(); }
+                    else { const fresh = await loadLiffId(); if (fresh) LIFF_ID = fresh; }
 
                     if (!LIFF_ID || LIFF_ID === 'YOUR-LIFF-ID') {
                         throw new Error('LIFF_ID ยังไม่ได้ตั้งค่า');
                     }
 
                     // ─── 🔧 Workaround: บาง user (โดยเฉพาะ Android) เจอ "Failed to fetch"
-                    // เพราะ LINE app cache manifest.json เสียหาย
-                    // วิธีแก้: preload manifest พร้อม cache:reload เพื่อบังคับโหลดใหม่
-                    try {
-                        await fetch('https://liffsdk.line-scdn.net/xlt/manifest.json', { cache: 'reload' });
-                    } catch (preloadErr) {
-                        console.warn('Manifest preload failed (continuing):', preloadErr);
-                    }
+                    // เพราะ LINE app cache manifest.json เสียหาย → preload พร้อม cache:reload (เริ่มไปแล้วด้านบน รอแค่ให้เสร็จก่อน init)
+                    await manifestP;
 
                     // Retry up to 2 times — handle transient cache issues
                     let initErr = null;
@@ -4332,6 +4340,8 @@
                             initErr = e;
                             console.warn(`liff.init attempt ${attempt} failed:`, e.message);
                             if (attempt < 2) {
+                                // LIFF ID ที่จำไว้อาจเก่า (แอดมินเปลี่ยนค่า) → ใช้ค่าล่าสุดจากฐานข้อมูลตอน retry
+                                if (liffIdFreshP) { try { const f = await liffIdFreshP; if (f && f !== LIFF_ID) LIFF_ID = f; } catch (_) {} }
                                 // รอ 500ms ก่อน retry + reload manifest อีกครั้ง
                                 await new Promise(r => setTimeout(r, 500));
                                 try { await fetch('https://liffsdk.line-scdn.net/xlt/manifest.json', { cache: 'reload' }); } catch {}
@@ -4386,21 +4396,27 @@
                 }
 
                 // ─── 🏠 ด่านลงทะเบียน: ยังไม่มีข้อมูลบ้านในฐานข้อมูล → พาไปหน้า register แล้วพากลับมาลิงก์เดิม (เช่น ?keycard=12) ───
-                try {
-                    const _gp = await liff.getProfile();
-                    if (!(await regGate({ uid: _gp.userId, page: 'crm.html', edge: EDGE_FUNCTION_URL }))) return;
-                } catch (e) { console.warn('regGate skipped', e); }
-
-                // ─── โหลด data แบบ resilient — ถ้าตัวไหน fail ก็ไม่ block ────
-                await Promise.allSettled([
+                // ⚡ เรียก "พร้อมกัน" ทีเดียว: ด่านลงทะเบียน + เมนูตามบทบาท + tiers/news/rewards (เดิมต่อกันทีละขั้น — ช้าตอนเปิดหน้า)
+                //    ทั้งหมดอ่านอย่างเดียว ไม่มีผลข้างเคียงถ้าด่านพาไปหน้าลงทะเบียน · syncUser/handleLogin ยังรอผ่านด่านก่อนเหมือนเดิม
+                let _gp = null;
+                try { _gp = await liff.getProfile(); } catch (e) { console.warn('regGate skipped', e); }
+                if (_gp) this.userProfile = _gp;
+                const dataP = Promise.allSettled([
                     this.fetchTiers().catch(e => console.warn('fetchTiers', e)),
                     this.fetchNews().catch(e => console.warn('fetchNews', e)),
                     this.fetchRewards().catch(e => console.warn('fetchRewards', e))
                 ]);
+                const menuP = _gp ? this.loadMenuAccess().catch(() => {}) : Promise.resolve();
+                if (_gp) {
+                    try {
+                        if (!(await regGate({ uid: _gp.userId, page: 'crm.html', edge: EDGE_FUNCTION_URL }))) return;
+                    } catch (e) { console.warn('regGate skipped', e); }
+                }
+                await dataP;
 
                 // ─── Login flow ────────────────────────────────────────────
                 try {
-                    await this.handleLogin();
+                    await this.handleLogin(_gp);
                 } catch (e) {
                     console.error('handleLogin error', e);
                     Swal.fire({
@@ -4422,7 +4438,7 @@
                 //   ?event=ABC123          → auto check-in event
                 //   ?tab=rewards           → เปิด tab ที่ระบุ
                 //   ?coupon=XYZ            → เปิด coupon detail
-                try { await this.loadMenuAccess(); } catch (e) { /* แสดงเมนูตามเดิม */ }
+                try { await menuP; } catch (e) { /* แสดงเมนูตามเดิม */ }   // เริ่มโหลดไปแล้วพร้อมด่านลงทะเบียน
                 // ─── 🔐 ด่านยืนยันสิทธิ์: ลงทะเบียนแล้วแต่ยังไม่ยืนยันสิทธิ์ผูกบ้าน → ล็อกไว้ที่หน้ายืนยันสิทธิ์ก่อน
                 //     (ยังไม่เปิดลิงก์/แท็บที่ผู้ใช้ตั้งใจจะเข้า — ยืนยันเสร็จแล้ว releaseStatusGate() ค่อยพาไปหน้านั้น)
                 let _gated = false;
@@ -4506,13 +4522,20 @@
                     try { await this._featP; } catch (e) { /* ignore */ }
                     if (!this.fOn('ownership') || !this.mOn('status')) return false;
                     if (this.menuAccess && this.menuAccess.is_admin) return false;
-                    let d;
-                    try {
-                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/check_registration?uid=${encodeURIComponent(uid)}`, { headers: this.lineAuthHeaders() });
-                        if (!res.ok) { console.warn('statusGate: HTTP ' + res.status + ' (ปล่อยผ่าน)'); return false; }
-                        d = await res.json();
-                    } catch (e) { console.warn('statusGate: เช็คไม่ได้ (ปล่อยผ่าน)', e); return false; }
-                    if (!d || !d.registered || !d.profile || d.profile.status_confirmed) return false;
+                    // ⚡ ด่านลงทะเบียน (registration_gate) ตอบ status_confirmed มาด้วยแล้ว → ใช้ผลนั้นเลย ไม่ต้องเรียก API เพิ่ม
+                    //    (server เก่าที่ยังไม่แนบค่านี้ → เรียก check_registration เหมือนเดิม)
+                    const gi = window.__regGateInfo;
+                    if (gi && gi.uid === uid && gi.d && gi.d.registered === true && typeof gi.d.status_confirmed === 'boolean') {
+                        if (gi.d.status_confirmed) return false;
+                    } else {
+                        let d;
+                        try {
+                            const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/check_registration?uid=${encodeURIComponent(uid)}`, { headers: this.lineAuthHeaders() });
+                            if (!res.ok) { console.warn('statusGate: HTTP ' + res.status + ' (ปล่อยผ่าน)'); return false; }
+                            d = await res.json();
+                        } catch (e) { console.warn('statusGate: เช็คไม่ได้ (ปล่อยผ่าน)', e); return false; }
+                        if (!d || !d.registered || !d.profile || d.profile.status_confirmed) return false;
+                    }
                     this.statusGate = { active: true };
                     this.currentTab = 'status';
                     return true;
@@ -4620,8 +4643,8 @@
                     this.myCoupons.forEach(c => this.renderBarcode('bc-' + c.id, c.code, { width: 1.6, height: 45 }));
                 },
 
-                async handleLogin() {
-                    const profile = await liff.getProfile();
+                async handleLogin(preProfile) {
+                    const profile = preProfile || await liff.getProfile();   // ใช้ผล getProfile ที่ได้มาแล้ว ไม่เรียกซ้ำ
                     this.userProfile = profile;
                     try { await this.syncUser(profile); } catch (e) { console.warn('syncUser', e); }
                     try { await this.fetchMyData(); } catch (e) { console.warn('fetchMyData', e); }
@@ -4887,9 +4910,10 @@
                             statusMessage: profile.statusMessage, updated_at: new Date().toISOString(), member_since: new Date().toISOString()
                         });
                     } else {
-                        await this.supabase.from('user_profiles').update({
+                        // ⚡ แค่อัปเดตชื่อ/รูป — ไม่ต้องรอผล (ผู้ใช้เดิมมีแถวอยู่แล้ว) ลดอีกหนึ่งรอบก่อนหน้าจอขึ้น
+                        this.supabase.from('user_profiles').update({
                             displayName: profile.displayName, pictureUrl: profile.pictureUrl, updated_at: new Date().toISOString()
-                        }).eq('userId', profile.userId);
+                        }).eq('userId', profile.userId).then(() => {}, e => console.warn('syncUser update', e));
                     }
                 },
 
