@@ -15,6 +15,7 @@
     EDGE_FUNCTION_URL: 'https://zmdywddraaeegzkvpwsw.supabase.co/functions/v1/line-webhook',
     MERGE_PAGES: false,   // เปิด true เมื่อทดสอบแท็บใน crm.html ครบแล้ว แล้วค่อยลบไฟล์หน้าย่อยทั้ง 7
     REG_GATE_SKIP: [],   // 🏠 ด่านลงทะเบียน: หน้าที่ "ไม่" ต้องบังคับลงทะเบียน เช่น ['slip.html'] (ว่าง = ทุกหน้าสมาชิกบังคับ · ดู REGISTRATION_GATE.md)
+    HOUSE_PREFIX: '998', HOUSE_MIN: 1, HOUSE_MAX: 432,   // 🏠 หน้าลงทะเบียนรับบ้านเลขที่เฉพาะ <PREFIX>/<MIN> – <PREFIX>/<MAX> (เช่น 998/1 – 998/432) · หมู่บ้านอื่นแก้ค่าตรงนี้
     DB_PROXY: false,                                          // 🔒 เปลี่ยนเป็น true เมื่อพร้อมใช้ตัวกลางฐานข้อมูล (/api/dbq) แล้วค่อยรัน migration_security_hardening.sql (ดู SECURITY_ROLLOUT.md) · ตั้งเป็น false = เรียก Supabase ตรงแบบเดิม
 
     // ── LIFF ──────────────────────────────────────────────────────────
