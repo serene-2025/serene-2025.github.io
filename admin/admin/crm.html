@@ -68,6 +68,10 @@
         .car-plate .pv { font-size: 12px; color: #475569; font-weight: 700; margin-top: 1px; }
         .car-plate.moto { background: linear-gradient(180deg, #fffbeb, #fef3c7); border-color: #92400e; }
         .car-seg-on { background: #4f46e5; color: #fff; box-shadow: 0 6px 16px rgba(79,70,229,.35); border-color: #4f46e5; }
+        /* 🔴 แถบเตือนยังไม่ยืนยันสิทธิ์: กระพริบแดง (ตัวอักษรขาวอ่านได้ทั้งสองจังหวะ) — ผู้ใช้ที่ตั้งค่าลดการเคลื่อนไหวจะเห็นแถบนิ่ง */
+        @keyframes statusBlink { 0%,100% { background-color: #dc2626; box-shadow: 0 0 0 0 rgba(220,38,38,.55); } 50% { background-color: #991b1b; box-shadow: 0 0 0 7px rgba(220,38,38,0); } }
+        .status-blink { background-color: #dc2626; animation: statusBlink 1.1s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) { .status-blink { animation: none; } }
         @keyframes slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
 
         /* ─── RFID Flip Card ──────────────────────────────────────── */
@@ -147,6 +151,17 @@
         </div>
 
         <main v-if="!loading" class="max-w-lg mx-auto px-4 pt-6 relative z-10">
+
+            <!-- 🔴 ยังไม่ยืนยันสิทธิ์ผูกบ้านเลขที่ → แถบแดงกระพริบด้านบนทุกหน้า แตะเพื่อไปหน้ายืนยันสิทธิ์ (หายเองเมื่อยืนยันแล้ว) -->
+            <div v-if="showStatusBanner" @click="goConfirmStatus()" role="button" tabindex="0" @keydown.enter="goConfirmStatus()" data-testid="status-banner"
+                 class="status-blink sticky top-2 z-40 mb-4 rounded-2xl px-3.5 py-3 text-white shadow-lg cursor-pointer flex items-center gap-3 active:scale-[0.99] transition">
+                <div class="text-2xl leading-none flex-shrink-0" aria-hidden="true">⚠️</div>
+                <div class="flex-1 min-w-0">
+                    <div class="font-extrabold text-sm leading-tight" data-testid="status-banner-title">ยังไม่ได้ยืนยันสิทธิ์<span v-if="statusHouse"> · บ้านเลขที่ {{ statusHouse }}</span></div>
+                    <div class="text-[11px] opacity-95 mt-0.5">แตะเพื่อเลือกสถานะของท่าน (เจ้าของบ้าน / เจ้าของร่วม / ผู้อาศัย / ผู้เช่า) ใช้เวลาไม่ถึงนาที</div>
+                </div>
+                <i class="fa-solid fa-chevron-right text-xs opacity-90 flex-shrink-0" aria-hidden="true"></i>
+            </div>
 
             <!-- ═══════ HOME ═══════ -->
             <div v-if="currentTab === 'home'" class="slide-up">
@@ -4010,6 +4025,7 @@
                     houseEditModal: false, houseEditForm: { fullname: '', phone: '', member_count: 1 }, houseEditSaving: false,
                     myInvoice: null, invoiceLoading: false,
                     houseFees: null, houseFeesLoading: false, houseFeesError: '', hfYear: null,   // 📒 บันทึกค่าส่วนกลางของบ้าน (จาก house_payments ผ่าน my_house_fees)
+                    statusUnconfirmed: false, statusHouse: '',   // 🔴 ลงทะเบียนแล้วแต่ยังไม่ยืนยันสิทธิ์ → แสดงแถบแดงกระพริบ (แอดมินก็เห็น แต่ไม่ถูกบังคับ)
                     statusGate: { active: false },   // 🔐 ด่านยืนยันสิทธิ์: true = ยังไม่ได้ยืนยัน → ล็อกให้อยู่หน้ายืนยันสิทธิ์ก่อน
                     ownership: null,   // ข้อมูลหลังโอนกรรมสิทธิ์บ้าน (since / settlement / carried_months) — null = ไม่เคยโอนผ่านระบบ
                     profileForm: {
@@ -4020,6 +4036,8 @@
                 }
             },
             computed: {
+                // 🔴 แถบเตือนยังไม่ยืนยันสิทธิ์: แสดงทุกหน้ายกเว้นหน้ายืนยันสิทธิ์เอง/ตอนถูกล็อกอยู่แล้ว · ฟีเจอร์/เมนูยืนยันสิทธิ์ปิด = ไม่แสดง
+                showStatusBanner() { return !!this.statusUnconfirmed && !this.statusGate.active && this.currentTab !== 'status' && this.fOn('ownership') && this.mOn('status'); },
                 hasAdminTools() {
                     const m = this.menuAccess; if (!m) return false;
                     const t = m.tools || {};
@@ -4521,12 +4539,12 @@
                     const uid = this.userProfile && this.userProfile.userId; if (!uid) return false;
                     try { await this._featP; } catch (e) { /* ignore */ }
                     if (!this.fOn('ownership') || !this.mOn('status')) return false;
-                    if (this.menuAccess && this.menuAccess.is_admin) return false;
-                    // ⚡ ด่านลงทะเบียน (registration_gate) ตอบ status_confirmed มาด้วยแล้ว → ใช้ผลนั้นเลย ไม่ต้องเรียก API เพิ่ม
+                    // ⚡ ด่านลงทะเบียน (registration_gate) ตอบ status_confirmed + house_no มาด้วยแล้ว → ใช้ผลนั้นเลย ไม่ต้องเรียก API เพิ่ม
                     //    (server เก่าที่ยังไม่แนบค่านี้ → เรียก check_registration เหมือนเดิม)
+                    let confirmed, house = '';
                     const gi = window.__regGateInfo;
                     if (gi && gi.uid === uid && gi.d && gi.d.registered === true && typeof gi.d.status_confirmed === 'boolean') {
-                        if (gi.d.status_confirmed) return false;
+                        confirmed = gi.d.status_confirmed; house = gi.d.house_no || '';
                     } else {
                         let d;
                         try {
@@ -4534,12 +4552,19 @@
                             if (!res.ok) { console.warn('statusGate: HTTP ' + res.status + ' (ปล่อยผ่าน)'); return false; }
                             d = await res.json();
                         } catch (e) { console.warn('statusGate: เช็คไม่ได้ (ปล่อยผ่าน)', e); return false; }
-                        if (!d || !d.registered || !d.profile || d.profile.status_confirmed) return false;
+                        if (!d || !d.registered || !d.profile) return false;
+                        confirmed = !!d.profile.status_confirmed; house = d.profile.house_no || '';
                     }
+                    if (confirmed) { this.statusUnconfirmed = false; return false; }
+                    // 🔴 ยังไม่ยืนยัน → แสดงแถบเตือนเสมอ (ทุกบทบาท)
+                    this.statusUnconfirmed = true; this.statusHouse = String(house || '').trim();
+                    // แอดมินไม่ถูกล็อก (เห็นแค่แถบเตือน) · คนอื่นล็อกไว้ที่หน้ายืนยันสิทธิ์ก่อน
+                    if (this.menuAccess && this.menuAccess.is_admin) return false;
                     this.statusGate = { active: true };
                     this.currentTab = 'status';
                     return true;
                 },
+                goConfirmStatus() { if (!this.statusGate.active) this.currentTab = 'status'; },
                 // ยืนยันสิทธิ์เสร็จ → ปลดล็อก แล้วพาไปหน้า/ลิงก์ที่ตั้งใจจะเข้าตั้งแต่แรก (อ่านจากพารามิเตอร์ลิงก์เดิม — ไม่มีลิงก์ = หน้าหลัก)
                 async releaseStatusGate() {
                     if (!this.statusGate.active) return;
@@ -6570,6 +6595,7 @@
                         const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/check_registration?uid=${this.userProfile.userId}`);
                         const d = await res.json();
                         this.statusCheckResult = d;
+                        if (d && d.registered && d.profile && d.profile.status_confirmed) this.statusUnconfirmed = false;   // ยืนยันแล้ว → ปิดแถบเตือน
                         if (d && d.registered && d.profile && !d.profile.status_confirmed && !this.selectedStatus) this.selectedStatus = d.profile.living_status || '';
                         if (d && d.registered) await Promise.all([this.loadOwnerInfo(), this.loadHouseInfo()]);
                     } catch (e) { console.warn('checkMyStatus', e); }
