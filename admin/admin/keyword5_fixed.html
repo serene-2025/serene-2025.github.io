@@ -15206,7 +15206,8 @@ async function updateAllUserProfiles() {
                         '<div>' + (img ? '<a href="' + escapeHtml(img) + '" target="_blank" rel="noopener"><img src="' + escapeHtml(img) + '" alt="รูปบัตร" class="w-full max-h-52 object-cover rounded-2xl border border-slate-200" data-testid="kcm-img"></a><div class="text-[10px] text-slate-400 mt-1">แตะรูปเพื่อเปิดเต็มจอ</div>' :
                             '<div class="h-full min-h-[8rem] rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center text-xs text-slate-400" data-testid="kcm-noimg">ลูกบ้านยังไม่ได้แนบรูปบัตร</div>') +
                             '<label class="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer" data-testid="kcm-img-btn">📷 ' + (img ? 'เปลี่ยนรูปบัตร' : 'เพิ่มรูปบัตร') +
-                            '<input type="file" accept="image/*" class="hidden" id="kcm-img-file" onchange="kcmPickImage(this)"></label></div>' +
+                            '<input type="file" accept="image/*" class="hidden" id="kcm-img-file" onchange="kcmPickImage(this)"></label>' +
+                            (img ? '<button type="button" onclick="kcmRemoveImage()" class="mt-2 w-full px-3 py-2 rounded-xl text-xs font-bold bg-white border border-rose-300 text-rose-600 hover:bg-rose-50" data-testid="kcm-remove-img">🗑 ลบรูปบัตร</button>' : '') + '</div>' +
                     '</div>' + flagsHtml + dupHtml +
                     '<div class="grid grid-cols-2 gap-2 text-[11px] text-slate-500"><div>สร้างเมื่อ: <b class="text-slate-700">' + escapeHtml(_kcmDT(c.created_at)) + '</b></div><div>ส่งยืนยันล่าสุด: <b class="text-slate-700">' + escapeHtml(_kcmDT(c.submitted_at)) + '</b></div></div>' +
                     (c.member_correction ? '<div class="text-[11px] bg-amber-50 border border-amber-200 text-amber-900 rounded-xl px-3 py-2 space-y-0.5" data-testid="kcm-correction"><div class="font-extrabold">✏️ สมาชิกแก้ไขรหัสบัตร — รอตรวจสอบ</div>' +
@@ -15226,24 +15227,71 @@ async function updateAllUserProfiles() {
                     (st === 'cancelled' ? '<div class="text-[11px] bg-rose-50 border border-rose-200 text-rose-700 rounded-xl px-3 py-2">🚫 ระงับเพราะ: <b>' + escapeHtml(c.cancel_reason || 'ไม่ระบุ') + '</b>' + (c.cancel_note ? ' — ' + escapeHtml(c.cancel_note) : '') + '<br><span class="text-rose-400">' + escapeHtml(_kcmDT(c.cancelled_at)) + ' · โดย ' + escapeHtml(c.cancelled_by || '-') + '</span></div>' : '') +
                     '<div class="flex flex-wrap gap-2" id="kcm-buttons">' + actions + '</div>' +
                     '<div id="kcm-action">' + (keep || '') + '</div>' +
+                    '<div data-testid="kcm-nl"><details id="kcm-nl-d" ' + (_kcm.nlOpen ? 'open ' : '') + 'ontoggle="_kcm.nlOpen = this.open"><summary class="text-xs font-bold text-slate-600 cursor-pointer" data-testid="kcm-nl-toggle">🔔 log การแจ้งเตือนลูกบ้าน <span id="kcm-nl-line" data-testid="kcm-nl-line" class="font-normal text-slate-400">กำลังโหลด...</span></summary><div id="kcm-nl-body" class="mt-2 text-[11px] text-slate-500"></div></details></div>' +
                     '<div><div class="text-xs font-bold text-slate-600 mb-1">🕘 ประวัติการทำรายการ</div><div id="kcm-history" class="text-[11px] text-slate-500">กำลังโหลด...</div></div>' +
                 '</div></div>';
             document.body.appendChild(ov);
             kcmHistory(c.id);
+            kcmNotifyLog(c.id);
         }
         async function kcmHistory(id) {
             const box = document.getElementById('kcm-history'); if (!box) return;
             try {
                 const res = await fetch(`${API_BASE_URL}/api/admin/audience/keycard_admin_history?id=${encodeURIComponent(id)}`);
                 const d = await res.json(); if (!res.ok) throw new Error(d.error || 'โหลดประวัติไม่สำเร็จ');
-                const label = { keycard_member_correct: 'ลูกบ้านแก้ไขรหัสบัตร', keycard_confirm: 'ลูกบ้านยืนยัน', keycard_cancel: 'ลูกบ้านระงับ', keycard_link_send: 'ส่งลิงก์ยืนยัน', keycard_admin_approve: 'แอดมินอนุมัติ', keycard_admin_set_image: 'แอดมินเปลี่ยนรูปบัตร', keycard_admin_request_fix: 'แอดมินแจ้งกลับ', keycard_admin_reconfirm: 'แอดมินให้ยืนยันใหม่', keycard_admin_mark_uploaded: 'แอดมินอัพลงบอร์ดแล้ว', keycard_admin_unmark_uploaded: 'แอดมินยกเลิกอัพลงบอร์ด', keycard_admin_suspend: 'แอดมินระงับ', keycard_admin_reactivate: 'แอดมินเปิดบัตร', keycard_admin_set_numbers: 'แอดมินแก้เลข/ผู้ใช้', keycard_admin_create: 'แอดมินเพิ่มบัตร' };
+                const label = { keycard_admin_remove_image: 'แอดมินลบรูปบัตร', keycard_member_correct: 'ลูกบ้านแก้ไขรหัสบัตร', keycard_confirm: 'ลูกบ้านยืนยัน', keycard_cancel: 'ลูกบ้านระงับ', keycard_link_send: 'ส่งลิงก์ยืนยัน', keycard_admin_approve: 'แอดมินอนุมัติ', keycard_admin_set_image: 'แอดมินเปลี่ยนรูปบัตร', keycard_admin_request_fix: 'แอดมินแจ้งกลับ', keycard_admin_reconfirm: 'แอดมินให้ยืนยันใหม่', keycard_admin_mark_uploaded: 'แอดมินอัพลงบอร์ดแล้ว', keycard_admin_unmark_uploaded: 'แอดมินยกเลิกอัพลงบอร์ด', keycard_admin_suspend: 'แอดมินระงับ', keycard_admin_reactivate: 'แอดมินเปิดบัตร', keycard_admin_set_numbers: 'แอดมินแก้เลข/ผู้ใช้', keycard_admin_create: 'แอดมินเพิ่มบัตร' };
                 const rows = d.history || [];
                 box.innerHTML = rows.length ? rows.map(h => {
                     const x = h.detail || {};
-                    const extra = [x.reason, x.note, x.from && x.to ? x.from + '→' + x.to : '', x.new ? 'เลขใหม่ ' + _kcmFmtNum(x.new.front, x.new.back) : '', x.old_front && x.new_front ? _kcmFmtNum(x.old_front, x.old_back) + ' → ' + _kcmFmtNum(x.new_front, x.new_back) : ''].filter(Boolean).join(' · ');
+                    const extra = [x.reason, x.note, x.image_removed ? 'ลบรูปบัตรออก' : '', x.from && x.to ? x.from + '→' + x.to : '', x.new ? 'เลขใหม่ ' + _kcmFmtNum(x.new.front, x.new.back) : '', x.old_front && x.new_front ? _kcmFmtNum(x.old_front, x.old_back) + ' → ' + _kcmFmtNum(x.new_front, x.new_back) : ''].filter(Boolean).join(' · ');
                     return '<div class="py-1 border-b border-slate-50"><span class="text-slate-400">' + escapeHtml(_kcmDT(h.at)) + '</span> <b class="text-slate-700">' + escapeHtml(label[h.action] || h.action) + '</b>' + (extra ? ' <span>' + escapeHtml(extra) + '</span>' : '') + '</div>';
                 }).join('') : 'ยังไม่มีประวัติ';
             } catch (e) { box.textContent = e.message; }
+        }
+
+        // ── log การแจ้งเตือน LINE ถึงลูกบ้าน (ส่งแล้ว/ล้มเหลว/ไม่ได้ติ๊กแจ้ง) ──
+        const _KCM_NL_ACTION = { approve: 'อนุมัติบัตร', request_fix: 'ขอให้แก้ไข', mark_uploaded: 'อัพลงบอร์ดแล้ว', reconfirm: 'ให้ยืนยันใหม่', fee_block: 'บล็อกบัตร (ค้างส่วนกลาง)', fee_unblock: 'ปลดบล็อกบัตร', suspend: 'ระงับบัตร', reactivate: 'เปิดใช้บัตร', move_house: 'ย้ายบ้าน', renewal_approve: 'อนุมัติต่ออายุ', renewal_reject: 'ปฏิเสธต่ออายุ' };
+        const _kcmNlAct = (a) => _KCM_NL_ACTION[a] || a || '—';
+        function _kcmNlResult(n) { return n.kind === 'skipped' ? 'ไม่ได้ติ๊กแจ้ง' : n.kind === 'no_recipient' ? 'บ้านนี้ไม่มีสมาชิกผูก LINE' : n.ok ? '✅ ส่งแล้ว' : '❌ ส่งไม่สำเร็จ' + (n.http_status ? ' (' + n.http_status + ')' : ''); }
+        async function kcmNotifyLog(id) {
+            const line = () => document.getElementById('kcm-nl-line'), body = () => document.getElementById('kcm-nl-body');
+            if (!line() || !body()) return;
+            const still = () => String(_kcm.openId) === String(id) && line() && body();
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/keycard_admin_notify_log?id=${encodeURIComponent(id)}`);
+                const d = await res.json().catch(() => ({})); if (!res.ok) throw new Error(d.error || 'HTTP ' + res.status);
+                if (!still()) return;
+                const m = d.summary || {}, rec = d.recipients || [], rows = d.rows || [];
+                if (d.table_missing) {
+                    line().textContent = '· ยังไม่ได้สร้างตาราง log'; line().className = 'font-normal text-amber-600';
+                    body().innerHTML = '<div class="bg-amber-50 text-amber-800 rounded-xl px-3 py-2" data-testid="kcm-nl-missing">ยังไม่ได้สร้างตารางเก็บ log — รันไฟล์ <b>migration_keycard_notify_log.sql</b> ใน Supabase ก่อน จึงจะเห็นประวัติการส่ง</div>'; return;
+                }
+                if (m.last_sent_at) { line().textContent = '· ส่งล่าสุด ' + _kcmDT(m.last_sent_at); line().className = 'font-bold text-emerald-600'; }
+                else if (m.last_attempt_at) { line().textContent = m.last_attempt_kind === 'skipped' ? '· ยังไม่เคยส่ง (ไม่ได้ติ๊กแจ้ง)' : m.last_attempt_kind === 'no_recipient' ? '· ยังไม่เคยส่ง (ไม่มีสมาชิกผูก LINE)' : '· ส่งไม่สำเร็จ'; line().className = 'font-bold text-rose-600'; }
+                else { line().textContent = '· ยังไม่เคยแจ้ง'; line().className = 'font-normal text-slate-400'; }
+                body().innerHTML =
+                    '<div data-testid="kcm-nl-summary">ส่งแล้ว <b class="text-emerald-600">' + (m.sent || 0) + '</b> · ส่งไม่สำเร็จ <b class="text-rose-600">' + (m.failed || 0) + '</b> · ไม่ได้ติ๊กแจ้ง <b>' + (m.skipped || 0) + '</b>' + (m.no_recipient ? ' · ไม่มีผู้รับ <b>' + m.no_recipient + '</b>' : '') + '</div>' +
+                    (rec.length ? rec.map(r => '<div class="flex justify-between gap-2 py-1 border-b border-slate-50" data-testid="kcm-nl-recipient"><span><b class="text-slate-700">' + escapeHtml(r.name || 'สมาชิก') + '</b>' + (r.last_at ? ' <span class="text-slate-400">· ล่าสุด ' + escapeHtml(_kcmNlAct(r.last_action)) + ' ' + escapeHtml(_kcmDT(r.last_at)) + '</span>' : '') + '</span><b class="whitespace-nowrap ' + (!r.last_at ? 'text-slate-400' : r.last_ok ? 'text-emerald-600' : 'text-rose-600') + '">' + (!r.last_at ? '— ยังไม่เคยแจ้ง' : r.last_ok ? '✅ ส่งแล้ว' : '❌ ส่งไม่สำเร็จ') + '</b></div>').join('')
+                        : '<div class="bg-amber-50 text-amber-700 rounded-xl px-3 py-2 mt-1" data-testid="kcm-nl-norecip">บ้านนี้ไม่มีสมาชิกที่ผูก LINE — แจ้งเตือนไปไม่ถึงใคร</div>') +
+                    (rows.length ? '<div class="mt-2">' + rows.map(n => '<div class="py-1 border-b border-slate-50" data-testid="kcm-nl-row"><div class="flex justify-between gap-2"><b class="text-slate-700">' + escapeHtml(_kcmNlAct(n.action)) + '</b><b class="whitespace-nowrap ' + (n.kind === 'push' ? (n.ok ? 'text-emerald-600' : 'text-rose-600') : 'text-slate-500') + '">' + escapeHtml(_kcmNlResult(n)) + '</b></div>' +
+                        (n.kind === 'push' ? '<div>ถึง ' + escapeHtml(n.to_name || 'สมาชิก') + (!n.ok && n.error ? ' <span class="text-rose-600">· ' + escapeHtml(n.error) + '</span>' : '') + '</div>' : '') + '<div class="text-slate-400">' + escapeHtml(_kcmDT(n.at)) + '</div></div>').join('') + '</div>'
+                        : '<div class="mt-2" data-testid="kcm-nl-empty">ยังไม่มีบันทึกการแจ้งเตือนของบัตรใบนี้</div>');
+            } catch (e) {
+                if (!still()) return;
+                line().textContent = '· โหลดไม่สำเร็จ'; line().className = 'font-bold text-rose-600'; body().textContent = 'โหลด log ไม่สำเร็จ: ' + e.message;
+            }
+        }
+        // 🗑 ลบรูปบัตร (ลูกบ้านต้องส่งใหม่) — ไฟล์ในที่เก็บถูกลบด้วย กู้คืนไม่ได้
+        async function kcmRemoveImage() {
+            const c = _kcm.byId[String(_kcm.openId)]; if (!c || !c.img || _kcm.busy) return;
+            const reason = prompt('ลบรูปบัตรของบ้าน ' + (c.house_number || '-') + ' ?\nรูปจะถูกลบออกจากระบบ (กู้คืนไม่ได้) เลขบัตรและสถานะไม่เปลี่ยน — ลูกบ้านต้องถ่ายรูปส่งใหม่\n\nเหตุผล (ไม่บังคับ) แล้วกด OK เพื่อลบ:', '');
+            if (reason === null) return;
+            _kcm.busy = true;
+            try {
+                await kcmPost({ action: 'remove_image', cardId: c.id, reason: String(reason).trim().slice(0, 200) });
+                showToast('✅ ลบรูปบัตรแล้ว', 'success');
+                _kcm.busy = false; await kcmReload();
+            } catch (e) { _kcm.busy = false; showToast('❌ ' + e.message, 'error'); }
         }
 
         // ── ฟอร์มการกระทำ (แสดงในหน้าต่างรายละเอียด) ──
@@ -15278,7 +15326,8 @@ async function updateAllUserProfiles() {
                 title = '🔄 ให้ลูกบ้านยืนยันบัตรใหม่'; color = 'bg-violet-500 hover:bg-violet-600'; cta = 'ให้ยืนยันใหม่';
                 body = '<label class="block text-xs font-bold text-slate-600 mb-1">เหตุผล *</label><select id="kcm-reason" class="' + inp + '">' + _kcmOpts(R.reconfirm || R.fix, '— เลือกเหตุผล —') + '</select>' +
                     '<textarea id="kcm-note" maxlength="200" rows="2" placeholder="รายละเอียดเพิ่มเติม (อื่น ๆ ต้องระบุ)" class="' + inp + ' mt-2"></textarea>' +
-                    '<div class="text-[11px] text-violet-600 mt-1">บัตรจะกลับเป็น "รอยืนยัน" — ลูกบ้านเห็นเหตุผลบนบัตรและกดยืนยันเอง (ส่งแล้วเป็น "รอตรวจสอบ" รอแอดมินอนุมัติ) · <b>ระบบไม่ส่ง LINE แจ้งลูกบ้าน</b> · ระหว่างนี้บัตรไม่เป็น "ใช้งานได้" — ตรวจสิทธิ์ที่เครื่องอ่านด้วย</div>';
+                    '<div class="text-[11px] text-violet-600 mt-1">บัตรจะกลับเป็น "รอยืนยัน" — ลูกบ้านเห็นเหตุผลบนบัตรและกดยืนยันเอง (ส่งแล้วเป็น "รอตรวจสอบ" รอแอดมินอนุมัติ) · <b>ระบบไม่ส่ง LINE แจ้งลูกบ้าน</b> · ระหว่างนี้บัตรไม่เป็น "ใช้งานได้" — ตรวจสิทธิ์ที่เครื่องอ่านด้วย</div>' +
+                    (c.img ? '<label class="flex items-start gap-2 text-xs text-rose-700 mt-2 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2 cursor-pointer"><input type="checkbox" id="kcm-rmimg" data-testid="kcm-rmimg" class="mt-0.5"><span><b>ลบรูปเดิมออกด้วย</b><br><span class="text-[11px] text-slate-500">ลูกบ้านต้องถ่ายรูปบัตรส่งใหม่ (ลบแล้วกู้คืนไม่ได้)</span></span></label>' : '');
             } else if (kind === 'suspend') {
                 title = '🚫 ระงับบัตร'; color = 'bg-rose-500 hover:bg-rose-600'; cta = 'ระงับ';
                 body = '<label class="block text-xs font-bold text-slate-600 mb-1">เหตุผล *</label><select id="kcm-reason" class="' + inp + '">' + _kcmOpts(R.cancel, '— เลือกเหตุผล —') + '</select>' +
@@ -15392,6 +15441,7 @@ async function updateAllUserProfiles() {
                 body.reason = val('kcm-reason'); body.note = val('kcm-note').trim(); body.notify = !!(document.getElementById('kcm-notify') || {}).checked;
                 if (!body.reason) { showToast('กรุณาเลือกเหตุผล', 'warning'); return; }
                 if (body.reason === 'อื่น ๆ' && body.note.length < 3) { showToast('เลือก "อื่น ๆ" ต้องระบุรายละเอียด', 'warning'); return; }
+                if (kind === 'reconfirm' && (document.getElementById('kcm-rmimg') || {}).checked) body.remove_image = true;
             }
             if (kind === 'fee_block' || kind === 'fee_unblock') {
                 const th = Number((_kcm.fee || {}).threshold) || 3, n = c.fee_months;
