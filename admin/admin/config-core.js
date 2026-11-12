@@ -254,6 +254,7 @@
       finally { if (timer) clearTimeout(timer); }
 
       if (!d || typeof d.registered !== 'boolean') return true;
+      try { window.__regGateInfo = { uid: uid, page: page, d: d }; } catch (e) { /* ignore */ }   // ให้หน้าเว็บใช้ผลซ้ำ (เช่น status_confirmed) ไม่ต้องเรียก API อีกรอบ
       if (d.registered && d.denied) {
         // 🧭 สิทธิ์เมนูตามบทบาท (ตั้งที่หน้าแอดมิน "สิทธิ์เมนูสมาชิก") — บทบาทนี้ใช้หน้านี้ไม่ได้
         showOverlay('ไม่มีสิทธิ์ใช้เมนูนี้', String(d.denied.message || 'บทบาทของท่านไม่มีสิทธิ์ใช้เมนูนี้ หากคิดว่าผิดพลาดกรุณาติดต่อนิติบุคคล'),
