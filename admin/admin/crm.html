@@ -1247,6 +1247,7 @@
                                 <span v-if="keyCardSummary.active" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-sky-100 text-sky-700" data-testid="kc-sum-waiting">รออัพลงบอร์ด {{ keyCardSummary.active }}</span>
                                 <span v-if="keyCardSummary.pending" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">รอยืนยัน {{ keyCardSummary.pending }}</span>
                                 <span v-if="keyCardSummary.reviewing" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">รอตรวจสอบ {{ keyCardSummary.reviewing }}</span>
+                                <span v-if="keyCardSummary.fee_blocked" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-600 text-white" data-testid="kc-sum-feeblocked">ระงับชั่วคราว {{ keyCardSummary.fee_blocked }}</span>
                                 <span v-if="keyCardSummary.cancelled" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">ระงับ {{ keyCardSummary.cancelled }} ใบ</span>
                             </div>
                         </div>
@@ -1276,6 +1277,7 @@
                                     : card.status === 'active' ? 'border-sky-300'
                                     : card.status === 'reviewing' ? 'border-blue-300'
                                     : card.status === 'cancelled' ? 'border-rose-200 opacity-60'
+                                    : card.status === 'fee_blocked' ? 'border-red-400'
                                     : 'border-amber-200'">
 
                             <!-- ─── 3D Flip Card ───────────────────────────── -->
@@ -1356,11 +1358,16 @@
                                     <span v-else-if="expOf('keycard', card.id).renew_opens_on && expOf('keycard', card.id).status === 'ok'" class="ml-auto text-slate-400" :data-testid="'kc-renew-opens-' + card.id">ต่ออายุได้ตั้งแต่ {{ formatThaiDate(expOf('keycard', card.id).renew_opens_on) }}</span>
                                 </div>
                                 <div v-else-if="card.expire_date" class="text-[10px] text-slate-400 mt-1">หมดอายุ {{ formatDate(card.expire_date) }}</div>
-                                <div v-if="card.status !== 'cancelled' && !cardNumbersFull(card)" class="mt-2 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5" data-testid="kc-incomplete">
+                                <div v-if="card.status === 'fee_blocked'" class="mt-2 text-[11px] text-red-800 bg-red-50 border border-red-300 rounded-lg px-2.5 py-2" data-testid="kc-fee-blocked-info">
+                                    <div class="font-bold"><i class="fa-solid fa-ban"></i> คีย์การ์ดถูกระงับการใช้งานชั่วคราว — ค้างค่าส่วนกลาง{{ card.fee_blocked_months ? ' ' + card.fee_blocked_months + ' เดือน' : '' }}</div>
+                                    <div class="mt-0.5">กรุณาชำระค่าส่วนกลางที่ค้างและติดต่อนิติบุคคล เมื่อชำระแล้วนิติฯ จะเปิดใช้บัตรให้อีกครั้ง</div>
+                                    <div v-if="card.fee_blocked_at" class="text-[10px] text-red-400 mt-0.5">ตั้งแต่ {{ formatDate(card.fee_blocked_at) }}</div>
+                                </div>
+                                <div v-if="card.status !== 'cancelled' && card.status !== 'fee_blocked' && !cardNumbersFull(card)" class="mt-2 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5" data-testid="kc-incomplete">
                                     <i class="fa-solid fa-triangle-exclamation"></i> เลขบัตรยังไม่ครบ (ชุดหน้า 10 หลัก · ชุดหลัง 8 หลัก) — กดแก้ไขเพื่อพิมพ์เลขที่เหลือ
                                 </div>
                                 <!-- 🆕 นิติฯ แจ้งกลับให้ตรวจ/แก้ไข -->
-                                <div v-if="card.status !== 'cancelled' && card.review_reason" class="mt-2 text-[11px] text-orange-800 bg-orange-50 border border-orange-300 rounded-lg px-2.5 py-2" data-testid="kc-review-note">
+                                <div v-if="card.status !== 'cancelled' && card.status !== 'fee_blocked' && card.review_reason" class="mt-2 text-[11px] text-orange-800 bg-orange-50 border border-orange-300 rounded-lg px-2.5 py-2" data-testid="kc-review-note">
                                     <div class="font-bold"><i class="fa-solid fa-bell"></i> นิติฯ แจ้งให้ตรวจสอบ: {{ card.review_reason }}</div>
                                     <div v-if="card.review_note" class="mt-0.5">{{ card.review_note }}</div>
                                     <button @click="openCardConfirmModal(card, card.status !== 'pending')" class="mt-1.5 px-3 py-1 rounded-lg bg-orange-500 text-white font-bold text-[11px]">แก้ไข / ยืนยันใหม่</button>
@@ -1379,19 +1386,21 @@
                                             : card.status === 'active' ? 'bg-sky-100 text-sky-700'
                                             : card.status === 'reviewing' ? 'bg-blue-100 text-blue-700'
                                             : card.status === 'cancelled' ? 'bg-slate-100 text-slate-500'
+                                            : card.status === 'fee_blocked' ? 'bg-red-600 text-white'
                                             : 'bg-amber-100 text-amber-700'">
                                     <i :class="card.status === 'uploaded' ? 'fa-solid fa-check-circle'
                                               : card.status === 'active' ? 'fa-solid fa-hourglass-half'
                                               : card.status === 'reviewing' ? 'fa-solid fa-magnifying-glass'
                                               : card.status === 'cancelled' ? 'fa-solid fa-xmark-circle'
+                                              : card.status === 'fee_blocked' ? 'fa-solid fa-ban'
                                               : 'fa-solid fa-clock'"></i>
                                     <span>{{ keyCardStatusLabel(card.status) }}</span>
                                 </div>
                                 <div v-if="card.status === 'active'" class="order-last text-[11px] text-sky-700 bg-sky-50 border border-sky-200 rounded-lg px-2.5 py-1.5 w-full" data-testid="kc-waiting-note">นิติฯ อนุมัติแล้ว — กำลังอัพบัตรลงบอร์ดระบบ <b>ยังใช้งานไม่ได้</b> จนกว่าจะอัพเสร็จ</div>
-                                <button v-if="card.status !== 'cancelled'" @click="openCardConfirmModal(card, card.status !== 'pending')" :data-testid="'kc-edit-' + card.id" class="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs" title="แก้ไข">
+                                <button v-if="card.status !== 'cancelled' && card.status !== 'fee_blocked'" @click="openCardConfirmModal(card, card.status !== 'pending')" :data-testid="'kc-edit-' + card.id" class="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs" title="แก้ไข">
                                     <i class="fa-solid fa-pen"></i>
                                 </button>
-                                <button v-if="card.status !== 'cancelled'" @click="cancelKeyCard(card)" class="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs" title="ระงับ">
+                                <button v-if="card.status !== 'cancelled' && card.status !== 'fee_blocked'" @click="cancelKeyCard(card)" class="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs" title="ระงับ">
                                     <i class="fa-solid fa-trash"></i>
                                 </button>
                                 <button v-if="card.img" @click.stop="viewCardImage(card)" class="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs" title="ดูรูปบัตร">
@@ -2768,14 +2777,30 @@
                 </div>
                 <div v-if="kcaMigrated === false" class="mb-4 p-3 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800">ยังไม่ได้รัน <b>migration_keycard_mgmt.sql</b> — การระงับ/ขอแก้ไขอาจใช้ไม่ได้จนกว่าจะรัน</div>
 
+                <div v-if="kcaFee.migrated === false" class="mb-3 p-3 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800" data-testid="kca-fee-nomig">ยังไม่ได้รัน <b>migration_keycard_fee_block.sql</b> — ปุ่มบล็อกคีย์การ์ดค้างค่าส่วนกลางจะใช้ไม่ได้จนกว่าจะรัน</div>
+                <div v-else-if="kcaLoaded && kcaFee.checked === false" class="mb-3 p-3 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800" data-testid="kca-fee-unchecked">โหลดข้อมูลค่าส่วนกลางไม่สำเร็จ — ตอนนี้ยังไม่แสดงเดือนที่ค้าง (ยังบล็อกเองได้โดยแอดมินตรวจสอบเอง)</div>
+
                 <!-- ตัวกรองสถานะ (กดเพื่อกรอง) -->
-                <div class="grid grid-cols-5 gap-1.5 mb-3" data-testid="kca-chips">
+                <div class="grid grid-cols-3 gap-1.5 mb-3" data-testid="kca-chips">
                     <button v-for="c in kcaChips" :key="c.key" @click="kcaFilter = c.key; kcaPage = 1" :data-testid="'kca-chip-' + c.key"
                             class="rounded-2xl py-2 px-1 text-center border-2 transition-all"
                             :class="kcaFilter === c.key ? c.on : 'bg-white border-transparent shadow-sm'">
                         <div class="text-lg font-extrabold leading-none" :class="kcaFilter === c.key ? '' : c.text">{{ kcaCount(c.key) }}</div>
                         <div class="text-[10px] font-bold mt-1 text-slate-500 leading-tight">{{ c.label }}</div>
                     </button>
+                </div>
+
+                <div v-if="kcaFilter === 'fee'" class="mb-3" data-testid="kca-fee-panel">
+                    <div class="p-3 rounded-2xl bg-red-50 border border-red-200 text-[11px] text-red-800 leading-snug mb-2">บ้านที่ค้างค่าส่วนกลางตั้งแต่ <b>{{ kcaFee.threshold }} เดือน</b> ขึ้นไปจะใช้คีย์การ์ดไม่ได้ — แนะนำให้กดบล็อก (บัตรที่บล็อกแล้วจะอยู่ในแถบนี้ จนกว่าจะปลดบล็อก)</div>
+                    <div class="grid grid-cols-3 gap-1.5">
+                        <button @click="kcaFeeSub = 'all'; kcaPage = 1" data-testid="kca-feesub-all" class="py-2 rounded-xl text-[11px] font-bold border-2" :class="kcaFeeSub === 'all' ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-transparent text-slate-600 shadow-sm'">ทั้งหมด {{ kcaFeeCount('should') + kcaFeeCount('blocked') }}</button>
+                        <button @click="kcaFeeSub = 'should'; kcaPage = 1" data-testid="kca-feesub-should" class="py-2 rounded-xl text-[11px] font-bold border-2" :class="kcaFeeSub === 'should' ? 'bg-red-500 border-red-500 text-white' : 'bg-white border-transparent text-red-600 shadow-sm'">ควรบล็อก {{ kcaFeeCount('should') }}</button>
+                        <button @click="kcaFeeSub = 'blocked'; kcaPage = 1" data-testid="kca-feesub-blocked" class="py-2 rounded-xl text-[11px] font-bold border-2" :class="kcaFeeSub === 'blocked' ? 'bg-red-700 border-red-700 text-white' : 'bg-white border-transparent text-red-700 shadow-sm'">บล็อกแล้ว {{ kcaFeeCount('blocked') }}</button>
+                    </div>
+                    <div v-if="kcaFeeSub !== 'blocked' && kcaFiltered.some(c => kcaFeeShould(c))" class="mt-2 p-3 rounded-2xl bg-white border border-red-200 flex items-center gap-2" data-testid="kca-fee-bulk-bar">
+                        <div class="flex-1 text-[11px] text-slate-600 leading-snug">ควรบล็อก <b>{{ kcaFiltered.filter(c => kcaFeeShould(c)).length }}</b> ใบ (ตามรายการที่แสดง/ค้นหา)</div>
+                        <button @click="kcaFeeBulkBlock()" :disabled="kcaBusy" data-testid="kca-fee-bulk" class="px-3 py-2 rounded-xl bg-red-600 text-white text-xs font-bold active:scale-95 disabled:opacity-50 whitespace-nowrap"><i class="fa-solid fa-ban"></i> บล็อกทั้งหมด</button>
+                    </div>
                 </div>
 
                 <button @click="kcaOpenDupCheck()" data-testid="kca-dupcheck-btn" class="w-full mb-3 py-2.5 px-3 rounded-2xl bg-white shadow-sm border-2 flex items-center gap-2 text-left active:scale-[0.99] transition"
@@ -2792,7 +2817,7 @@
                     <button @click="kcaBulkUploaded()" :disabled="kcaBusy" data-testid="kca-bulk-upload" class="px-3 py-2 rounded-xl bg-sky-500 text-white text-xs font-bold active:scale-95 disabled:opacity-50 whitespace-nowrap"><i class="fa-solid fa-tower-broadcast"></i> อัพลงบอร์ดแล้วทั้งหมด</button>
                 </div>
 
-                <div v-if="kcaPickable.length" class="mb-3 flex items-center gap-2 text-xs" data-testid="kca-pick-row">
+                <div v-if="kcaPickable.length && kcaFilter !== 'fee'" class="mb-3 flex items-center gap-2 text-xs" data-testid="kca-pick-row">
                     <button @click="kcaPickAll()" data-testid="kca-pick-all" class="px-3 py-2 rounded-xl bg-white shadow-sm font-bold text-emerald-700 border border-emerald-200 active:scale-95"><i class="fa-solid fa-check-double"></i> {{ kcaAllPicked ? 'ยกเลิกเลือกทั้งหมด' : 'เลือกทั้งหมดที่รออนุมัติ (' + kcaPickable.length + ')' }}</button>
                     <span class="text-slate-400">ติ๊กช่องซ้ายของบัตร หรือกดดูรูปแล้วกด "เลือกไว้อนุมัติ"</span>
                 </div>
@@ -2826,8 +2851,9 @@
                             </div>
                             <div class="font-mono text-[13px] font-bold text-slate-700 whitespace-nowrap overflow-hidden text-ellipsis">{{ formatKeycardNumber(c.front_number, c.back_number) }}</div>
                             <div class="text-[11px] text-slate-400 truncate">{{ c.holder_name || 'ไม่ระบุผู้ใช้บัตร' }}</div>
-                            <div v-if="(c.flags || []).length" class="flex flex-wrap gap-1 mt-1">
-                                <span v-for="f in c.flags" :key="f" class="text-[9px] font-bold px-1.5 py-0.5 rounded" :class="(kcaFlag(f) || [])[1]">{{ (kcaFlag(f) || [f])[0] }}</span>
+                            <div v-if="kcaFeeBadge(c)" class="mt-1"><span class="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" :class="kcaFeeBadge(c)[1]" :data-testid="'kca-fee-badge-' + c.id">{{ kcaFeeBadge(c)[0] }}</span></div>
+                            <div v-if="(c.flags || []).filter(f => f !== 'fee_arrears').length" class="flex flex-wrap gap-1 mt-1">
+                                <span v-for="f in c.flags.filter(x => x !== 'fee_arrears')" :key="f" class="text-[9px] font-bold px-1.5 py-0.5 rounded" :class="(kcaFlag(f) || [])[1]">{{ (kcaFlag(f) || [f])[0] }}</span>
                             </div>
                         </div>
                         <i class="fa-solid fa-chevron-right text-slate-300 self-center"></i>
@@ -3371,8 +3397,8 @@
                         </div>
                     </div>
 
-                    <div v-if="(kcaSel.flags || []).length" class="flex flex-wrap gap-1.5">
-                        <span v-for="f in kcaSel.flags" :key="f" class="text-[11px] font-bold px-2 py-1 rounded-lg" :class="(kcaFlag(f) || [])[1]"><i class="fa-solid fa-triangle-exclamation"></i> {{ (kcaFlag(f) || [f])[0] }}</span>
+                    <div v-if="(kcaSel.flags || []).filter(x => x !== 'fee_arrears').length" class="flex flex-wrap gap-1.5">
+                        <span v-for="f in kcaSel.flags.filter(x => x !== 'fee_arrears')" :key="f" class="text-[11px] font-bold px-2 py-1 rounded-lg" :class="(kcaFlag(f) || [])[1]"><i class="fa-solid fa-triangle-exclamation"></i> {{ (kcaFlag(f) || [f])[0] }}</span>
                     </div>
                     <div v-if="(kcaSel.duplicate_of || []).length" class="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 space-y-2" data-testid="kca-dup-box">
                         <div class="font-extrabold"><i class="fa-solid fa-clone"></i> เลขชุดหน้าซ้ำกับบัตรอีก {{ kcaSel.duplicate_of.length }} ใบ</div>
@@ -3410,6 +3436,20 @@
                         <div v-if="kcaSel.member_correction.previous_status === 'active' || kcaSel.member_correction.previous_status === 'uploaded'" class="font-bold text-orange-700">⚠️ บัตรนี้เคยอนุมัติ/อัพลงบอร์ดแล้ว — ตรวจเลขใหม่กับรูป แล้วแก้เลขบนบอร์ดระบบให้ตรงกัน</div>
                         <div class="text-amber-700">เทียบเลขใหม่กับรูปบัตรด้านบน แล้วกด "อนุมัติ" หรือ "ขอให้แก้ไข"</div>
                     </div>
+                    <div v-if="kcaSel.status === 'fee_blocked'" class="p-3 rounded-xl bg-red-50 border border-red-300 text-xs text-red-800 space-y-1" data-testid="kca-fee-blocked-box">
+                        <div class="font-extrabold text-sm"><i class="fa-solid fa-ban"></i> บล็อกคีย์การ์ด — ค้างค่าส่วนกลาง{{ kcaSel.fee_blocked_months ? ' ' + kcaSel.fee_blocked_months + ' เดือน' : '' }}</div>
+                        <div v-if="kcaSel.fee_blocked_at">บล็อกเมื่อ {{ kcaFmtDate(kcaSel.fee_blocked_at) }}<span v-if="kcaSel.fee_blocked_by"> · โดย {{ kcaSel.fee_blocked_by }}</span></div>
+                        <div v-if="kcaSel.fee_blocked_note">หมายเหตุ: {{ kcaSel.fee_blocked_note }}</div>
+                        <div>ตอนนี้บ้านนี้ค้าง: <b data-testid="kca-fee-now">{{ kcaSel.fee_months == null ? 'ตรวจไม่ได้' : kcaSel.fee_months + ' เดือน' }}</b><span v-if="kcaSel.fee_months != null && kcaSel.fee_months < (kcaFee.threshold || 3)" class="font-bold text-emerald-700"> — ต่ำกว่าเกณฑ์แล้ว ปลดบล็อกได้</span></div>
+                        <div v-if="kcaSel.fee_prev_status === 'uploaded'" class="font-bold text-orange-700">⚠️ บัตรนี้เคยอัพลงบอร์ดแล้ว — ต้องลบออกจากบอร์ดระบบ (ระบบไม่ลบให้อัตโนมัติ) · ถ้าปลดบล็อกจะกลับเป็น "รออัพลงบอร์ด"</div>
+                        <div v-if="(kcaSel.fee_unpaid || []).length" class="text-[11px] text-red-700">เดือนที่ค้าง: {{ kcaSel.fee_unpaid.join(', ') }}</div>
+                    </div>
+                    <div v-else-if="kcaSel.status !== 'cancelled' && kcaSel.fee_months != null && kcaSel.fee_months >= 1" class="p-3 rounded-xl border text-xs space-y-1" :class="kcaSel.fee_months >= (kcaFee.threshold || 3) ? 'bg-red-50 border-red-300 text-red-800' : 'bg-amber-50 border-amber-200 text-amber-800'" data-testid="kca-fee-box">
+                        <div class="font-extrabold text-sm">💰 บ้านนี้ค้างค่าส่วนกลาง {{ kcaSel.fee_months }} เดือน</div>
+                        <div v-if="kcaSel.fee_months >= (kcaFee.threshold || 3)" class="font-bold">ถึงเกณฑ์ {{ kcaFee.threshold || 3 }} เดือนแล้ว — คีย์การ์ดควรถูกระงับการใช้งาน แนะนำให้กด "บล็อกคีย์การ์ด"</div>
+                        <div v-else class="text-[11px]">ยังไม่ถึงเกณฑ์บล็อก ({{ kcaFee.threshold || 3 }} เดือน)</div>
+                        <div v-if="(kcaSel.fee_unpaid || []).length" class="text-[11px]">เดือนที่ค้าง: {{ kcaSel.fee_unpaid.join(', ') }}</div>
+                    </div>
                     <div v-if="kcaSel.status === 'cancelled'" class="p-3 rounded-xl bg-rose-50 text-xs text-rose-700">ระงับเพราะ: <b>{{ kcaSel.cancel_reason || '—' }}</b><span v-if="kcaSel.cancel_note"> · {{ kcaSel.cancel_note }}</span></div>
                     <div v-else-if="kcaSel.review_reason" class="p-3 rounded-xl bg-violet-50 text-xs text-violet-700">แจ้งให้แก้ไข: <b>{{ kcaSel.review_reason }}</b><span v-if="kcaSel.review_note"> · {{ kcaSel.review_note }}</span></div>
 
@@ -3440,7 +3480,7 @@
                     <div class="grid grid-cols-2 gap-2 pt-1">
                         <button v-if="kcaSel.status === 'pending' || kcaSel.status === 'reviewing'" @click="kcaApprove()" :disabled="kcaBusy" data-testid="kca-approve"
                                 class="col-span-2 py-3.5 rounded-2xl bg-emerald-500 text-white font-extrabold shadow-md active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-circle-check"></i> {{ kcaEditDirty ? 'บันทึกและอนุมัติบัตร' : 'ตรวจสอบแล้ว · อนุมัติบัตร' }}</button>
-                        <button v-if="kcaSel.status !== 'cancelled'" @click="kcaRequestFix()" :disabled="kcaBusy" data-testid="kca-fix"
+                        <button v-if="kcaSel.status !== 'cancelled' && kcaSel.status !== 'fee_blocked'" @click="kcaRequestFix()" :disabled="kcaBusy" data-testid="kca-fix"
                                 class="py-3 rounded-2xl bg-violet-100 text-violet-700 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-rotate-left"></i> ขอให้แก้ไข</button>
                         <button v-if="kcaSel.status === 'active'" @click="kcaMarkUploaded()" :disabled="kcaBusy" data-testid="kca-uploaded"
                                 class="col-span-2 py-3.5 rounded-2xl bg-sky-500 text-white font-extrabold shadow-md active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-tower-broadcast"></i> อัพลงบอร์ดแล้ว <span class="text-[10px] font-normal">(ใช้งานได้จริง)</span></button>
@@ -3448,6 +3488,10 @@
                                 class="col-span-2 py-2.5 rounded-2xl bg-sky-50 text-sky-700 font-bold text-xs active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-rotate-left"></i> ยกเลิกสถานะ "อัพลงบอร์ดแล้ว" <span class="font-normal">(กลับเป็นรออัพ)</span></button>
                         <button v-if="kcaSel.status === 'active' || kcaSel.status === 'reviewing' || kcaSel.status === 'uploaded'" @click="kcaReconfirm()" :disabled="kcaBusy" data-testid="kca-reconfirm"
                                 class="col-span-2 py-3 rounded-2xl bg-indigo-100 text-indigo-700 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-arrows-rotate"></i> ให้ยืนยันใหม่ <span class="text-[10px] font-normal">(กลับเป็น "รอยืนยัน" · เลือกส่ง LINE ได้)</span></button>
+                        <button v-if="kcaSel.status === 'fee_blocked'" @click="kcaFeeUnblock()" :disabled="kcaBusy" data-testid="kca-fee-unblock"
+                                class="col-span-2 py-3.5 rounded-2xl bg-emerald-500 text-white font-extrabold shadow-md active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-lock-open"></i> ปลดบล็อกคีย์การ์ด</button>
+                        <button v-if="kcaFeeCanBlock(kcaSel)" @click="kcaFeeBlock()" :disabled="kcaBusy || kcaFee.migrated === false" data-testid="kca-fee-block"
+                                class="col-span-2 rounded-2xl font-bold active:scale-95 transition-transform disabled:opacity-50" :class="kcaFeeShould(kcaSel) ? 'py-3.5 bg-red-600 text-white font-extrabold shadow-md' : 'py-2.5 bg-white border border-red-300 text-red-600 text-xs'"><i class="fa-solid fa-ban"></i> บล็อกคีย์การ์ด (ค้างค่าส่วนกลาง) <span v-if="!kcaFeeShould(kcaSel)" class="font-normal">· ยังไม่ถึงเกณฑ์</span></button>
                         <button v-if="kcaSel.status !== 'cancelled'" @click="kcaSuspend()" :disabled="kcaBusy" data-testid="kca-suspend"
                                 class="py-3 rounded-2xl bg-rose-100 text-rose-700 font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"><i class="fa-solid fa-ban"></i> ระงับบัตร</button>
                         <button v-if="kcaSel.status === 'cancelled'" @click="kcaReactivate()" :disabled="kcaBusy" data-testid="kca-reactivate"
@@ -3826,6 +3870,7 @@
                     keycardContactHouse: (function () { try { return String(appCfgIn('BRAND', 'keycard_contact_house', '998/5') || '').trim(); } catch (e) { return '998/5'; } })(),
                     // ─── 🪪 ADMIN: จัดการคีย์การ์ด ───
                     kcaLoading: false, kcaError: null, kcaCards: [], kcaReasons: { cancel: [], fix: [], reconfirm: [], roles: [], delete: [], move: [] }, kcaMigrated: null, kcaTruncated: false, kcaLoaded: false, kcaSeq: 0,
+                    kcaFee: { checked: null, threshold: 3, migrated: null }, kcaFeeSub: 'all',
                     kcaFilter: 'all', kcaQuery: '', kcaPage: 1, kcaPick: {}, kcaSel: null, kcaEdit: { front: '', back: '', holder: '' }, kcaBusy: false,
                     kcaHistOpen: false, kcaHist: [], kcaHistLoading: false, kcaPendingBadge: 0, kcaDupSheet: false, kcaDupTab: 'front', kcaDupCancelled: false,
                     // ─── 🏘️ ADMIN: ทะเบียนบ้าน & สมาชิก ───
@@ -3841,6 +3886,7 @@
                         { key: 'pending', label: 'รอยืนยัน', on: 'bg-amber-50 border-amber-400 text-amber-600', text: 'text-amber-600' },
                         { key: 'active', label: 'รออัพลงบอร์ด', on: 'bg-sky-50 border-sky-400 text-sky-600', text: 'text-sky-600' },
                         { key: 'uploaded', label: 'อัพลงบอร์ดแล้ว', on: 'bg-emerald-50 border-emerald-400 text-emerald-600', text: 'text-emerald-600' },
+                        { key: 'fee', label: 'ค้างส่วนกลาง', on: 'bg-red-50 border-red-400 text-red-600', text: 'text-red-600' },
                         { key: 'all', label: 'ทั้งหมด', on: 'bg-slate-100 border-slate-400 text-slate-700', text: 'text-slate-700' },
                     ],
                     keycardBackImg: (function () { try { return appCfgIn('BRAND', 'keycard_back_img', 'https://lh3.googleusercontent.com/d/1s17S_3RLuLx0iovtFNZVy2ttEYaHdc1n'); } catch (e) { return 'https://lh3.googleusercontent.com/d/1s17S_3RLuLx0iovtFNZVy2ttEYaHdc1n'; } })(),   // รูปหลังบัตร (เปลี่ยนได้ที่ config: BRAND.keycard_back_img)   // กัน prefetch/โหลดซ้อนกันเขียนทับรายการบัตรเต็ม
@@ -3984,19 +4030,24 @@
                 keyCardSummary() {
                     const rows = this.keyCards || [];
                     const c = (st) => rows.filter(r => r.status === st).length;
-                    return { total: rows.length, active: c('active'), uploaded: c('uploaded'), pending: c('pending'), reviewing: c('reviewing'), cancelled: c('cancelled') };
+                    return { total: rows.length, active: c('active'), uploaded: c('uploaded'), pending: c('pending'), reviewing: c('reviewing'), cancelled: c('cancelled'), fee_blocked: c('fee_blocked') };
                 },
                 // เลขเดิมที่ล็อกไว้ (ลบ/แก้ไม่ได้) + เลขเต็มหลังพิมพ์เพิ่ม
                 kcaFiltered() {
                     const f = this.kcaFilter, q = String(this.kcaQuery || '').trim().toLowerCase();
                     const digits = q.replace(/\D/g, '');
-                    let rows = this.kcaCards.filter(c => f === 'all' ? true : c.status === f);
+                    let rows = this.kcaCards.filter(c => f === 'all' ? true : f === 'fee' ? this.kcaFeeIn(c) : c.status === f);
+                    if (f === 'fee' && this.kcaFeeSub === 'should') rows = rows.filter(c => this.kcaFeeShould(c));
+                    if (f === 'fee' && this.kcaFeeSub === 'blocked') rows = rows.filter(c => c.status === 'fee_blocked');
                     if (q) {
                         const hq = this.hnNorm(q);   // 998/28 ต้องเจอ 998/028 (ไม่สนเลข 0 นำหน้า/ช่องว่าง)
                         rows = rows.filter(c => String(c.house_number || '').toLowerCase().includes(q)
                             || (hq && this.hnNorm(c.house_number).includes(hq))
                             || String(c.holder_name || '').toLowerCase().includes(q)
                             || (digits.length >= 3 && (this.kcStored(c.front_number, 10) + this.kcStored(c.back_number, 8)).includes(digits)));
+                    }
+                    if (f === 'fee') {   // ค้างมากสุดอยู่บน · ควรบล็อก (ยังไม่ได้บล็อก) ก่อนบล็อกแล้ว
+                        rows = rows.slice().sort((a, b) => ((b.status === 'fee_blocked' ? 0 : 1) - (a.status === 'fee_blocked' ? 0 : 1)) || ((b.fee_months || 0) - (a.fee_months || 0)) || String(a.house_number).localeCompare(String(b.house_number), 'th', { numeric: true }));
                     }
                     if (f === 'reviewing') {   // ที่ลูกบ้านยืนยันมาก่อน อยู่บนสุด
                         rows = rows.slice().sort((a, b) => String(a.submitted_at || a.created_at || '').localeCompare(String(b.submitted_at || b.created_at || '')));
@@ -4618,6 +4669,10 @@
                     }
                     if (card.status === 'cancelled') {
                         Swal.fire({ icon: 'info', title: 'คีย์การ์ดใบนี้ถูกระงับแล้ว', text: card.cancel_reason ? 'เหตุผล: ' + card.cancel_reason : '', confirmButtonText: 'ตกลง' });
+                        return;
+                    }
+                    if (card.status === 'fee_blocked') {
+                        Swal.fire({ icon: 'warning', title: 'คีย์การ์ดใบนี้ถูกระงับชั่วคราว', text: 'เนื่องจากค้างค่าส่วนกลาง — กรุณาชำระและติดต่อนิติบุคคลเพื่อเปิดใช้บัตรอีกครั้ง' });
                         return;
                     }
                     this.openCardConfirmModal(card, card.status !== 'pending');
@@ -5670,7 +5725,7 @@
                 // 📇 KEY CARD MANAGEMENT (port จาก kyecard.html)
                 // ════════════════════════════════════════════════════════════
                 keyCardStatusLabel(status) {
-                    return { pending: 'รอยืนยัน', reviewing: 'รอตรวจสอบ', active: 'รออัพลงบอร์ด', uploaded: 'ใช้งานได้', cancelled: 'ระงับ' }[status] || status;
+                    return { pending: 'รอยืนยัน', reviewing: 'รอตรวจสอบ', active: 'รออัพลงบอร์ด', uploaded: 'ใช้งานได้', cancelled: 'ระงับ', fee_blocked: 'ระงับชั่วคราว (ค้างค่าส่วนกลาง)' }[status] || status;
                 },
 
                 // ════════════════════════════════════════════════════════════
@@ -7139,13 +7194,26 @@
                     if (!res.ok) { const e = new Error(d.error || ('HTTP ' + res.status)); e.status = res.status; e.data = d; throw e; }
                     return d;
                 },
-                kcaStatus(st) { return ({ pending: ['รอยืนยัน', 'bg-amber-100 text-amber-700'], reviewing: ['รอตรวจสอบ', 'bg-blue-100 text-blue-700'], active: ['รออัพลงบอร์ด', 'bg-sky-100 text-sky-700'], uploaded: ['อัพลงบอร์ดแล้ว', 'bg-emerald-100 text-emerald-700'], cancelled: ['ระงับ', 'bg-rose-100 text-rose-700'] })[st] || [st || '—', 'bg-slate-100 text-slate-600']; },
+                kcaStatus(st) { return ({ pending: ['รอยืนยัน', 'bg-amber-100 text-amber-700'], reviewing: ['รอตรวจสอบ', 'bg-blue-100 text-blue-700'], active: ['รออัพลงบอร์ด', 'bg-sky-100 text-sky-700'], uploaded: ['อัพลงบอร์ดแล้ว', 'bg-emerald-100 text-emerald-700'], cancelled: ['ระงับ', 'bg-rose-100 text-rose-700'], fee_blocked: ['บล็อก · ค้างส่วนกลาง', 'bg-red-600 text-white'] })[st] || [st || '—', 'bg-slate-100 text-slate-600']; },
                 kcaFlag(f) {
-                    return ({ incomplete: ['เลขไม่ครบ', 'bg-amber-100 text-amber-800'], duplicate: ['ชุดหน้าซ้ำ', 'bg-rose-100 text-rose-700'], duplicate_back: ['ชุดหลังซ้ำ', 'bg-orange-100 text-orange-700'], no_img: ['ไม่มีรูปบัตร', 'bg-orange-100 text-orange-700'],
+                    return ({ incomplete: ['เลขไม่ครบ', 'bg-amber-100 text-amber-800'], duplicate: ['ชุดหน้าซ้ำ', 'bg-rose-100 text-rose-700'], duplicate_back: ['ชุดหลังซ้ำ', 'bg-orange-100 text-orange-700'], fee_arrears: ['ควรบล็อก · ค้างส่วนกลาง', 'bg-red-100 text-red-700'], no_img: ['ไม่มีรูปบัตร', 'bg-orange-100 text-orange-700'],
                               no_holder: ['ไม่ระบุผู้ใช้บัตร', 'bg-slate-200 text-slate-600'], stale_review: ['ค้างตรวจ', 'bg-violet-100 text-violet-700'],
                               over_limit: ['บ้านมีบัตรมาก', 'bg-fuchsia-100 text-fuchsia-700'], no_members: ['บ้านไม่มีสมาชิก', 'bg-slate-200 text-slate-600'] })[f];
                 },
-                kcaCount(key) { return key === 'all' ? this.kcaCards.length : this.kcaCards.filter(c => c.status === key).length; },
+                kcaCount(key) { return key === 'all' ? this.kcaCards.length : key === 'fee' ? this.kcaCards.filter(c => this.kcaFeeIn(c)).length : this.kcaCards.filter(c => c.status === key).length; },
+                // 💰 ค้างค่าส่วนกลาง: อยู่ในแถบ "ค้างส่วนกลาง" = บล็อกแล้ว หรือ (ยังใช้งานอยู่และ) ค้างถึงเกณฑ์ → ควรบล็อก
+                kcaFeeShould(c) { return !!c && c.status !== 'fee_blocked' && (c.flags || []).includes('fee_arrears'); },
+                kcaFeeIn(c) { return !!c && (c.status === 'fee_blocked' || this.kcaFeeShould(c)); },
+                kcaFeeCount(sub) { return this.kcaCards.filter(c => sub === 'blocked' ? c.status === 'fee_blocked' : this.kcaFeeShould(c)).length; },
+                // ป้ายเดือนค้างในแต่ละใบ: [ข้อความ, class] หรือ null (ไม่ค้าง/ตรวจไม่ได้/บัตรที่ระงับ)
+                kcaFeeBadge(c) {
+                    if (!c || c.status === 'cancelled') return null;
+                    const n = Number(c.fee_months);
+                    if (c.status === 'fee_blocked') return ['⛔ ' + (c.fee_blocked_months ? 'ค้าง ' + c.fee_blocked_months + ' เดือน · ' : '') + 'บล็อกอยู่', 'bg-red-600 text-white'];
+                    if (!isFinite(n) || c.fee_months == null || n < 1) return null;
+                    const th = Number(this.kcaFee.threshold) || 3;
+                    return [(n >= th ? '💰 ค้างส่วนกลาง ' : '💰 ค้าง ') + n + ' เดือน', n >= th ? 'bg-red-100 text-red-700' : 'bg-amber-50 text-amber-700'];
+                },
                 kcaDigits(v, max) { return String(v == null ? '' : v).replace(/\D/g, '').slice(0, max); },
                 kcaFmtDay(v) { try { const d = new Date(String(v).slice(0, 10) + 'T00:00:00'); return isNaN(d) ? String(v || '') : d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }); } catch (e) { return String(v || ''); } },
                 kcaFmtDate(v) { try { return new Date(v).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return String(v || ''); } },
@@ -7170,6 +7238,7 @@
                         this.kcaCards = Array.isArray(d.cards) ? d.cards : [];
                         this.kcaReasons = Object.assign({ cancel: [], fix: [], reconfirm: [], roles: [], delete: [], move: [] }, d.reasons || {});
                         this.kcaMigrated = d.migrated === false ? false : true;
+                        this.kcaFee = Object.assign({ checked: null, threshold: 3, migrated: null }, d.fee || {});
                         this.kcaTruncated = !!d.truncated;
                         this.kcaLoaded = true;
                         this.kcaPendingBadge = this.kcaCount('reviewing');
@@ -7397,6 +7466,68 @@
                 async kcaReconfirm() {
                     const v = await this.kcaReasonDialog('ให้ลูกบ้านยืนยันบัตรใหม่?', (this.kcaReasons.reconfirm && this.kcaReasons.reconfirm.length) ? this.kcaReasons.reconfirm : this.kcaReasons.fix, '#4f46e5', 'ให้ยืนยันใหม่', { notifyHint: 'ส่งเหตุผลพร้อมลิงก์ให้ลูกบ้านเปิดยืนยันบัตรใหม่ได้ทันที (ไม่ติ๊ก = ลูกบ้านเห็นในแอปเท่านั้น)' }); if (!v) return;
                     await this.kcaRun({ action: 'reconfirm', reason: v.reason, note: v.note, notify: !!v.notify }, 'ส่งกลับเป็น "รอยืนยัน" แล้ว');
+                },
+                kcaFeeCanBlock(c) { return !!c && ['pending', 'reviewing', 'active', 'uploaded'].includes(c.status); },
+                // ⛔ บล็อกคีย์การ์ด (ค้างค่าส่วนกลาง) — ติ๊กส่ง LINE ได้ · ยังไม่ถึงเกณฑ์/ตรวจไม่ได้ → ยืนยันซ้ำแล้วส่ง force
+                async kcaFeeBlock() {
+                    const c = this.kcaSel; if (!c || this.kcaBusy) return;
+                    const th = Number(this.kcaFee.threshold) || 3, n = c.fee_months, unknown = n == null, below = !unknown && n < th;
+                    const warn = unknown ? 'ตรวจเดือนค้างไม่ได้ในตอนนี้ — ยืนยันเองว่าบ้านนี้ค้างถึงเกณฑ์'
+                        : below ? `บ้านนี้ค้าง ${n} เดือน ยังไม่ถึงเกณฑ์ ${th} เดือน — จะบล็อกเองโดยแอดมินสั่ง` : `บ้านนี้ค้างค่าส่วนกลาง ${n} เดือน (เกณฑ์ ${th} เดือน)`;
+                    const { isConfirmed, value } = await Swal.fire({
+                        title: 'บล็อกคีย์การ์ดใบนี้?', icon: 'warning', showCancelButton: true, focusConfirm: false, confirmButtonColor: '#dc2626', confirmButtonText: 'บล็อกบัตร', cancelButtonText: 'ยกเลิก',
+                        html: `<div style="font-size:13px;text-align:left;line-height:1.55"><div style="padding:8px 10px;border-radius:10px;background:${below || unknown ? '#fffbeb' : '#fef2f2'};color:${below || unknown ? '#92400e' : '#991b1b'};font-weight:700">${this.kcaEsc(warn)}</div>
+                               <div style="margin-top:8px;color:#475569">บัตรจะอยู่ในแถบ "ค้างส่วนกลาง" และลูกบ้านแก้ไข/ยกเลิกบัตรเองไม่ได้จนกว่าจะปลดบล็อก${c.status === 'uploaded' ? '<br><b style="color:#c2410c">⚠️ บัตรนี้อัพลงบอร์ดแล้ว — ระบบไม่ลบออกจากบอร์ดให้ ต้องลบเอง</b>' : ''}</div></div>
+                               <textarea id="kca-fee-note" class="swal2-textarea" maxlength="300" placeholder="หมายเหตุ (ไม่บังคับ)" style="margin:10px 0 0;width:100%;font-size:13px"></textarea>
+                               <label style="display:flex;align-items:flex-start;gap:10px;margin-top:12px;padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:12px;text-align:left;cursor:pointer">
+                                   <input type="checkbox" id="kca-fee-notify" data-testid="kca-fee-notify" style="width:20px;height:20px;margin-top:1px;accent-color:#dc2626;flex:none">
+                                   <span style="font-size:13px;line-height:1.45"><b>ส่งแจ้งเตือน LINE ถึงลูกบ้าน</b><br><span style="font-size:11.5px;color:#64748b">แจ้งว่าบัตรถูกระงับชั่วคราวเพราะค้างค่าส่วนกลาง (ไม่ติ๊ก = ลูกบ้านเห็นในแอปเท่านั้น)</span></span></label>`,
+                        preConfirm: () => ({ note: (document.getElementById('kca-fee-note').value || '').trim(), notify: !!document.getElementById('kca-fee-notify').checked })
+                    });
+                    if (!isConfirmed) return;
+                    const d = await this.kcaRun({ action: 'fee_block', note: value.note, notify: value.notify, force: below || unknown }, 'บล็อกคีย์การ์ดแล้ว');
+                    if (d && d.was_uploaded) Swal.fire({ icon: 'warning', title: 'อย่าลืมลบออกจากบอร์ด', text: 'บัตรใบนี้เคยอัพลงบอร์ดแล้ว — ระบบยังไม่ได้ลบเลขบัตรออกจากบอร์ดให้' });
+                },
+                async kcaFeeUnblock() {
+                    const c = this.kcaSel; if (!c || this.kcaBusy) return;
+                    const th = Number(this.kcaFee.threshold) || 3, n = c.fee_months, still = n != null && n >= th;
+                    const { isConfirmed, value } = await Swal.fire({
+                        title: 'ปลดบล็อกคีย์การ์ด?', icon: 'question', showCancelButton: true, focusConfirm: false, confirmButtonColor: '#10b981', confirmButtonText: 'ปลดบล็อก', cancelButtonText: 'ยกเลิก',
+                        html: `<div style="font-size:13px;text-align:left;line-height:1.55">${still ? `<div style="padding:8px 10px;border-radius:10px;background:#fef2f2;color:#991b1b;font-weight:700;margin-bottom:8px">บ้านนี้ยังค้าง ${n} เดือน (เกณฑ์ ${th} เดือน) — ปลดบล็อกต่อเมื่อชำระแล้วหรือแอดมินอนุโลม</div>` : ''}
+                               <div style="color:#475569">${c.fee_prev_status === 'uploaded' ? 'บัตรเคยอัพลงบอร์ดแล้ว — หลังปลดบล็อกจะกลับเป็น "รออัพลงบอร์ด" ต้องอัพเลขลงบอร์ดใหม่' : 'บัตรจะกลับไปสถานะก่อนถูกบล็อก'}</div></div>
+                               <label style="display:flex;align-items:flex-start;gap:10px;margin-top:12px;padding:10px 12px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:12px;text-align:left;cursor:pointer">
+                                   <input type="checkbox" id="kca-fee-notify" data-testid="kca-fee-notify" style="width:20px;height:20px;margin-top:1px;accent-color:#10b981;flex:none">
+                                   <span style="font-size:13px;line-height:1.45"><b>ส่งแจ้งเตือน LINE ถึงลูกบ้าน</b><br><span style="font-size:11.5px;color:#64748b">แจ้งว่าเปิดใช้บัตรอีกครั้งแล้ว</span></span></label>`,
+                        preConfirm: () => ({ notify: !!document.getElementById('kca-fee-notify').checked })
+                    });
+                    if (!isConfirmed) return;
+                    await this.kcaRun({ action: 'fee_unblock', notify: value.notify, force: still }, 'ปลดบล็อกแล้ว');
+                },
+                // ⛔ บล็อกทุกใบที่ "ควรบล็อก" ตามรายการที่แสดง (ไม่ force → เซิร์ฟเวอร์ตรวจเกณฑ์ซ้ำ)
+                async kcaFeeBulkBlock() {
+                    if (this.kcaBusy) return;
+                    const rows = this.kcaFiltered.filter(c => this.kcaFeeShould(c));
+                    if (!rows.length) return;
+                    const houses = Array.from(new Set(rows.map(c => String(c.house_number)))), upl = rows.filter(c => c.status === 'uploaded').length;
+                    const { isConfirmed, value } = await Swal.fire({
+                        title: `บล็อก ${rows.length} ใบ?`, icon: 'warning', showCancelButton: true, focusConfirm: false, confirmButtonColor: '#dc2626', confirmButtonText: 'บล็อกทั้งหมด', cancelButtonText: 'ยกเลิก',
+                        html: `<div style="font-size:13px;text-align:left;line-height:1.55;color:#475569">บ้านที่ค้างค่าส่วนกลางถึงเกณฑ์ ${this.kcaFee.threshold || 3} เดือน: <b>${this.kcaEsc(houses.slice(0, 12).join(', '))}${houses.length > 12 ? ' …' : ''}</b>${upl ? `<br><b style="color:#c2410c">⚠️ ${upl} ใบอัพลงบอร์ดแล้ว — ต้องลบออกจากบอร์ดเอง</b>` : ''}</div>
+                               <label style="display:flex;align-items:flex-start;gap:10px;margin-top:12px;padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:12px;text-align:left;cursor:pointer">
+                                   <input type="checkbox" id="kca-fee-notify" data-testid="kca-fee-notify" style="width:20px;height:20px;margin-top:1px;accent-color:#dc2626;flex:none">
+                                   <span style="font-size:13px;line-height:1.45"><b>ส่งแจ้งเตือน LINE ถึงลูกบ้าน</b><br><span style="font-size:11.5px;color:#64748b">ส่งบ้านละ 1 ข้อความ</span></span></label>`,
+                        preConfirm: () => ({ notify: !!document.getElementById('kca-fee-notify').checked })
+                    });
+                    if (!isConfirmed) return;
+                    this.kcaBusy = true;
+                    try {
+                        const d = await this.kcaApi('keycard_admin_action', { method: 'POST', body: JSON.stringify({ action: 'fee_block_bulk', ids: rows.map(c => c.id).slice(0, 200), notify: value.notify }) });
+                        const why = (d.skipped_detail || []).slice(0, 6).map(x => `• ${this.kcaEsc(x.house ? 'บ้าน ' + x.house : 'id ' + x.id)}: ${this.kcaEsc(x.reason)}`).join('<br>');
+                        await Swal.fire({ icon: d.skipped ? 'warning' : 'success', title: `บล็อกแล้ว ${d.blocked} ใบ`, timer: d.skipped ? undefined : 1800, showConfirmButton: !!d.skipped,
+                            html: (d.skipped ? `<div style="font-size:13px;text-align:left;line-height:1.6"><b>ข้าม ${d.skipped} ใบ</b><br>${why}${d.skipped > 6 ? '<br>…' : ''}</div>` : '') + (d.was_uploaded ? `<div style="font-size:12px;color:#c2410c;margin-top:6px">⚠️ ${d.was_uploaded} ใบอัพลงบอร์ดแล้ว — อย่าลืมลบออกจากบอร์ด</div>` : '') });
+                        this.kcaBusy = false;
+                        await this.loadKcAdmin();
+                    } catch (e) { Swal.fire('ไม่สำเร็จ', e.message, 'error'); }
+                    finally { this.kcaBusy = false; }
                 },
                 async kcaSuspend() {
                     const v = await this.kcaReasonDialog('ระงับคีย์การ์ดใบนี้?', this.kcaReasons.cancel, '#f43f5e', 'ระงับ'); if (!v) return;
