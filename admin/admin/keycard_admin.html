@@ -99,6 +99,9 @@ tr.row.sel.picked td{background:#EAF3DD}
 .st-active{background:#E0F2FE;color:#0369A1}
 .st-uploaded{background:#D1FAE5;color:#047857}
 .st-cancelled{background:#FFE4E6;color:#BE123C}
+.st-fee_blocked{background:#DC2626;color:#fff}
+.flag.fl-fee_arrears{background:#FEE2E2;color:#B91C1C}
+.feechip{display:inline-flex;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;margin-top:3px}
 .flag{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:1px 7px;border-radius:6px;margin:2px 4px 0 0;white-space:nowrap}
 .fl-incomplete{background:#FEF3C7;color:#92400E}.fl-duplicate{background:#FFE4E6;color:#BE123C}.fl-duplicate_back{background:#FFEDD5;color:#C2410C}.fl-no_img{background:#FFEDD5;color:#C2410C}
 .fl-no_holder{background:#E8ECEF;color:#5E6E7B}.fl-stale_review{background:#EDE9FE;color:#6D28D9}.fl-over_limit{background:#FAE8FF;color:#A21CAF}.fl-no_members{background:#E8ECEF;color:#5E6E7B}
@@ -146,7 +149,7 @@ tr.row.sel.picked td{background:#EAF3DD}
 .act:disabled{opacity:.5;cursor:not-allowed}
 .act.go{background:#12805C}.act.go:hover{background:#0E6A4C}
 .act.board{background:#0B7BB5}.act.board:hover{background:#09679A}
-.act.neutral{background:var(--ink)}
+.act.neutral{background:var(--ink)}.act.warn{background:#DC2626}.act.warn:hover{background:#B91C1C}
 .sub{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
 .sub button{height:34px;border-radius:8px;border:1px solid var(--line-strong);background:#fff;font:inherit;font-size:12.5px;font-weight:700;color:var(--ink);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
 .sub button:hover{background:#F4F7F8}
@@ -311,7 +314,8 @@ tr.row.sel.picked td{background:#EAF3DD}
               <td>{{ c.holder_name || '—' }}</td>
               <td>
                 <span class="pill" :class="'st-' + c.status">{{ statusLabel(c.status) }}</span>
-                <div v-if="(c.flags || []).length"><span v-for="f in c.flags" :key="f" class="flag" :class="'fl-' + f">{{ flagLabel(f) }}</span></div>
+                <div v-if="feeChip(c)"><span class="feechip" :style="feeChip(c).s" :data-testid="'kc-fee-chip-' + c.id">{{ feeChip(c).t }}</span></div>
+                <div v-if="(c.flags || []).filter((f) => f !== 'fee_arrears').length"><span v-for="f in c.flags.filter((x) => x !== 'fee_arrears')" :key="f" class="flag" :class="'fl-' + f">{{ flagLabel(f) }}</span></div>
                 <div v-if="c.member_correction" class="flag fl-stale_review" style="background:#FFF1CC;color:#7A4B06"><i class="fa-solid fa-pen"></i> ลูกบ้านแก้เลข</div>
               </td>
               <td class="muted tnum" style="white-space:nowrap">{{ fmtDate(c.submitted_at || c.created_at) }}</td>
@@ -407,6 +411,20 @@ tr.row.sel.picked td{background:#EAF3DD}
               เหตุผล: <b>{{ sel.member_correction.reason || '—' }}</b><span v-if="sel.member_correction.note"> · {{ sel.member_correction.note }}</span> · {{ fmtDateTime(sel.member_correction.at) }}
               <div v-if="sel.member_correction.previous_status === 'active' || sel.member_correction.previous_status === 'uploaded'" class="mt-1" style="color:#B45309;font-weight:700">บัตรนี้เคยอนุมัติ/อัพลงบอร์ดแล้ว — ตรวจเลขใหม่กับรูป และแก้เลขบนบอร์ดระบบด้วย</div>
             </div>
+            <div v-if="sel.status === 'fee_blocked'" class="note rose" data-testid="kc-p-feeblocked" style="border-color:#FCA5A5">
+              <b><i class="fa-solid fa-ban"></i> บล็อกคีย์การ์ด — ค้างค่าส่วนกลาง{{ sel.fee_blocked_months ? ' ' + sel.fee_blocked_months + ' เดือน' : '' }}</b>
+              <div v-if="sel.fee_blocked_at">บล็อกเมื่อ {{ fmtDateTime(sel.fee_blocked_at) }}<span v-if="sel.fee_blocked_by"> · โดย {{ sel.fee_blocked_by }}</span></div>
+              <div v-if="sel.fee_blocked_note">หมายเหตุ: {{ sel.fee_blocked_note }}</div>
+              <div>ตอนนี้บ้านนี้ค้าง: <b data-testid="kc-p-fee-now">{{ sel.fee_months == null ? 'ตรวจไม่ได้' : sel.fee_months + ' เดือน' }}</b><span v-if="sel.fee_months != null && sel.fee_months < (fee.threshold || 3)" style="color:#047857;font-weight:700"> — ต่ำกว่าเกณฑ์แล้ว ปลดบล็อกได้</span></div>
+              <div v-if="sel.fee_prev_status === 'uploaded'" style="color:#C2410C;font-weight:700">⚠️ เคยอัพลงบอร์ดแล้ว — ต้องลบออกจากบอร์ดระบบเอง · ปลดบล็อกแล้วจะกลับเป็น “รออัพลงบอร์ด”</div>
+              <div v-if="(sel.fee_unpaid || []).length">เดือนที่ค้าง: {{ sel.fee_unpaid.join(', ') }}</div>
+            </div>
+            <div v-else-if="sel.status !== 'cancelled' && sel.fee_months != null && sel.fee_months >= 1" class="note" :class="sel.fee_months >= (fee.threshold || 3) ? 'rose' : 'amber'" data-testid="kc-p-fee">
+              <b>💰 บ้านนี้ค้างค่าส่วนกลาง {{ sel.fee_months }} เดือน</b>
+              <div v-if="sel.fee_months >= (fee.threshold || 3)" style="font-weight:700">ถึงเกณฑ์ {{ fee.threshold || 3 }} เดือนแล้ว — แนะนำให้กด “บล็อกคีย์การ์ด”</div>
+              <div v-else>ยังไม่ถึงเกณฑ์บล็อก ({{ fee.threshold || 3 }} เดือน)</div>
+              <div v-if="(sel.fee_unpaid || []).length">เดือนที่ค้าง: {{ sel.fee_unpaid.join(', ') }}</div>
+            </div>
             <div v-if="sel.status === 'cancelled'" class="note rose">ระงับเพราะ: <b>{{ sel.cancel_reason || '—' }}</b><span v-if="sel.cancel_note"> · {{ sel.cancel_note }}</span><span v-if="sel.cancelled_at"> · {{ fmtDateTime(sel.cancelled_at) }}</span></div>
             <div v-else-if="sel.review_reason" class="note violet">แจ้งให้ลูกบ้านแก้ไข: <b>{{ sel.review_reason }}</b><span v-if="sel.review_note"> · {{ sel.review_note }}</span></div>
 
@@ -442,9 +460,11 @@ tr.row.sel.picked td{background:#EAF3DD}
             <button v-if="sel.status === 'pending' || sel.status === 'reviewing'" class="act go" @click="approve()" :disabled="busy" data-testid="kc-approve"><i class="fa-solid fa-circle-check"></i> {{ editDirty ? 'บันทึกและอนุมัติบัตร' : 'ตรวจสอบแล้ว · อนุมัติบัตร' }}</button>
             <button v-if="sel.status === 'active'" class="act board" @click="markUploaded()" :disabled="busy" data-testid="kc-uploaded"><i class="fa-solid fa-tower-broadcast"></i> อัพลงบอร์ดแล้ว</button>
             <button v-if="sel.status === 'uploaded'" class="act neutral" style="height:38px;font-size:13.5px" @click="unmarkUploaded()" :disabled="busy" data-testid="kc-unupload"><i class="fa-solid fa-rotate-left"></i> ยกเลิกสถานะ “อัพลงบอร์ดแล้ว”</button>
+            <button v-if="sel.status === 'fee_blocked'" class="act go" @click="feeUnblock()" :disabled="busy" data-testid="kc-fee-unblock"><i class="fa-solid fa-lock-open"></i> ปลดบล็อกคีย์การ์ด</button>
+            <button v-if="canFeeBlock(sel)" class="act" :class="(sel.flags || []).includes('fee_arrears') ? 'warn' : 'neutral'" style="height:38px;font-size:13.5px" @click="feeBlock()" :disabled="busy || fee.migrated === false" data-testid="kc-fee-block"><i class="fa-solid fa-ban"></i> บล็อกคีย์การ์ด (ค้างค่าส่วนกลาง)</button>
             <button v-if="sel.status === 'cancelled'" class="act go" @click="reactivate()" :disabled="busy" data-testid="kc-reactivate"><i class="fa-solid fa-rotate-right"></i> เปิดใช้บัตรอีกครั้ง</button>
             <div class="sub">
-              <button v-if="sel.status !== 'cancelled'" @click="requestFix()" :disabled="busy" data-testid="kc-fix"><i class="fa-solid fa-comment-dots"></i> ขอให้แก้ไข</button>
+              <button v-if="sel.status !== 'cancelled' && sel.status !== 'fee_blocked'" @click="requestFix()" :disabled="busy" data-testid="kc-fix"><i class="fa-solid fa-comment-dots"></i> ขอให้แก้ไข</button>
               <button v-if="['active', 'reviewing', 'uploaded'].includes(sel.status)" @click="reconfirm()" :disabled="busy" data-testid="kc-reconfirm"><i class="fa-solid fa-arrows-rotate"></i> ให้ยืนยันใหม่</button>
               <button v-if="sel.status !== 'cancelled'" class="warn" @click="suspend()" :disabled="busy" data-testid="kc-suspend"><i class="fa-solid fa-ban"></i> ระงับบัตร</button>
               <button @click="moveHouse()" :disabled="busy" data-testid="kc-move"><i class="fa-solid fa-house-circle-check"></i> ย้ายบ้าน</button>
@@ -539,10 +559,10 @@ tr.row.sel.picked td{background:#EAF3DD}
   // LIFF: ใช้ LIFF ID ของหน้าแอดมิน (หรือ Mini App ID เดียวทุกหน้า) · ทดสอบด้วย ?liffId=… ได้
   const LIFF_ID = QS.get('liffId') || appCfg('MINI_APP_ID', '') || appCfgIn('LIFF_FALLBACK', 'admin', '2009815540-mD9OJXZa');
 
-  const STATUS_TH = { pending: 'รอยืนยัน', reviewing: 'รอตรวจสอบ', active: 'รออัพลงบอร์ด', uploaded: 'อัพลงบอร์ดแล้ว', cancelled: 'ระงับ' };
-  const STATUS_ORDER = { reviewing: 0, pending: 1, active: 2, uploaded: 3, cancelled: 4 };
-  const FLAG_TH = { incomplete: 'เลขไม่ครบ', duplicate: 'เลขซ้ำ', duplicate_back: 'ชุดหลังซ้ำ', no_img: 'ไม่มีรูปบัตร', no_holder: 'ไม่ระบุผู้ใช้บัตร', stale_review: 'ค้างตรวจ', over_limit: 'บ้านมีบัตรมาก', no_members: 'บ้านไม่มีสมาชิก' };
-  const FLAG_ORDER = ['duplicate', 'duplicate_back', 'incomplete', 'no_img', 'stale_review', 'over_limit', 'no_members', 'no_holder'];
+  const STATUS_TH = { pending: 'รอยืนยัน', reviewing: 'รอตรวจสอบ', active: 'รออัพลงบอร์ด', uploaded: 'อัพลงบอร์ดแล้ว', cancelled: 'ระงับ', fee_blocked: 'บล็อก · ค้างส่วนกลาง' };
+  const STATUS_ORDER = { reviewing: 0, pending: 1, active: 2, uploaded: 3, fee_blocked: 4, cancelled: 5 };
+  const FLAG_TH = { incomplete: 'เลขไม่ครบ', duplicate: 'เลขซ้ำ', duplicate_back: 'ชุดหลังซ้ำ', fee_arrears: 'ควรบล็อก · ค้างส่วนกลาง', no_img: 'ไม่มีรูปบัตร', no_holder: 'ไม่ระบุผู้ใช้บัตร', stale_review: 'ค้างตรวจ', over_limit: 'บ้านมีบัตรมาก', no_members: 'บ้านไม่มีสมาชิก' };
+  const FLAG_ORDER = ['fee_arrears', 'duplicate', 'duplicate_back', 'incomplete', 'no_img', 'stale_review', 'over_limit', 'no_members', 'no_holder'];
   const ACTION_TH = {
     keycard_admin_create: 'แอดมินเพิ่มบัตร', keycard_admin_set_numbers: 'แอดมินแก้เลขบัตร', keycard_admin_set_image: 'แอดมินเปลี่ยนรูปบัตร', keycard_admin_approve: 'แอดมินอนุมัติบัตร',
     keycard_admin_request_fix: 'แอดมินขอให้แก้ไข', keycard_admin_reconfirm: 'แอดมินให้ยืนยันใหม่', keycard_admin_mark_uploaded: 'แอดมินอัพลงบอร์ดแล้ว', keycard_admin_unmark_uploaded: 'แอดมินยกเลิกสถานะอัพลงบอร์ด',
@@ -610,14 +630,15 @@ tr.row.sel.picked td{background:#EAF3DD}
         timer: null,
         tabs: [
           { key: 'all', label: 'ทั้งหมด' }, { key: 'reviewing', label: 'รอตรวจสอบ', hot: true }, { key: 'pending', label: 'รอยืนยัน' },
-          { key: 'active', label: 'รออัพลงบอร์ด' }, { key: 'uploaded', label: 'อัพลงบอร์ดแล้ว' }, { key: 'cancelled', label: 'ระงับ' }
-        ]
+          { key: 'active', label: 'รออัพลงบอร์ด' }, { key: 'uploaded', label: 'อัพลงบอร์ดแล้ว' }, { key: 'fee', label: 'ค้างส่วนกลาง', hot: true }, { key: 'cancelled', label: 'ระงับ' }
+        ],
+        fee: { checked: null, threshold: 3, migrated: null }
       };
     },
     computed: {
       counts() {
-        const c = { all: this.cards.length, pending: 0, reviewing: 0, active: 0, uploaded: 0, cancelled: 0 };
-        for (const x of this.cards) if (c[x.status] != null) c[x.status]++;
+        const c = { all: this.cards.length, pending: 0, reviewing: 0, active: 0, uploaded: 0, cancelled: 0, fee: 0 };
+        for (const x of this.cards) { if (c[x.status] != null) c[x.status]++; if (this.feeIn(x)) c.fee++; }
         return c;
       },
       flagOptions() {
@@ -631,7 +652,8 @@ tr.row.sel.picked td{background:#EAF3DD}
       },
       filtered() {
         const f = this.filter, q = String(this.query || '').trim().toLowerCase(), qd = q.replace(/\D/g, ''), hq = hnNorm(q);
-        let rows = this.cards.filter((c) => f === 'all' ? true : c.status === f);
+        let rows = this.cards.filter((c) => f === 'all' ? true : f === 'fee' ? this.feeIn(c) : c.status === f);
+        if (f === 'fee') rows = rows.slice().sort((a, b) => ((a.status === 'fee_blocked' ? 1 : 0) - (b.status === 'fee_blocked' ? 1 : 0)) || ((b.fee_months || 0) - (a.fee_months || 0)));
         if (this.flagFilter) rows = rows.filter((c) => (c.flags || []).includes(this.flagFilter));
         if (this.holderFilter) rows = rows.filter((c) => this.holderFilter === '__none' ? !c.holder_name : c.holder_name === this.holderFilter);
         if (q) {
@@ -709,6 +731,7 @@ tr.row.sel.picked td{background:#EAF3DD}
           const wasDirty = this.editDirty;
           this.cards = Array.isArray(d.cards) ? d.cards : [];
           this.reasons = Object.assign({ cancel: [], fix: [], reconfirm: [], roles: [], delete: [], move: [] }, d.reasons || {});
+          this.fee = Object.assign({ checked: null, threshold: 3, migrated: null }, d.fee || {});
           this.truncated = !!d.truncated; this.loaded = true;
           this.loadedAt = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
           if (this.selId != null) { const c = this.sel; if (!c) this.selId = null; else if (!wasDirty) this.syncEdit(c); }
@@ -723,6 +746,41 @@ tr.row.sel.picked td{background:#EAF3DD}
 
       // ───────── แสดงผล ─────────
       statusLabel(s) { return STATUS_TH[s] || s || '—'; },
+      feeIn(c) { return !!c && (c.status === 'fee_blocked' || (c.status !== 'cancelled' && (c.flags || []).includes('fee_arrears'))); },
+      feeChip(c) {
+        if (!c || c.status === 'cancelled') return null;
+        if (c.status === 'fee_blocked') return { t: '⛔ ' + (c.fee_blocked_months ? 'ค้าง ' + c.fee_blocked_months + ' เดือน · ' : '') + 'บล็อกอยู่', s: 'background:#DC2626;color:#fff' };
+        const n = Number(c.fee_months); if (c.fee_months == null || !isFinite(n) || n < 1) return null;
+        const th = Number(this.fee.threshold) || 3;
+        return n >= th ? { t: '💰 ค้างส่วนกลาง ' + n + ' เดือน', s: 'background:#FEE2E2;color:#B91C1C' } : { t: '💰 ค้าง ' + n + ' เดือน', s: 'background:#FEF3C7;color:#92400E' };
+      },
+      canFeeBlock(c) { return !!c && ['pending', 'reviewing', 'active', 'uploaded'].includes(c.status); },
+      async feeBlock() {
+        const c = this.sel; if (!c || this.busy) return;
+        const th = Number(this.fee.threshold) || 3, n = c.fee_months, unknown = n == null, below = !unknown && n < th;
+        const warn = unknown ? 'ตรวจเดือนค้างไม่ได้ในตอนนี้ — ยืนยันเองว่าบ้านนี้ค้างถึงเกณฑ์' : below ? `บ้านนี้ค้าง ${n} เดือน ยังไม่ถึงเกณฑ์ ${th} เดือน — จะบล็อกเองโดยแอดมินสั่ง` : `บ้านนี้ค้างค่าส่วนกลาง ${n} เดือน (เกณฑ์ ${th} เดือน)`;
+        const r = await Swal.fire({
+          title: 'บล็อกคีย์การ์ดใบนี้?', icon: 'warning', showCancelButton: true, focusConfirm: false, confirmButtonColor: '#DC2626', confirmButtonText: 'บล็อกบัตร', cancelButtonText: 'ยกเลิก',
+          html: `<div style="font-size:13px;text-align:left;line-height:1.55"><div style="padding:8px 10px;border-radius:10px;background:${below || unknown ? '#FFFBEB' : '#FEF2F2'};color:${below || unknown ? '#92400E' : '#991B1B'};font-weight:700">${esc(warn)}</div>
+                 <div style="margin-top:8px;color:#475569">บัตรจะอยู่ในแถบ “ค้างส่วนกลาง” และลูกบ้านแก้ไข/ยกเลิกบัตรเองไม่ได้จนกว่าจะปลดบล็อก${c.status === 'uploaded' ? '<br><b style="color:#C2410C">⚠️ บัตรนี้อัพลงบอร์ดแล้ว — ระบบไม่ลบออกจากบอร์ดให้ ต้องลบเอง</b>' : ''}</div></div>
+                 <textarea id="kc-fee-note" class="swal2-textarea" maxlength="300" placeholder="หมายเหตุ (ไม่บังคับ)" style="margin:10px 0 0;width:100%;font-size:13px"></textarea>${this.notifyHtml('แจ้งว่าบัตรถูกระงับชั่วคราวเพราะค้างค่าส่วนกลาง — ไม่ติ๊ก = ลูกบ้านเห็นในแอปเท่านั้น')}`,
+          preConfirm: () => ({ note: (document.getElementById('kc-fee-note').value || '').trim(), notify: !!(document.getElementById('kc-notify') || {}).checked })
+        });
+        if (!r.isConfirmed) return;
+        const d = await this.run({ action: 'fee_block', note: r.value.note, notify: r.value.notify, force: below || unknown }, 'บล็อกคีย์การ์ดแล้ว');
+        if (d && d.was_uploaded) Swal.fire({ icon: 'warning', title: 'อย่าลืมลบออกจากบอร์ด', text: 'บัตรใบนี้เคยอัพลงบอร์ดแล้ว — ระบบยังไม่ได้ลบเลขบัตรออกจากบอร์ดให้' });
+      },
+      async feeUnblock() {
+        const c = this.sel; if (!c || this.busy) return;
+        const th = Number(this.fee.threshold) || 3, n = c.fee_months, still = n != null && n >= th;
+        const r = await this.confirmDialog({
+          title: 'ปลดบล็อกคีย์การ์ด?', confirmText: 'ปลดบล็อก',
+          html: `${still ? `<div style="padding:8px 10px;border-radius:10px;background:#FEF2F2;color:#991B1B;font-weight:700;margin-bottom:8px;font-size:13px">บ้านนี้ยังค้าง ${n} เดือน (เกณฑ์ ${th} เดือน)</div>` : ''}<div style="font-size:13px;color:#475569">${c.fee_prev_status === 'uploaded' ? 'บัตรเคยอัพลงบอร์ดแล้ว — หลังปลดบล็อกจะกลับเป็น “รออัพลงบอร์ด” ต้องอัพใหม่' : 'บัตรจะกลับไปสถานะก่อนถูกบล็อก'}</div>`,
+          notifyHint: 'แจ้งลูกบ้านว่าเปิดใช้บัตรอีกครั้งแล้ว — ไม่ติ๊ก = ไม่ส่ง'
+        });
+        if (!r) return;
+        await this.run({ action: 'fee_unblock', notify: r.notify, force: still }, 'ปลดบล็อกแล้ว');
+      },
       flagLabel(f) { return FLAG_TH[f] || f; },
       actionLabel(a) { return ACTION_TH[a] || a; },
       digits,
