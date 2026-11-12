@@ -1119,6 +1119,53 @@
                     <i class="fa-solid fa-receipt"></i> แนบสลิปแจ้งชำระ
                 </button>
 
+                <!-- 📒 บันทึกค่าส่วนกลางของบ้านนี้ (ดึงจากตารางบันทึกค่าส่วนกลาง house_payments) -->
+                <div class="glass-card p-4 mb-5" data-testid="hf-card">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-xl">📒</span>
+                        <div class="flex-1 min-w-0">
+                            <div class="font-bold text-slate-800 text-sm">บันทึกค่าส่วนกลางของบ้าน</div>
+                            <div class="text-[11px] text-slate-500" v-if="houseFees && houseFees.house_no">บ้านเลขที่ <b>{{ houseFees.house_no }}</b> {{ houseFees.soi }}</div>
+                        </div>
+                        <button @click="loadHouseFees()" :disabled="houseFeesLoading" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 text-xs flex items-center justify-center" aria-label="โหลดใหม่" data-testid="hf-reload"><i class="fa-solid fa-rotate" :class="{ 'fa-spin': houseFeesLoading }"></i></button>
+                    </div>
+                    <div v-if="houseFeesLoading && !houseFees" class="py-6 text-center text-slate-400 text-xs" data-testid="hf-loading"><i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลดบันทึกค่าส่วนกลาง...</div>
+                    <div v-else-if="houseFeesError" class="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700" data-testid="hf-error">โหลดบันทึกค่าส่วนกลางไม่สำเร็จ: {{ houseFeesError }}
+                        <button @click="loadHouseFees()" class="ml-1 font-bold underline">ลองใหม่</button></div>
+                    <template v-else-if="houseFees">
+                        <div v-if="houseFees.keycards_blocked > 0" class="p-3 mb-3 rounded-xl bg-red-50 border border-red-300 text-xs text-red-800 font-bold" data-testid="hf-blocked">⛔ คีย์การ์ดของบ้านนี้ {{ houseFees.keycards_blocked }} ใบถูกระงับชั่วคราว เพราะค้างค่าส่วนกลาง — ชำระแล้วแจ้งนิติบุคคลเพื่อเปิดใช้บัตร</div>
+                        <div v-if="houseFees.summary.arrears_months > 0" class="p-3 mb-3 rounded-xl border text-xs space-y-1" :class="houseFees.summary.over_threshold ? 'bg-rose-50 border-rose-300 text-rose-800' : 'bg-amber-50 border-amber-200 text-amber-800'" data-testid="hf-arrears">
+                            <div class="font-extrabold text-sm">ค้างชำระ {{ houseFees.summary.arrears_months }} เดือน<span v-if="houseFees.summary.arrears_amount != null"> · {{ Number(houseFees.summary.arrears_amount).toLocaleString() }} บาท</span></div>
+                            <div class="leading-relaxed">{{ houseFees.summary.unpaid.map(u => u.label).concat(houseFees.summary.carried.map(c => c.label + ' ' + c.year + ' (ยอดยกมา)')).join(', ') }}</div>
+                            <div v-if="houseFees.summary.over_threshold" class="font-bold" data-testid="hf-over">ค้างถึง {{ houseFees.summary.threshold }} เดือนขึ้นไป — คีย์การ์ดอาจถูกระงับการใช้งาน กรุณาชำระโดยเร็ว</div>
+                        </div>
+                        <div v-else-if="houseFees.has_records" class="p-3 mb-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-bold" data-testid="hf-clear">✅ ไม่มียอดค้างชำระ</div>
+                        <div v-if="!houseFees.has_records" class="py-4 text-center text-slate-400 text-xs" data-testid="hf-empty">ยังไม่มีบันทึกค่าส่วนกลางของบ้านนี้ในระบบ — หากสงสัยกรุณาติดต่อนิติบุคคล</div>
+                        <template v-else>
+                            <div class="flex gap-1.5 overflow-x-auto pb-2 mb-2" data-testid="hf-years">
+                                <button v-for="y in houseFees.years" :key="y.year" @click="hfYear = y.year" :data-testid="'hf-year-' + y.year"
+                                        class="px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap border" :class="hfYear === y.year ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-200 text-slate-600'">ปี {{ y.year }}<span v-if="y.unpaid" class="ml-1 text-[10px]" :class="hfYear === y.year ? 'text-rose-100' : 'text-rose-500'">ค้าง {{ y.unpaid }}</span></button>
+                            </div>
+                            <div v-if="hfYearData" class="grid grid-cols-4 gap-1.5" data-testid="hf-grid">
+                                <div v-for="m in hfYearData.months" :key="m.m" :data-testid="'hf-m-' + m.m" :data-status="m.status"
+                                     class="rounded-xl py-2 px-1 text-center border" :class="hfMonthClass(m.status)">
+                                    <div class="text-[11px] font-bold">{{ m.label }}</div>
+                                    <div class="text-[10px] leading-tight mt-0.5">{{ hfMonthText(m) }}</div>
+                                </div>
+                            </div>
+                            <div class="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-500 mt-3">
+                                <span><span class="inline-block w-2 h-2 rounded-full bg-emerald-500"></span> จ่ายแล้ว</span>
+                                <span><span class="inline-block w-2 h-2 rounded-full bg-sky-500"></span> ล่วงหน้า</span>
+                                <span><span class="inline-block w-2 h-2 rounded-full bg-rose-500"></span> ค้าง</span>
+                                <span><span class="inline-block w-2 h-2 rounded-full bg-slate-400"></span> ไม่เก็บ</span>
+                                <span><span class="inline-block w-2 h-2 rounded-full bg-white border border-slate-300"></span> ยังไม่ถึงเดือน</span>
+                            </div>
+                            <div v-if="houseFees.ownership_since" class="text-[10px] text-sky-700 mt-2" data-testid="hf-since">🏠 แสดงเฉพาะหลังวันที่โอนเป็นเจ้าของ ({{ houseFees.ownership_since }}) — ช่วงก่อนหน้าเป็นของเจ้าของเดิม</div>
+                        </template>
+                        <div class="text-[10px] text-slate-400 mt-2">ข้อมูลตามที่นิติบุคคลบันทึก · ถ้าชำระแล้วแต่ยังขึ้นค้าง ให้แนบสลิปแจ้งชำระด้านบน</div>
+                    </template>
+                </div>
+
                 <!-- Streak card -->
                 <div class="glass-card p-5 mb-5 bg-gradient-to-br from-amber-50 to-orange-50 text-center">
                     <div class="text-5xl mb-2">🔥</div>
@@ -1424,7 +1471,7 @@
             <div class="max-w-md mx-auto min-h-screen bg-gray-50 flex flex-col shadow-xl relative">
                 <header class="px-5 py-5 shadow-md flex items-center justify-between rounded-b-2xl mb-1 bg-gradient-to-r from-teal-600 to-emerald-500">
                     <div class="flex items-center text-white">
-                        <button @click="currentTab = 'home'" class="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center mr-3"><i class="fa-solid fa-arrow-left"></i></button>
+                        <button v-if="!statusGate.active" @click="currentTab = 'home'" class="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center mr-3"><i class="fa-solid fa-arrow-left"></i></button>
                         <span class="text-3xl mr-3">🔐</span>
                         <div>
                             <h1 class="text-lg font-extrabold tracking-wide">ยืนยันสิทธิ์เจ้าของบ้าน</h1>
@@ -1435,6 +1482,10 @@
                 <p class="text-[11px] text-slate-400 text-center mb-3">✅ {{ userProfile?.displayName || '' }}</p>
 
                 <div class="px-5 pb-28 flex-1">
+                    <div v-if="statusGate.active" class="mb-4 p-3 rounded-2xl bg-amber-50 border border-amber-300 text-xs text-amber-900 leading-relaxed" data-testid="status-gate-banner">
+                        <div class="font-extrabold text-sm mb-0.5">🔐 กรุณายืนยันสิทธิ์ก่อนเริ่มใช้งาน</div>
+                        เลือกสถานะของท่านในบ้านเลขที่ <b>{{ statusCheckResult?.profile?.house_no || '' }}</b> แล้วกดยืนยัน (ใช้ผูกบัญชี LINE ของท่านเข้ากับบ้าน) — เสร็จแล้วระบบจะพาท่านไปหน้าที่ตั้งใจจะเข้าทันที
+                    </div>
 
                     <div v-if="statusCheckLoading && !statusCheckResult" class="text-center py-20">
                         <div class="w-10 h-10 border-4 border-teal-200 border-t-teal-500 rounded-full animate-spin mx-auto mb-4"></div>
@@ -3958,6 +4009,8 @@
                     cardViewerImage: null,
                     houseEditModal: false, houseEditForm: { fullname: '', phone: '', member_count: 1 }, houseEditSaving: false,
                     myInvoice: null, invoiceLoading: false,
+                    houseFees: null, houseFeesLoading: false, houseFeesError: '', hfYear: null,   // 📒 บันทึกค่าส่วนกลางของบ้าน (จาก house_payments ผ่าน my_house_fees)
+                    statusGate: { active: false },   // 🔐 ด่านยืนยันสิทธิ์: true = ยังไม่ได้ยืนยัน → ล็อกให้อยู่หน้ายืนยันสิทธิ์ก่อน
                     ownership: null,   // ข้อมูลหลังโอนกรรมสิทธิ์บ้าน (since / settlement / carried_months) — null = ไม่เคยโอนผ่านระบบ
                     profileForm: {
                         first_name: '', last_name: '', phone: '', email: '', birthday: '', gender: '',
@@ -4075,6 +4128,7 @@
                     }
                     return { front: Object.values(fm).filter(n => n > 1).length, back: Object.values(bm).filter(n => n > 1).length };
                 },
+                hfYearData() { const f = this.houseFees; if (!f || !(f.years || []).length) return null; return f.years.find(y => y.year === this.hfYear) || f.years[0]; },
                 kcaShown() { return this.kcaFiltered.slice(0, this.kcaPage * 30); },
                 // ✅ เลือกหลายใบเพื่ออนุมัติ: เฉพาะบัตร "รอยืนยัน/รอตรวจสอบ"
                 kcaPickable() { return this.kcaFiltered.filter(c => this.kcaCanPick(c)); },
@@ -4196,7 +4250,7 @@
             },
             async mounted() {
                 this.supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-                this.loadFeatures();   // ไม่ต้องรอ — ซ่อนปุ่มฟีเจอร์ที่ปิดเมื่อโหลดเสร็จ
+                this._featP = this.loadFeatures();   // ไม่ต้องรอ — ซ่อนปุ่มฟีเจอร์ที่ปิดเมื่อโหลดเสร็จ (ด่านยืนยันสิทธิ์รอผลนี้ก่อนตัดสิน)
 
                 // ─── 🧹 Clean stale OAuth tokens จาก URL (ป้องกัน "Failed to fetch" ครั้งที่ 2) ───
                 // หลัง LIFF login สำเร็จ tokens จะติดอยู่ใน URL — รอบที่ 2 LIFF อาจคิดว่าเป็น login flow ใหม่
@@ -4369,20 +4423,32 @@
                 //   ?tab=rewards           → เปิด tab ที่ระบุ
                 //   ?coupon=XYZ            → เปิด coupon detail
                 try { await this.loadMenuAccess(); } catch (e) { /* แสดงเมนูตามเดิม */ }
+                // ─── 🔐 ด่านยืนยันสิทธิ์: ลงทะเบียนแล้วแต่ยังไม่ยืนยันสิทธิ์ผูกบ้าน → ล็อกไว้ที่หน้ายืนยันสิทธิ์ก่อน
+                //     (ยังไม่เปิดลิงก์/แท็บที่ผู้ใช้ตั้งใจจะเข้า — ยืนยันเสร็จแล้ว releaseStatusGate() ค่อยพาไปหน้านั้น)
+                let _gated = false;
+                try { _gated = await this.statusGateCheck(); } catch (e) { console.warn('statusGate skipped', e); }
                 this.trackCrmVisit();
                 this.loadExpiry(true);
-                this.handleDeepLink().catch(e => console.warn('deep link', e));
+                if (!_gated) this.handleDeepLink().catch(e => console.warn('deep link', e));
                 try { this.friendDismissed = sessionStorage.getItem('crm_friend_dismissed') === '1'; } catch (e) { /* ใช้ไม่ได้ก็ข้าม */ }
                 this.checkFriendship();
                 this.loadHouseRole();
             },
             watch: {
                 currentTab(newVal) {
+                    // 🔐 ยังไม่ยืนยันสิทธิ์ → ไปหน้าอื่นไม่ได้ (ปุ่มเมนู/ลิงก์/แท็บ) จนกว่าจะยืนยันเสร็จ
+                    if (this.statusGate.active && newVal !== 'status') {
+                        this.currentTab = 'status';
+                        try { Swal.fire({ toast: true, position: 'top', icon: 'info', title: 'กรุณายืนยันสิทธิ์ก่อนใช้งานเมนูอื่น', timer: 2200, showConfirmButton: false }); } catch (e) { /* ignore */ }
+                        return;
+                    }
                     // 🧭 สิทธิ์เมนูตามบทบาท — กันเข้าแท็บที่ไม่มีสิทธิ์ผ่านลิงก์ (?tab=...) หรือปุ่มที่ซ่อนไม่ทัน
                     if (!this.guardTab(newVal)) { this.notifyMenuDenied(); this.currentTab = 'home'; return; }
                     this.kcNoticeOpen = (newVal === 'keycard');   // 🪪 เข้าหน้ายืนยันคีย์การ์ดทีไร ขึ้นข้อความแจ้งก่อนทุกครั้ง
                     if (newVal === 'home') { this.$nextTick(() => this.renderMemberBarcode()); this.loadExpiry(false); }
                     if (newVal === 'keycard') this.loadExpiry(true);
+                    // 💰 เปิดจากลิงก์ ?tab=payments (ไม่ผ่านปุ่ม openPayments) ต้องโหลดใบแจ้งหนี้/บันทึกค่าส่วนกลางเอง — เดิมหน้าว่าง
+                    if (newVal === 'payments' && !this.invoiceLoading && !this.houseFeesLoading && !this.houseFees) this.openPayments();
                     if (newVal === 'coupons') this.$nextTick(() => this.renderCouponBarcodes());
                     if (newVal === 'cars' && this.myCars.length === 0) this.loadMyCars();
                     if (newVal === 'complaints' && this.myComplaints.length === 0) this.loadMyComplaints();
@@ -4432,6 +4498,33 @@
                         if (!res.ok) return;
                         try { sessionStorage.setItem(KEY, String(Date.now())); } catch (e) { /* ข้าม */ }
                     } catch (e) { /* เครือข่ายล้ม → ไม่เป็นไร รอบหน้านับใหม่ */ }
+                },
+                // 🔐 ด่านยืนยันสิทธิ์ (หลังด่านลงทะเบียน): คืน true = ล็อกไว้ที่หน้ายืนยันสิทธิ์ (ยังไม่เปิดลิงก์ปลายทาง)
+                //   ข้าม (ปล่อยเข้าตามปกติ) เมื่อ: ยืนยันแล้ว · แอดมิน · เมนู/ฟีเจอร์ยืนยันสิทธิ์ถูกปิด · เช็คไม่ได้ (เป็นตัวนำทาง ไม่ใช่ด่านความปลอดภัย)
+                async statusGateCheck() {
+                    const uid = this.userProfile && this.userProfile.userId; if (!uid) return false;
+                    try { await this._featP; } catch (e) { /* ignore */ }
+                    if (!this.fOn('ownership') || !this.mOn('status')) return false;
+                    if (this.menuAccess && this.menuAccess.is_admin) return false;
+                    let d;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/check_registration?uid=${encodeURIComponent(uid)}`, { headers: this.lineAuthHeaders() });
+                        if (!res.ok) { console.warn('statusGate: HTTP ' + res.status + ' (ปล่อยผ่าน)'); return false; }
+                        d = await res.json();
+                    } catch (e) { console.warn('statusGate: เช็คไม่ได้ (ปล่อยผ่าน)', e); return false; }
+                    if (!d || !d.registered || !d.profile || d.profile.status_confirmed) return false;
+                    this.statusGate = { active: true };
+                    this.currentTab = 'status';
+                    return true;
+                },
+                // ยืนยันสิทธิ์เสร็จ → ปลดล็อก แล้วพาไปหน้า/ลิงก์ที่ตั้งใจจะเข้าตั้งแต่แรก (อ่านจากพารามิเตอร์ลิงก์เดิม — ไม่มีลิงก์ = หน้าหลัก)
+                async releaseStatusGate() {
+                    if (!this.statusGate.active) return;
+                    this.statusGate = { active: false };
+                    await new Promise(r => setTimeout(r, 1200));   // ให้ผู้ใช้เห็นข้อความ "ยืนยันสำเร็จ" ก่อนเปลี่ยนหน้า
+                    this.currentTab = 'home';
+                    try { Swal.close(); } catch (e) { /* ignore */ }
+                    await this.handleDeepLink().catch(e => console.warn('deep link', e));
                 },
                 async loadMenuAccess() {
                     const uid = this.userProfile && this.userProfile.userId;
@@ -5570,8 +5663,28 @@
 
                 // ════════════════════════════════════════════════════════════
                 // 💰 PAYMENT HISTORY
+                // 📒 บันทึกค่าส่วนกลางของบ้านตัวเอง (server หาบ้านจาก uid เอง — ไม่รับเลขบ้านจากหน้าเว็บ)
+                async loadHouseFees() {
+                    const uid = this.userProfile && this.userProfile.userId; if (!uid) return;
+                    this.houseFeesLoading = true; this.houseFeesError = '';
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/my_house_fees?userId=${encodeURIComponent(uid)}`, { headers: this.lineAuthHeaders() });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.error || ('HTTP ' + res.status));
+                        this.houseFees = d;
+                        const ys = (d.years || []).map(y => y.year);
+                        this.hfYear = ys.includes(d.summary && d.summary.current_year) ? d.summary.current_year : (ys[0] || null);
+                    } catch (e) { this.houseFeesError = e.message || String(e); }
+                    finally { this.houseFeesLoading = false; }
+                },
+                hfMonthClass(st) {
+                    return ({ paid: 'bg-emerald-50 border-emerald-300 text-emerald-700', advance: 'bg-sky-50 border-sky-300 text-sky-700', waived: 'bg-slate-100 border-slate-300 text-slate-600',
+                              unpaid: 'bg-rose-50 border-rose-300 text-rose-700', future: 'bg-white border-dashed border-slate-300 text-slate-300', before_transfer: 'bg-slate-50 border-slate-200 text-slate-300' })[st] || 'bg-white border-slate-200 text-slate-400';
+                },
+                hfMonthText(m) { return ({ paid: 'จ่ายแล้ว', advance: 'ล่วงหน้า', waived: 'ไม่เก็บ', unpaid: m.note || 'ค้าง', future: '', before_transfer: '—' })[m.status] || ''; },
                 async openPayments() {
                     this.currentTab = 'payments';
+                    this.loadHouseFees();   // ไม่ต้องรอ — ตารางบันทึกค่าส่วนกลางโหลดคู่กับใบแจ้งหนี้
                     this.invoiceLoading = true;
                     this.myInvoice = null;
                     try {
@@ -6512,6 +6625,7 @@
                         this.nameChoice = ''; this.nameNote = '';
                         await this.checkMyStatus();
                         await this.loadHouseMembers();
+                        if (this.statusGate.active && this.statusCheckResult && this.statusCheckResult.profile && this.statusCheckResult.profile.status_confirmed) await this.releaseStatusGate();
                     } catch (err) {
                         Swal.fire('ไม่สำเร็จ', err.message, 'error');
                     } finally {
