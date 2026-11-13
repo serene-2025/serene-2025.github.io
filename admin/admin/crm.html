@@ -354,6 +354,11 @@
                         <span class="text-xs font-bold text-slate-700">แจ้งซ่อม</span>
                         <span v-if="myRepairs.filter(r => r.status === 'pending').length > 0" class="absolute top-2 right-2 min-w-[20px] h-5 px-1 rounded-full bg-sky-500 text-white text-[10px] font-bold flex items-center justify-center">{{ myRepairs.filter(r => r.status === 'pending').length }}</span>
                     </button>
+                    <button v-if="mOn('chat')" @click="currentTab = 'chat'" data-testid="chat-tile" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 relative">
+                        <div class="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-lg"><i class="fa-solid fa-comments"></i></div>
+                        <span class="text-xs font-bold text-slate-700">แชทกับนิติฯ</span>
+                        <span v-if="(menuAccess && menuAccess.chat_unread || 0) > 0" class="absolute top-1.5 right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-rose-500 text-white text-[10px] font-extrabold flex items-center justify-center" data-testid="chat-tile-badge">{{ menuAccess.chat_unread > 99 ? '99+' : menuAccess.chat_unread }}</span>
+                    </button>
                     <button v-if="(fOn('cctv')) && mOn('cctv')" @click="currentTab = 'cctv'" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 relative">
                         <div class="w-12 h-12 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-lg"><i class="fa-solid fa-video"></i></div>
                         <span class="text-xs font-bold text-slate-700">ขอดูกล้อง</span>
@@ -389,6 +394,13 @@
                             <div class="w-12 h-12 rounded-full flex items-center justify-center text-lg" :style="adminMenuStyle('rose')"><i class="fa-solid fa-inbox"></i></div>
                             <span class="text-xs font-bold text-slate-700 text-center leading-tight">งานรอตรวจ</span>
                             <span v-if="(menuAccess.inbox_count || 0) > 0" class="absolute top-1.5 right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-rose-500 text-white text-[10px] font-extrabold flex items-center justify-center" data-testid="inbox-badge">{{ menuAccess.inbox_count > 99 ? '99+' : menuAccess.inbox_count }}</span>
+                        </button>
+                        <!-- 💬 แชทลูกบ้าน — เห็นเมื่อมีสิทธิ์โมดูล ร้องเรียน หรือ ทะเบียนบ้าน&สมาชิก -->
+                        <button v-if="menuAccess.tools && menuAccess.tools.chat_admin" @click="openChatAdmin()" data-testid="admin-menu-chat"
+                           class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 border border-dashed border-slate-300 relative">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center text-lg" :style="adminMenuStyle('emerald')"><i class="fa-solid fa-comments"></i></div>
+                            <span class="text-xs font-bold text-slate-700 text-center leading-tight">แชทลูกบ้าน</span>
+                            <span v-if="(menuAccess.chat_admin_unread || 0) > 0" class="absolute top-1.5 right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-rose-500 text-white text-[10px] font-extrabold flex items-center justify-center" data-testid="chat-admin-badge">{{ menuAccess.chat_admin_unread > 99 ? '99+' : menuAccess.chat_admin_unread }}</span>
                         </button>
                         <!-- 📊 แดชบอร์ดการใช้งาน CRM -->
                         <button v-if="menuAccess.tools && menuAccess.tools.usage_dashboard" @click="openUsage()" data-testid="admin-menu-usage"
@@ -3074,6 +3086,171 @@
 
         <!-- ─── รายละเอียดบ้าน (ทะเบียนบ้าน & สมาชิก) ─── -->
         <!-- 📥 ADMIN: งานรอตรวจ (รวมทุกระบบ) -->
+        <!-- 💬 แชทกับนิติฯ (ลูกบ้าน) — z-[41] = ทับแถบเมนูล่าง (z-40) เพื่อให้ช่องพิมพ์ไม่ถูกบัง -->
+        <div v-if="currentTab === 'chat' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-emerald-50 z-[41] flex flex-col" data-testid="chat-page">
+            <div class="shrink-0 max-w-lg w-full mx-auto px-4 pt-5 pb-3 flex items-center gap-3">
+                <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" data-testid="chat-back"><i class="fa-solid fa-arrow-left"></i></button>
+                <div class="flex-1 min-w-0">
+                    <h2 class="text-xl font-extrabold text-slate-800 leading-tight">แชทกับนิติฯ</h2>
+                    <div class="text-[11px] text-slate-500">พิมพ์ข้อความถึงเจ้าหน้าที่ได้ที่นี่ · ตอบกลับในเวลาทำการ</div>
+                </div>
+            </div>
+            <div ref="chatScroll" class="flex-1 overflow-y-auto" data-testid="chat-scroll">
+                <div class="max-w-lg mx-auto px-4 py-2 space-y-2">
+                    <div v-if="chat.notReady" class="rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-sm p-4" data-testid="chat-notready">ระบบแชทยังไม่เปิดใช้งาน กรุณาติดต่อนิติบุคคลโดยตรง</div>
+                    <div v-else-if="chat.error" class="rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-sm p-3" data-testid="chat-error">{{ chat.error }} <button @click="chatEnter()" class="underline font-bold ml-1">ลองใหม่</button></div>
+                    <div v-if="chat.loading && !chat.msgs.length" class="text-center text-slate-400 py-10"><i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลด...</div>
+                    <div v-if="chat.hasMore" class="text-center"><button @click="chatMore()" :disabled="chat.loadingMore" class="text-xs font-bold text-emerald-700 bg-white shadow-sm rounded-full px-4 py-1.5" data-testid="chat-more">{{ chat.loadingMore ? 'กำลังโหลด...' : 'ดูข้อความเก่ากว่านี้' }}</button></div>
+                    <div v-if="!chat.loading && !chat.notReady && !chat.error && !chat.msgs.length" class="rounded-3xl bg-white shadow-sm p-8 text-center" data-testid="chat-empty">
+                        <div class="text-4xl mb-2">💬</div><div class="font-bold text-slate-700">ยังไม่มีข้อความ</div><div class="text-xs text-slate-400 mt-1 leading-relaxed">ทักนิติฯ ได้เลย เช่น สอบถามค่าส่วนกลาง คีย์การ์ด หรือแจ้งปัญหาในหมู่บ้าน</div>
+                    </div>
+                    <template v-for="(m, i) in chat.msgs" :key="m.cid || m.id">
+                        <div v-if="chatNewDay(chat.msgs, i)" class="text-center text-[10px] text-slate-400 pt-2" :data-testid="'chat-day-' + i">{{ chatDayLabel(m.at) }}</div>
+                        <div v-if="m.role === 'system'" class="text-center"><span class="inline-block text-[11px] text-slate-500 bg-slate-200/70 rounded-full px-3 py-1" :data-testid="'chat-msg-' + m.id">{{ m.body }}</span></div>
+                        <div v-else class="flex" :class="m.role === 'member' ? 'justify-end' : 'justify-start'">
+                            <div class="max-w-[82%]">
+                                <div v-if="m.role === 'admin'" class="text-[10px] text-slate-400 mb-0.5 ml-1">{{ m.name }}</div>
+                                <div class="rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words shadow-sm" :class="[m.role === 'member' ? 'bg-emerald-500 text-white rounded-br-md' : 'bg-white text-slate-800 rounded-bl-md', m.state === 'failed' ? 'ring-2 ring-rose-400' : '', m.state === 'sending' ? 'opacity-60' : '']" :data-testid="'chat-msg-' + (m.cid || m.id)">{{ m.body }}</div>
+                                <div class="text-[10px] text-slate-400 mt-0.5 px-1" :class="m.role === 'member' ? 'text-right' : ''">
+                                    <template v-if="m.state === 'sending'">กำลังส่ง...</template>
+                                    <template v-else-if="m.state === 'failed'"><span class="text-rose-500 font-bold">ส่งไม่สำเร็จ</span> · <button @click="chatRetry(m)" class="underline font-bold text-rose-600" data-testid="chat-retry">ส่งใหม่</button> · <button @click="chatDiscard(m)" class="underline">ลบ</button></template>
+                                    <template v-else>{{ chatTime(m.at) }}<span v-if="m.id === chatLastReadId" class="text-emerald-600 font-bold" data-testid="chat-read"> · อ่านแล้ว</span></template>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+            <div class="shrink-0 bg-white/95 backdrop-blur border-t border-slate-200" style="padding-bottom: env(safe-area-inset-bottom)">
+                <div class="max-w-lg mx-auto px-4 py-2.5">
+                    <div v-if="chat.thread && chat.thread.status === 'closed'" class="text-[11px] text-slate-500 text-center mb-1.5" data-testid="chat-closed">นิติฯ ปิดเคสแล้ว — พิมพ์ข้อความใหม่เพื่อเปิดเคสอีกครั้ง</div>
+                    <div v-if="chat.sendErr" class="text-[11px] text-rose-600 mb-1.5" data-testid="chat-send-err">{{ chat.sendErr }}</div>
+                    <div class="flex items-end gap-2">
+                        <textarea v-model="chat.text" @input="chatGrow($event)" rows="1" maxlength="1000" :disabled="chat.notReady" placeholder="พิมพ์ข้อความ..." class="flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm max-h-32 focus:outline-none focus:ring-2 focus:ring-emerald-300" data-testid="chat-input"></textarea>
+                        <button @click="chatSend()" :disabled="!chat.text.trim() || chat.notReady" class="w-11 h-11 shrink-0 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-md active:scale-95 disabled:opacity-40" data-testid="chat-send" title="ส่ง"><i class="fa-solid fa-paper-plane"></i></button>
+                    </div>
+                    <div v-if="chat.text.length > 800" class="text-[10px] text-right mt-1" :class="chat.text.length >= 1000 ? 'text-rose-500 font-bold' : 'text-slate-400'" data-testid="chat-count">{{ chat.text.length }}/1000</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 💬 แชทลูกบ้าน (แอดมิน) -->
+        <div v-if="currentTab === 'chatadmin' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-emerald-50 z-[41] flex flex-col" data-testid="cha-page">
+            <div class="shrink-0 max-w-lg w-full mx-auto px-4 pt-5 pb-3 flex items-center gap-3">
+                <button @click="chatAdmBack()" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" data-testid="cha-back"><i class="fa-solid fa-arrow-left"></i></button>
+                <div class="flex-1 min-w-0">
+                    <span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-800 text-white tracking-wider">ADMIN</span>
+                    <template v-if="chatAdm.view === 'list'"><h2 class="text-xl font-extrabold text-slate-800 leading-tight">แชทลูกบ้าน</h2></template>
+                    <template v-else-if="chatAdm.sel"><h2 class="text-lg font-extrabold text-slate-800 leading-tight truncate" data-testid="cha-title">บ้าน {{ chatAdm.sel.house_no || '—' }} · {{ chatAdm.sel.member_name || 'ลูกบ้าน' }}</h2></template>
+                </div>
+                <button v-if="chatAdm.view === 'list'" @click="chatAdmLoad(true)" :disabled="chatAdm.loading" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" title="รีเฟรช" data-testid="cha-refresh"><i class="fa-solid fa-rotate" :class="chatAdm.loading ? 'fa-spin' : ''"></i></button>
+            </div>
+
+            <!-- รายการห้อง -->
+            <template v-if="chatAdm.view === 'list'">
+                <div class="shrink-0 max-w-lg w-full mx-auto px-4 pb-2">
+                    <div class="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1" data-testid="cha-chips">
+                        <button v-for="c in chatAdmChips" :key="c.key" @click="chatAdmPick(c)" class="shrink-0 rounded-full px-3 py-1.5 text-xs font-bold border transition" :class="chatAdmChipOn(c) ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200'" :data-testid="'cha-chip-' + c.key">{{ c.label }}<span v-if="c.count != null" class="ml-1 px-1.5 rounded-full text-[10px]" :class="chatAdmChipOn(c) ? 'bg-white/25' : (c.key === 'unread' && c.count > 0 ? 'bg-rose-500 text-white' : 'bg-slate-100')" :data-testid="'cha-count-' + c.key">{{ c.count }}</span></button>
+                    </div>
+                    <div class="flex gap-2">
+                        <input v-model="chatAdm.q" @input="chatAdmSearchInput()" type="search" placeholder="ค้นหา บ้านเลขที่ / ชื่อ / ข้อความ" class="flex-1 min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" data-testid="cha-search">
+                        <select v-model="chatAdm.label" @change="chatAdmLoad(true)" class="rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs" data-testid="cha-label-filter">
+                            <option value="">ทุกป้าย</option><option value="-">ไม่มีป้าย</option><option v-for="l in chatAdm.labels" :key="l" :value="l">{{ l }}</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="flex-1 overflow-y-auto" data-testid="cha-list">
+                    <div class="max-w-lg mx-auto px-4 pb-6 space-y-2">
+                        <div v-if="chatAdm.notReady" class="rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-sm p-4" data-testid="cha-notready">ระบบแชทยังไม่เปิดใช้ — ต้องรัน <b>migration_support_chat.sql</b> ใน Supabase ก่อน</div>
+                        <div v-else-if="chatAdm.error" class="rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-sm p-3" data-testid="cha-error">{{ chatAdm.error }} <button @click="chatAdmLoad(true)" class="underline font-bold ml-1">ลองใหม่</button></div>
+                        <div v-if="chatAdm.loading && !chatAdm.threads.length" class="text-center text-slate-400 py-10"><i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลด...</div>
+                        <div v-if="!chatAdm.loading && !chatAdm.notReady && !chatAdm.error && !chatAdm.threads.length" class="rounded-3xl bg-white shadow-sm p-8 text-center" data-testid="cha-empty"><div class="text-4xl mb-2">📭</div><div class="font-bold text-slate-700">{{ chatAdm.q || chatAdm.label || chatAdm.filter !== 'all' || chatAdm.status !== 'open' ? 'ไม่พบห้องแชทที่ตรงเงื่อนไข' : 'ยังไม่มีข้อความจากลูกบ้าน' }}</div></div>
+                        <button v-for="t in chatAdm.threads" :key="t.id" @click="chatAdmOpen(t)" class="w-full text-left rounded-2xl bg-white shadow-sm p-3.5 flex gap-3 items-start active:scale-[0.99] transition" :class="t.unread_admin > 0 ? 'ring-2 ring-rose-200' : ''" :data-testid="'cha-row-' + t.id">
+                            <div class="w-11 h-11 shrink-0 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-extrabold">{{ (t.house_no || '?').slice(0, 5) }}</div>
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2"><span class="font-bold text-slate-800 text-sm truncate">{{ t.member_name || 'ลูกบ้าน' }}</span><span class="ml-auto text-[10px] text-slate-400 shrink-0">{{ ibAge(t.last_message_at) }}</span></div>
+                                <div class="text-xs mt-0.5 truncate" :class="t.unread_admin > 0 ? 'text-slate-800 font-bold' : 'text-slate-500'">{{ t.last_sender === 'admin' ? 'คุณ: ' : '' }}{{ t.last_message_preview }}</div>
+                                <div class="flex flex-wrap gap-1 mt-1.5">
+                                    <span v-if="t.status === 'closed'" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">ปิดเคสแล้ว</span>
+                                    <span v-else-if="t.waiting === 'admin'" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">รอแอดมินตอบ</span>
+                                    <span v-else-if="t.waiting === 'member'" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-100 text-sky-700">รอลูกบ้าน</span>
+                                    <span v-if="t.label" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">{{ t.label }}</span>
+                                </div>
+                            </div>
+                            <span v-if="t.unread_admin > 0" class="min-w-[20px] h-5 px-1 rounded-full bg-rose-500 text-white text-[10px] font-extrabold flex items-center justify-center shrink-0" :data-testid="'cha-row-unread-' + t.id">{{ t.unread_admin }}</span>
+                        </button>
+                        <div v-if="chatAdm.threads.length < chatAdm.total" class="text-center pt-1"><button @click="chatAdmMore()" :disabled="chatAdm.loading" class="text-xs font-bold text-emerald-700 bg-white shadow-sm rounded-full px-4 py-1.5" data-testid="cha-more">โหลดเพิ่ม ({{ chatAdm.threads.length }}/{{ chatAdm.total }})</button></div>
+                    </div>
+                </div>
+            </template>
+
+            <!-- ห้องแชท -->
+            <template v-else-if="chatAdm.sel">
+                <div class="shrink-0 max-w-lg w-full mx-auto px-4 pb-2 flex items-center gap-2" data-testid="cha-thread">
+                    <select :value="chatAdm.sel.label || ''" @change="chatAdmSetLabel($event.target.value)" class="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs" data-testid="cha-label"><option value="">ไม่มีป้าย</option><option v-for="l in chatAdm.labels" :key="l" :value="l">{{ l }}</option></select>
+                    <span v-if="chatAdm.sel.status === 'closed'" class="text-[10px] font-bold px-2 py-1 rounded-full bg-slate-200 text-slate-600" data-testid="cha-status-closed">ปิดเคสแล้ว</span>
+                    <button v-if="chatAdm.sel.status !== 'closed'" @click="chatAdmClose()" class="ml-auto text-xs font-bold px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-700 active:scale-95" data-testid="cha-close"><i class="fa-solid fa-circle-check text-emerald-500"></i> ปิดเคส</button>
+                    <button v-else @click="chatAdmReopen()" class="ml-auto text-xs font-bold px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-700 active:scale-95" data-testid="cha-reopen"><i class="fa-solid fa-rotate-left text-sky-500"></i> เปิดเคสอีกครั้ง</button>
+                </div>
+                <div ref="chatAdmScroll" class="flex-1 overflow-y-auto" data-testid="cha-scroll">
+                    <div class="max-w-lg mx-auto px-4 py-2 space-y-2">
+                        <div v-if="chatAdm.selErr" class="rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-sm p-3" data-testid="cha-sel-error">{{ chatAdm.selErr }}</div>
+                        <div v-if="chatAdm.selLoading && !chatAdm.selMsgs.length" class="text-center text-slate-400 py-10"><i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลด...</div>
+                        <div v-if="chatAdm.selHasMore" class="text-center"><button @click="chatAdmMoreMsgs()" class="text-xs font-bold text-emerald-700 bg-white shadow-sm rounded-full px-4 py-1.5" data-testid="cha-msgs-more">ดูข้อความเก่ากว่านี้</button></div>
+                        <template v-for="(m, i) in chatAdm.selMsgs" :key="m.cid || m.id">
+                            <div v-if="chatNewDay(chatAdm.selMsgs, i)" class="text-center text-[10px] text-slate-400 pt-2">{{ chatDayLabel(m.at) }}</div>
+                            <div v-if="m.role === 'system'" class="text-center"><span class="inline-block text-[11px] text-slate-500 bg-slate-200/70 rounded-full px-3 py-1" :data-testid="'cha-msg-' + m.id">{{ m.body }}</span></div>
+                            <div v-else class="flex" :class="m.role === 'admin' ? 'justify-end' : 'justify-start'">
+                                <div class="max-w-[82%]">
+                                    <div class="text-[10px] text-slate-400 mb-0.5 mx-1" :class="m.role === 'admin' ? 'text-right' : ''">{{ m.name }}</div>
+                                    <div class="rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words shadow-sm" :class="[m.role === 'admin' ? 'bg-slate-800 text-white rounded-br-md' : 'bg-white text-slate-800 rounded-bl-md', m.state === 'failed' ? 'ring-2 ring-rose-400' : '', m.state === 'sending' ? 'opacity-60' : '']" :data-testid="'cha-msg-' + (m.cid || m.id)">{{ m.body }}</div>
+                                    <div class="text-[10px] text-slate-400 mt-0.5 px-1" :class="m.role === 'admin' ? 'text-right' : ''">
+                                        <template v-if="m.state === 'sending'">กำลังส่ง...</template>
+                                        <template v-else-if="m.state === 'failed'"><span class="text-rose-500 font-bold">ส่งไม่สำเร็จ</span> · <button @click="chatAdmRetry(m)" class="underline font-bold text-rose-600" data-testid="cha-retry">ส่งใหม่</button> · <button @click="chatAdmDiscard(m)" class="underline">ลบ</button></template>
+                                        <template v-else>{{ chatTime(m.at) }}<span v-if="m.id === chatAdmLastReadId" class="text-emerald-600 font-bold" data-testid="cha-read"> · ลูกบ้านอ่านแล้ว</span></template>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                <div class="shrink-0 bg-white/95 backdrop-blur border-t border-slate-200" style="padding-bottom: env(safe-area-inset-bottom)">
+                    <div class="max-w-lg mx-auto px-4 py-2.5">
+                        <div v-if="chatAdm.sel.status === 'closed'" class="text-xs text-slate-500 text-center py-2" data-testid="cha-closed-note">เคสนี้ปิดแล้ว — กด "เปิดเคสอีกครั้ง" ก่อนตอบ (ลูกบ้านพิมพ์มาใหม่ก็จะเปิดให้อัตโนมัติ)</div>
+                        <template v-else>
+                            <div v-if="chatAdm.sendErr" class="text-[11px] text-rose-600 mb-1.5" data-testid="cha-send-err">{{ chatAdm.sendErr }}</div>
+                            <div class="flex items-end gap-2">
+                                <button @click="chatAdmOpenTpl()" class="w-11 h-11 shrink-0 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center active:scale-95" title="ข้อความตอบเร็ว" data-testid="cha-tpl-btn"><i class="fa-solid fa-bolt"></i></button>
+                                <textarea v-model="chatAdm.text" @input="chatGrow($event)" rows="1" maxlength="1000" placeholder="พิมพ์ตอบลูกบ้าน..." class="flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm max-h-32 focus:outline-none focus:ring-2 focus:ring-emerald-300" data-testid="cha-input"></textarea>
+                                <button @click="chatAdmSend()" :disabled="!chatAdm.text.trim()" class="w-11 h-11 shrink-0 rounded-full bg-slate-800 text-white flex items-center justify-center shadow-md active:scale-95 disabled:opacity-40" data-testid="cha-send" title="ส่ง"><i class="fa-solid fa-paper-plane"></i></button>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+
+            <!-- ข้อความตอบเร็ว -->
+            <div v-if="chatAdm.tplOpen" class="fixed inset-0 z-[45] bg-black/50 flex items-end justify-center" @click.self="chatAdm.tplOpen = false" data-testid="cha-tpl-sheet">
+                <div class="bg-white w-full max-w-lg rounded-t-3xl max-h-[80vh] overflow-y-auto pb-8">
+                    <div class="sticky top-0 bg-white z-10 px-5 pt-4 pb-3 border-b border-slate-100 flex items-center gap-3">
+                        <div class="flex-1 font-extrabold text-slate-800">⚡ ข้อความตอบเร็ว</div>
+                        <button @click="chatAdmEditTpl(null)" class="text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-500 text-white active:scale-95" data-testid="cha-tpl-add"><i class="fa-solid fa-plus"></i> เพิ่ม</button>
+                        <button @click="chatAdm.tplOpen = false" class="w-9 h-9 rounded-full bg-slate-100 text-slate-500 text-xl leading-none" data-testid="cha-tpl-close">&times;</button>
+                    </div>
+                    <div class="px-5 pt-3 space-y-2">
+                        <div v-if="chatAdm.tplLoading" class="text-center text-slate-400 py-6"><i class="fa-solid fa-spinner fa-spin"></i></div>
+                        <div v-else-if="chatAdm.tplError" class="text-sm text-rose-600" data-testid="cha-tpl-error">{{ chatAdm.tplError }}</div>
+                        <div v-else-if="!chatAdm.tpls.length" class="text-sm text-slate-400 text-center py-6" data-testid="cha-tpl-empty">ยังไม่มีข้อความตอบเร็ว — กด "เพิ่ม" เพื่อสร้าง</div>
+                        <div v-for="t in chatAdm.tpls" :key="t.id" class="rounded-2xl border border-slate-200 p-3 flex gap-2 items-start" :class="t.active ? '' : 'opacity-50'" :data-testid="'cha-tpl-row-' + t.id">
+                            <button @click="chatAdmUseTpl(t)" class="flex-1 min-w-0 text-left" :data-testid="'cha-tpl-' + t.id"><div class="font-bold text-sm text-slate-800">{{ t.title }}<span v-if="!t.active" class="ml-1 text-[10px] text-slate-400">(ปิดใช้งาน)</span></div><div class="text-xs text-slate-500 mt-0.5 whitespace-pre-wrap break-words line-clamp-3">{{ t.body }}</div></button>
+                            <button @click="chatAdmEditTpl(t)" class="w-8 h-8 shrink-0 rounded-full bg-slate-100 text-slate-500 text-xs" title="แก้ไข" :data-testid="'cha-tpl-edit-' + t.id"><i class="fa-solid fa-pen"></i></button>
+                            <button @click="chatAdmDelTpl(t)" class="w-8 h-8 shrink-0 rounded-full bg-rose-50 text-rose-500 text-xs" title="ลบ" :data-testid="'cha-tpl-del-' + t.id"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div v-if="currentTab === 'inbox' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-rose-50/40 overflow-y-auto z-20" data-testid="ib-page">
             <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
                 <div class="mb-4 flex items-center gap-3">
@@ -4031,6 +4208,8 @@
                     profileEditing: false,
                     expiry: null, expiryLoading: false, expiryAt: 0, expirySheet: false, expiryBusy: '',
                     exa: { loading: false, error: '', data: null, type: '', status: 'attention', month: '', q: '', seq: 0, busy: {} }, exaTimer: null,
+                    chat: { loading: false, error: '', notReady: false, thread: null, msgs: [], hasMore: false, text: '', sendErr: '', loadingMore: false, seq: 0, polling: false, inflight: 0, pollErr: 0, tick: 0 }, chatTimer: null,
+                    chatAdm: { view: 'list', loading: false, error: '', notReady: false, threads: [], total: 0, counts: null, status: 'open', filter: 'all', label: '', q: '', offset: 0, labels: [], seq: 0, sel: null, selSeq: 0, selMsgs: [], selHasMore: false, selLoading: false, selErr: '', selPolling: false, text: '', sendErr: '', inflight: 0, tplOpen: false, tpls: [], tplLoading: false, tplError: '' }, chatAdmTimer: null, chatAdmQTimer: null,
                     inbox: { loading: false, error: '', data: null }, ibBusy: {}, usage: { loading: false, error: '', data: null, days: 30, showNever: false },
                     profileMore: null, profileMoreLoading: false, profileMoreError: '', profileMoreAt: 0, pmOpen: { line: false, members: false, reg: false },
                     ownerEdit: { open: false, type: 'sole', names: [''], note: '', saving: false, error: '', max: 4 },
@@ -4177,7 +4356,7 @@
                 hasAdminTools() {
                     const m = this.menuAccess; if (!m) return false;
                     const t = m.tools || {};
-                    return !!((m.admin_menus && m.admin_menus.length) || t.keycard_admin || t.member_registry || t.admin_inbox || t.usage_dashboard || t.expiry_admin);
+                    return !!((m.admin_menus && m.admin_menus.length) || t.keycard_admin || t.member_registry || t.admin_inbox || t.usage_dashboard || t.expiry_admin || t.chat_admin);
                 },
                 // ⏳ วันหมดอายุของบ้าน (สมาชิก)
                 expiryItems() { return (this.expiry && Array.isArray(this.expiry.items)) ? this.expiry.items : []; },
@@ -4292,6 +4471,12 @@
                 },
                 hfYearData() { const f = this.houseFees; if (!f || !(f.years || []).length) return null; return f.years.find(y => y.year === this.hfYear) || f.years[0]; },
                 // 🔴 บัตรที่ถูกบล็อกขึ้นก่อน (ที่เหลือเรียงตามเดิม)
+                chatLastReadId() { const up = this.chat.thread && this.chat.thread.read_by_admin_upto || 0; let id = 0; for (const m of this.chat.msgs) if (m.role === 'member' && !m.local && m.id <= up) id = m.id; return id; },
+                chatAdmLastReadId() { const up = this.chatAdm.sel && this.chatAdm.sel.read_by_member_upto || 0; let id = 0; for (const m of this.chatAdm.selMsgs) if (m.role === 'admin' && !m.local && m.id <= up) id = m.id; return id; },
+                chatAdmChips() { const c = this.chatAdm.counts || {}; return [
+                    { key: 'open', label: 'เปิดอยู่', status: 'open', filter: 'all', count: c.open }, { key: 'unread', label: 'ยังไม่อ่าน', status: 'all', filter: 'unread', count: c.unread },
+                    { key: 'waiting_admin', label: 'รอแอดมินตอบ', status: 'open', filter: 'waiting_admin', count: c.waiting_admin }, { key: 'waiting_member', label: 'รอลูกบ้าน', status: 'open', filter: 'waiting_member', count: null },
+                    { key: 'closed', label: 'ปิดเคสแล้ว', status: 'closed', filter: 'all', count: c.closed }]; },
                 keyCardBlockedCount() { return (this.keyCards || []).filter(c => c.status === 'fee_blocked').length; },
                 keyCardsView() { const r = this.keyCards || []; return r.filter(c => c.status === 'fee_blocked').concat(r.filter(c => c.status !== 'fee_blocked')); },
                 kcaShown() { return this.kcaFiltered.slice(0, this.kcaPage * 30); },
@@ -4613,6 +4798,7 @@
                 let _gated = false;
                 try { _gated = await this.statusGateCheck(); } catch (e) { console.warn('statusGate skipped', e); }
                 this.trackCrmVisit();
+                this.chatBindVisibility();
                 this.loadExpiry(true);
                 if (!_gated) this.handleDeepLink().catch(e => console.warn('deep link', e));
                 try { this.friendDismissed = sessionStorage.getItem('crm_friend_dismissed') === '1'; } catch (e) { /* ใช้ไม่ได้ก็ข้าม */ }
@@ -4640,6 +4826,12 @@
                     if (newVal === 'repairs' && this.myRepairs.length === 0) this.loadMyRepairs();
                     if (newVal === 'profile' && !this.statusCheckResult) this.checkMyStatus();
                     if (newVal === 'profile') this.loadProfileMore(false);
+                    // 💬 แชท: เข้าหน้า = โหลด + เริ่ม polling · ออกหน้า = หยุด (ไม่ polling เบื้องหลัง)
+                    if (newVal === 'chat') this.chatEnter(); else this.chatLeave();
+                    if (newVal === 'chatadmin') {
+                        if (!(this.menuAccess && this.menuAccess.tools && this.menuAccess.tools.chat_admin)) { this.currentTab = 'home'; return; }
+                        this.chatAdmEnter();
+                    } else this.chatAdmStopPoll();
                     this.trackCrmTab(newVal);
                     if (newVal === 'status') this.enterStatusPage();
                     if (newVal === 'cctv' && this.myCctvRequests.length === 0) this.loadMyCctvRequests();
@@ -4658,7 +4850,7 @@
                 mOn(key) { const m = this.menuAccess && this.menuAccess.menus; return !m || m[key] !== false; },
                 guardTab(tab) {
                     const map = { rewards: 'rewards', coupons: 'coupons', history: 'history', checkin: 'checkin', agm: 'agm', payments: 'payments', keycard: 'keycard',
-                                  cars: 'cars', complaints: 'complaints', repairs: 'repairs', cctv: 'cctv', gallery: 'gallery', status: 'status', news: 'news', housemembers: 'house_members' };
+                                  cars: 'cars', chat: 'chat', complaints: 'complaints', repairs: 'repairs', cctv: 'cctv', gallery: 'gallery', status: 'status', news: 'news', housemembers: 'house_members' };
                     const k = map[tab];
                     return !k || this.mOn(k);
                 },
@@ -4907,7 +5099,7 @@
                     // ชื่อเรียกอื่นที่ใช้ในลิงก์ได้ (เช่น ?tab=car หรือ ?tab=confirm)
                     const tabAlias = { car: 'cars', vehicle: 'cars', confirm: 'status', ownership: 'status', verify: 'status', complaint: 'complaints', repair: 'repairs', camera: 'cctv' };
                     const validTabs = ['home', 'rewards', 'coupons', 'news', 'profile', 'history', 'checkin', 'agm', 'payments', 'keycard',
-                                       'cars', 'complaints', 'repairs', 'cctv', 'gallery', 'status', 'housemembers'];
+                                       'cars', 'complaints', 'repairs', 'cctv', 'gallery', 'status', 'housemembers', 'chat'];
                     const tabKey = tabAlias[tabName] || tabName;
                     // 🪪 ลิงก์ลัดแอดมิน ?tab=kcadmin — เปิดได้เมื่อ server บอกว่าบัญชีนี้ใช้เครื่องมือนี้ได้ (ตัวบังคับจริงอยู่ที่ API)
                     if (tabKey === 'kcadmin') {
@@ -4928,6 +5120,11 @@
                     if (tabKey === 'expiry') {   // ⏳ ?tab=expiry — ลิงก์ลัดแอดมิน
                         const url = new URL(window.location.href); url.searchParams.delete('tab'); history.replaceState(null, '', url.toString());
                         if (this.menuAccess && this.menuAccess.tools && this.menuAccess.tools.expiry_admin) await this.openExa();
+                        return;
+                    }
+                    if (tabKey === 'chatadmin') {   // 💬 ?tab=chatadmin — ลิงก์ลัดแอดมิน
+                        const url = new URL(window.location.href); url.searchParams.delete('tab'); history.replaceState(null, '', url.toString());
+                        if (this.menuAccess && this.menuAccess.tools && this.menuAccess.tools.chat_admin) await this.openChatAdmin();
                         return;
                     }
                     if (tabKey === 'usage') {
@@ -5481,6 +5678,304 @@
                         await this.exaLoad();
                         Swal.fire({ icon: 'success', title: 'ตั้งวันให้ ' + d.updated + ' ใบแล้ว', text: 'วันหมดอายุ ' + this.formatThaiDate(d.date), timer: 2200, showConfirmButton: false });
                     } catch (e) { Swal.fire('ไม่สำเร็จ', e.message || 'เกิดข้อผิดพลาด', 'error'); this.exaLoad(); }
+                },
+
+                // ═════════ 💬 แชทกับนิติฯ (ลูกบ้าน) ═════════
+                chatApi(path, opts) {
+                    const o = Object.assign({}, opts || {});
+                    o.headers = this.lineAuthHeaders(o.method === 'POST' ? { 'Content-Type': 'application/json' } : {});
+                    return fetch(`${EDGE_FUNCTION_URL}/api/crm/${path}`, o).then(async (res) => {
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) { const e = new Error(d.error || ('HTTP ' + res.status)); e.status = res.status; e.data = d; throw e; }
+                        return d;
+                    });
+                },
+                chatUid() { return this.userProfile && this.userProfile.userId; },
+                chatTime(at) { const d = new Date(at); return isNaN(d) ? '' : d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }); },
+                chatDayKey(at) { const d = new Date(at); return isNaN(d) ? '' : d.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }); },
+                chatNewDay(list, i) { return i === 0 || this.chatDayKey(list[i].at) !== this.chatDayKey(list[i - 1].at); },
+                chatDayLabel(at) {
+                    const k = this.chatDayKey(at), now = Date.now();
+                    if (k === this.chatDayKey(now)) return 'วันนี้';
+                    if (k === this.chatDayKey(now - 86400000)) return 'เมื่อวาน';
+                    const d = new Date(at); return isNaN(d) ? '' : d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' });
+                },
+                chatGrow(ev) { const el = ev && ev.target; if (!el) return; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 128) + 'px'; },
+                chatNewCid() { return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); },
+                chatScrollDown(ref) { this.$nextTick(() => { const el = this.$refs[ref]; if (el) el.scrollTop = el.scrollHeight; }); },
+                chatNearBottom(ref) { const el = this.$refs[ref]; return !el || (el.scrollHeight - el.scrollTop - el.clientHeight) < 120; },
+                // รวมข้อความจากเซิร์ฟเวอร์เข้ารายการ (ตัดซ้ำตาม id · เรียงตาม id · ข้อความที่ยังส่งไม่สำเร็จ/กำลังส่งอยู่ท้ายสุด)
+                chatMerge(list, incoming) {
+                    const have = new Set(list.filter(m => !m.local).map(m => m.id));
+                    const fresh = (incoming || []).filter(m => !have.has(m.id));
+                    const server = list.filter(m => !m.local).concat(fresh).sort((a, b) => a.id - b.id);
+                    return server.concat(list.filter(m => m.local));
+                },
+                chatLastServerId(list) { let id = 0; for (const m of list) if (!m.local && m.id > id) id = m.id; return id; },
+                async chatEnter() {
+                    const uid = this.chatUid(); if (!uid) return;
+                    const seq = ++this.chat.seq;
+                    this.chat.loading = true; this.chat.error = ''; this.chat.sendErr = ''; this.chat.notReady = false;
+                    try {
+                        const d = await this.chatApi(`chat_thread?userId=${encodeURIComponent(uid)}`);
+                        if (this.chat.seq !== seq) return;
+                        this.chat.thread = d.thread || null; this.chat.hasMore = !!d.has_more;
+                        this.chat.msgs = this.chatMerge(this.chat.msgs.filter(m => m.local), d.messages || []);
+                        if (this.menuAccess) this.menuAccess.chat_unread = 0;
+                        this.chatScrollDown('chatScroll');
+                    } catch (e) {
+                        if (this.chat.seq !== seq) return;
+                        if (e.data && e.data.code === 'chat_not_ready') this.chat.notReady = true;
+                        else this.chat.error = 'โหลดแชทไม่สำเร็จ: ' + (e.message || '');
+                    } finally { if (this.chat.seq === seq) this.chat.loading = false; }
+                    this.chatStartPoll();
+                },
+                chatStartPoll() {
+                    this.chatStopPoll(); this.chat.tick = 0;
+                    this.chatTimer = setInterval(() => this.chatPoll(), 5000);
+                },
+                chatStopPoll() { if (this.chatTimer) { clearInterval(this.chatTimer); this.chatTimer = null; } },
+                async chatPoll() {
+                    if (this.currentTab !== 'chat') { this.chatStopPoll(); return; }
+                    if (document.hidden || this.chat.polling || this.chat.inflight > 0 || this.chat.notReady) return;
+                    this.chat.tick = (this.chat.tick || 0) + 1;
+                    if (this.chat.pollErr >= 3 && this.chat.tick % 6 !== 0) return;   // เน็ตมีปัญหา → ถอยห่างออก (ลองทุก ~30 วินาที)
+                    const uid = this.chatUid(); if (!uid) return;
+                    this.chat.polling = true;
+                    try {
+                        const near = this.chatNearBottom('chatScroll');
+                        const d = await this.chatApi(`chat_thread?userId=${encodeURIComponent(uid)}&after=${this.chatLastServerId(this.chat.msgs)}`);
+                        if (this.currentTab !== 'chat') return;
+                        this.chat.thread = d.thread || this.chat.thread; this.chat.pollErr = 0; this.chat.error = '';
+                        if (d.messages && d.messages.length) { this.chat.msgs = this.chatMerge(this.chat.msgs, d.messages); if (near) this.chatScrollDown('chatScroll'); }
+                    } catch (e) { this.chat.pollErr = (this.chat.pollErr || 0) + 1; }
+                    finally { this.chat.polling = false; }
+                },
+                async chatMore() {
+                    const uid = this.chatUid(); if (!uid || this.chat.loadingMore) return;
+                    const first = this.chat.msgs.find(m => !m.local); if (!first) return;
+                    this.chat.loadingMore = true;
+                    try {
+                        const el = this.$refs.chatScroll, prev = el ? el.scrollHeight : 0;
+                        const d = await this.chatApi(`chat_thread?userId=${encodeURIComponent(uid)}&before=${first.id}&mark=0`);
+                        this.chat.msgs = this.chatMerge(this.chat.msgs, d.messages || []); this.chat.hasMore = !!d.has_more;
+                        this.$nextTick(() => { if (el) el.scrollTop = el.scrollHeight - prev; });
+                    } catch (e) { this.chat.error = 'โหลดข้อความเก่าไม่สำเร็จ: ' + (e.message || ''); }
+                    finally { this.chat.loadingMore = false; }
+                },
+                async chatSend() {
+                    const text = String(this.chat.text || '').trim(); if (!text) return;
+                    if (text.length > 1000) { this.chat.sendErr = 'ข้อความยาวเกิน 1000 ตัวอักษร'; return; }
+                    this.chat.sendErr = '';
+                    const m = { id: -Date.now(), cid: this.chatNewCid(), local: true, state: 'sending', role: 'member', body: text, at: new Date().toISOString(), name: '' };
+                    this.chat.msgs = this.chat.msgs.concat([m]); this.chat.text = '';
+                    this.$nextTick(() => { const ta = document.querySelector('[data-testid="chat-input"]'); if (ta) ta.style.height = 'auto'; });
+                    this.chatScrollDown('chatScroll');
+                    await this.chatTransmit(m);
+                },
+                async chatTransmit(m0) {
+                    const uid = this.chatUid(); if (!uid) return;
+                    const m = this.chat.msgs.find(x => x.cid === m0.cid) || m0;   // ต้องใช้ตัวที่ reactive (ไม่ใช่ object ดิบ) ไม่งั้นหน้าจอไม่อัปเดตสถานะ
+                    m.state = 'sending'; this.chat.inflight = (this.chat.inflight || 0) + 1;
+                    try {
+                        const d = await this.chatApi('chat_send', { method: 'POST', body: JSON.stringify({ userId: uid, body: m.body, client_id: m.cid }) });
+                        const rest = this.chat.msgs.filter(x => x.cid !== m.cid);
+                        this.chat.msgs = this.chatMerge(rest, [d.message]);
+                        if (this.chat.thread) this.chat.thread.status = 'open'; else this.chat.thread = { status: 'open', read_by_admin_upto: 0 };
+                        this.chat.pollErr = 0; this.chatScrollDown('chatScroll');
+                    } catch (e) {
+                        const code = e.data && e.data.code;
+                        if (code === 'rate_limited' || code === 'too_long' || code === 'empty') {   // ส่งใหม่ก็ไม่ผ่าน → เอาออกจากรายการ คืนข้อความให้แก้
+                            this.chat.msgs = this.chat.msgs.filter(x => x.cid !== m.cid);
+                            if (!this.chat.text) this.chat.text = m.body;
+                            this.chat.sendErr = e.message;
+                        } else if (code === 'chat_not_ready') { this.chat.notReady = true; this.chat.msgs = this.chat.msgs.filter(x => x.cid !== m.cid); }
+                        else { m.state = 'failed'; this.chat.sendErr = 'ส่งไม่สำเร็จ — ตรวจสอบอินเทอร์เน็ตแล้วกด "ส่งใหม่"'; }
+                    } finally { this.chat.inflight = Math.max(0, (this.chat.inflight || 1) - 1); }
+                },
+                chatRetry(m) { this.chat.sendErr = ''; return this.chatTransmit(m); },
+                chatDiscard(m) { this.chat.msgs = this.chat.msgs.filter(x => x.cid !== m.cid); this.chat.sendErr = ''; },
+                chatLeave() { this.chatStopPoll(); this.chat.seq++; },
+
+                // ═════════ 💬 แชทลูกบ้าน (แอดมิน) ═════════
+                chatAdmChipOn(c) { return this.chatAdm.status === c.status && this.chatAdm.filter === c.filter; },
+                chatAdmPick(c) { this.chatAdm.status = c.status; this.chatAdm.filter = c.filter; this.chatAdmLoad(true); },
+                chatAdmSearchInput() { clearTimeout(this.chatAdmQTimer); this.chatAdmQTimer = setTimeout(() => this.chatAdmLoad(true), 350); },
+                chatAdmApplyBadge() { if (this.menuAccess && this.chatAdm.counts) this.menuAccess.chat_admin_unread = this.chatAdm.counts.unread || 0; },
+                async openChatAdmin() { this.chatAdm.view = 'list'; this.currentTab = 'chatadmin'; },
+                async chatAdmEnter() {
+                    this.chatAdm.view = 'list'; this.chatAdm.sel = null;
+                    await this.chatAdmLoad(true);
+                    this.chatAdmStartPoll();
+                },
+                chatAdmStartPoll() { this.chatAdmStopPoll(); this.chatAdmTimer = setInterval(() => this.chatAdmPoll(), 6000); },
+                chatAdmStopPoll() { if (this.chatAdmTimer) { clearInterval(this.chatAdmTimer); this.chatAdmTimer = null; } clearTimeout(this.chatAdmQTimer); },
+                async chatAdmPoll() {
+                    if (this.currentTab !== 'chatadmin') { this.chatAdmStopPoll(); return; }
+                    if (document.hidden || this.chatAdm.notReady) return;
+                    try {
+                        if (this.chatAdm.view === 'list') { if (!this.chatAdm.loading && this.chatAdm.offset === 0) await this.chatAdmLoad(false, true); }
+                        else if (this.chatAdm.sel && !this.chatAdm.selLoading && !this.chatAdm.inflight && !this.chatAdm.selPolling) await this.chatAdmPollThread();
+                    } catch (e) { /* รอบหน้าลองใหม่ */ }
+                },
+                async chatAdmLoad(reset, silent) {
+                    const seq = ++this.chatAdm.seq;
+                    if (reset) this.chatAdm.offset = 0;
+                    if (!silent) { this.chatAdm.loading = true; this.chatAdm.error = ''; }
+                    try {
+                        const p = new URLSearchParams({ status: this.chatAdm.status, filter: this.chatAdm.filter, limit: '30', offset: String(this.chatAdm.offset) });
+                        if (this.chatAdm.label) p.set('label', this.chatAdm.label);
+                        if (this.chatAdm.q.trim()) p.set('q', this.chatAdm.q.trim());
+                        const d = await this.kcaApi('chat_inbox?' + p.toString());
+                        if (this.chatAdm.seq !== seq) return;
+                        this.chatAdm.notReady = false; this.chatAdm.error = '';
+                        this.chatAdm.threads = this.chatAdm.offset === 0 ? d.threads : this.chatAdm.threads.concat(d.threads);
+                        this.chatAdm.total = d.total; this.chatAdm.labels = d.labels || this.chatAdm.labels;
+                        if (d.counts) { this.chatAdm.counts = d.counts; this.chatAdmApplyBadge(); }
+                    } catch (e) {
+                        if (this.chatAdm.seq !== seq) return;
+                        if (e.data && e.data.code === 'chat_not_ready') { this.chatAdm.notReady = true; this.chatAdm.threads = []; }
+                        else if (!silent) this.chatAdm.error = 'โหลดรายการแชทไม่สำเร็จ: ' + (e.message || '');
+                    } finally { if (this.chatAdm.seq === seq && !silent) this.chatAdm.loading = false; }
+                },
+                async chatAdmMore() { this.chatAdm.offset = this.chatAdm.threads.length; await this.chatAdmLoad(false); },
+                chatAdmBack() {
+                    if (this.chatAdm.view === 'thread') { this.chatAdm.selSeq++; this.chatAdm.view = 'list'; this.chatAdm.sel = null; this.chatAdmLoad(true); }
+                    else this.currentTab = 'home';
+                },
+                async chatAdmOpen(t) {
+                    const seq = ++this.chatAdm.selSeq;
+                    this.chatAdm.view = 'thread'; this.chatAdm.sel = Object.assign({}, t); this.chatAdm.selMsgs = []; this.chatAdm.selHasMore = false;
+                    this.chatAdm.selErr = ''; this.chatAdm.sendErr = ''; this.chatAdm.text = ''; this.chatAdm.selLoading = true;
+                    try {
+                        const d = await this.kcaApi('chat_messages?thread_id=' + encodeURIComponent(t.id));
+                        if (this.chatAdm.selSeq !== seq) return;
+                        this.chatAdm.sel = Object.assign({}, this.chatAdm.sel, d.thread); this.chatAdm.selMsgs = d.messages || []; this.chatAdm.selHasMore = !!d.has_more;
+                        const row = this.chatAdm.threads.find(x => x.id === t.id);
+                        if (row && row.unread_admin > 0) {
+                            if (this.chatAdm.counts && this.chatAdm.counts.unread > 0) { this.chatAdm.counts.unread--; this.chatAdmApplyBadge(); }
+                            row.unread_admin = 0;
+                        }
+                        this.chatScrollDown('chatAdmScroll');
+                    } catch (e) { if (this.chatAdm.selSeq === seq) this.chatAdm.selErr = 'โหลดข้อความไม่สำเร็จ: ' + (e.message || ''); }
+                    finally { if (this.chatAdm.selSeq === seq) this.chatAdm.selLoading = false; }
+                },
+                async chatAdmPollThread() {
+                    const t = this.chatAdm.sel; if (!t) return;
+                    this.chatAdm.selPolling = true; const seq = this.chatAdm.selSeq;
+                    try {
+                        const near = this.chatNearBottom('chatAdmScroll');
+                        const d = await this.kcaApi(`chat_messages?thread_id=${encodeURIComponent(t.id)}&after=${this.chatLastServerId(this.chatAdm.selMsgs)}`);
+                        if (this.chatAdm.selSeq !== seq || !this.chatAdm.sel) return;
+                        this.chatAdm.sel = Object.assign({}, this.chatAdm.sel, d.thread);
+                        if (d.messages && d.messages.length) { this.chatAdm.selMsgs = this.chatMerge(this.chatAdm.selMsgs, d.messages); if (near) this.chatScrollDown('chatAdmScroll'); }
+                    } finally { this.chatAdm.selPolling = false; }
+                },
+                async chatAdmMoreMsgs() {
+                    const t = this.chatAdm.sel, first = this.chatAdm.selMsgs.find(m => !m.local); if (!t || !first) return;
+                    try {
+                        const el = this.$refs.chatAdmScroll, prev = el ? el.scrollHeight : 0;
+                        const d = await this.kcaApi(`chat_messages?thread_id=${encodeURIComponent(t.id)}&before=${first.id}&mark=0`);
+                        this.chatAdm.selMsgs = this.chatMerge(this.chatAdm.selMsgs, d.messages || []); this.chatAdm.selHasMore = !!d.has_more;
+                        this.$nextTick(() => { if (el) el.scrollTop = el.scrollHeight - prev; });
+                    } catch (e) { this.chatAdm.selErr = 'โหลดข้อความเก่าไม่สำเร็จ: ' + (e.message || ''); }
+                },
+                async chatAdmSend() {
+                    const text = String(this.chatAdm.text || '').trim(); if (!text || !this.chatAdm.sel) return;
+                    if (text.length > 1000) { this.chatAdm.sendErr = 'ข้อความยาวเกิน 1000 ตัวอักษร'; return; }
+                    this.chatAdm.sendErr = '';
+                    const m = { id: -Date.now(), cid: this.chatNewCid(), local: true, state: 'sending', role: 'admin', body: text, at: new Date().toISOString(), name: 'คุณ' };
+                    this.chatAdm.selMsgs = this.chatAdm.selMsgs.concat([m]); this.chatAdm.text = '';
+                    this.$nextTick(() => { const ta = document.querySelector('[data-testid="cha-input"]'); if (ta) ta.style.height = 'auto'; });
+                    this.chatScrollDown('chatAdmScroll');
+                    await this.chatAdmTransmit(m);
+                },
+                async chatAdmTransmit(m0) {
+                    const t = this.chatAdm.sel; if (!t) return;
+                    const m = this.chatAdm.selMsgs.find(x => x.cid === m0.cid) || m0;
+                    m.state = 'sending'; this.chatAdm.inflight = (this.chatAdm.inflight || 0) + 1;
+                    try {
+                        const d = await this.kcaApi('chat_reply', { method: 'POST', body: JSON.stringify({ thread_id: t.id, body: m.body, client_id: m.cid }) });
+                        this.chatAdm.selMsgs = this.chatMerge(this.chatAdm.selMsgs.filter(x => x.cid !== m.cid), [d.message]);
+                        this.chatScrollDown('chatAdmScroll');
+                    } catch (e) {
+                        const code = e.data && e.data.code;
+                        if (code === 'thread_closed') { this.chatAdm.selMsgs = this.chatAdm.selMsgs.filter(x => x.cid !== m.cid); if (!this.chatAdm.text) this.chatAdm.text = m.body; this.chatAdm.sel = Object.assign({}, this.chatAdm.sel, { status: 'closed' }); this.chatAdm.sendErr = e.message; }
+                        else if (code === 'too_long' || code === 'empty') { this.chatAdm.selMsgs = this.chatAdm.selMsgs.filter(x => x.cid !== m.cid); if (!this.chatAdm.text) this.chatAdm.text = m.body; this.chatAdm.sendErr = e.message; }
+                        else { m.state = 'failed'; this.chatAdm.sendErr = 'ส่งไม่สำเร็จ — กด "ส่งใหม่" ที่ข้อความ'; }
+                    } finally { this.chatAdm.inflight = Math.max(0, (this.chatAdm.inflight || 1) - 1); }
+                },
+                chatAdmRetry(m) { this.chatAdm.sendErr = ''; return this.chatAdmTransmit(m); },
+                chatAdmDiscard(m) { this.chatAdm.selMsgs = this.chatAdm.selMsgs.filter(x => x.cid !== m.cid); this.chatAdm.sendErr = ''; },
+                async chatAdmClose() {
+                    const t = this.chatAdm.sel; if (!t) return;
+                    const r = await Swal.fire({ title: 'ปิดเคสนี้?', text: 'ลูกบ้านจะเห็นข้อความ "นิติบุคคลปิดเคสแล้ว" และพิมพ์ใหม่ได้เสมอ', icon: 'question', showCancelButton: true, confirmButtonText: 'ปิดเคส', cancelButtonText: 'ยกเลิก' });
+                    if (!r.isConfirmed) return;
+                    await this.chatAdmStatusAction('chat_close', 'closed');
+                },
+                async chatAdmReopen() { await this.chatAdmStatusAction('chat_reopen', 'open'); },
+                async chatAdmStatusAction(act, st) {
+                    const t = this.chatAdm.sel; if (!t) return;
+                    try {
+                        await this.kcaApi(act, { method: 'POST', body: JSON.stringify({ thread_id: t.id }) });
+                        this.chatAdm.sel = Object.assign({}, this.chatAdm.sel, { status: st });
+                        await this.chatAdmPollThread();
+                        this.chatScrollDown('chatAdmScroll');
+                    } catch (e) { Swal.fire('ไม่สำเร็จ', e.message || 'เกิดข้อผิดพลาด', 'error'); }
+                },
+                async chatAdmSetLabel(label) {
+                    const t = this.chatAdm.sel; if (!t) return;
+                    try {
+                        const d = await this.kcaApi('chat_label', { method: 'POST', body: JSON.stringify({ thread_id: t.id, label: label || null }) });
+                        this.chatAdm.sel = Object.assign({}, this.chatAdm.sel, { label: d.label });
+                        const row = this.chatAdm.threads.find(x => x.id === t.id); if (row) row.label = d.label;
+                    } catch (e) { Swal.fire('ไม่สำเร็จ', e.message || 'เกิดข้อผิดพลาด', 'error'); this.chatAdm.sel = Object.assign({}, this.chatAdm.sel); }
+                },
+                async chatAdmOpenTpl() {
+                    this.chatAdm.tplOpen = true; this.chatAdm.tplError = ''; this.chatAdm.tplLoading = true;
+                    try { const d = await this.kcaApi('chat_templates'); this.chatAdm.tpls = d.templates || []; }
+                    catch (e) { this.chatAdm.tplError = 'โหลดข้อความตอบเร็วไม่สำเร็จ: ' + (e.message || ''); }
+                    finally { this.chatAdm.tplLoading = false; }
+                },
+                chatAdmUseTpl(t) {
+                    const cur = String(this.chatAdm.text || '');
+                    this.chatAdm.text = (cur ? cur.replace(/\s+$/, '') + '\n' : '') + t.body;
+                    this.chatAdm.tplOpen = false;
+                    this.$nextTick(() => { const ta = document.querySelector('[data-testid="cha-input"]'); if (ta) { ta.focus(); this.chatGrow({ target: ta }); } });
+                },
+                async chatAdmEditTpl(t) {
+                    const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+                    const r = await Swal.fire({
+                        title: t ? 'แก้ไขข้อความตอบเร็ว' : 'เพิ่มข้อความตอบเร็ว', showCancelButton: true, confirmButtonText: 'บันทึก', cancelButtonText: 'ยกเลิก',
+                        html: `<input id="cha-tpl-title" class="swal2-input" maxlength="40" placeholder="ชื่อปุ่ม (เช่น รับเรื่องแล้ว)" value="${esc(t && t.title)}">` +
+                              `<textarea id="cha-tpl-body" class="swal2-textarea" maxlength="1000" placeholder="ข้อความที่จะใส่ในช่องพิมพ์">${esc(t && t.body)}</textarea>` +
+                              `<label style="display:flex;gap:8px;align-items:center;justify-content:center;font-size:13px"><input id="cha-tpl-active" type="checkbox" ${(!t || t.active) ? 'checked' : ''}> ใช้งาน</label>`,
+                        preConfirm: () => {
+                            const title = document.getElementById('cha-tpl-title').value.trim(), body = document.getElementById('cha-tpl-body').value.trim();
+                            if (!title) { Swal.showValidationMessage('กรุณาใส่ชื่อปุ่ม'); return false; }
+                            if (!body) { Swal.showValidationMessage('กรุณาใส่ข้อความ'); return false; }
+                            return { title, body, active: document.getElementById('cha-tpl-active').checked };
+                        },
+                    });
+                    if (!r.isConfirmed || !r.value) return;
+                    try {
+                        await this.kcaApi('chat_template_save', { method: 'POST', body: JSON.stringify(Object.assign({}, r.value, t ? { id: t.id, sort_order: t.sort_order } : {})) });
+                        const d = await this.kcaApi('chat_templates'); this.chatAdm.tpls = d.templates || [];
+                    } catch (e) { Swal.fire('ไม่สำเร็จ', e.message || 'เกิดข้อผิดพลาด', 'error'); }
+                },
+                async chatAdmDelTpl(t) {
+                    const r = await Swal.fire({ title: 'ลบข้อความ "' + t.title + '"?', icon: 'warning', showCancelButton: true, confirmButtonText: 'ลบ', cancelButtonText: 'ยกเลิก' });
+                    if (!r.isConfirmed) return;
+                    try { await this.kcaApi('chat_template_delete', { method: 'POST', body: JSON.stringify({ id: t.id }) }); this.chatAdm.tpls = this.chatAdm.tpls.filter(x => x.id !== t.id); }
+                    catch (e) { Swal.fire('ไม่สำเร็จ', e.message || 'เกิดข้อผิดพลาด', 'error'); }
+                },
+                chatBindVisibility() {
+                    if (this._chatVis) return; this._chatVis = true;
+                    document.addEventListener('visibilitychange', () => {
+                        if (document.hidden) return;
+                        const now = Date.now(); if (now - (this._chatVisAt || 0) < 20000) return; this._chatVisAt = now;
+                        if (this.currentTab === 'home') this.loadMenuAccess();   // กลับมาเปิดแอป → รีเฟรชป้ายแดง
+                    });
                 },
 
                 // ═════════ 📥 ADMIN: งานรอตรวจ ═════════
