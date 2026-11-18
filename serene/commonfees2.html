@@ -4965,7 +4965,7 @@
                                     <i data-lucide="key-round" class="w-5 h-5"></i>
                                     สำรองรูปคีย์การ์ดไป Google Drive
                                 </h3>
-                                <p class="text-white/90 text-sm mt-1">คัดลอกรูปบัตรที่ลูกบ้านส่งมา (Supabase Storage) ไปเก็บใน Google Drive — ปลอดภัย: ไม่แก้ลิงก์ในฐานข้อมูล ไม่ลบต้นฉบับ รันซ้ำได้ (ข้ามรูปที่สำรองแล้ว)</p>
+                                <p class="text-white/90 text-sm mt-1">① คัดลอกรูปบัตร (Supabase Storage) ไปเก็บใน Google Drive — ไม่แก้/ไม่ลบอะไร รันซ้ำได้ • ② เปลี่ยนลิงก์ในฐานข้อมูลเป็น Drive (ตรวจไฟล์ก่อน คืนลิงก์เดิมได้) • ③ ลบต้นฉบับใน Supabase เพื่อคืนพื้นที่</p>
                             </div>
                             <div class="p-5 space-y-3">
                                 <div id="kbCardFolder" class="text-xs text-slate-500"></div>
@@ -4977,6 +4977,23 @@
                                     <button onclick="kbStop()" id="kbStopBtn" class="hidden px-4 py-2 bg-red-100 hover:bg-red-600 hover:text-white text-red-700 rounded-lg text-sm font-bold">⏹ หยุด</button>
                                     <button onclick="kbRefresh(true)" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-bold">🔄 ตรวจสถานะอีกครั้ง</button>
                                     <span id="kbProgress" class="text-sm text-slate-600 font-medium"></span>
+                                </div>
+                                <div class="border-t border-slate-200 pt-3 space-y-2">
+                                    <div class="text-xs font-bold text-slate-600">คืนพื้นที่ Supabase (ทำหลังสำรองครบ)</div>
+                                    <div id="kbStepInfo" class="text-xs text-slate-500"></div>
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <button onclick="kbSwitchStart()" id="kbSwitchBtn" disabled class="px-3 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-bold opacity-50"><span>② เปลี่ยนลิงก์เป็น Drive</span></button>
+                                        <button onclick="kbCleanStart()" id="kbCleanBtn" disabled class="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold opacity-50"><span>③ ลบต้นฉบับใน Supabase</span></button>
+                                        <button onclick="kbRevertStart()" id="kbRevertBtn" disabled class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold opacity-50"><span>↩ คืนลิงก์เดิม</span></button>
+                                    </div>
+                                    <details class="text-xs text-slate-500">
+                                        <summary class="cursor-pointer font-bold text-slate-600">เงื่อนไขและ "ถ้าลบไม่ได้" ต้องทำอย่างไร</summary>
+                                        <ul class="list-disc pl-5 mt-1 space-y-1">
+                                            <li>โฟลเดอร์ Drive ต้องแชร์เป็น <b>"ทุกคนที่มีลิงก์ - ผู้ดู"</b> เพื่อให้ลิงก์ lh5.googleusercontent.com/d/... เปิดรูปได้ในทุกระบบ (ขั้น ② จะตรวจให้ทุกรูป ถ้าเปิดไม่ได้จะไม่เปลี่ยนลิงก์)</li>
+                                            <li>ขั้น ③ ลบถาวร: ลบเฉพาะรูปที่ไม่มีการ์ด/ถังขยะอ้างอิงแล้ว และมีสำเนา Drive ขนาดตรงกัน • ระบบอื่นที่อ่านตาราง rfid ต้องรองรับลิงก์ Drive ก่อนทำ ②</li>
+                                            <li>ถ้า Supabase ไม่อนุญาตให้ลบ: รัน SQL ใน <code>rfid_keycard_storage_delete_policy.sql</code> (เพิ่ม policy ลบชั่วคราว) → กดลบ → รัน DROP POLICY ท้ายไฟล์ หรือเลือกลบเองใน Supabase Dashboard → Storage → keycard_images</li>
+                                        </ul>
+                                    </details>
                                 </div>
                                 <div id="kbBarWrap" class="hidden h-2 bg-slate-200 rounded-full overflow-hidden"><div id="kbBar" class="h-2 bg-orange-500 rounded-full transition-all" style="width:0%"></div></div>
                                 <div id="kbLog" class="hidden bg-slate-50 rounded-lg p-3 text-xs font-mono max-h-48 overflow-y-auto space-y-1 border border-slate-200"></div>
@@ -19472,20 +19489,32 @@ function kbStorageRef(img) {
     return { file: f, url: p + rest };
 }
 // แผนสำรอง: เทียบรูปของการ์ดทุกใบกับรายชื่อไฟล์ที่มีใน Drive แล้ว (รูปเดียวกันที่ใช้หลายใบ นับครั้งเดียว)
-function kbPlan(cards, existingNames) {
-    const have = new Set();
+function kbPlan(cards, existingNames, files) {
+    const have = new Set(), drv = new Map(), byId = new Map();
     (existingNames || []).forEach(n => { const s = String(n), i = s.indexOf('__'); have.add(i >= 0 ? s.slice(i + 2) : s); });
-    const seen = new Set(), pending = []; let images = 0, backed = 0, other = 0, noImg = 0;
+    (files || []).forEach(f => { const s = String(f.n), i = s.indexOf('__'); if (i < 0) return; const d = { name: s, id: String(f.i), size: Number(f.s) || 0, file: s.slice(i + 2) }; drv.set(d.file, d); byId.set(d.id, d); });
+    const seen = new Set(), pending = [], groups = new Map(), referenced = new Set(), revertRows = [];
+    let images = 0, backed = 0, other = 0, noImg = 0, onDrive = 0;
     (cards || []).forEach(c => {
         const raw = String(c.img ?? '').trim();
         if (!raw) { noImg++; return; }
+        const dm = raw.match(KB_DRIVE_RE);
+        if (dm) { onDrive++; const d = byId.get(dm[1]); if (d) revertRows.push({ card: c, d }); return; }
         const ref = kbStorageRef(raw);
         if (!ref) { other++; return; }
+        referenced.add(ref.file);
+        let g = groups.get(ref.file); if (!g) { g = { ref, raws: new Set(), rows: 0 }; groups.set(ref.file, g); }
+        g.raws.add(raw); g.rows++;
         if (seen.has(ref.file)) return; seen.add(ref.file); images++;
         if (have.has(ref.file)) backed++;
         else pending.push({ name: `${kbSafe(c.house_number)}__${ref.file}`, url: ref.url, id: c.id, house: c.house_number });
     });
-    return { images, backed, pending, other, noImg };
+    // รูปที่ "สลับลิงก์ได้" = มีไฟล์ใน Drive แล้ว และลิงก์ดิบไม่ผ่านการแปลงชื่อ (เพื่อให้คืนลิงก์เดิมได้เป๊ะ)
+    const prefix = kbPrefix(), switchable = [], deletable = [];
+    groups.forEach((g, file) => { const d = drv.get(file); if (d && g.ref.url === prefix + file) switchable.push({ file, name: d.name, id: d.id, url: g.ref.url, raws: [...g.raws], rows: g.rows }); });
+    // รูปที่ "ลบต้นฉบับได้" = มีไฟล์ใน Drive และไม่มีการ์ดใดอ้างอิงแล้ว (GAS ตรวจซ้ำอีกรอบก่อนลบจริง)
+    drv.forEach((d, file) => { if (!referenced.has(file) && /^[A-Za-z0-9._-]{1,200}$/.test(file)) deletable.push({ file, name: d.name, id: d.id, url: prefix + file, size: d.size }); });
+    return { images, backed, pending, other, noImg, onDrive, switchable, deletable, revertRows };
 }
 
 function kbRenderFolder() {
@@ -19507,14 +19536,26 @@ function kbRenderStatus() {
     else if (kbBusy && !kbRunning) html = '<span class="text-slate-400">กำลังตรวจสอบโฟลเดอร์และรูปที่สำรองแล้ว...</span>';
     else if (kbError) html = `<div class="text-red-600">❌ ${nsEsc(kbError)}</div>${/ไม่พบคำสั่ง|Action not found/i.test(kbError) ? '<div class="text-xs text-amber-700 mt-1">ต้องอัปเดตโค้ด GAS (Code_merged.gs) แล้ว Deploy เวอร์ชันใหม่ก่อน</div>' : ''}`;
     else if (p) {
-        html = `รูปคีย์การ์ด <b>${p.images}</b> รูป • สำรองแล้ว <b class="text-green-600">${p.backed}</b> • ยังไม่ได้สำรอง <b class="${p.pending.length ? 'text-amber-600' : 'text-slate-500'}">${p.pending.length}</b>`
+        html = `รูปคีย์การ์ด${p.onDrive ? 'ที่ยังอยู่ใน Supabase' : ''} <b>${p.images}</b> รูป • สำรองแล้ว <b class="text-green-600">${p.backed}</b> • ยังไม่ได้สำรอง <b class="${p.pending.length ? 'text-amber-600' : 'text-slate-500'}">${p.pending.length}</b>`
             + (p.other ? ` • <span class="text-slate-400" title="รูปที่ไม่ได้เก็บใน Supabase Storage ของระบบนี้ ระบบไม่สำรองให้">ข้าม ${p.other} (เก็บที่อื่น)</span>` : '')
-            + (p.pending.length === 0 && p.images > 0 ? ' <span class="text-green-600 font-bold">✅ สำรองครบแล้ว</span>' : '');
+            + (p.pending.length === 0 && p.images > 0 ? ' <span class="text-green-600 font-bold">✅ สำรองครบแล้ว</span>' : '')
+            + (p.onDrive ? ` • ใช้ลิงก์ Drive แล้ว <b class="text-sky-600">${p.onDrive}</b> การ์ด` : '');
         can = p.pending.length > 0; if (can) label = `เริ่มสำรอง ${p.pending.length} รูป`;
     }
     st.innerHTML = html;
+    kbRenderSteps();
     if (lbl && !kbRunning) lbl.textContent = label;
     if (btn && !kbRunning) { btn.disabled = !can; btn.classList.toggle('opacity-50', !can); }
+}
+
+function kbRenderSteps() {
+    const p = kbPlanCache, info = document.getElementById('kbStepInfo');
+    const set = (id, n, text) => { const b = document.getElementById(id); if (!b) return; const can = !kbRunning && !kbBusy && n > 0; b.disabled = !can; b.classList.toggle('opacity-50', !can); const l = b.querySelector('span'); if (l) l.textContent = text; };
+    if (!p) { set('kbSwitchBtn', 0, '② เปลี่ยนลิงก์เป็น Drive'); set('kbCleanBtn', 0, '③ ลบต้นฉบับใน Supabase'); set('kbRevertBtn', 0, '↩ คืนลิงก์เดิม'); if (info) info.innerHTML = ''; return; }
+    set('kbSwitchBtn', p.switchable.length, p.switchable.length ? `② เปลี่ยนลิงก์เป็น Drive (${p.switchable.length} รูป)` : '② เปลี่ยนลิงก์เป็น Drive');
+    set('kbCleanBtn', p.deletable.length, p.deletable.length ? `③ ลบต้นฉบับใน Supabase (${p.deletable.length})` : '③ ลบต้นฉบับใน Supabase');
+    set('kbRevertBtn', p.revertRows.length, p.revertRows.length ? `↩ คืนลิงก์เดิม (${p.revertRows.length} การ์ด)` : '↩ คืนลิงก์เดิม');
+    if (info) info.innerHTML = `การ์ดที่ใช้ลิงก์ Drive แล้ว <b class="text-green-600">${p.onDrive}</b> • รอเปลี่ยนลิงก์ <b class="${p.switchable.length ? 'text-amber-600' : 'text-slate-500'}">${p.switchable.length}</b> รูป`;
 }
 
 // ตรวจโฟลเดอร์ + รูปที่สำรองแล้ว (จำผลไว้ 60 วินาที ยกเว้นสั่ง force)
@@ -19526,9 +19567,9 @@ async function kbRefresh(force) {
     if (!force && kbPlanCache && Date.now() - kbListedAt < 60000) { kbRenderStatus(); return; }
     kbBusy = true; kbError = ''; kbRenderStatus();
     try {
-        if (!keycardDataLoaded) { keycardData = await kcFetchAll(); keycardDataLoaded = true; }
+        if (force || !keycardDataLoaded) { keycardData = await kcFetchAll(); keycardDataLoaded = true; }
         const res = await callGas('keycard_backup_list', { folder_id: s.folderId });
-        kbPlanCache = kbPlan(keycardData, res.names); kbListedAt = Date.now();
+        kbPlanCache = kbPlan(keycardData, res.names, res.files); kbListedAt = Date.now();
     } catch (e) { kbError = e.message; kbPlanCache = null; }
     kbBusy = false; kbRenderStatus();
 }
@@ -19590,6 +19631,7 @@ async function kbStart() {
     const btn = document.getElementById('kbStartBtn'), stopBtn = document.getElementById('kbStopBtn'), prog = document.getElementById('kbProgress'), bar = document.getElementById('kbBar'), barWrap = document.getElementById('kbBarWrap'), log = document.getElementById('kbLog');
     log.innerHTML = ''; log.classList.remove('hidden'); barWrap.classList.remove('hidden'); bar.style.width = '0%';
     btn.disabled = true; btn.classList.add('opacity-50'); stopBtn.classList.remove('hidden');
+    kbRenderSteps();
     // ทำพร้อมกัน KB_WORKERS สาย (GAS รับได้) — สายใดพังจะสั่งหยุดทุกสาย; รูปที่สำเร็จแล้วเก็บไว้ กดเริ่มใหม่เพื่อทำต่อ
     const chunks = []; for (let i = 0; i < items.length; i += KB_BATCH) chunks.push(items.slice(i, i + KB_BATCH));
     let next = 0;
@@ -19635,6 +19677,180 @@ window.kbStart = kbStart;
 window.kbStop = kbStop;
 window.kbRefresh = kbRefresh;
 window.openKeycardBackup = openKeycardBackup;
+
+// ================================================================
+// ☁️ ขั้นต่อจากสำรอง: เปลี่ยนลิงก์รูปเป็น Drive → ลบต้นฉบับใน Supabase (คืนพื้นที่) • คืนลิงก์เดิมได้ตราบที่ต้นฉบับยังอยู่
+//   ความปลอดภัย: สลับลิงก์เฉพาะรูปที่ GAS ตรวจแล้ว (ไฟล์อยู่ในโฟลเดอร์ + ขนาดตรง + เปิดผ่านลิงก์ lh5 ได้สาธารณะ)
+//                อัปเดตเฉพาะแถวที่ img ยังเป็นลิงก์เดิม • ดาวน์โหลด CSV กำกับทุกครั้ง • ลบจริงต้องพิมพ์ยืนยัน และ GAS ตรวจซ้ำก่อนลบทุกรูป
+// ================================================================
+const KB_DRIVE_RE = /^https:\/\/lh5\.googleusercontent\.com\/d\/([A-Za-z0-9_-]{10,})\/?$/;
+const kbDriveUrl = id => `https://lh5.googleusercontent.com/d/${id}`;
+const kbMB = b => (b / 1048576).toFixed(b >= 10485760 ? 0 : 1);
+
+// HEAD ตรวจว่ารูปต้นฉบับยังอยู่ใน Supabase ไหม + ขนาด (ทำขนาน 10 สาย)
+async function kbProbe(urls) {
+    const out = new Map(); let i = 0;
+    const w = async () => {
+        while (i < urls.length) {
+            const u = urls[i++];
+            try {
+                const r = await fetch(u, { method: 'HEAD', cache: 'no-store' });
+                if (r.status === 404 || r.status === 400) out.set(u, { exists: false, size: 0 });
+                else if (r.ok) out.set(u, { exists: true, size: Number(r.headers.get('content-length')) || 0 });
+                else out.set(u, { exists: true, size: 0, unknown: true });
+            } catch (e) { out.set(u, { exists: true, size: 0, unknown: true, err: true }); }
+        }
+    };
+    await Promise.all(Array.from({ length: 10 }, w));
+    return out;
+}
+
+// เริ่ม/จบ การทำงานแบบหลาย batch (ใช้ UI ชุดเดียวกับตอนสำรอง; ล็อกด้วย kbRunning กันกดซ้อน)
+function kbUiBegin(label, total) {
+    kbRunning = true;
+    ['kbStartBtn', 'kbSwitchBtn', 'kbCleanBtn', 'kbRevertBtn'].forEach(id => { const b = document.getElementById(id); if (b) { b.disabled = true; b.classList.add('opacity-50'); } });
+    const log = document.getElementById('kbLog'), bw = document.getElementById('kbBarWrap'), bar = document.getElementById('kbBar'), sb = document.getElementById('kbStopBtn'), pr = document.getElementById('kbProgress');
+    if (log) { log.innerHTML = ''; log.classList.remove('hidden'); }
+    if (bw) bw.classList.remove('hidden'); if (bar) bar.style.width = '0%'; if (sb) sb.classList.remove('hidden');
+    if (pr) pr.textContent = `${label} 0/${total}...`;
+}
+function kbUiProgress(label, done, total) {
+    const bar = document.getElementById('kbBar'), pr = document.getElementById('kbProgress');
+    if (bar) bar.style.width = `${total ? Math.round(done / total * 100) : 100}%`;
+    if (pr) pr.textContent = `${label} ${done}/${total}...`;
+}
+function kbUiEnd(text) {
+    kbRunning = false;
+    const sb = document.getElementById('kbStopBtn'), pr = document.getElementById('kbProgress');
+    if (sb) sb.classList.add('hidden'); if (pr) pr.textContent = text;
+}
+// แบ่ง items เป็น batch แล้วให้ KB_WORKERS สายช่วยกันทำ; handler ที่ throw = หยุดทุกสาย (คืนข้อความสาเหตุ); กดหยุด = 'ผู้ใช้กดหยุด'
+async function kbRunChunks(items, label, handler) {
+    const chunks = []; for (let i = 0; i < items.length; i += KB_BATCH) chunks.push(items.slice(i, i + KB_BATCH));
+    let next = 0, done = 0, stoppedBy = '';
+    const worker = async () => {
+        while (kbRunning && next < chunks.length) {
+            const chunk = chunks[next++];
+            try { await handler(chunk); done += chunk.length; kbUiProgress(label, done, items.length); }
+            catch (e) { if (!stoppedBy) stoppedBy = 'เกิดข้อผิดพลาด: ' + e.message; _kbLog(`<div class="text-red-600 font-bold">❌ ${nsEsc(e.message)}</div>`); kbRunning = false; return; }
+            await new Promise(r => setTimeout(r, 200));
+        }
+    };
+    await Promise.all(Array.from({ length: KB_WORKERS }, worker));
+    if (!stoppedBy && next < chunks.length) stoppedBy = 'ผู้ใช้กดหยุด';
+    return stoppedBy;
+}
+function kbGuard(perm) {
+    if (kbRunning || kbBusy) return null;
+    if (!hasPermission(currentUser.role, perm)) { Swal.fire('ไม่มีสิทธิ์', 'บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้', 'warning'); return null; }
+    const s = getKeycardBackupSettings();
+    if (!s.folderId) { Swal.fire('ยังไม่ได้ตั้งโฟลเดอร์', 'ตั้ง Google Drive Folder ID ที่ "ตั้งค่าทั่วไป" ก่อน', 'info'); return null; }
+    return s;
+}
+function kbMapCsv(rows) { return '﻿' + ['card_id,house_number,old_img,new_img'].concat(rows.map(r => r.map(v => kcCsvCell(v)).join(','))).join('\n'); }
+
+// ② เปลี่ยนลิงก์รูปในฐานข้อมูลเป็นลิงก์ Drive (เฉพาะรูปที่ตรวจผ่าน)
+async function kbSwitchStart() {
+    const s = kbGuard('edit'); if (!s) return;
+    await kbRefresh(true);
+    const plan = kbPlanCache;
+    if (kbError || !plan) { if (kbError) Swal.fire('ตรวจสถานะไม่สำเร็จ', kbError, 'error'); return; }
+    const items = plan.switchable.slice();
+    if (!items.length) { Swal.fire('ไม่มีรูปให้เปลี่ยน', 'ต้องสำรองรูปไป Drive ให้ครบก่อน (หรือรูปทั้งหมดเปลี่ยนไปแล้ว)', 'info'); return; }
+    const rows = items.reduce((a, x) => a + x.rows, 0);
+    const c = await Swal.fire({ title: `เปลี่ยนลิงก์เป็น Drive ${items.length} รูป?`, html: `ระบบจะตรวจไฟล์ใน Drive ก่อน (อยู่ในโฟลเดอร์ • ขนาดตรงต้นฉบับ • เปิดผ่านลิงก์ได้) แล้วเปลี่ยน <b>img</b> ของการ์ด ${rows} ใบ เฉพาะรูปที่ตรวจผ่าน<br><span class="text-xs text-slate-500">รูปต้นฉบับใน Supabase ยังไม่ถูกลบ • ดาวน์โหลดไฟล์ CSV กำกับให้อัตโนมัติ • ย้อนกลับได้จากปุ่ม "คืนลิงก์เดิม"</span>`, icon: 'question', showCancelButton: true, confirmButtonText: 'เริ่มเปลี่ยนลิงก์', cancelButtonText: 'ยกเลิก' });
+    if (!c.isConfirmed) return;
+    kbUiBegin('กำลังตรวจและเปลี่ยนลิงก์', items.length);
+    const ctx = { ok: 0, fail: 0, map: [] };
+    const stoppedBy = await kbRunChunks(items, 'กำลังตรวจและเปลี่ยนลิงก์', async (chunk) => {
+        const res = await callGas('keycard_drive_check', { folder_id: s.folderId, items: chunk.map(x => ({ name: x.name, url: x.url, id: x.id })) });
+        for (const r of (res.results || [])) {
+            const it = chunk.find(x => x.name === r.name); if (!it) continue;
+            if (r.status !== 'ok' || r.id !== it.id) { ctx.fail++; _kbLog(`<div class="text-red-500 pl-3">⚠️ ${nsEsc(r.name)}: ${nsEsc(r.error || 'รหัสไฟล์ไม่ตรง')}</div>`); continue; }
+            const nu = kbDriveUrl(it.id);
+            for (const raw of it.raws) {
+                const got = await callSupabaseRest(`rfid?img=eq.${encodeURIComponent(raw)}&select=id,house_number`, { method: 'PATCH', headers: { 'Prefer': 'return=representation' }, body: JSON.stringify({ img: nu }) });
+                (got || []).forEach(row => { ctx.map.push([row.id, row.house_number, raw, nu]); const k = keycardData.find(x => x.id === row.id); if (k) k.img = nu; });
+            }
+            ctx.ok++;
+        }
+        _kbLog(`<div>ตรวจผ่านและเปลี่ยนลิงก์แล้ว ${ctx.ok} • ไม่ผ่าน ${ctx.fail}</div>`);
+    });
+    kbUiEnd(`เสร็จสิ้น — เปลี่ยนลิงก์ ${ctx.ok} รูป (${ctx.map.length} การ์ด) / ไม่ผ่าน ${ctx.fail}${stoppedBy ? ' (' + stoppedBy + ')' : ''}`);
+    if (ctx.map.length) { try { downloadCSV(kbMapCsv(ctx.map), `คีย์การ์ด_สลับลิงก์เป็นDrive_${nsToday()}.csv`); } catch (e) { } }
+    if (ctx.ok || ctx.fail) writeAuditLog('switch_keycard_img_to_drive', 'rfid', `เปลี่ยนลิงก์รูปคีย์การ์ดเป็น Drive ${ctx.ok} รูป (${ctx.map.length} การ์ด) ไม่ผ่าน ${ctx.fail} — โดย ${currentUser?.name || '-'}`).catch(() => {});
+    await kbRefresh(true);
+    Swal.fire(ctx.fail || stoppedBy ? 'เสร็จสิ้น (ยังมีที่ไม่ครบ)' : 'เปลี่ยนลิงก์เรียบร้อย', `เปลี่ยนลิงก์ ${ctx.ok} รูป • ไม่ผ่านการตรวจ ${ctx.fail} รูป${stoppedBy ? '\n(' + stoppedBy + ')' : ''}\nไฟล์ CSV กำกับถูกดาวน์โหลดแล้ว — เก็บไว้ก่อนลบต้นฉบับ`, ctx.fail || stoppedBy ? 'warning' : 'success');
+}
+
+// ③ ลบรูปต้นฉบับใน Supabase ที่ไม่มีการ์ดอ้างอิงแล้ว (มีสำเนาใน Drive)
+async function kbCleanStart() {
+    const s = kbGuard('delete'); if (!s) return;
+    await kbRefresh(true);
+    const plan = kbPlanCache;
+    if (kbError || !plan) { if (kbError) Swal.fire('ตรวจสถานะไม่สำเร็จ', kbError, 'error'); return; }
+    if (!plan.deletable.length) { Swal.fire('ไม่มีรูปให้ลบ', 'ยังไม่มีรูปที่สำรองแล้วและไม่มีการ์ดอ้างอิง — ทำข้อ ② ก่อน', 'info'); return; }
+    Swal.fire({ title: 'กำลังตรวจรูปใน Supabase...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    const probe = await kbProbe(plan.deletable.map(x => x.url));
+    const items = plan.deletable.filter(x => (probe.get(x.url) || {}).exists);
+    const bytes = items.reduce((a, x) => a + ((probe.get(x.url) || {}).size || 0), 0);
+    if (!items.length) { Swal.fire('ไม่มีต้นฉบับค้างใน Supabase แล้ว', 'รูปที่สำรองไว้ถูกลบจาก Supabase หมดแล้ว', 'success'); return; }
+    const c = await Swal.fire({
+        title: `ลบรูปต้นฉบับ ${items.length} รูป?`, icon: 'warning', showCancelButton: true, confirmButtonText: 'ลบถาวร', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#dc2626',
+        html: `จะคืนพื้นที่ประมาณ <b>${kbMB(bytes)} MB</b> ใน Supabase<br><span class="text-xs text-slate-500">ลบเฉพาะรูปที่ไม่มีการ์ด (หรือการ์ดในถังขยะ) อ้างอิงแล้ว และมีสำเนาใน Drive ขนาดตรงกัน • GAS ตรวจซ้ำก่อนลบทุกรูป • <b>ย้อนกลับไม่ได้</b> — เหลือสำเนาใน Drive เท่านั้น</span><br><span class="text-xs">พิมพ์คำว่า <b>ลบ</b> เพื่อยืนยัน</span>`,
+        input: 'text', inputPlaceholder: 'ลบ', inputValidator: v => String(v || '').trim() === 'ลบ' ? undefined : 'พิมพ์คำว่า ลบ เพื่อยืนยัน'
+    });
+    if (!c.isConfirmed) return;
+    kbUiBegin('กำลังลบต้นฉบับ', items.length);
+    const ctx = { del: 0, gone: 0, fail: 0, bytes: 0, denied: false };
+    const stoppedBy = await kbRunChunks(items, 'กำลังลบต้นฉบับ', async (chunk) => {
+        const res = await callGas('keycard_storage_cleanup', { folder_id: s.folderId, items: chunk.map(x => ({ name: x.name, url: x.url, id: x.id })) });
+        ctx.del += res.deleted || 0; ctx.gone += res.gone || 0; ctx.fail += res.failed || 0;
+        (res.results || []).forEach(r => { if (r.status === 'deleted') ctx.bytes += r.bytes || 0; if (r.status === 'error') { _kbLog(`<div class="text-red-500 pl-3">⚠️ ${nsEsc(r.name)}: ${nsEsc(r.error)}</div>`); if (/ไม่อนุญาตให้ลบ/.test(r.error || '')) ctx.denied = true; } });
+        _kbLog(`<div>ลบแล้ว ${ctx.del} • ล้มเหลว ${ctx.fail}</div>`);
+        if (ctx.denied) throw new Error('Supabase ไม่อนุญาตให้ลบไฟล์ — ต้องเพิ่ม policy ก่อน (ดูคำแนะนำใต้ปุ่ม)');
+    });
+    kbUiEnd(`เสร็จสิ้น — ลบ ${ctx.del} รูป (คืนพื้นที่ ~${kbMB(ctx.bytes)} MB) / ล้มเหลว ${ctx.fail}${stoppedBy ? ' (' + stoppedBy + ')' : ''}`);
+    if (ctx.del || ctx.fail) writeAuditLog('cleanup_keycard_storage', 'keycard_images', `ลบรูปต้นฉบับคีย์การ์ดใน Supabase ${ctx.del} รูป (~${kbMB(ctx.bytes)} MB) ล้มเหลว ${ctx.fail} — โดย ${currentUser?.name || '-'}`).catch(() => {});
+    await kbRefresh(true);
+    Swal.fire(ctx.denied ? 'Supabase ไม่อนุญาตให้ลบ' : (ctx.fail || stoppedBy ? 'เสร็จสิ้น (ยังมีที่ไม่ครบ)' : 'ลบเรียบร้อย'),
+        ctx.denied ? 'ยังไม่มีรูปใดถูกลบ (หรือถูกลบเท่าที่แสดงในบันทึก) — เปิดคำแนะนำ "ถ้าลบไม่ได้" ใต้ปุ่มแล้วเพิ่ม policy ชั่วคราว จากนั้นกดลบอีกครั้ง'
+            : `ลบ ${ctx.del} รูป (คืนพื้นที่ ~${kbMB(ctx.bytes)} MB) • ล้มเหลว ${ctx.fail} รูป${stoppedBy ? '\n(' + stoppedBy + ')' : ''}\nพื้นที่ใน Supabase Dashboard อาจอัปเดตช้าสักครู่`, ctx.denied || ctx.fail || stoppedBy ? 'warning' : 'success');
+}
+
+// ↩ คืนลิงก์ของการ์ดที่ชี้ Drive กลับเป็นลิงก์ Supabase เดิม (ทำได้เฉพาะรูปที่ต้นฉบับยังไม่ถูกลบ)
+async function kbRevertStart() {
+    const s = kbGuard('edit'); if (!s) return;
+    await kbRefresh(true);
+    const plan = kbPlanCache;
+    if (kbError || !plan) { if (kbError) Swal.fire('ตรวจสถานะไม่สำเร็จ', kbError, 'error'); return; }
+    const groups = new Map();
+    plan.revertRows.forEach(({ card, d }) => { const u = kbPrefix() + d.file; if (!/^[A-Za-z0-9._-]{1,200}$/.test(d.file)) return; const k = card.img; if (!groups.has(k)) groups.set(k, { cur: k, orig: u, cards: [] }); groups.get(k).cards.push(card); });
+    const list = [...groups.values()];
+    if (!list.length) { Swal.fire('ไม่มีลิงก์ให้คืน', 'ไม่พบการ์ดที่ชี้ไปยังไฟล์ในโฟลเดอร์สำรองนี้', 'info'); return; }
+    Swal.fire({ title: 'กำลังตรวจต้นฉบับใน Supabase...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    const probe = await kbProbe(list.map(x => x.orig));
+    const ok = list.filter(x => (probe.get(x.orig) || {}).exists), lost = list.length - ok.length;
+    if (!ok.length) { Swal.fire('คืนลิงก์ไม่ได้', 'ต้นฉบับใน Supabase ถูกลบไปหมดแล้ว — ใช้ลิงก์ Drive ต่อไป', 'info'); return; }
+    const c = await Swal.fire({ title: `คืนลิงก์เดิม ${ok.length} รูป?`, html: `การ์ด ${ok.reduce((a, x) => a + x.cards.length, 0)} ใบจะกลับไปใช้ลิงก์ Supabase${lost ? `<br><span class="text-xs text-amber-600">ข้าม ${lost} รูปที่ต้นฉบับถูกลบไปแล้ว (คืนไม่ได้)</span>` : ''}`, icon: 'question', showCancelButton: true, confirmButtonText: 'คืนลิงก์เดิม', cancelButtonText: 'ยกเลิก' });
+    if (!c.isConfirmed) return;
+    kbUiBegin('กำลังคืนลิงก์', ok.length);
+    let done = 0, fail = 0;
+    const stoppedBy = await kbRunChunks(ok, 'กำลังคืนลิงก์', async (chunk) => {
+        for (const g of chunk) {
+            const got = await callSupabaseRest(`rfid?img=eq.${encodeURIComponent(g.cur)}&select=id`, { method: 'PATCH', headers: { 'Prefer': 'return=representation' }, body: JSON.stringify({ img: g.orig }) });
+            (got || []).forEach(row => { const k = keycardData.find(x => x.id === row.id); if (k) k.img = g.orig; done++; });
+        }
+    });
+    kbUiEnd(`เสร็จสิ้น — คืนลิงก์ ${done} การ์ด${stoppedBy ? ' (' + stoppedBy + ')' : ''}`);
+    if (done) writeAuditLog('revert_keycard_img_to_supabase', 'rfid', `คืนลิงก์รูปคีย์การ์ดเป็น Supabase ${done} การ์ด — โดย ${currentUser?.name || '-'}`).catch(() => {});
+    await kbRefresh(true);
+    showToast(stoppedBy ? 'warning' : 'success', `คืนลิงก์เดิม ${done} การ์ด${stoppedBy ? ' (' + stoppedBy + ')' : ''}`);
+}
+
+window.kbSwitchStart = kbSwitchStart;
+window.kbCleanStart = kbCleanStart;
+window.kbRevertStart = kbRevertStart;
 
 
 // ================================================================
