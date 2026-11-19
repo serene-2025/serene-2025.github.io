@@ -3678,7 +3678,7 @@ if (viewName === 'dashboard') await renderDashboardView();
 
             query = query.range(from, to);
 
-            const { data, error, count } = await query;
+            const [{ data, error, count }] = await Promise.all([query, loadCq(false)]);
             if (error) { showToast(error.message, 'error'); return; }
             currentKeywords = data;
 
@@ -3720,6 +3720,7 @@ if (viewName === 'dashboard') await renderDashboardView();
                     </div>
                 </div>
 
+                ${cqCardHtml()}
                 <div class="glass rounded-3xl overflow-hidden slide-in border-0 shadow-xl" style="animation-delay: 0.1s;">
                     <!-- Desktop Table View -->
                     <div class="hidden md:block overflow-x-auto">
@@ -3969,6 +3970,259 @@ async function updateAllUserProfiles() {
 
 
 
+        // ─── 🤖 สถานะ AI รายคน: แดชบอร์ดด้านบนหน้า Users ──────────────────
+        let aiFilter = 'all';            // all | off
+        // ═══ 📨 Quick Reply "ติดต่อแอดมิน" (UI เริ่ม)
+        // ตั้งค่าปุ่มหัวข้อที่ผู้ใช้กดได้หลังพิมพ์ "ติดต่อแอดมิน" · เก็บที่เซิร์ฟเวอร์ (contact_quick_get/save/reset) — ข้อจำกัดตาม LINE
+        let cqData = null, cqErr = '', cqAt = 0, cqDraft = null, cqBusy = false, cqServerErr = '';
+        const CQ_LIM = { items: 13, label: 20, text: 300, intro: 500, ack: 300 };
+        const cqLen = (s) => Array.from(String(s || '')).length;
+        async function loadCq(force) {
+            if (!force && cqData && Date.now() - cqAt < 30000) return;
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/contact_quick_get`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดการตั้งค่าปุ่มตอบด่วนไม่สำเร็จ');
+                cqData = d; cqAt = Date.now(); cqErr = '';
+            } catch (e) { cqErr = e.message || 'โหลดการตั้งค่าปุ่มตอบด่วนไม่สำเร็จ'; }
+        }
+        function cqCardHtml() {
+            let inner;
+            if (!cqData) {
+                inner = `<div class="text-sm text-rose-600 font-medium flex-1" data-testid="cq-error">${escapeHtml(cqErr || 'ยังไม่ได้โหลดการตั้งค่า')}</div>
+                    <button onclick="cqRetry()" class="px-4 py-2.5 rounded-2xl bg-white text-slate-700 font-bold text-sm border border-slate-200 hover:bg-slate-50" data-testid="cq-retry">ลองใหม่</button>`;
+            } else {
+                const c = cqData.config, on = c.enabled && c.items.length > 0;
+                const chip = on ? `<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[11px] font-bold" data-testid="cq-status">เปิดใช้งาน · ${c.items.length} ปุ่ม</span>`
+                    : `<span class="px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 text-[11px] font-bold" data-testid="cq-status">${c.enabled ? 'ยังไม่มีปุ่ม' : 'ปิดอยู่'} · ตอบข้อความเดิม</span>`;
+                const labels = on ? c.items.slice(0, 8).map(i => `<span class="px-2.5 py-1 rounded-full bg-white border border-slate-200 text-[12px] text-slate-700 font-medium">${escapeHtml(i.label)}</span>`).join('') + (c.items.length > 8 ? `<span class="text-[12px] text-slate-400 self-center">+${c.items.length - 8}</span>` : '') : '';
+                inner = `<div class="flex-1 min-w-0">
+                        <div class="flex flex-wrap items-center gap-2"><span class="font-bold text-slate-800">ปุ่มตอบด่วนเมื่อผู้ใช้พิมพ์ "ติดต่อแอดมิน"</span>${chip}${cqData.custom ? '' : '<span class="text-[11px] text-slate-400">ค่าเริ่มต้น</span>'}</div>
+                        <div class="mt-1 text-[12px] text-slate-500">ผู้ใช้กดหัวข้อแล้วระบบส่งเป็นข้อความถึงแอดมินทันที · แอดมินเห็นในแชทและช่องทางแจ้งเตือนพร้อมหัวข้อ</div>
+                        ${labels ? `<div class="mt-2 flex flex-wrap gap-1.5" data-testid="cq-chips">${labels}</div>` : ''}
+                    </div>
+                    <button onclick="openCqEditor()" class="px-5 py-2.5 rounded-2xl bg-fuchsia-600 text-white font-bold text-sm hover:bg-fuchsia-700 transition flex items-center gap-2 whitespace-nowrap" data-testid="cq-open"><i data-lucide="settings-2" class="w-4 h-4"></i> ตั้งค่า</button>`;
+            }
+            return `<div id="cq-card-wrap"><div class="mb-6 rounded-3xl p-5 bg-gradient-to-br from-fuchsia-50 to-white border border-fuchsia-100 shadow-sm flex flex-col sm:flex-row sm:items-center gap-4 slide-in" data-testid="cq-card">
+                <div class="hidden sm:flex w-11 h-11 rounded-2xl bg-fuchsia-100 text-fuchsia-600 items-center justify-center shrink-0"><i data-lucide="message-circle-more" class="w-6 h-6"></i></div>${inner}</div></div>`;
+        }
+        function cqRefreshCard() {
+            const w = document.getElementById('cq-card-wrap'); if (!w) return;
+            w.outerHTML = cqCardHtml(); if (window.lucide) lucide.createIcons();
+        }
+        async function cqRetry() { await loadCq(true); cqRefreshCard(); }
+        function cqReserved(t) {
+            const x = String(t || '').toLowerCase().trim();
+            if (x.includes('ติดต่อแอดมิน')) return 'มีคำว่า "ติดต่อแอดมิน" (จะวนเข้าระบบติดต่อแอดมินซ้ำ)';
+            if (x === 'ai on' || x === 'ai off') return 'ตรงกับคำสั่ง ai on/ai off';
+            if (x.startsWith('qr ') || x.startsWith('qr:')) return 'ขึ้นต้นด้วยคำสั่ง qr';
+            return '';
+        }
+        // ตรวจแบบเดียวกับเซิร์ฟเวอร์ → คืน { top: [...], items: { index: msg } }
+        function cqValidate(d) {
+            const top = [], items = {}; const seen = {};
+            if (!String(d.intro || '').trim()) top.push('ข้อความนำว่างไม่ได้');
+            else if (cqLen(d.intro.trim()) > CQ_LIM.intro) top.push(`ข้อความนำยาวเกิน ${CQ_LIM.intro} ตัวอักษร`);
+            if (cqLen(String(d.ack || '').trim()) > CQ_LIM.ack) top.push(`ข้อความตอบรับยาวเกิน ${CQ_LIM.ack} ตัวอักษร`);
+            if (d.items.length > CQ_LIM.items) top.push(`ปุ่มได้ไม่เกิน ${CQ_LIM.items} ปุ่ม`);
+            d.items.forEach((it, i) => {
+                const label = String(it.label || '').trim(), text = String(it.text || '').trim() || label;
+                let m = '';
+                if (!label) m = 'ต้องมีชื่อปุ่ม';
+                else if (cqLen(label) > CQ_LIM.label) m = `ชื่อปุ่มยาวเกิน ${CQ_LIM.label} ตัวอักษร (LINE จำกัด)`;
+                else if (cqLen(text) > CQ_LIM.text) m = `ข้อความที่ส่งยาวเกิน ${CQ_LIM.text} ตัวอักษร`;
+                else if (cqReserved(text)) m = 'ข้อความที่ส่ง' + cqReserved(text);
+                else if (seen[text.toLowerCase()] !== undefined) m = `ข้อความที่ส่งซ้ำกับปุ่มที่ ${seen[text.toLowerCase()] + 1}`;
+                if (!m) seen[text.toLowerCase()] = i;
+                if (m) items[i] = m;
+            });
+            return { top, items, ok: !top.length && !Object.keys(items).length };
+        }
+        function openCqEditor() {
+            if (!cqData) return;
+            const c = cqData.config;
+            cqDraft = { enabled: !!c.enabled, intro: c.intro, ack: c.ack, items: c.items.map(i => ({ label: i.label, text: i.text })) };
+            cqServerErr = '';
+            document.getElementById('modal-title').innerText = 'ตั้งค่าปุ่มตอบด่วน "ติดต่อแอดมิน"';
+            cqRenderEditor();
+            const ov = document.getElementById('modal-overlay'); ov.classList.remove('hidden');
+            setTimeout(() => { ov.classList.remove('opacity-0'); document.getElementById('modal-container').classList.remove('scale-95'); }, 10);
+        }
+        function cqPreviewHtml() {
+            const d = cqDraft, on = d.enabled && d.items.length > 0;
+            const text = on ? d.intro : CQ_BASE_TEXT;
+            const chips = on ? d.items.map(i => `<span class="shrink-0 px-3 py-1.5 rounded-full bg-white border border-emerald-300 text-emerald-700 text-[12px] font-semibold whitespace-nowrap" data-testid="cq-pv-chip">${escapeHtml(String(i.label || '').trim() || '…')}</span>`).join('') : '';
+            return `<div class="rounded-2xl bg-slate-200/70 p-3"><div class="max-w-[85%] rounded-2xl rounded-tl-sm bg-white px-3 py-2 text-[13px] text-slate-700 whitespace-pre-line shadow-sm" data-testid="cq-pv-text">${escapeHtml(text)}</div>
+                ${chips ? `<div class="mt-2 flex gap-2 overflow-x-auto pb-1">${chips}</div>` : ''}</div>
+                <div class="mt-1 text-[11px] text-slate-400">${on ? 'ตัวอย่างที่ผู้ใช้เห็น (ปุ่มเลื่อนซ้าย-ขวาใน LINE)' : 'ตัวอย่างข้อความเมื่อปิดปุ่ม/ไม่มีปุ่ม'}</div>`;
+        }
+        const CQ_BASE_TEXT = 'ระบบได้ส่งข้อความแจ้งเตือนแอดมินให้แล้วครับ โปรดรอสักครู่ แอดมินจะรีบมาตอบกลับครับ 👩‍💻';
+        function cqRenderEditor() {
+            const d = cqDraft, v = cqValidate(d);
+            const rows = d.items.map((it, i) => `<div class="rounded-2xl bg-white/80 border ${v.items[i] ? 'border-rose-300' : 'border-slate-200'} p-3" data-testid="cq-item-${i}">
+                    <div class="flex gap-2 items-start">
+                        <div class="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-5 gap-2">
+                            <div class="sm:col-span-2"><input type="text" value="${escapeHtml(it.label)}" oninput="cqSetItem(${i},'label',this.value)" placeholder="ชื่อปุ่ม เช่น 🔧 แจ้งซ่อม" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-fuchsia-400" data-testid="cq-label-${i}">
+                                <div class="text-[10px] text-right text-slate-400 mt-0.5" id="cq-lc-${i}">${cqLen(it.label)}/${CQ_LIM.label}</div></div>
+                            <div class="sm:col-span-3"><input type="text" value="${escapeHtml(it.text)}" oninput="cqSetItem(${i},'text',this.value)" placeholder="ข้อความที่ส่งถึงแอดมิน (ว่าง = ใช้ชื่อปุ่ม)" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-fuchsia-400" data-testid="cq-text-${i}"></div>
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <button onclick="cqMove(${i},-1)" ${i === 0 ? 'disabled' : ''} class="p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-30" title="เลื่อนขึ้น" data-testid="cq-up-${i}"><i data-lucide="chevron-up" class="w-4 h-4"></i></button>
+                            <button onclick="cqMove(${i},1)" ${i === d.items.length - 1 ? 'disabled' : ''} class="p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-30" title="เลื่อนลง" data-testid="cq-down-${i}"><i data-lucide="chevron-down" class="w-4 h-4"></i></button>
+                        </div>
+                        <button onclick="cqRemove(${i})" class="p-1.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100" title="ลบปุ่ม" data-testid="cq-del-${i}"><i data-lucide="x" class="w-4 h-4"></i></button>
+                    </div>
+                    <div class="text-[11px] text-rose-600 mt-1 ${v.items[i] ? '' : 'hidden'}" id="cq-ie-${i}" data-testid="cq-ierr-${i}">${escapeHtml(v.items[i] || '')}</div>
+                </div>`).join('');
+            document.getElementById('modal-content').innerHTML = `<div class="space-y-5" data-testid="cq-editor">
+                <label class="flex items-center gap-3 p-3 rounded-2xl bg-white/80 border border-slate-200 cursor-pointer">
+                    <input type="checkbox" ${d.enabled ? 'checked' : ''} onchange="cqSetTop('enabled',this.checked)" class="w-5 h-5 accent-fuchsia-600" data-testid="cq-enabled">
+                    <span class="font-bold text-slate-700 text-sm">เปิดใช้ปุ่มตอบด่วน</span><span class="text-[12px] text-slate-400">(ปิด = บอทตอบข้อความเดิมโดยไม่มีปุ่ม)</span>
+                </label>
+                <div>
+                    <div class="flex justify-between"><label class="text-sm font-bold text-slate-700">ข้อความนำ (บอทตอบก่อนแสดงปุ่ม)</label><span class="text-[11px] text-slate-400" id="cq-ic">${cqLen(d.intro)}/${CQ_LIM.intro}</span></div>
+                    <textarea rows="3" oninput="cqSetTop('intro',this.value)" class="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-fuchsia-400" data-testid="cq-intro">${escapeHtml(d.intro)}</textarea>
+                </div>
+                <div>
+                    <div class="flex justify-between items-center"><label class="text-sm font-bold text-slate-700">ปุ่มหัวข้อ <span class="font-normal text-slate-400" id="cq-count">(${d.items.length}/${CQ_LIM.items})</span></label>
+                        <button onclick="cqAdd()" ${d.items.length >= CQ_LIM.items ? 'disabled' : ''} class="px-3 py-1.5 rounded-xl bg-fuchsia-50 text-fuchsia-700 font-bold text-sm hover:bg-fuchsia-100 disabled:opacity-40 flex items-center gap-1" data-testid="cq-add"><i data-lucide="plus" class="w-4 h-4"></i> เพิ่มปุ่ม</button></div>
+                    <div class="mt-2 space-y-2">${rows || '<div class="text-sm text-slate-400 p-3 rounded-2xl bg-white/60 border border-dashed border-slate-300" data-testid="cq-empty">ยังไม่มีปุ่ม — กด "เพิ่มปุ่ม" (ถ้าไม่มีปุ่ม บอทจะตอบข้อความเดิม)</div>'}</div>
+                    <div class="mt-2 text-[11px] text-slate-400 leading-relaxed">ผู้ใช้กดปุ่ม = LINE ส่ง "ข้อความที่ส่ง" ของปุ่มนั้นเข้ามา ต้องไม่ซ้ำกันและห้ามมีคำว่า "ติดต่อแอดมิน" / ai on / ai off / qr (กันบอทวนซ้ำ)</div>
+                </div>
+                <div>
+                    <div class="flex justify-between"><label class="text-sm font-bold text-slate-700">ข้อความตอบรับเมื่อผู้ใช้กดปุ่ม</label><span class="text-[11px] text-slate-400" id="cq-ac">${cqLen(d.ack)}/${CQ_LIM.ack}</span></div>
+                    <input type="text" value="${escapeHtml(d.ack)}" oninput="cqSetTop('ack',this.value)" class="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-fuchsia-400" data-testid="cq-ack">
+                    <div class="mt-1 text-[11px] text-slate-400">ใส่ {หัวข้อ} เพื่อแทรกชื่อปุ่มที่ผู้ใช้เลือก</div>
+                </div>
+                <div><div class="text-sm font-bold text-slate-700 mb-1">ตัวอย่าง</div><div id="cq-preview" data-testid="cq-preview">${cqPreviewHtml()}</div></div>
+                <div class="text-sm text-rose-600 font-medium ${v.top.length || cqServerErr ? '' : 'hidden'}" id="cq-top-err" data-testid="cq-top-err">${escapeHtml(cqServerErr || v.top.join(' · '))}</div>
+                <div class="flex flex-col-reverse sm:flex-row gap-3 pt-1">
+                    <button onclick="cqReset()" class="sm:flex-none px-5 py-3 rounded-2xl bg-slate-100 text-slate-600 font-bold text-sm hover:bg-slate-200" data-testid="cq-reset">คืนค่าเริ่มต้น</button>
+                    <button onclick="closeModal()" class="sm:flex-none px-5 py-3 rounded-2xl bg-slate-100 text-slate-600 font-bold text-sm hover:bg-slate-200" data-testid="cq-cancel">ยกเลิก</button>
+                    <button onclick="cqSave()" id="cq-save" ${v.ok ? '' : 'disabled'} class="flex-1 px-5 py-3 rounded-2xl bg-fuchsia-600 text-white font-bold text-sm hover:bg-fuchsia-700 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="cq-save">บันทึก</button>
+                </div></div>`;
+            if (window.lucide) lucide.createIcons();
+        }
+        // อัปเดตเฉพาะจุด (ไม่วาดใหม่ทั้งหมด → เคอร์เซอร์ไม่หลุดระหว่างพิมพ์)
+        function cqLive() {
+            const d = cqDraft, v = cqValidate(d);
+            const set = (id, fn) => { const e = document.getElementById(id); if (e) fn(e); };
+            set('cq-preview', e => e.innerHTML = cqPreviewHtml());
+            set('cq-save', e => e.disabled = !v.ok || cqBusy);
+            set('cq-ic', e => e.textContent = `${cqLen(d.intro)}/${CQ_LIM.intro}`);
+            set('cq-ac', e => e.textContent = `${cqLen(d.ack)}/${CQ_LIM.ack}`);
+            set('cq-top-err', e => { const m = cqServerErr || v.top.join(' · '); e.textContent = m; e.classList.toggle('hidden', !m); });
+            d.items.forEach((it, i) => {
+                set('cq-lc-' + i, e => e.textContent = `${cqLen(it.label)}/${CQ_LIM.label}`);
+                set('cq-ie-' + i, e => { e.textContent = v.items[i] || ''; e.classList.toggle('hidden', !v.items[i]); const box = e.closest('[data-testid^="cq-item-"]'); if (box) { box.classList.toggle('border-rose-300', !!v.items[i]); box.classList.toggle('border-slate-200', !v.items[i]); } });
+            });
+        }
+        function cqSetTop(k, val) { cqDraft[k] = val; cqServerErr = ''; cqLive(); if (k === 'enabled') cqRenderEditor(); }
+        function cqSetItem(i, k, val) { cqDraft.items[i][k] = val; cqServerErr = ''; cqLive(); }
+        function cqAdd() { if (cqDraft.items.length >= CQ_LIM.items) return; cqDraft.items.push({ label: '', text: '' }); cqServerErr = ''; cqRenderEditor(); const e = document.querySelector(`[data-testid="cq-label-${cqDraft.items.length - 1}"]`); if (e) e.focus(); }
+        function cqRemove(i) { cqDraft.items.splice(i, 1); cqServerErr = ''; cqRenderEditor(); }
+        function cqMove(i, dir) { const j = i + dir; if (j < 0 || j >= cqDraft.items.length) return; const a = cqDraft.items; [a[i], a[j]] = [a[j], a[i]]; cqRenderEditor(); }
+        async function cqSave() {
+            if (cqBusy || !cqDraft) return;
+            const v = cqValidate(cqDraft); if (!v.ok) { cqLive(); return; }
+            cqBusy = true; const btn = document.getElementById('cq-save'); if (btn) { btn.disabled = true; btn.textContent = 'กำลังบันทึก...'; }
+            try {
+                const body = { enabled: cqDraft.enabled, intro: cqDraft.intro.trim(), ack: cqDraft.ack.trim(), items: cqDraft.items.map(i => ({ label: i.label.trim(), text: (i.text || '').trim() || i.label.trim() })) };
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/contact_quick_save`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                const d = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+                cqData = { ...(cqData || {}), config: d.config, custom: true }; cqAt = Date.now(); cqErr = '';
+                closeModal(); cqRefreshCard(); showToast('✅ บันทึกปุ่มตอบด่วนแล้ว (มีผลกับข้อความถัดไปทันที)', 'success');
+            } catch (e) {
+                cqServerErr = e.message || 'บันทึกไม่สำเร็จ';
+                if (document.getElementById('cq-editor') || document.querySelector('[data-testid="cq-editor"]')) { cqLive(); }
+            } finally {
+                cqBusy = false; const b2 = document.getElementById('cq-save'); if (b2) { b2.textContent = 'บันทึก'; b2.disabled = !cqValidate(cqDraft).ok; }
+            }
+        }
+        function cqReset() {
+            showConfirmModal('คืนค่าเริ่มต้น?', 'ปุ่มและข้อความที่ตั้งไว้จะถูกแทนที่ด้วยค่าเริ่มต้นของระบบ (6 ปุ่ม: ค่าส่วนกลาง คีย์การ์ด ทะเบียนรถ แจ้งซ่อม ร้องเรียน เรื่องอื่น ๆ)', async () => {
+                try {
+                    const res = await fetch(`${API_BASE_URL}/api/admin/audience/contact_quick_reset`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                    const d = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(d.error || 'คืนค่าเริ่มต้นไม่สำเร็จ');
+                    cqData = { ...(cqData || {}), config: d.config, custom: false }; cqAt = Date.now(); cqErr = '';
+                    cqRefreshCard(); showToast('✅ คืนค่าเริ่มต้นแล้ว', 'success');
+                } catch (e) { showToast('❌ ' + (e.message || 'คืนค่าเริ่มต้นไม่สำเร็จ'), 'error'); }
+            });
+        }
+        // ═══ 📨 Quick Reply "ติดต่อแอดมิน" (UI จบ)
+
+        let aiSummary = null, aiSummaryAt = 0, aiSummaryErr = '';
+        const AI_REASON_LABEL = { contact_admin: 'พิมพ์ "ติดต่อแอดมิน"', user_cmd: 'พิมพ์ ai off เอง', admin_manual: 'แอดมินปิดให้', unknown: 'ไม่ทราบสาเหตุ' };
+        async function loadAiSummary(force) {
+            if (!force && aiSummary && Date.now() - aiSummaryAt < 30000) return;
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/ai_users_summary`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดสรุปสถานะ AI ไม่สำเร็จ');
+                aiSummary = d; aiSummaryAt = Date.now(); aiSummaryErr = '';
+            } catch (e) { aiSummaryErr = e.message || 'โหลดสรุปสถานะ AI ไม่สำเร็จ'; }
+        }
+        function aiOffInfo(u) {   // ข้อความอธิบายว่าทำไม AI ของคนนี้ปิด (ว่าง = เปิดอยู่)
+            if (u.ai_status !== false) return '';
+            if (!AI_REASON_LABEL[u.ai_off_reason] || u.ai_off_reason === 'unknown') return 'ปิดอยู่ · ไม่ทราบสาเหตุ (ข้อมูลก่อนมีการบันทึก)';
+            const r = AI_REASON_LABEL[u.ai_off_reason];
+            const when = u.ai_off_at ? ' · ' + formatThaiDateTime(u.ai_off_at) : '';
+            const by = u.ai_off_reason === 'admin_manual' && u.ai_off_by ? ' · โดย ' + u.ai_off_by : '';
+            return 'ปิดเพราะ ' + r + when + by;
+        }
+        function aiDashboardHtml() {
+            if (aiSummaryErr && !aiSummary) return `<div class="mb-6 p-4 rounded-2xl bg-rose-50 text-rose-600 text-sm font-medium flex items-center justify-between gap-3" data-testid="ai-dash-error"><span>${escapeHtml(aiSummaryErr)}</span><button onclick="refreshAiSummary()" class="px-3 py-1.5 bg-white rounded-xl font-bold text-rose-600 shadow-sm">ลองใหม่</button></div>`;
+            if (!aiSummary) return '';
+            const d = aiSummary, pct = d.total ? Math.round(d.on * 100 / d.total) : 0;
+            const chips = ['contact_admin', 'user_cmd', 'admin_manual', 'unknown'].filter(k => (d.reasons[k] || 0) > 0)
+                .map(k => `<span class="px-2 py-0.5 rounded-full bg-white/80 text-slate-600 text-[11px] font-bold border border-slate-200" data-testid="ai-reason-${k}">${AI_REASON_LABEL[k]} ${d.reasons[k]}</span>`).join('');
+            const resumeTxt = d.auto_resume_hours > 0 ? `เปิดคืนเองหลังพิมพ์ "ติดต่อแอดมิน" ครบ ${d.auto_resume_hours} ชม. หรือเมื่อแอดมินปิดเคสในแชท` : 'ปิดการเปิดคืนอัตโนมัติอยู่';
+            return `
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 slide-in" data-testid="ai-dash">
+                    <div class="rounded-3xl p-5 bg-gradient-to-br from-fuchsia-50 to-violet-50 border border-fuchsia-100 shadow-sm">
+                        <div class="flex items-center gap-2 text-sm font-bold text-fuchsia-700"><i data-lucide="bot" class="w-5 h-5"></i> AI เปิดอยู่</div>
+                        <div class="mt-2 flex items-end gap-2"><span class="text-4xl font-extrabold text-slate-800" data-testid="ai-on-count">${d.on.toLocaleString()}</span><span class="text-sm text-slate-500 mb-1.5">จาก ${d.total.toLocaleString()} คน</span></div>
+                        <div class="mt-3 h-2 rounded-full bg-white/80 overflow-hidden"><div class="h-full rounded-full bg-fuchsia-500" style="width:${pct}%"></div></div>
+                        <div class="mt-1 text-[11px] text-slate-500">${pct}% ของผู้ใช้ทั้งหมด</div>
+                    </div>
+                    <button onclick="setAiFilter(aiFilter === 'off' ? 'all' : 'off')" class="text-left rounded-3xl p-5 border shadow-sm transition ${aiFilter === 'off' ? 'bg-rose-100 border-rose-300 ring-2 ring-rose-300' : 'bg-rose-50 border-rose-100 hover:bg-rose-100/70'}" data-testid="ai-filter-off" title="กดเพื่อดูเฉพาะคนที่ AI ปิดอยู่">
+                        <div class="flex items-center gap-2 text-sm font-bold text-rose-700"><i data-lucide="bot-off" class="w-5 h-5"></i> AI ปิดอยู่ ${aiFilter === 'off' ? '<span class="ml-auto text-[11px] font-bold px-2 py-0.5 rounded-full bg-rose-600 text-white">กำลังกรอง</span>' : ''}</div>
+                        <div class="mt-2 flex items-end gap-2"><span class="text-4xl font-extrabold text-slate-800" data-testid="ai-off-count">${d.off.toLocaleString()}</span><span class="text-sm text-slate-500 mb-1.5">คน</span></div>
+                        <div class="mt-3 flex flex-wrap gap-1.5">${chips || '<span class="text-[11px] text-slate-400">ไม่มีใครถูกปิด</span>'}</div>
+                    </button>
+                    <div class="rounded-3xl p-5 bg-white/80 border border-slate-200 shadow-sm flex flex-col">
+                        <div class="text-sm font-bold text-slate-700 flex items-center gap-2"><i data-lucide="power" class="w-5 h-5 text-emerald-600"></i> เปิด AI ให้ทุกคน</div>
+                        <div class="mt-2 text-[12px] text-slate-500 leading-relaxed">${resumeTxt}</div>
+                        <div class="mt-2 flex flex-wrap gap-1.5">
+                            <span class="px-2 py-0.5 rounded-full text-[11px] font-bold ${d.global_ai ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}" data-testid="ai-global-chip">AI ทั้งระบบ: ${d.global_ai ? 'เปิด' : 'ปิดอยู่'}</span>
+                        </div>
+                        ${d.global_ai ? '' : '<div class="mt-2 text-[11px] text-amber-700" data-testid="ai-global-warn">ปุ่มสวิตช์ AI ทั้งระบบถูกปิดอยู่ — เปิดรายคนแล้ว บอทก็ยังไม่ตอบจนกว่าจะเปิดสวิตช์ทั้งระบบ</div>'}
+                        ${d.tracked ? '' : '<div class="mt-2 text-[11px] text-slate-400" data-testid="ai-untracked-note">ยังไม่ได้รัน migration_ai_user_status.sql — ยังไม่เห็นสาเหตุที่ปิด และไม่เปิดคืนอัตโนมัติ</div>'}
+                        <div class="mt-auto pt-3"><button onclick="resumeAllAi()" ${d.off === 0 ? 'disabled' : ''} class="w-full py-3 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition ${d.off === 0 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md active:scale-[0.99]'}" data-testid="ai-resume-all">
+                            <i data-lucide="toggle-right" class="w-5 h-5"></i> ${d.off === 0 ? 'ทุกคนเปิด AI อยู่แล้ว' : `เปิด AI ทั้งหมด (${d.off.toLocaleString()} คน)`}
+                        </button></div>
+                    </div>
+                </div>`;
+        }
+        async function refreshAiSummary() { await loadAiSummary(true); if (currentView === 'users') renderUsersTable(); }
+        function setAiFilter(v) { aiFilter = v; currentPage = 1; renderUsersTable(); }
+        function resumeAllAi() {
+            const n = aiSummary ? aiSummary.off : 0; if (!n) return;
+            showConfirmModal('เปิด AI ให้ทุกคน?', `จะเปิด AI ให้ผู้ใช้ที่ปิดอยู่ทั้งหมด ${n.toLocaleString()} คนทันที\n(รวมคนที่พิมพ์ ai off เอง และคนที่แอดมินปิดไว้) — ทำย้อนได้โดยปิดรายคน`, async () => {
+                showToast('กำลังเปิด AI ทั้งหมด...', 'loading');
+                try {
+                    const res = await fetch(`${API_BASE_URL}/api/admin/audience/ai_users_resume_all`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                    const d = await res.json();
+                    if (!res.ok) throw new Error(d.error || 'เปิดทั้งหมดไม่สำเร็จ');
+                    showToast(`✅ เปิด AI ให้ ${d.resumed} คนแล้ว`, 'success');
+                    aiFilter = 'all';
+                    await loadAiSummary(true); renderUsersTable();
+                } catch (e) { showToast('❌ ' + (e.message || 'เปิดทั้งหมดไม่สำเร็จ'), 'error'); }
+            });
+        }
+
         async function renderUsersTable() {
             const from = (currentPage - 1) * ITEMS_PER_PAGE;
             const to = from + ITEMS_PER_PAGE - 1;
@@ -3978,10 +4232,11 @@ async function updateAllUserProfiles() {
             if (searchQuery) {
                 query = query.or(`displayName.ilike.%${searchQuery}%,userId.ilike.%${searchQuery}%`);
             }
+            if (aiFilter === 'off') query = query.eq('ai_status', false);
 
             query = query.range(from, to);
 
-            const { data, error, count } = await query;
+            const [{ data, error, count }] = await Promise.all([query, loadAiSummary(false)]);
             if (error) { showToast(error.message, 'error'); return; }
 
             const totalPages = Math.ceil(count / ITEMS_PER_PAGE);
@@ -4013,6 +4268,8 @@ async function updateAllUserProfiles() {
                          </button>
                     </div>
                 </div>
+                ${aiDashboardHtml()}
+                ${aiFilter === 'off' ? `<div class="mb-3 flex items-center gap-2 text-sm text-rose-700 font-bold" data-testid="ai-filter-note"><i data-lucide="filter" class="w-4 h-4"></i> แสดงเฉพาะผู้ใช้ที่ AI ปิดอยู่ <button onclick="setAiFilter('all')" class="ml-1 px-2.5 py-1 rounded-full bg-white shadow-sm text-xs text-slate-600">ล้างตัวกรอง</button></div>` : ''}
                 <div class="glass rounded-3xl overflow-hidden slide-in border-0 shadow-xl" style="animation-delay: 0.1s;">
                     <div class="hidden md:block overflow-x-auto">
                         <table class="w-full text-left border-collapse">
@@ -4073,7 +4330,7 @@ async function updateAllUserProfiles() {
                             <td class="px-6 py-5">
                                 <span class="inline-flex px-3 py-1 rounded-full text-xs font-bold border ${statusColor} capitalize shadow-sm">${u.status}</span>
                             </td>
-                            <td class="px-6 py-5">${aiBadge}</td>
+                            <td class="px-6 py-5">${aiBadge}${isAiOn ? '' : `<div class="mt-1.5 text-[11px] text-slate-400 max-w-[190px] leading-snug" data-testid="ai-off-reason-${u.userId}">${escapeHtml(aiOffInfo(u))}</div>`}</td>
                             <td class="px-6 py-5 text-sm text-slate-500 whitespace-nowrap font-medium">${thaiDate}</td>
                             <td class="px-8 py-5 text-right">
                                 <button onclick="openUserModal('${userStr}')" class="p-2 text-fuchsia-600 bg-fuchsia-50/50 rounded-xl hover:bg-fuchsia-100 hover:shadow-md transition-all"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
@@ -4099,7 +4356,7 @@ async function updateAllUserProfiles() {
                                 <div class="flex justify-between items-start">
                                     <div class="font-bold text-slate-800 text-base mb-0.5 flex items-center gap-2">
                                         ${escapeHtml(u.displayName)}
-                                        <button onclick="toggleUserAi('${u.userId}', ${isAiOn})" class="p-1 rounded-md bg-gray-50 border border-gray-100">${aiIcon}</button>
+                                        <button onclick="toggleUserAi('${u.userId}', ${isAiOn})" class="p-1 rounded-md bg-gray-50 border border-gray-100" title="${isAiOn ? 'AI เปิดอยู่ — กดเพื่อปิด' : escapeHtml(aiOffInfo(u)) + ' — กดเพื่อเปิด'}" data-testid="ai-icon-${u.userId}">${aiIcon}</button>
                                     </div>
                                     <div class="flex gap-1.5">
                                         ${u.role === 'admin' ? '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-violet-100 text-violet-700">ADMIN</span>' : ''}
@@ -4111,6 +4368,7 @@ async function updateAllUserProfiles() {
                                     <i data-lucide="copy" class="w-3 h-3"></i>
                                 </div>
                                 <div class="text-[11px] text-gray-400">Active: ${thaiDate}</div>
+                                ${isAiOn ? '' : `<div class="text-[11px] text-rose-500 mt-0.5 leading-snug" data-testid="ai-off-reason-m-${u.userId}">🔕 ${escapeHtml(aiOffInfo(u))}</div>`}
                             </div>
                             <button onclick="openUserModal('${userStr}')" class="absolute right-4 bottom-4 p-2 text-fuchsia-600 bg-fuchsia-50 rounded-xl"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
                         </div>
@@ -5104,19 +5362,16 @@ async function updateAllUserProfiles() {
 
         async function toggleUserAi(userId, currentStatus) {
             const newStatus = !currentStatus;
-
-
-
-            const { error } = await supabaseClient.from('user_profiles').update({ ai_status: newStatus }).eq('userId', userId);
-
-            if (error) {
-                showToast('เกิดข้อผิดพลาด: ' + error.message, 'error');
-            } else {
+            try {
+                // ผ่าน API ของระบบ (บันทึกสาเหตุ "แอดมินปิดให้" + ชื่อผู้ปิด + audit log)
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/ai_user_set`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, on: newStatus }) });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
                 showToast(newStatus ? 'เปิด AI สำหรับผู้ใช้นี้แล้ว' : 'ปิด AI สำหรับผู้ใช้นี้แล้ว');
-
-                const btn = document.activeElement;
-
+                await loadAiSummary(true);
                 renderUsersTable();
+            } catch (e) {
+                showToast('เกิดข้อผิดพลาด: ' + (e.message || ''), 'error');
             }
         }
 
