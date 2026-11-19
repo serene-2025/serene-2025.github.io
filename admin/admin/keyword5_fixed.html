@@ -17306,7 +17306,7 @@ const CAR_PER_PAGE = 30;
         };
         let repairStatusFilter = '';
 
-        // ─── 📹 จัดการคำขอดูกล้องวงจรปิด (cctv.html) ──────────────────
+        // ─── 📹 จัดการคำขอดูกล้องวงจรปิด (crm.html) ──────────────────
         const CCTV_STATUS_LABELS = {
             pending:  { icon:'⏳', label:'รอตรวจสอบ', color:'amber' },
             approved: { icon:'✅', label:'อนุมัติแล้ว', color:'emerald' },
@@ -18140,6 +18140,23 @@ const CAR_PER_PAGE = 30;
             } catch(e) { showToast('❌ ' + e.message, 'error'); }
         }
 
+        // ═══ 📹 CCTV admin v2 (เริ่ม)
+        let cctvCounts = null, ccAdm = null, ccRl = null;
+        const CC_PRESET_INSTR = ['ติดต่อรับชมภาพที่สำนักงานนิติบุคคลต่อหน้าเจ้าหน้าที่', 'ห้ามแคปภาพ/ถ่ายภาพหน้าจอ/เผยแพร่ภาพ ก่อนได้รับอนุญาต', 'รับชมได้เฉพาะภายในช่วงเวลาที่กำหนด', 'กรุณานำบัตรประชาชนมาแสดงตัวตนก่อนรับชม'];
+        const CC_PRESET_REJECT = ['ข้อมูลไม่ครบถ้วน ไม่สามารถระบุเหตุการณ์ได้', 'ไม่มีภาพในช่วงเวลาที่ขอ (เกินระยะเวลาเก็บภาพ)', 'ไม่มีกล้องครอบคลุมจุดที่ขอ', 'กรณีนี้ต้องแจ้งความและให้เจ้าหน้าที่ตำรวจประสานขอข้อมูล', 'ไม่เข้าเงื่อนไขตามกฎระเบียบการขอดูกล้อง'];
+        const ccBkkLocal = (ms) => new Date(ms + 7 * 3600000).toISOString().slice(0, 16);   // → "YYYY-MM-DDTHH:mm" เวลาไทย (ใส่ใน datetime-local)
+        const ccLocalToIso = (v) => { if (!v) return null; const d = new Date(v + ':00+07:00'); return isNaN(d.getTime()) ? null : d.toISOString(); };
+        const ccDT = (iso) => { try { return new Date(iso).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return String(iso || ''); } };
+        const ccYmd = (ymd) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd || '')); if (!m) return String(ymd || '—'); return `${+m[3]} ${['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'][+m[2] - 1]} ${+m[1] + 543}`; };
+        const ccLen = (s) => Array.from(String(s || '')).length;
+        // โมดอลของหน้านี้ (ไม่ใช้ showModal เพราะมันใส่เนื้อหาใน <p> กลางหน้าจอ)
+        function ccOpenModal(title, html) {
+            document.getElementById('modal-title').innerText = title;
+            document.getElementById('modal-content').innerHTML = html;
+            const ov = document.getElementById('modal-overlay'); ov.classList.remove('hidden');
+            setTimeout(() => { ov.classList.remove('opacity-0'); document.getElementById('modal-container').classList.remove('scale-95'); if (window.lucide) lucide.createIcons(); }, 10);
+        }
+
         async function renderCctvManagementView() {
             document.getElementById('content-area').innerHTML =
                 '<div class="slide-in p-2">' +
@@ -18147,24 +18164,77 @@ const CAR_PER_PAGE = 30;
                 '<div><h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">' +
                 '<span class="bg-slate-200 text-slate-700 p-2.5 rounded-2xl shadow-sm"><i data-lucide="camera" class="w-8 h-8"></i></span>' +
                 'จัดการคำขอดูกล้อง</h1>' +
-                '<p class="text-sm text-slate-500 mt-2 ml-1">คำขอดูกล้องวงจรปิดจากลูกบ้านผ่าน cctv.html</p></div>' +
-                '<button onclick="openCctvZonesModal()" class="px-4 py-2.5 bg-slate-700 hover:bg-slate-800 text-white rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="settings" class="w-4 h-4"></i> จัดการจุดกล้อง</button>' +
+                '<p class="text-sm text-slate-500 mt-2 ml-1">คำขอดูกล้องวงจรปิดจากลูกบ้านผ่านแอปสมาชิก (crm.html)</p></div>' +
+                '<div class="flex gap-2 flex-wrap">' +
+                '<button onclick="openCctvRulesModal()" data-testid="cc-rules-btn" class="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="scroll-text" class="w-4 h-4"></i> กฎระเบียบ</button>' +
+                '<button onclick="openCctvZonesModal()" class="px-4 py-2.5 bg-slate-700 hover:bg-slate-800 text-white rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="settings" class="w-4 h-4"></i> จัดการจุดกล้อง</button></div>' +
                 '</div>' +
-                '<div class="glass rounded-3xl p-4 shadow-sm mb-4 flex flex-wrap gap-1.5">' +
-                [['pending','⏳ รอตรวจสอบ'],['approved','✅ อนุมัติแล้ว'],['rejected','❌ ไม่อนุมัติ'],['','ทั้งหมด']].map(([v,l]) =>
-                    '<button data-status="' + v + '" onclick="switchCctvStatus(this.dataset.status)" class="px-3 py-2 rounded-xl text-xs font-bold transition-all ' +
-                    (cctvStatusFilter === v ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600') + '">' + l + '</button>'
-                ).join('') + '</div>' +
+                '<div id="cctv-filter" class="glass rounded-3xl p-4 shadow-sm mb-4 flex flex-wrap gap-1.5"></div>' +
                 '<div id="cctv-list"></div></div>';
-            lucide.createIcons();
+            cctvFilterHtml();
+            if (window.lucide) lucide.createIcons();
             await loadCctvList();
         }
-
+        function cctvFilterHtml() {
+            const el = document.getElementById('cctv-filter'); if (!el) return;
+            const c = cctvCounts || {};
+            const cnt = (k) => (c[k] !== undefined && c[k] !== null) ? ' <span class="ml-1 px-1.5 rounded-full text-[10px] ' + (cctvStatusFilter === k ? 'bg-white/25' : 'bg-slate-200 text-slate-600') + '" data-testid="cc-count-' + k + '">' + c[k] + '</span>' : '';
+            el.innerHTML = [['pending', '⏳ รอตรวจสอบ'], ['approved', '✅ อนุมัติแล้ว'], ['rejected', '❌ ไม่อนุมัติ'], ['', 'ทั้งหมด']].map(([v, l]) =>
+                '<button data-status="' + v + '" data-testid="cc-filter-' + (v || 'all') + '" onclick="switchCctvStatus(this.dataset.status)" class="px-3 py-2 rounded-xl text-xs font-bold transition-all ' +
+                (cctvStatusFilter === v ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600') + '">' + l + (v ? cnt(v) : '') + '</button>').join('');
+        }
         function switchCctvStatus(status) {
             cctvStatusFilter = status;
-            renderCctvManagementView();
+            cctvFilterHtml();
+            loadCctvList();
         }
-
+        function cctvFlagsHtml(r) {
+            const q = r.requester || {}, f = [];
+            const chip = (cls, t, id) => '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold ' + cls + '" data-testid="' + id + '">' + t + '</span>';
+            if (!q.registered) f.push(chip('bg-rose-100 text-rose-700', '⚠️ ไม่พบในทะเบียนสมาชิก', 'cc-flag-unreg'));
+            else {
+                if (q.house_match === false) f.push(chip('bg-amber-100 text-amber-800', '⚠️ บ้านไม่ตรงทะเบียน (' + escapeHtml(q.house_no || '—') + ')', 'cc-flag-house'));
+                if (!q.status_confirmed) f.push(chip('bg-amber-100 text-amber-800', 'ยังไม่ยืนยันสถานะ', 'cc-flag-unconf'));
+            }
+            const h = r.history;
+            if (h && h.total > 1) f.push(chip('bg-slate-100 text-slate-600', 'เคยขอมาก่อน ' + (h.total - 1) + ' ครั้ง (✅' + h.approved + ' ❌' + h.rejected + ')', 'cc-flag-hist'));
+            return f.length ? '<div class="flex flex-wrap gap-1.5 mb-3">' + f.join('') + '</div>' : '';
+        }
+        function cctvCardHtml(r, idx) {
+            const st = CCTV_STATUS_LABELS[r.status] || { icon: '❓', label: r.status, color: 'slate' };
+            const q = r.requester || {};
+            const dt = new Date(r.created_at).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+            const acc = r.access || {};
+            const accTxt = r.status === 'approved' && (acc.valid_from || acc.valid_until)
+                ? '<div class="text-xs rounded-xl p-2.5 mb-2 ' + (acc.state === 'expired' ? 'bg-rose-50 text-rose-700' : acc.state === 'not_started' ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800') + '" data-testid="cc-window">⏱ ' + (acc.valid_from ? ccDT(acc.valid_from) : 'ทันที') + ' – ' + (acc.valid_until ? ccDT(acc.valid_until) : 'ไม่กำหนด') + ' · <b>' + ({ active: 'อยู่ในช่วงที่ดูได้', not_started: 'ยังไม่ถึงเวลา', expired: 'หมดเวลาแล้ว' }[acc.state] || '') + '</b></div>' : '';
+            const cams = (r.approved_cameras || []).length && r.status === 'approved' ? '<div class="text-xs text-emerald-700 mb-2">🎥 ' + r.approved_cameras.map(escapeHtml).join(' · ') + '</div>' : '';
+            const notif = r.status !== 'pending' && r.result_notify_ok !== undefined && r.result_notify_ok !== null
+                ? '<div class="text-[11px] mb-2 ' + (r.result_notify_ok ? 'text-emerald-600' : 'text-rose-600') + '" data-testid="cc-notified">' + (r.result_notify_ok ? '✅ แจ้งผู้ขอทาง LINE แล้ว' : '⚠️ ส่งข้อความถึงผู้ขอไม่สำเร็จ') + (r.result_notified_at ? ' · ' + ccDT(r.result_notified_at) : '') + '</div>' : '';
+            return '<div class="glass rounded-3xl p-5" data-testid="cc-card-' + escapeHtml(r.id) + '">' +
+                '<div class="flex justify-between items-start mb-3 gap-2">' +
+                '<div class="flex items-center gap-2.5 min-w-0">' +
+                (r.line_picture_url
+                    ? '<img src="' + escapeHtml(r.line_picture_url) + '" class="w-10 h-10 rounded-full object-cover border border-slate-200 flex-shrink-0">'
+                    : '<div class="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0"><i data-lucide="user" class="w-4 h-4 text-slate-400"></i></div>') +
+                '<div class="min-w-0"><div class="font-bold text-slate-800 truncate" data-testid="cc-name">' + escapeHtml(r.requester_name || r.line_display_name || 'ไม่ระบุ') + (r.requester_relation ? ' <span class="text-[11px] font-medium text-slate-500">(' + escapeHtml(r.requester_relation) + ')</span>' : '') + '</div>' +
+                '<div class="text-[11px] text-slate-400 truncate">LINE: ' + escapeHtml(r.line_display_name || '—') + '</div></div></div>' +
+                '<div class="text-right flex-shrink-0"><span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-' + st.color + '-100 text-' + st.color + '-700">' + st.icon + ' ' + st.label + '</span>' +
+                '<div class="text-[10px] font-mono text-slate-400 mt-1" data-testid="cc-ref">' + escapeHtml(r.ref_no || '') + '</div></div></div>' +
+                '<div class="text-xs text-slate-500 mb-2" data-testid="cc-home">🏠 ' + escapeHtml(r.house_number || '—') + (q.registered && q.soi ? ' · ซอย ' + escapeHtml(q.soi) : '') + (q.registered && q.living_status ? ' · ' + escapeHtml(q.living_status) : '') + ' · 📞 ' + escapeHtml(r.phone_number || '—') + (q.registered && q.phone_masked ? ' <span class="text-slate-400">(ทะเบียน ' + escapeHtml(q.phone_masked) + ')</span>' : '') + '</div>' +
+                cctvFlagsHtml(r) +
+                '<div class="text-xs font-bold text-slate-600 mb-1">📍 ' + escapeHtml(r.camera_zone || '—') + (r.incident_type ? ' <span class="ml-1 px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px]">' + escapeHtml(r.incident_type) + '</span>' : '') + '</div>' +
+                '<div class="text-xs text-slate-500 mb-2">📅 ' + ccYmd(r.request_date) + (r.time_range ? ' ⏰ ' + escapeHtml(r.time_range) : '') + '</div>' +
+                '<div class="text-sm text-slate-600 bg-slate-50 rounded-xl p-3 mb-2">' + escapeHtml(r.reason || '') + (r.details ? '<div class="text-xs text-slate-500 mt-1.5 pt-1.5 border-t border-slate-200">🔎 ' + escapeHtml(r.details) + '</div>' : '') + '</div>' +
+                '<div class="text-[11px] text-slate-500 mb-2">🚔 ' + (r.police_report ? 'แจ้งความแล้ว' + (r.police_report_no ? ' (' + escapeHtml(r.police_report_no) + ')' : '') : 'ยังไม่ได้แจ้งความ') + '</div>' +
+                cams + accTxt +
+                (r.response_link ? '<a href="' + escapeHtml(r.response_link) + '" target="_blank" rel="noopener" class="text-xs text-blue-600 underline mb-2 block">🔗 ลิงก์ที่แนบไว้แล้ว</a>' : '') +
+                (r.instructions ? '<div class="text-xs text-amber-800 bg-amber-50 rounded-xl p-2.5 mb-2"><b>คำแนะนำ:</b> ' + escapeHtml(r.instructions) + '</div>' : '') +
+                (r.admin_remark ? '<div class="text-xs text-indigo-600 bg-indigo-50 rounded-xl p-2.5 mb-2"><b>หมายเหตุ:</b> ' + escapeHtml(r.admin_remark) + '</div>' : '') +
+                notif +
+                '<div class="text-[11px] text-slate-400 mb-3">ขอเมื่อ ' + dt + ' · ' + (r.rules_version ? '📜 ยอมรับกฎ v' + escapeHtml(r.rules_version) + (r.rules_accepted_at ? ' เมื่อ ' + ccDT(r.rules_accepted_at) : '') : '📜 ไม่มีบันทึกการยอมรับกฎ (คำขอก่อนอัปเดต)') + (r.signature_url ? ' · <a href="' + escapeHtml(r.signature_url) + '" target="_blank" rel="noopener" class="text-blue-600 underline" data-testid="cc-sig">✍️ ลายเซ็น</a>' : '') + '</div>' +
+                '<button data-idx="' + idx + '" data-testid="cc-open-' + escapeHtml(r.id) + '" onclick="openCctvDetailModal(this.dataset.idx)" class="w-full py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> ' + (r.status === 'pending' ? 'พิจารณาคำขอ' : 'ดู/แก้ไขผลการพิจารณา') + '</button>' +
+                '</div>';
+        }
         async function loadCctvList() {
             const el = document.getElementById('cctv-list');
             el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">⏳ กำลังโหลด...</div>';
@@ -18173,79 +18243,229 @@ const CAR_PER_PAGE = 30;
                 const d = await res.json();
                 if (!res.ok) throw new Error(d.error || 'โหลดล้มเหลว');
                 window._cctvItems = d.items || [];
-
-                if (!d.items?.length) {
-                    el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400">ไม่มีคำขอในหมวดนี้</div>';
-                    return;
-                }
-
-                el.innerHTML = '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' + d.items.map((r, idx) => {
-                    const st = CCTV_STATUS_LABELS[r.status] || { icon:'❓', label:r.status, color:'slate' };
-                    const dt = new Date(r.created_at).toLocaleDateString('th-TH', { day:'2-digit', month:'short', year:'2-digit', hour:'2-digit', minute:'2-digit' });
-                    return '<div class="glass rounded-3xl p-5">' +
-                        '<div class="flex justify-between items-start mb-3">' +
-                        '<div class="flex items-center gap-2.5">' +
-                        (r.line_picture_url
-                            ? '<img src="' + escapeHtml(r.line_picture_url) + '" class="w-10 h-10 rounded-full object-cover border border-slate-200 flex-shrink-0">'
-                            : '<div class="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0"><i data-lucide="user" class="w-4 h-4 text-slate-400"></i></div>') +
-                        '<div><div class="font-bold text-slate-800">' + escapeHtml(r.line_display_name || 'ไม่ระบุ') + '</div>' +
-                        '<div class="text-xs text-slate-400">🏠 ' + escapeHtml(r.house_number||'—') + ' · 📞 ' + escapeHtml(r.phone_number||'—') + '</div></div>' +
-                        '</div>' +
-                        '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-' + st.color + '-100 text-' + st.color + '-700 flex-shrink-0">' + st.icon + ' ' + st.label + '</span>' +
-                        '</div>' +
-                        '<div class="text-xs font-bold text-slate-600 mb-1">📍 ' + escapeHtml(r.camera_zone||'—') + '</div>' +
-                        '<div class="text-xs text-slate-500 mb-2">📅 ' + escapeHtml(r.request_date||'—') + (r.time_range ? ' ⏰ ' + escapeHtml(r.time_range) : '') + '</div>' +
-                        '<div class="text-sm text-slate-600 bg-slate-50 rounded-xl p-3 mb-3">' + escapeHtml(r.reason||'') + '</div>' +
-                        (r.response_link ? '<a href="' + escapeHtml(r.response_link) + '" target="_blank" class="text-xs text-blue-600 underline mb-2 block">🔗 ลิงก์ที่แนบไว้แล้ว</a>' : '') +
-                        (r.admin_remark ? '<div class="text-xs text-indigo-600 bg-indigo-50 rounded-xl p-2.5 mb-3"><b>หมายเหตุ:</b> ' + escapeHtml(r.admin_remark) + '</div>' : '') +
-                        '<div class="text-[11px] text-slate-400 mb-3">ขอเมื่อ ' + dt + '</div>' +
-                        '<button data-idx="' + idx + '" onclick="openCctvDetailModal(this.dataset.idx)" class="w-full py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> พิจารณาคำขอ</button>' +
-                        '</div>';
-                }).join('') + '</div>';
-                lucide.createIcons();
-            } catch(e) {
-                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center">❌ ' + escapeHtml(e.message) + '</div>';
+                if (d.counts) { cctvCounts = d.counts; cctvFilterHtml(); }
+                if (!d.items?.length) { el.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400" data-testid="cc-empty">ไม่มีคำขอในหมวดนี้</div>'; return; }
+                el.innerHTML = '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' + d.items.map((r, idx) => cctvCardHtml(r, idx)).join('') + '</div>';
+                if (window.lucide) lucide.createIcons();
+            } catch (e) {
+                el.innerHTML = '<div class="glass rounded-3xl p-6 text-rose-500 text-center" data-testid="cc-error">❌ ' + escapeHtml(e.message) + '</div>';
             }
         }
 
-        function openCctvDetailModal(idx) {
-            const r = window._cctvItems[parseInt(idx)];
+        // ── โมดอลตอบกลับคำขอ (อนุมัติ: กล้อง/ช่วงเวลา/ลิงก์/คำแนะนำ · ไม่อนุมัติ: เหตุผล/คำแนะนำ) + ตัวอย่างข้อความที่ผู้ขอจะได้รับ ──
+        async function openCctvDetailModal(idx) {
+            const r = (window._cctvItems || [])[parseInt(idx)];
             if (!r) return;
-            showModal('📹 พิจารณาคำขอ — ' + escapeHtml(r.house_number||''),
-                '<div class="space-y-3 text-left">' +
-                '<div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-2.5">📍 ' + escapeHtml(r.camera_zone||'') + ' · 📅 ' + escapeHtml(r.request_date||'') + '<br>' + escapeHtml(r.reason||'') + '</div>' +
-                '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">ลิงก์คลิป/วิดีโอ (ถ้าอนุมัติ)</label>' +
-                '<input id="cctv-response-link" value="' + escapeHtml(r.response_link||'') + '" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="เช่น ลิงก์ Google Drive"></div>' +
-                '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">หมายเหตุ</label>' +
-                '<textarea id="cctv-remark" rows="2" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none" placeholder="เช่น เหตุผลที่ไม่อนุมัติ...">' + escapeHtml(r.admin_remark||'') + '</textarea></div>' +
-                '<div class="flex gap-2 pt-2">' +
-                '<button data-idx="' + idx + '" onclick="updateCctvStatus(this.dataset.idx,\'approved\')" class="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold text-sm">✅ อนุมัติ</button>' +
-                '<button data-idx="' + idx + '" onclick="updateCctvStatus(this.dataset.idx,\'rejected\')" class="flex-1 py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold text-sm">❌ ไม่อนุมัติ</button>' +
-                '</div>' +
-                '<button onclick="closeModal()" class="w-full py-2 bg-slate-100 rounded-2xl text-sm font-bold">ปิด</button>' +
-                '</div>'
-            );
+            let zones = [];
+            try { const res = await fetch(`${API_BASE_URL}/api/admin/audience/cctv_camera_zones_list`); const d = await res.json(); zones = Array.isArray(d.zones) ? d.zones : []; } catch (_) { /* ใช้เฉพาะกล้องที่ผู้ขอระบุ */ }
+            const cams = new Set((r.approved_cameras || []).length ? r.approved_cameras : [r.camera_zone]);
+            const all = Array.from(new Set([...zones, ...cams, r.camera_zone].filter(Boolean)));
+            const hasWin = !!(r.valid_from || r.valid_until);
+            ccAdm = {
+                r, mode: r.status === 'rejected' ? 'reject' : 'approve', zones: all, cams,
+                noWindow: r.status === 'approved' && !hasWin,
+                from: r.valid_from ? ccBkkLocal(new Date(r.valid_from).getTime()) : ccBkkLocal(Date.now()),
+                until: r.valid_until ? ccBkkLocal(new Date(r.valid_until).getTime()) : ccBkkLocal(Date.now() + 7 * 86400000),
+                link: r.response_link || '', instr: r.instructions || '', remark: r.admin_remark || '',
+                notify: !!r.uid, armed: false, busy: false, err: '',
+            };
+            ccAdmRender();
+            ccOpenModal('📹 พิจารณาคำขอ — ' + (r.ref_no || r.house_number || ''), document.getElementById('modal-content').innerHTML);
         }
-
-        async function updateCctvStatus(idx, status) {
-            const r = window._cctvItems[parseInt(idx)];
-            if (!r) return;
-            const responseLink = document.getElementById('cctv-response-link')?.value?.trim();
-            const adminRemark = document.getElementById('cctv-remark')?.value?.trim();
-
+        function ccAdmValidate() {
+            const a = ccAdm, e = [];
+            if (a.mode === 'approve') {
+                if (!a.cams.size) e.push('เลือกกล้องที่อนุมัติอย่างน้อย 1 จุด');
+                if (!a.noWindow) {
+                    const f = ccLocalToIso(a.from), u = ccLocalToIso(a.until);
+                    if (!u) e.push('กำหนดเวลาสิ้นสุดที่ให้ดู (หรือเลือก "ไม่จำกัดเวลา")');
+                    else if (f && new Date(u) <= new Date(f)) e.push('เวลาสิ้นสุดต้องหลังเวลาเริ่ม');
+                    else if (new Date(u).getTime() <= Date.now()) e.push('เวลาสิ้นสุดผ่านไปแล้ว');
+                }
+                if (a.link.trim() && !/^https?:\/\//i.test(a.link.trim())) e.push('ลิงก์ต้องขึ้นต้นด้วย http:// หรือ https://');
+            } else if (!a.remark.trim()) e.push('ระบุเหตุผลที่ไม่อนุมัติ (ผู้ขอจะได้รับข้อความนี้)');
+            if (ccLen(a.instr) > 1000 || ccLen(a.remark) > 1000) e.push('ข้อความยาวเกิน 1,000 ตัวอักษร');
+            return e;
+        }
+        function ccAdmPreviewHtml() {
+            const a = ccAdm, r = a.r, ok = a.mode === 'approve';
+            const row = (k, v) => '<div class="flex gap-2 text-[12px]"><div class="w-24 shrink-0 text-slate-400">' + k + '</div><div class="text-slate-800 whitespace-pre-line">' + escapeHtml(v || '—') + '</div></div>';
+            const win = a.noWindow ? 'ตามที่นิติบุคคลแจ้ง' : ((a.from ? ccDT(ccLocalToIso(a.from)) : 'ทันที') + ' – ' + (a.until ? ccDT(ccLocalToIso(a.until)) : 'ไม่กำหนด'));
+            return '<div class="rounded-2xl overflow-hidden border border-slate-200 bg-white max-w-sm" data-testid="cc-preview">' +
+                '<div class="px-4 py-3 text-white font-bold text-sm" style="background:' + (ok ? '#059669' : '#e11d48') + '" data-testid="cc-pv-head">' + (ok ? '✅ อนุมัติคำขอดูกล้องวงจรปิด' : '❌ ไม่อนุมัติคำขอดูกล้องวงจรปิด') + '</div>' +
+                '<div class="p-4 space-y-2">' +
+                '<div class="font-bold text-sm text-slate-800">เรียน คุณ' + escapeHtml(r.requester_name || '') + '</div>' +
+                '<div class="text-[12px] text-slate-600">' + (ok ? 'ขอบคุณที่ใช้บริการ — คำขอดูกล้องวงจรปิดของท่านได้รับการอนุมัติแล้ว' : 'ขอบคุณที่แจ้งความประสงค์ — เสียใจที่ต้องแจ้งว่าคำขอของท่านยังไม่ได้รับการอนุมัติ') + '</div>' +
+                '<div class="border-t pt-2 space-y-1">' + row('เลขที่คำขอ', r.ref_no) + row('บ้านเลขที่', r.house_number) + row('ภาพย้อนหลัง', ccYmd(r.request_date) + (r.time_range ? ' ' + r.time_range : '')) +
+                (ok ? row('กล้องที่อนุมัติ', Array.from(a.cams).join('\n')) + row('ช่วงเวลาที่ดูได้', win) : row('จุดที่ขอดู', r.camera_zone) + (a.remark.trim() ? row('เหตุผล', a.remark.trim()) : '')) + '</div>' +
+                (a.instr.trim() ? '<div class="rounded-xl bg-amber-50 p-2.5 text-[12px] text-amber-900" data-testid="cc-pv-instr"><b>📌 คำแนะนำจากนิติบุคคล</b><div class="whitespace-pre-line mt-0.5">' + escapeHtml(a.instr.trim()) + '</div></div>' : '') +
+                (ok ? '<div class="rounded-xl bg-rose-50 p-2.5 text-[11px] font-bold text-rose-700">⚠️ ห้ามแคปภาพ บันทึกหน้าจอ หรือเผยแพร่ภาพ ก่อนได้รับอนุญาตเด็ดขาด</div>' : '') +
+                (ok && a.link.trim() ? '<div class="text-center rounded-xl py-2 text-white text-[12px] font-bold" style="background:#059669">🎬 เปิดดูภาพ</div>' : '') +
+                '</div></div>';
+        }
+        function ccAdmRender() {
+            const a = ccAdm, r = a.r, ok = a.mode === 'approve';
+            const chips = (list, fn) => list.map((t, i) => '<button type="button" data-i="' + i + '" onclick="' + fn + '(this.dataset.i)" class="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-[11px] text-slate-600 text-left">+ ' + escapeHtml(t) + '</button>').join('');
+            const tab = (m, label, cls) => '<button type="button" onclick="ccAdmMode(\'' + m + '\')" data-testid="cc-mode-' + m + '" class="flex-1 py-2.5 rounded-2xl font-bold text-sm border-2 ' + (a.mode === m ? cls : 'bg-white text-slate-500 border-slate-200') + '">' + label + '</button>';
+            const camBoxes = a.zones.map((z, i) => '<label class="flex items-center gap-2 text-sm text-slate-700 py-1"><input type="checkbox" ' + (a.cams.has(z) ? 'checked' : '') + ' data-i="' + i + '" onchange="ccAdmCam(this.dataset.i,this.checked)" class="w-4 h-4 accent-emerald-600" data-testid="cc-cam-' + i + '"> ' + escapeHtml(z) + (z === r.camera_zone ? ' <span class="text-[10px] text-slate-400">(ที่ผู้ขอระบุ)</span>' : '') + '</label>').join('');
+            const approveBlock =
+                '<div class="space-y-3" data-testid="cc-approve-fields">' +
+                '<div><div class="text-xs font-bold text-slate-600 mb-1">กล้องที่อนุมัติให้ดู *</div><div class="rounded-xl border border-slate-200 bg-white px-3 py-1.5 max-h-40 overflow-y-auto">' + (camBoxes || '<div class="text-xs text-slate-400 py-2">ไม่มีรายชื่อจุดกล้อง</div>') + '</div>' +
+                '<div class="flex gap-2 mt-1.5"><input id="cc-cam-extra" placeholder="เพิ่มจุดอื่น เช่น กล้องหน้าบ้าน 12" class="flex-1 border border-slate-200 rounded-xl px-3 py-1.5 text-xs" data-testid="cc-cam-extra"><button type="button" onclick="ccAdmCamAdd()" class="px-3 py-1.5 rounded-xl bg-slate-100 text-xs font-bold" data-testid="cc-cam-add">เพิ่ม</button></div></div>' +
+                '<div><div class="flex items-center justify-between"><div class="text-xs font-bold text-slate-600 mb-1">ช่วงเวลาที่ให้ดูได้</div>' +
+                '<label class="text-xs text-slate-600 flex items-center gap-1.5"><input type="checkbox" ' + (a.noWindow ? 'checked' : '') + ' onchange="ccAdmSet(\'noWindow\',this.checked,true)" class="accent-slate-600" data-testid="cc-nowin"> ไม่จำกัดเวลา</label></div>' +
+                (a.noWindow ? '<div class="text-[11px] text-slate-400">ผู้ขอเห็นลิงก์ได้ตลอด (ไม่แนะนำ — ลิงก์อาจถูกส่งต่อ)</div>' :
+                    '<div class="grid grid-cols-2 gap-2"><div><div class="text-[10px] text-slate-400">เริ่ม</div><input type="datetime-local" value="' + a.from + '" oninput="ccAdmSet(\'from\',this.value)" class="w-full border border-slate-200 rounded-xl px-2 py-2 text-sm" data-testid="cc-from"></div>' +
+                    '<div><div class="text-[10px] text-slate-400">สิ้นสุด</div><input type="datetime-local" value="' + a.until + '" oninput="ccAdmSet(\'until\',this.value)" class="w-full border border-slate-200 rounded-xl px-2 py-2 text-sm" data-testid="cc-until"></div></div>' +
+                    '<div class="flex flex-wrap gap-1.5 mt-1.5">' + [[24, '24 ชม.'], [72, '3 วัน'], [168, '7 วัน'], [720, '30 วัน']].map(([h, l]) => '<button type="button" onclick="ccAdmQuick(' + h + ')" class="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-bold" data-testid="cc-quick-' + h + '">' + l + '</button>').join('') + '</div>') + '</div>' +
+                '<div><div class="text-xs font-bold text-slate-600 mb-1">ลิงก์ดูภาพ (ถ้ามี)</div><input value="' + escapeHtml(a.link) + '" oninput="ccAdmSet(\'link\',this.value)" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="https://… (เช่น Google Drive)" data-testid="cc-link"></div>' +
+                '</div>';
+            const instrBlock =
+                '<div><div class="text-xs font-bold text-slate-600 mb-1">' + (ok ? 'คำแนะนำถึงผู้ขอ' : 'คำแนะนำ/ขั้นตอนถัดไป (ถ้ามี)') + '</div>' +
+                '<textarea rows="3" oninput="ccAdmSet(\'instr\',this.value)" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none" placeholder="เช่น ติดต่อรับชมที่สำนักงานนิติบุคคล…" data-testid="cc-instr">' + escapeHtml(a.instr) + '</textarea>' +
+                (ok ? '<div class="flex flex-wrap gap-1.5 mt-1.5">' + chips(CC_PRESET_INSTR, 'ccAdmPresetInstr') + '</div>' : '') + '</div>';
+            const remarkBlock =
+                '<div><div class="text-xs font-bold text-slate-600 mb-1">' + (ok ? 'หมายเหตุ (ถ้ามี)' : 'เหตุผลที่ไม่อนุมัติ *') + '</div>' +
+                '<textarea rows="2" oninput="ccAdmSet(\'remark\',this.value)" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none" placeholder="' + (ok ? 'เช่น ภาพชัดเจน' : 'ผู้ขอจะได้รับข้อความนี้') + '" data-testid="cc-remark">' + escapeHtml(a.remark) + '</textarea>' +
+                (ok ? '' : '<div class="flex flex-wrap gap-1.5 mt-1.5">' + chips(CC_PRESET_REJECT, 'ccAdmPresetReject') + '</div>') + '</div>';
+            document.getElementById('modal-content').innerHTML =
+                '<div class="space-y-4 text-left" data-testid="cc-detail">' +
+                '<div class="text-xs text-slate-600 bg-slate-50 rounded-2xl p-3 leading-relaxed"><b>' + escapeHtml(r.requester_name || r.line_display_name || '') + '</b> · 🏠 ' + escapeHtml(r.house_number || '') + '<br>📍 ' + escapeHtml(r.camera_zone || '') + ' · 📅 ' + ccYmd(r.request_date) + (r.time_range ? ' ⏰ ' + escapeHtml(r.time_range) : '') + '<br>' + escapeHtml(r.reason || '') + '</div>' +
+                (r.status !== 'pending' ? '<div class="text-xs text-amber-800 bg-amber-50 rounded-xl p-2.5" data-testid="cc-redo-warn">⚠️ คำขอนี้ตัดสินไปแล้ว (' + (CCTV_STATUS_LABELS[r.status] ? CCTV_STATUS_LABELS[r.status].label : r.status) + ') — การบันทึกใหม่จะ' + (a.notify ? 'ส่งข้อความแจ้งผู้ขออีกครั้ง' : 'อัปเดตข้อมูล') + '</div>' : '') +
+                '<div class="flex gap-2">' + tab('approve', '✅ อนุมัติ', 'bg-emerald-50 text-emerald-700 border-emerald-400') + tab('reject', '❌ ไม่อนุมัติ', 'bg-rose-50 text-rose-700 border-rose-400') + '</div>' +
+                (ok ? approveBlock : '') + (ok ? instrBlock + remarkBlock : remarkBlock + instrBlock) +
+                '<label class="flex items-center gap-2 text-sm ' + (r.uid ? 'text-slate-700' : 'text-slate-400') + '"><input type="checkbox" ' + (a.notify ? 'checked' : '') + (r.uid ? '' : ' disabled') + ' onchange="ccAdmSet(\'notify\',this.checked)" class="w-4 h-4 accent-slate-700" data-testid="cc-notify"> ส่งข้อความแจ้งผู้ขอทาง LINE (Flex)' + (r.uid ? '' : ' <span class="text-[11px]">(ไม่มี LINE UID)</span>') + '</label>' +
+                '<div id="cc-preview-wrap">' + (a.notify ? '<div class="text-xs font-bold text-slate-500 mb-1">ตัวอย่างข้อความที่ผู้ขอจะได้รับ</div>' + ccAdmPreviewHtml() : '') + '</div>' +
+                '<div id="cc-err" class="text-sm text-rose-600 font-medium hidden" data-testid="cc-err"></div>' +
+                '<div class="flex gap-2"><button type="button" onclick="closeModal()" class="px-5 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold text-sm" data-testid="cc-cancel">ปิด</button>' +
+                '<button type="button" id="cc-send" onclick="ccAdmSend()" class="flex-1 py-3 rounded-2xl font-bold text-sm text-white disabled:opacity-40 disabled:cursor-not-allowed ' + (ok ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700') + '" data-testid="cc-send"></button></div></div>';
+            ccAdmLive();
+            if (window.lucide) lucide.createIcons();
+        }
+        function ccAdmLive() {
+            const a = ccAdm; if (!a) return;
+            const errs = ccAdmValidate();
+            const pw = document.getElementById('cc-preview-wrap'); if (pw) pw.innerHTML = a.notify ? '<div class="text-xs font-bold text-slate-500 mb-1">ตัวอย่างข้อความที่ผู้ขอจะได้รับ</div>' + ccAdmPreviewHtml() : '';
+            const er = document.getElementById('cc-err'); if (er) { er.textContent = a.err || errs.join(' · '); er.classList.toggle('hidden', !(a.err || errs.length)); }
+            const b = document.getElementById('cc-send'); if (b) {
+                b.disabled = a.busy || errs.length > 0;
+                b.textContent = a.busy ? 'กำลังส่ง...' : a.armed ? ('ยืนยัน' + (a.mode === 'approve' ? 'อนุมัติ' : 'ไม่อนุมัติ') + (a.notify ? ' · ส่งถึงผู้ขอทันที' : '')) : (a.mode === 'approve' ? '✅ อนุมัติ' : '❌ ไม่อนุมัติ') + (a.notify ? ' และแจ้งผู้ขอ' : '');
+            }
+        }
+        function ccAdmMode(m) { ccAdm.mode = m; ccAdm.armed = false; ccAdm.err = ''; ccAdmRender(); }
+        function ccAdmSet(k, v, rerender) { ccAdm[k] = v; ccAdm.armed = false; ccAdm.err = ''; if (rerender) ccAdmRender(); else ccAdmLive(); }
+        function ccAdmCam(i, on) { const z = ccAdm.zones[parseInt(i)]; if (on) ccAdm.cams.add(z); else ccAdm.cams.delete(z); ccAdm.armed = false; ccAdm.err = ''; ccAdmLive(); }
+        function ccAdmCamAdd() {
+            const el = document.getElementById('cc-cam-extra'); const v = (el && el.value || '').trim().slice(0, 80); if (!v) return;
+            if (!ccAdm.zones.includes(v)) ccAdm.zones.push(v); ccAdm.cams.add(v); ccAdm.armed = false; ccAdmRender();
+        }
+        function ccAdmQuick(h) { ccAdm.from = ccBkkLocal(Date.now()); ccAdm.until = ccBkkLocal(Date.now() + h * 3600000); ccAdm.armed = false; ccAdm.err = ''; ccAdmRender(); }
+        function ccAdmAppend(field, t) { const cur = ccAdm[field].trim(); ccAdm[field] = (cur ? cur + '\n' : '') + t; ccAdm.armed = false; ccAdmRender(); }
+        function ccAdmPresetInstr(i) { ccAdmAppend('instr', CC_PRESET_INSTR[parseInt(i)]); }
+        function ccAdmPresetReject(i) { ccAdm.remark = CC_PRESET_REJECT[parseInt(i)]; ccAdm.armed = false; ccAdmRender(); }
+        async function ccAdmSend() {
+            const a = ccAdm; if (!a || a.busy) return;
+            if (ccAdmValidate().length) { ccAdmLive(); return; }
+            if (!a.armed) { a.armed = true; ccAdmLive(); return; }   // กดครั้งแรก = ขอยืนยัน (ผลจะถูกส่งถึงผู้ขอทันที)
+            a.busy = true; ccAdmLive();
+            const ok = a.mode === 'approve';
+            const body = { id: a.r.id, status: ok ? 'approved' : 'rejected', adminRemark: a.remark.trim(), instructions: a.instr.trim(), notify: !!a.notify };
+            if (ok) {
+                body.responseLink = a.link.trim(); body.approvedCameras = Array.from(a.cams);
+                body.validFrom = a.noWindow ? null : ccLocalToIso(a.from); body.validUntil = a.noWindow ? null : ccLocalToIso(a.until);
+            }
             try {
-                const res = await fetch(`${API_BASE_URL}/api/admin/audience/cctv_request_update`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: r.id, status, responseLink, adminRemark })
-                });
-                if (!res.ok) throw new Error('บันทึกไม่สำเร็จ');
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/cctv_request_update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                const d = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
                 closeModal();
-                showToast(status === 'approved' ? '✅ อนุมัติแล้ว แจ้งผู้ขอแล้ว' : '❌ ปฏิเสธแล้ว', 'success');
+                const msg = (ok ? '✅ อนุมัติแล้ว' : '❌ ไม่อนุมัติแล้ว') + (d.notified === true ? ' · แจ้งผู้ขอทาง LINE แล้ว' : d.notified === false ? ' · แต่ส่งข้อความถึงผู้ขอไม่สำเร็จ (ผู้ขอยังไม่ได้รับแจ้ง)' : '');
+                showToast(msg, d.notified === false ? 'error' : 'success');
+                if (d.degraded) showToast('⚠️ ยังไม่ได้รัน migration_cctv_v2.sql — บันทึกกล้อง/ช่วงเวลา/คำแนะนำไม่ได้ (บันทึกเฉพาะสถานะ ลิงก์ และหมายเหตุ)', 'error');
                 loadCctvList();
-            } catch(e) { showToast('❌ ' + e.message, 'error'); }
+            } catch (e) { a.busy = false; a.armed = false; a.err = e.message || 'บันทึกไม่สำเร็จ'; ccAdmLive(); }
         }
 
-        // ─── จัดการรายชื่อจุดติดตั้งกล้อง (dropdown ใน cctv.html) ───
+        // ── ตั้งค่ากฎระเบียบการขอดูกล้อง (ผู้ขอต้องอ่าน+ยอมรับก่อนกรอกฟอร์ม) ──
+        async function openCctvRulesModal() {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/cctv_rules_get?fresh=1`);
+                const d = await res.json();
+                if (!res.ok || !d.rules) throw new Error(d.error || 'โหลดกฎระเบียบไม่สำเร็จ');
+                ccRl = { v: d.rules.version, is_default: !!d.is_default, defaults: d.defaults, title: d.rules.title, intro: d.rules.intro || '', proh: (d.rules.prohibitions || []).join('\n'), guide: (d.rules.guidelines || []).join('\n'), footer: d.rules.footer || '', err: '', busy: false };
+            } catch (e) { showToast('❌ ' + (e.message || 'โหลดกฎระเบียบไม่สำเร็จ'), 'error'); return; }
+            ccRlRender();
+            ccOpenModal('📜 กฎระเบียบการขอดูกล้อง', document.getElementById('modal-content').innerHTML);
+        }
+        const ccLines = (s) => String(s || '').split('\n').map(x => x.trim()).filter(Boolean);
+        function ccRlValidate() {
+            const g = ccRl, e = [];
+            if (!g.title.trim()) e.push('หัวข้อว่างไม่ได้');
+            const p = ccLines(g.proh), q = ccLines(g.guide);
+            if (!p.length) e.push('ต้องมีข้อห้ามอย่างน้อย 1 ข้อ');
+            if (p.length > 15) e.push('ข้อห้ามได้ไม่เกิน 15 ข้อ'); if (q.length > 15) e.push('ข้อปฏิบัติได้ไม่เกิน 15 ข้อ');
+            p.concat(q).forEach((t, i) => { if (ccLen(t) > 300) e.push('มีข้อที่ยาวเกิน 300 ตัวอักษร'); });
+            if (ccLen(g.intro) > 400) e.push('บทนำยาวเกิน 400 ตัวอักษร'); if (ccLen(g.footer) > 300) e.push('ข้อความท้ายยาวเกิน 300 ตัวอักษร');
+            return Array.from(new Set(e));
+        }
+        function ccRlPreview() {
+            const g = ccRl;
+            return '<div class="rounded-2xl border border-slate-200 bg-white p-4 space-y-3 max-w-sm" data-testid="cc-rl-preview">' +
+                '<div class="font-extrabold text-slate-800">📹 ' + escapeHtml(g.title) + '</div>' + (g.intro.trim() ? '<div class="text-[12px] text-slate-600 whitespace-pre-line">' + escapeHtml(g.intro.trim()) + '</div>' : '') +
+                '<div class="rounded-xl border-2 border-rose-300 bg-rose-50 p-3"><div class="font-extrabold text-rose-700 text-sm mb-1">🚫 ข้อห้ามเด็ดขาด</div><ol class="space-y-1 text-[12px] text-rose-900">' + ccLines(g.proh).map((t, i) => '<li>' + (i + 1) + '. ' + escapeHtml(t) + '</li>').join('') + '</ol></div>' +
+                (ccLines(g.guide).length ? '<div class="rounded-xl border border-slate-200 bg-slate-50 p-3"><div class="font-extrabold text-slate-700 text-sm mb-1">📋 ข้อปฏิบัติและเงื่อนไข</div><ul class="space-y-1 text-[12px] text-slate-700">' + ccLines(g.guide).map(t => '<li>• ' + escapeHtml(t) + '</li>').join('') + '</ul></div>' : '') +
+                (g.footer.trim() ? '<div class="text-[12px] font-bold text-slate-700">' + escapeHtml(g.footer.trim()) + '</div>' : '') + '</div>';
+        }
+        function ccRlRender() {
+            const g = ccRl;
+            const inp = 'w-full border border-slate-200 rounded-xl px-3 py-2 text-sm';
+            document.getElementById('modal-content').innerHTML =
+                '<div class="space-y-4 text-left" data-testid="cc-rl">' +
+                '<div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-3 leading-relaxed">ลูกบ้านต้องอ่านและกดยอมรับ <b>ทุกครั้งที่เข้าหน้าขอดูกล้อง</b> ระบบเก็บเวอร์ชัน เวลา และสำเนาข้อความที่ผู้ขอยอมรับไว้เป็นหลักฐาน · เวอร์ชันปัจจุบัน <b data-testid="cc-rl-ver">v' + escapeHtml(g.v) + '</b>' + (g.is_default ? ' (ค่าเริ่มต้น)' : '') + '<br>⚖️ ข้อความมาตรฐานเป็นเพียงแม่แบบ ควรให้ฝ่ายกฎหมายของนิติบุคคลตรวจก่อนใช้จริง</div>' +
+                '<div><div class="text-xs font-bold text-slate-600 mb-1">หัวข้อ</div><input value="' + escapeHtml(g.title) + '" oninput="ccRlSet(\'title\',this.value)" class="' + inp + '" data-testid="cc-rl-title"></div>' +
+                '<div><div class="text-xs font-bold text-slate-600 mb-1">บทนำ</div><textarea rows="3" oninput="ccRlSet(\'intro\',this.value)" class="' + inp + ' resize-none" data-testid="cc-rl-intro">' + escapeHtml(g.intro) + '</textarea></div>' +
+                '<div><div class="text-xs font-bold text-rose-700 mb-1">🚫 ข้อห้ามเด็ดขาด (บรรทัดละ 1 ข้อ) <span class="font-normal text-slate-400" id="cc-rl-pc"></span></div><textarea rows="6" oninput="ccRlSet(\'proh\',this.value)" class="' + inp + '" data-testid="cc-rl-proh">' + escapeHtml(g.proh) + '</textarea></div>' +
+                '<div><div class="text-xs font-bold text-slate-600 mb-1">📋 ข้อปฏิบัติและเงื่อนไข (บรรทัดละ 1 ข้อ) <span class="font-normal text-slate-400" id="cc-rl-gc"></span></div><textarea rows="5" oninput="ccRlSet(\'guide\',this.value)" class="' + inp + '" data-testid="cc-rl-guide">' + escapeHtml(g.guide) + '</textarea></div>' +
+                '<div><div class="text-xs font-bold text-slate-600 mb-1">ข้อความท้ายกฎ</div><textarea rows="2" oninput="ccRlSet(\'footer\',this.value)" class="' + inp + ' resize-none" data-testid="cc-rl-footer">' + escapeHtml(g.footer) + '</textarea></div>' +
+                '<div><div class="text-xs font-bold text-slate-500 mb-1">ตัวอย่างที่ลูกบ้านเห็น</div><div id="cc-rl-pv">' + ccRlPreview() + '</div></div>' +
+                '<div class="text-sm text-rose-600 font-medium hidden" id="cc-rl-err" data-testid="cc-rl-err"></div>' +
+                '<div class="flex flex-col-reverse sm:flex-row gap-2"><button type="button" onclick="ccRlReset()" class="px-4 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold text-sm" data-testid="cc-rl-reset">คืนค่าเริ่มต้น</button>' +
+                '<button type="button" onclick="closeModal()" class="px-4 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold text-sm" data-testid="cc-rl-cancel">ยกเลิก</button>' +
+                '<button type="button" id="cc-rl-save" onclick="ccRlSave()" class="flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed" data-testid="cc-rl-save">บันทึก</button></div></div>';
+            ccRlLive();
+        }
+        function ccRlLive() {
+            const g = ccRl; if (!g) return; const errs = ccRlValidate();
+            const set = (id, f) => { const e = document.getElementById(id); if (e) f(e); };
+            set('cc-rl-pv', e => e.innerHTML = ccRlPreview());
+            set('cc-rl-pc', e => e.textContent = '(' + ccLines(g.proh).length + '/15)'); set('cc-rl-gc', e => e.textContent = '(' + ccLines(g.guide).length + '/15)');
+            set('cc-rl-err', e => { const m = g.err || errs.join(' · '); e.textContent = m; e.classList.toggle('hidden', !m); });
+            set('cc-rl-save', e => e.disabled = g.busy || errs.length > 0);
+        }
+        function ccRlSet(k, v) { ccRl[k] = v; ccRl.err = ''; ccRlLive(); }
+        async function ccRlSave() {
+            const g = ccRl; if (!g || g.busy || ccRlValidate().length) return;
+            g.busy = true; ccRlLive();
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/cctv_rules_save`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: g.title.trim(), intro: g.intro.trim(), prohibitions: ccLines(g.proh), guidelines: ccLines(g.guide), footer: g.footer.trim() }) });
+                const d = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+                closeModal();
+                showToast(d.changed ? `✅ บันทึกกฎระเบียบแล้ว (v${d.rules.version}) — ลูกบ้านต้องกดยอมรับฉบับใหม่` : 'ไม่มีการเปลี่ยนแปลงจากฉบับเดิม', 'success');
+            } catch (e) { g.busy = false; g.err = e.message || 'บันทึกไม่สำเร็จ'; ccRlLive(); }
+        }
+        function ccRlReset() {
+            showConfirmModal('คืนค่าเริ่มต้น?', 'กฎระเบียบจะกลับเป็นข้อความมาตรฐานของระบบ และลูกบ้านต้องกดยอมรับฉบับนี้ใหม่', async () => {
+                try {
+                    const res = await fetch(`${API_BASE_URL}/api/admin/audience/cctv_rules_reset`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                    const d = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(d.error || 'คืนค่าเริ่มต้นไม่สำเร็จ');
+                    showToast('✅ คืนค่าเริ่มต้นแล้ว (v' + d.rules.version + ')', 'success');
+                } catch (e) { showToast('❌ ' + (e.message || 'คืนค่าเริ่มต้นไม่สำเร็จ'), 'error'); }
+            });
+        }
+
+        // ─── จัดการรายชื่อจุดติดตั้งกล้อง (dropdown ในฟอร์มขอดูกล้อง) ───
         async function openCctvZonesModal() {
             let zones = [];
             try {
@@ -18256,7 +18476,7 @@ const CAR_PER_PAGE = 30;
 
             showModal('📍 จัดการจุดติดตั้งกล้อง',
                 '<div class="space-y-3 text-left">' +
-                '<p class="text-xs text-slate-500">รายชื่อนี้จะไปแสดงเป็น dropdown ในหน้า cctv.html ให้ลูกบ้านเลือก</p>' +
+                '<p class="text-xs text-slate-500">รายชื่อนี้จะไปแสดงเป็น dropdown ในฟอร์มขอดูกล้อง ให้ลูกบ้านเลือก</p>' +
                 '<div id="cctv-zones-list" class="space-y-1.5 max-h-60 overflow-y-auto">' +
                 zones.map((z, i) => '<div class="flex gap-2"><input value="' + escapeHtml(z) + '" data-zone-idx="' + i + '" class="cctv-zone-input flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm"><button onclick="this.parentElement.remove()" class="px-2 text-rose-400">🗑️</button></div>').join('') +
                 '</div>' +
@@ -18297,6 +18517,8 @@ const CAR_PER_PAGE = 30;
                 showToast('✅ บันทึกรายชื่อจุดกล้องแล้ว', 'success');
             } catch(e) { showToast('❌ ' + e.message, 'error'); }
         }
+
+        // ═══ 📹 CCTV admin v2 (จบ)
 
         async function renderRepairManagementView() {
             document.getElementById('content-area').innerHTML =
