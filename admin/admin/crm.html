@@ -2129,111 +2129,234 @@
             </div>
         </div>
 
-        <!-- ═══════ Repairs Tab (แจ้งซ่อม) ═══════ -->
-        <div v-if="currentTab === 'repairs' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-sky-50/30 overflow-y-auto z-20">
+        <!-- ═══════ Repairs Tab (แจ้งซ่อมส่วนกลาง · แดชบอร์ด + รายการทั้งหมด) ═══════ -->
+        <div v-if="currentTab === 'repairs' && !loading" class="fixed inset-0 bg-gradient-to-b from-sky-50 via-slate-50 to-slate-50 overflow-y-auto z-20" data-testid="rp-page">
             <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
-                <div class="mb-5 flex items-center gap-3">
-                    <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500"><i class="fa-solid fa-arrow-left"></i></button>
-                    <div class="flex-1">
-                        <h2 class="text-2xl font-extrabold text-slate-800">แจ้งซ่อม</h2>
-                        <p class="text-xs text-slate-500">บ้านเลขที่ {{ repairHouseNumber || '—' }}</p>
+                <div class="mb-4 flex items-center gap-3">
+                    <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500 flex-shrink-0"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="flex-1 min-w-0">
+                        <h2 class="text-2xl font-extrabold text-slate-800 leading-tight">แจ้งซ่อมส่วนกลาง</h2>
+                        <p class="text-xs text-slate-500">ทุกคนเห็นรายการแจ้งทั้งหมด · ไม่แสดงชื่อ/บ้านผู้แจ้ง</p>
                     </div>
-                    <button @click="openRepairForm" class="px-4 py-2 bg-sky-500 rounded-2xl text-white text-sm font-bold flex items-center gap-2 shadow-md">
+                    <button @click="openRepairForm" :disabled="!repairBoard" data-testid="rp-new" class="px-4 py-2 bg-sky-600 hover:bg-sky-700 disabled:bg-slate-300 rounded-2xl text-white text-sm font-bold flex items-center gap-2 shadow-md flex-shrink-0">
                         <i class="fa-solid fa-plus"></i> แจ้งซ่อม
                     </button>
                 </div>
 
-                <div v-if="repairLoading" class="bg-white rounded-3xl p-12 text-center shadow-sm">
+                <div v-if="repairLoading && !repairBoard" class="bg-white rounded-3xl p-12 text-center shadow-sm" data-testid="rp-loading">
                     <div class="w-10 h-10 mx-auto mb-3 border-4 border-sky-200 border-t-sky-500 rounded-full animate-spin"></div>
                     <p class="text-sm text-slate-500 font-bold">กำลังโหลด...</p>
                 </div>
 
-                <div v-else-if="myRepairs.length === 0" class="bg-white rounded-3xl p-10 text-center shadow-sm">
-                    <div class="text-6xl mb-3">🔧</div>
-                    <p class="font-bold text-slate-700 mb-1">ยังไม่เคยแจ้งซ่อม</p>
-                    <p class="text-xs text-slate-400 mb-4">กดปุ่ม "แจ้งซ่อม" เพื่อแจ้งปัญหา</p>
-                    <button @click="openRepairForm" class="px-6 py-2.5 bg-sky-500 text-white rounded-2xl font-bold text-sm">+ แจ้งซ่อม</button>
+                <div v-else-if="repairError && !repairBoard" class="bg-white rounded-3xl p-8 text-center shadow-sm" data-testid="rp-error">
+                    <div class="text-4xl mb-2">⚠️</div>
+                    <p class="font-bold text-slate-700 mb-1">โหลดข้อมูลแจ้งซ่อมไม่สำเร็จ</p>
+                    <p class="text-xs text-slate-400 mb-4">{{ repairError }}</p>
+                    <button @click="loadRepairBoard" data-testid="rp-retry" class="px-6 py-2.5 bg-sky-600 text-white rounded-2xl font-bold text-sm">ลองใหม่</button>
                 </div>
 
-                <div v-else class="space-y-4">
-                    <div v-for="r in myRepairs" :key="r.id" class="rounded-3xl shadow-md overflow-hidden border-2 bg-white"
-                         :class="{
-                             'border-emerald-400': r.status === 'completed',
-                             'border-amber-400':   r.status === 'pending' || r.status === 'in_progress'
-                         }">
-                        <div class="px-4 py-2 flex items-center justify-between text-xs font-bold"
-                             :class="{
-                                 'bg-emerald-500 text-white': r.status === 'completed',
-                                 'bg-amber-500 text-white':   r.status === 'pending' || r.status === 'in_progress'
-                             }">
-                            <span>{{ { pending:'⏳ รอดำเนินการ', in_progress:'🔧 กำลังซ่อม', completed:'✅ เสร็จแล้ว' }[r.status] || r.status }}</span>
-                            <span>{{ formatThaiDate(r.created_at) }}</span>
-                        </div>
-                        <div class="p-4">
-                            <div class="text-xs font-bold text-sky-600 mb-1">{{ r.category }}</div>
-                            <div class="text-sm text-slate-700 mb-3">{{ r.detail }}</div>
-                            <img v-if="r.image_url" :src="isValidImageUrl(r.image_url)" class="w-full h-32 object-cover rounded-2xl border border-slate-100 mb-3" @error="$event.target.style.display='none'">
-                            <div v-if="r.admin_remark" class="bg-indigo-50 rounded-xl p-3 text-xs text-indigo-700 mb-2">
-                                <div class="font-bold mb-0.5">💬 หมายเหตุจากนิติบุคคล</div>
-                                {{ r.admin_remark }}
+                <template v-else-if="repairBoard">
+                    <!-- ── แถบเตือนขอบเขต + ระเบียบ ── -->
+                    <div class="mb-4 rounded-3xl border border-sky-200 bg-white shadow-sm overflow-hidden" data-testid="rp-guide">
+                        <button @click="toggleRepairGuide" class="w-full px-4 py-3 flex items-center gap-3 text-left" data-testid="rp-guide-toggle">
+                            <div class="w-10 h-10 rounded-2xl bg-sky-100 text-sky-600 flex items-center justify-center flex-shrink-0"><i class="fa-solid fa-book-open"></i></div>
+                            <div class="flex-1 min-w-0">
+                                <div class="text-sm font-extrabold text-slate-800">ระเบียบการแจ้งซ่อม</div>
+                                <div class="text-[11px] text-slate-500 leading-snug">{{ repairBoard.guide.lead }}</div>
                             </div>
-                            <img v-if="r.admin_image_url" :src="isValidImageUrl(r.admin_image_url)" class="w-full h-32 object-cover rounded-2xl border border-emerald-200" @error="$event.target.style.display='none'">
-                            <div v-if="r.admin_image_url" class="text-[10px] text-emerald-600 font-bold mt-1 text-center">📸 รูปหลังซ่อมเสร็จ</div>
+                            <i class="fa-solid text-slate-400 transition-transform" :class="repairGuideOpen ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+                        </button>
+                        <div v-if="repairGuideOpen" class="px-4 pb-4 space-y-3" data-testid="rp-guide-body">
+                            <div class="rounded-2xl bg-emerald-50 border border-emerald-200 p-3" data-testid="rp-guide-accept">
+                                <div class="text-xs font-extrabold text-emerald-700 mb-1.5"><i class="fa-solid fa-circle-check mr-1"></i>{{ repairBoard.guide.accept_title }}</div>
+                                <ul class="space-y-1 text-[12px] text-emerald-900"><li v-for="(t, i) in repairBoard.guide.accept" :key="'a'+i" class="flex gap-2"><span class="text-emerald-500">•</span><span>{{ t }}</span></li></ul>
+                            </div>
+                            <div class="rounded-2xl bg-rose-50 border-2 border-rose-300 p-3" data-testid="rp-guide-reject">
+                                <div class="text-xs font-extrabold text-rose-700 mb-1.5"><i class="fa-solid fa-house-circle-xmark mr-1"></i>{{ repairBoard.guide.reject_title }}</div>
+                                <ul class="space-y-1 text-[12px] text-rose-900"><li v-for="(t, i) in repairBoard.guide.reject" :key="'r'+i" class="flex gap-2"><span class="text-rose-500">•</span><span>{{ t }}</span></li></ul>
+                                <div class="mt-2 text-[12px] font-bold text-rose-700 border-t border-rose-200 pt-2" data-testid="rp-guide-note">{{ repairBoard.guide.reject_note }}</div>
+                            </div>
+                            <div class="rounded-2xl bg-slate-50 border border-slate-200 p-3">
+                                <div class="text-xs font-extrabold text-slate-700 mb-1.5"><i class="fa-solid fa-list-check mr-1"></i>{{ repairBoard.guide.howto_title }}</div>
+                                <ul class="space-y-1 text-[12px] text-slate-700"><li v-for="(t, i) in repairBoard.guide.howto" :key="'h'+i" class="flex gap-2"><span class="text-slate-400">{{ i + 1 }}.</span><span>{{ t }}</span></li></ul>
+                            </div>
+                            <div class="rounded-2xl bg-amber-50 border border-amber-300 p-3 text-[12px] text-amber-900 flex gap-2" data-testid="rp-guide-emergency"><i class="fa-solid fa-triangle-exclamation text-amber-500 mt-0.5"></i><span>{{ repairBoard.guide.emergency }}</span></div>
                         </div>
                     </div>
-                </div>
+
+                    <!-- ── แดชบอร์ด ── -->
+                    <div class="mb-4 rounded-3xl overflow-hidden shadow-lg bg-gradient-to-br from-sky-600 via-sky-700 to-indigo-800 text-white" data-testid="rp-dash">
+                        <div class="p-5">
+                            <div class="flex items-center justify-between mb-3">
+                                <div class="text-sm font-extrabold tracking-wide">ภาพรวมงานซ่อมส่วนกลาง</div>
+                                <div class="text-[11px] text-sky-100">ทั้งหมด <b data-testid="rp-total">{{ repairBoard.stats.total }}</b> เรื่อง<span v-if="repairBoard.stats.truncated">+</span></div>
+                            </div>
+                            <div class="flex items-center gap-5">
+                                <div class="relative w-32 h-32 flex-shrink-0" data-testid="rp-donut">
+                                    <svg viewBox="0 0 100 100" class="w-full h-full -rotate-90">
+                                        <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(255,255,255,.18)" stroke-width="12"/>
+                                        <circle v-for="(s, i) in repairDonut" :key="i" cx="50" cy="50" r="42" fill="none" :stroke="s.color" stroke-width="12" stroke-linecap="butt"
+                                                :stroke-dasharray="s.dash + ' ' + (repairCirc - s.dash)" :stroke-dashoffset="-s.offset" :data-testid="'rp-seg-' + s.key"/>
+                                    </svg>
+                                    <div class="absolute inset-0 flex flex-col items-center justify-center">
+                                        <div class="text-3xl font-black leading-none" data-testid="rp-pct">{{ repairBoard.stats.completion_rate }}<span class="text-base font-bold">%</span></div>
+                                        <div class="text-[10px] text-sky-100 mt-1">ซ่อมเสร็จแล้ว</div>
+                                    </div>
+                                </div>
+                                <div class="flex-1 grid grid-cols-1 gap-2">
+                                    <button @click="repairPickStatus('pending')" class="flex items-center justify-between rounded-2xl bg-white/10 hover:bg-white/20 px-3 py-2 text-left" data-testid="rp-kpi-pending"><span class="flex items-center gap-2 text-xs"><span class="w-2.5 h-2.5 rounded-full bg-amber-300"></span>รอดำเนินการ</span><b class="text-lg">{{ repairBoard.stats.pending }}</b></button>
+                                    <button @click="repairPickStatus('in_progress')" class="flex items-center justify-between rounded-2xl bg-white/10 hover:bg-white/20 px-3 py-2 text-left" data-testid="rp-kpi-progress"><span class="flex items-center gap-2 text-xs"><span class="w-2.5 h-2.5 rounded-full bg-sky-300"></span>กำลังซ่อม</span><b class="text-lg">{{ repairBoard.stats.in_progress }}</b></button>
+                                    <button @click="repairPickStatus('completed')" class="flex items-center justify-between rounded-2xl bg-white/10 hover:bg-white/20 px-3 py-2 text-left" data-testid="rp-kpi-done"><span class="flex items-center gap-2 text-xs"><span class="w-2.5 h-2.5 rounded-full bg-emerald-300"></span>เสร็จแล้ว</span><b class="text-lg">{{ repairBoard.stats.completed }}</b></button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-3 divide-x divide-white/15 bg-black/15 text-center">
+                            <div class="py-3"><div class="text-lg font-extrabold" data-testid="rp-kpi-month">{{ repairBoard.stats.this_month }}</div><div class="text-[10px] text-sky-100">แจ้งเดือนนี้</div></div>
+                            <div class="py-3"><div class="text-lg font-extrabold" data-testid="rp-kpi-open">{{ repairBoard.stats.open }}</div><div class="text-[10px] text-sky-100">ยังค้างอยู่</div></div>
+                            <div class="py-3"><div class="text-lg font-extrabold" data-testid="rp-median">{{ repairMedianText }}</div><div class="text-[10px] text-sky-100">เวลาปิดงานทั่วไป (ประมาณ)</div></div>
+                        </div>
+                    </div>
+
+                    <div v-if="repairBoard.stats.total > 0" class="mb-4 grid grid-cols-1 gap-4">
+                        <div class="rounded-3xl bg-white shadow-sm p-4" data-testid="rp-cats">
+                            <div class="text-sm font-extrabold text-slate-800 mb-3">แจ้งบ่อยที่สุดตามหมวด</div>
+                            <div class="space-y-2.5">
+                                <div v-for="(c, i) in repairCatBars" :key="c.name" :data-testid="'rp-cat-' + i">
+                                    <div class="flex items-center justify-between text-xs mb-1"><span class="text-slate-700 font-bold truncate pr-2">{{ c.icon }} {{ c.name }}</span><span class="text-slate-500 font-bold">{{ c.count }}</span></div>
+                                    <div class="h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full bg-sky-500" :style="{ width: c.pct + '%' }"></div></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="rounded-3xl bg-white shadow-sm p-4" data-testid="rp-monthly">
+                            <div class="flex items-center justify-between mb-3">
+                                <div class="text-sm font-extrabold text-slate-800">6 เดือนล่าสุด</div>
+                                <div class="flex items-center gap-3 text-[10px] text-slate-500"><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-sky-500"></span>แจ้ง</span><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span>เสร็จ</span></div>
+                            </div>
+                            <div class="flex items-end justify-between gap-2 h-28">
+                                <div v-for="m in repairMonthly" :key="m.ym" class="flex-1 flex flex-col items-center gap-1 h-full justify-end" :data-testid="'rp-m-' + m.ym">
+                                    <div class="flex items-end gap-1 w-full justify-center flex-1">
+                                        <div class="w-3 rounded-t bg-sky-500" :style="{ height: m.hc + '%' }" :title="'แจ้ง ' + m.created"></div>
+                                        <div class="w-3 rounded-t bg-emerald-500" :style="{ height: m.hd + '%' }" :title="'เสร็จ ' + m.completed"></div>
+                                    </div>
+                                    <div class="text-[10px] text-slate-500 font-bold">{{ m.label }}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ── ตัวกรอง ── -->
+                    <div class="mb-3 flex items-center gap-2">
+                        <div class="flex-1 grid grid-cols-2 bg-white rounded-2xl p-1 shadow-sm">
+                            <button @click="repairView.scope = 'all'; repairView.shown = 20" class="py-2 rounded-xl text-xs font-extrabold" :class="repairView.scope === 'all' ? 'bg-sky-600 text-white' : 'text-slate-500'" data-testid="rp-scope-all">ทั้งหมด ({{ repairBoard.items.length }})</button>
+                            <button @click="repairView.scope = 'mine'; repairView.shown = 20" class="py-2 rounded-xl text-xs font-extrabold" :class="repairView.scope === 'mine' ? 'bg-sky-600 text-white' : 'text-slate-500'" data-testid="rp-scope-mine">ของฉัน ({{ repairMineCount }})</button>
+                        </div>
+                    </div>
+                    <div class="mb-2 flex gap-1.5 overflow-x-auto pb-1" data-testid="rp-status-chips">
+                        <button v-for="s in repairStatusChips" :key="s.key" @click="repairView.status = s.key; repairView.shown = 20" class="px-3 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap border" :class="repairView.status === s.key ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200'" :data-testid="'rp-st-' + (s.key || 'all')">{{ s.label }} {{ s.count }}</button>
+                    </div>
+                    <div v-if="repairCatOptions.length > 1" class="mb-3 flex gap-1.5 overflow-x-auto pb-1" data-testid="rp-cat-chips">
+                        <button @click="repairView.cat = ''; repairView.shown = 20" class="px-3 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap border" :class="!repairView.cat ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-200'" data-testid="rp-catchip-all">ทุกหมวด</button>
+                        <button v-for="(c, i) in repairCatOptions" :key="c.name" @click="repairView.cat = c.name; repairView.shown = 20" class="px-3 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap border" :class="repairView.cat === c.name ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-200'" :data-testid="'rp-catchip-' + i">{{ c.icon }} {{ c.name }} {{ c.count }}</button>
+                    </div>
+
+                    <!-- ── รายการ ── -->
+                    <div v-if="repairBoard.items.length === 0" class="bg-white rounded-3xl p-10 text-center shadow-sm" data-testid="rp-empty">
+                        <div class="text-6xl mb-3">🏡</div>
+                        <p class="font-bold text-slate-700 mb-1">ยังไม่มีเรื่องแจ้งซ่อมส่วนกลาง</p>
+                        <p class="text-xs text-slate-400 mb-4">พบจุดชำรุดในพื้นที่ส่วนกลาง กดปุ่ม "แจ้งซ่อม" ได้เลย</p>
+                    </div>
+                    <div v-else-if="repairFiltered.length === 0" class="bg-white rounded-3xl p-8 text-center shadow-sm" data-testid="rp-empty-filter">
+                        <div class="text-4xl mb-2">🔍</div>
+                        <p class="font-bold text-slate-700 mb-1">ไม่พบรายการตามตัวกรอง</p>
+                        <button @click="repairResetFilters" class="mt-2 px-4 py-2 rounded-2xl bg-slate-100 text-slate-600 text-xs font-bold" data-testid="rp-reset-filters">ล้างตัวกรอง</button>
+                    </div>
+                    <div v-else class="space-y-3" data-testid="rp-list">
+                        <div v-for="r in repairVisible" :key="r.id" class="rounded-3xl bg-white shadow-sm overflow-hidden border border-slate-100" :class="r.mine ? 'ring-2 ring-sky-300' : ''" :data-testid="'rp-card-' + r.id">
+                            <div class="flex">
+                                <div class="w-1.5 flex-shrink-0" :class="{ 'bg-emerald-500': r.status === 'completed', 'bg-sky-500': r.status === 'in_progress', 'bg-amber-400': r.status === 'pending' }"></div>
+                                <div class="flex-1 min-w-0 p-4">
+                                    <div class="flex items-center gap-2 mb-1.5">
+                                        <span class="text-[11px] font-extrabold px-2 py-0.5 rounded-full" :class="{ 'bg-emerald-100 text-emerald-700': r.status === 'completed', 'bg-sky-100 text-sky-700': r.status === 'in_progress', 'bg-amber-100 text-amber-700': r.status === 'pending' }" :data-testid="'rp-status-' + r.id">{{ { pending: '⏳ รอดำเนินการ', in_progress: '🔧 กำลังซ่อม', completed: '✅ เสร็จแล้ว' }[r.status] }}</span>
+                                        <span v-if="r.mine" class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-sky-600 text-white" data-testid="rp-mine-badge">ของฉัน</span>
+                                        <span class="ml-auto text-[10px] text-slate-400" :title="formatThaiDate(r.created_at)">{{ repairAgo(r.created_at) }}</span>
+                                    </div>
+                                    <div class="text-sm font-extrabold text-slate-800 leading-snug">{{ repairCatIcon(r.category) }} {{ r.category }}</div>
+                                    <div v-if="r.location" class="text-xs font-bold text-sky-700 mt-0.5" data-testid="rp-loc"><i class="fa-solid fa-location-dot mr-1"></i>{{ r.location }}</div>
+                                    <div class="text-sm text-slate-600 mt-1.5 whitespace-pre-line break-words">{{ r.detail }}</div>
+                                    <img v-if="r.image_url" :src="isValidImageUrl(r.image_url)" class="w-full h-36 object-cover rounded-2xl border border-slate-100 mt-3" loading="lazy" @error="$event.target.style.display='none'">
+                                    <div v-if="r.admin_remark" class="bg-indigo-50 rounded-xl p-3 text-xs text-indigo-700 mt-3" data-testid="rp-remark">
+                                        <div class="font-bold mb-0.5">💬 หมายเหตุจากนิติบุคคล</div>{{ r.admin_remark }}
+                                    </div>
+                                    <template v-if="r.admin_image_url">
+                                        <img :src="isValidImageUrl(r.admin_image_url)" class="w-full h-36 object-cover rounded-2xl border border-emerald-200 mt-3" loading="lazy" @error="$event.target.style.display='none'">
+                                        <div class="text-[10px] text-emerald-600 font-bold mt-1 text-center">📸 รูปหลังซ่อมเสร็จ</div>
+                                    </template>
+                                    <div v-if="r.status === 'completed' && r.resolved_at" class="text-[11px] text-emerald-600 font-bold mt-2" data-testid="rp-resolved">✅ ปิดงานเมื่อ {{ formatThaiDate(r.resolved_at) }}</div>
+                                </div>
+                            </div>
+                        </div>
+                        <button v-if="repairFiltered.length > repairVisible.length" @click="repairView.shown += 20" class="w-full py-3 rounded-2xl bg-white shadow-sm text-sm font-bold text-sky-700" data-testid="rp-more">แสดงเพิ่ม ({{ repairFiltered.length - repairVisible.length }} รายการ)</button>
+                        <p v-if="repairBoard.list_truncated" class="text-center text-[11px] text-slate-400">แสดง {{ repairBoard.items.length }} รายการล่าสุด</p>
+                    </div>
+                </template>
             </div>
         </div>
 
         <!-- ═══════ Repair Form Modal ═══════ -->
-        <div v-if="repairFormModal && !loading" @click.self="repairFormModal = false" class="fixed inset-0 modal-bg z-50 flex items-end md:items-center justify-center p-3">
-            <div class="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl slide-up max-h-[90vh] overflow-y-auto">
-                <div class="flex items-center gap-2 mb-4">
+        <div v-if="repairFormModal && !loading && repairBoard" @click.self="repairFormModal = false" class="fixed inset-0 modal-bg z-50 flex items-end md:items-center justify-center p-3">
+            <div class="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl slide-up max-h-[92vh] overflow-y-auto" data-testid="rp-form">
+                <div class="flex items-center gap-2 mb-1">
                     <div class="text-2xl">🔧</div>
-                    <h3 class="text-lg font-extrabold text-slate-800">แจ้งซ่อม</h3>
+                    <h3 class="text-lg font-extrabold text-slate-800">แจ้งซ่อมพื้นที่ส่วนกลาง</h3>
                 </div>
+                <p class="text-[11px] text-rose-600 font-bold mb-3 leading-snug" data-testid="rp-form-scope">รับแจ้งเฉพาะพื้นที่ส่วนกลาง — เรื่องภายในตัวบ้าน นิติบุคคลไม่รับผิดชอบ</p>
                 <div class="space-y-3">
-                    <div class="grid grid-cols-2 gap-2">
-                        <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">บ้านเลขที่ *</label>
-                            <input v-model="repairForm.house_number" type="text" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-400 outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">เบอร์โทร</label>
-                            <input v-model="repairForm.phone" type="tel" maxlength="10" inputmode="numeric"
-                                   @input="repairForm.phone = repairForm.phone.replace(/[^0-9]/g,'').replace(/^0*/,'0')"
-                                   placeholder="0xxxxxxxxx"
-                                   class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-400 outline-none">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1.5">หมวดหมู่ *</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button v-for="(c, i) in repairBoard.categories" :key="c.name" type="button" @click="repairForm.category = c.name" class="rounded-2xl border-2 px-2.5 py-2 text-left text-[12px] font-bold leading-snug flex items-center gap-2" :class="repairForm.category === c.name ? 'border-sky-500 bg-sky-50 text-sky-800' : 'border-slate-200 text-slate-600'" :data-testid="'rp-f-cat-' + i"><span class="text-lg">{{ c.icon }}</span><span>{{ c.name }}</span></button>
                         </div>
                     </div>
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">หมวดหมู่ *</label>
-                        <select v-model="repairForm.category" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
-                            <option>ไฟฟ้า</option>
-                            <option>ประปา</option>
-                            <option>โครงสร้าง/ผนัง/หลังคา</option>
-                            <option>พื้นที่ส่วนกลาง</option>
-                            <option>อื่นๆ</option>
-                        </select>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">จุดที่เสียหาย (พื้นที่ส่วนกลาง) *</label>
+                        <input v-model="repairForm.location" maxlength="120" type="text" placeholder="เช่น ซอย 5 ใกล้บ้านเลขที่ 12 / สระว่ายน้ำ / ป้อมยามทางเข้า" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-400 outline-none" data-testid="rp-f-loc">
+                    </div>
+                    <div v-if="repairSimilar.length" class="rounded-2xl bg-amber-50 border border-amber-300 p-3 text-[12px] text-amber-900" data-testid="rp-similar">
+                        <div class="font-extrabold mb-1">⚠️ มีเรื่องคล้ายกันแจ้งไว้แล้ว — ตรวจสอบก่อนแจ้งซ้ำ</div>
+                        <div v-for="s in repairSimilar" :key="s.id" class="flex gap-1.5 mt-0.5"><span>•</span><span>{{ s.location }} · {{ { pending: 'รอดำเนินการ', in_progress: 'กำลังซ่อม' }[s.status] }} · {{ repairAgo(s.created_at) }}</span></div>
                     </div>
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">รายละเอียด *</label>
-                        <textarea v-model="repairForm.detail" rows="3" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-400 outline-none resize-none" placeholder="อธิบายปัญหาที่พบ..."></textarea>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">รายละเอียดปัญหา *</label>
+                        <textarea v-model="repairForm.detail" rows="3" maxlength="1000" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-sky-400 outline-none resize-none" placeholder="อธิบายปัญหาที่พบ..." data-testid="rp-f-detail"></textarea>
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-700 mb-1">รูปภาพประกอบ (ไม่บังคับ)</label>
-                        <input type="file" accept="image/*" @change="onRepairImageChange" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                        <div v-if="repairForm.image_url" class="mt-2">
-                            <img :src="isValidImageUrl(repairForm.image_url)" class="h-24 w-full object-cover rounded-xl border" @error="$event.target.style.display='none'">
-                        </div>
-                        <div v-if="repairImageUploading" class="mt-1 text-xs text-sky-500 flex items-center gap-1">
-                            <i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลด...
+                        <input type="file" accept="image/*" @change="onRepairImageChange" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" data-testid="rp-f-file">
+                        <div v-if="repairForm.image_url" class="mt-2"><img :src="isValidImageUrl(repairForm.image_url)" class="h-24 w-full object-cover rounded-xl border" @error="$event.target.style.display='none'"></div>
+                        <div v-if="repairImageUploading" class="mt-1 text-xs text-sky-500 flex items-center gap-1"><i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลด...</div>
+                    </div>
+                    <div class="rounded-2xl bg-slate-50 border border-slate-200 p-3">
+                        <div class="text-[11px] font-bold text-slate-600 mb-2"><i class="fa-solid fa-lock mr-1"></i>ข้อมูลผู้แจ้ง — นิติบุคคลเห็นเท่านั้น ไม่แสดงให้ลูกบ้านคนอื่น</div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-600 mb-1">บ้านเลขที่ *</label>
+                                <input v-model="repairForm.house_number" type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-sky-400 outline-none bg-white" data-testid="rp-f-house">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-600 mb-1">เบอร์โทร</label>
+                                <input v-model="repairForm.phone" type="tel" maxlength="10" inputmode="numeric" @input="repairForm.phone = repairForm.phone.replace(/[^0-9]/g,'').replace(/^0*/,'0')" placeholder="0xxxxxxxxx" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-sky-400 outline-none bg-white" data-testid="rp-f-phone">
+                            </div>
                         </div>
                     </div>
+                    <label class="flex items-start gap-2.5 rounded-2xl border-2 p-3 cursor-pointer" :class="repairAck ? 'border-emerald-400 bg-emerald-50' : 'border-rose-300 bg-rose-50'">
+                        <input type="checkbox" v-model="repairAck" class="mt-0.5 w-5 h-5 accent-emerald-600 flex-shrink-0" data-testid="rp-ack">
+                        <span class="text-[12px] font-bold leading-snug" :class="repairAck ? 'text-emerald-800' : 'text-rose-800'">{{ repairBoard.guide.ack }}</span>
+                    </label>
+                    <div v-if="repairFormError" class="text-xs text-rose-600 font-bold" data-testid="rp-form-err">{{ repairFormError }}</div>
                 </div>
                 <div class="flex gap-2 mt-5">
-                    <button @click="repairFormModal = false" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold">ยกเลิก</button>
-                    <button @click="submitRepair" :disabled="repairSaving || repairImageUploading" class="flex-1 py-3 bg-sky-500 hover:bg-sky-600 disabled:bg-slate-300 text-white rounded-2xl font-bold flex items-center justify-center gap-2">
+                    <button @click="repairFormModal = false" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold" data-testid="rp-cancel">ยกเลิก</button>
+                    <button @click="submitRepair" :disabled="repairSaving || repairImageUploading || !repairFormReady" class="flex-1 py-3 bg-sky-600 hover:bg-sky-700 disabled:bg-slate-300 text-white rounded-2xl font-bold flex items-center justify-center gap-2" data-testid="rp-submit">
                         <i v-if="repairSaving" class="fa-solid fa-spinner fa-spin"></i>
                         <i v-else class="fa-solid fa-paper-plane"></i>
                         ส่งเรื่อง
@@ -4476,9 +4599,10 @@
                     sigDrawing: false, sigHasDrawn: false, // ลายเซ็นร้องเรียน
 
                     // ─── Repair Requests (แจ้งซ่อม) ───
-                    myRepairs: [], repairHouseNumber: null, repairLoading: false,
-                    repairFormModal: false,
-                    repairForm: { house_number: '', phone: '', category: 'ไฟฟ้า', detail: '', image_url: '' },
+                    repairBoard: null, repairHouseNumber: null, repairLoading: false, repairError: '',
+                    repairView: { scope: 'all', status: '', cat: '', shown: 20 }, repairGuideOpen: false,
+                    repairFormModal: false, repairAck: false, repairFormError: '',
+                    repairForm: { house_number: '', phone: '', category: '', location: '', detail: '', image_url: '' },
                     repairSaving: false, repairImageUploading: false,
 
                     // ─── Slip Upload (เปิด slip.html ด้วย liff.openWindow()) ───
@@ -4756,6 +4880,70 @@
                         { key: 'general', label: '🎁 ทั่วไป' },
                     ];
                 },
+                // ═══ 🔧 แจ้งซ่อมส่วนกลาง: ค่าคำนวณของแดชบอร์ด/ตัวกรอง (เริ่ม)
+                repairCirc() { return 2 * Math.PI * 42; },
+                repairDonut() {
+                    const st = this.repairBoard && this.repairBoard.stats; if (!st || !st.total) return [];
+                    const C = this.repairCirc; let off = 0; const out = [];
+                    [['completed', '#6ee7b7', st.completed], ['in_progress', '#7dd3fc', st.in_progress], ['pending', '#fcd34d', st.pending]].forEach(([key, color, n]) => {
+                        if (!n) return; const dash = (n / st.total) * C; out.push({ key, color, dash, offset: off }); off += dash;
+                    });
+                    return out;
+                },
+                repairMedianText() {
+                    const h = this.repairBoard && this.repairBoard.stats.median_resolve_hours;
+                    if (h === null || h === undefined) return '—';
+                    if (h < 1) return '< 1 ชม.';
+                    if (h < 48) return Math.round(h) + ' ชม.';
+                    return Math.round(h / 24) + ' วัน';
+                },
+                repairCatBars() {
+                    const st = this.repairBoard && this.repairBoard.stats; if (!st) return [];
+                    const max = Math.max(1, ...st.by_category.map(c => c.count));
+                    return st.by_category.slice(0, 6).map(c => ({ name: c.name, count: c.count, icon: this.repairCatIcon(c.name), pct: Math.max(4, Math.round((c.count / max) * 100)) }));
+                },
+                repairMonthly() {
+                    const st = this.repairBoard && this.repairBoard.stats; if (!st) return [];
+                    const MS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+                    const max = Math.max(1, ...st.monthly.map(m => Math.max(m.created, m.completed)));
+                    const h = v => v ? Math.max(8, Math.round((v / max) * 100)) : 0;
+                    return st.monthly.map(m => ({ ...m, label: MS[(parseInt(m.ym.slice(5, 7), 10) || 1) - 1], hc: h(m.created), hd: h(m.completed) }));
+                },
+                repairInScope() {
+                    const b = this.repairBoard; if (!b) return [];
+                    return this.repairView.scope === 'mine' ? b.items.filter(i => i.mine) : b.items;
+                },
+                myRepairs() { return this.repairBoard ? this.repairBoard.items.filter(i => i.mine) : []; },   // ของฉัน (ใช้กับป้ายบนหน้าหลัก/โปรไฟล์)
+                repairMineCount() { return this.repairBoard ? this.repairBoard.items.filter(i => i.mine).length : 0; },
+                repairStatusChips() {
+                    const base = this.repairInScope; const n = k => base.filter(i => i.status === k).length;
+                    return [{ key: '', label: 'ทั้งหมด', count: base.length }, { key: 'pending', label: '⏳ รอ', count: n('pending') }, { key: 'in_progress', label: '🔧 กำลังซ่อม', count: n('in_progress') }, { key: 'completed', label: '✅ เสร็จ', count: n('completed') }];
+                },
+                repairCatOptions() {
+                    const m = {}; this.repairInScope.forEach(i => { m[i.category] = (m[i.category] || 0) + 1; });
+                    return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count, icon: this.repairCatIcon(name) }));
+                },
+                repairFiltered() {
+                    const v = this.repairView;
+                    return this.repairInScope.filter(i => (!v.status || i.status === v.status) && (!v.cat || i.category === v.cat));
+                },
+                repairVisible() { return this.repairFiltered.slice(0, this.repairView.shown); },
+                repairSimilar() {
+                    if (!this.repairFormModal || !this.repairBoard) return [];
+                    const norm = s => String(s || '').toLowerCase().replace(/\s+/g, '');
+                    const loc = norm(this.repairForm.location); if (loc.length < 3 || !this.repairForm.category) return [];
+                    const toks = String(this.repairForm.location).toLowerCase().split(/[\s,\/()]+/).filter(t => t.length >= 3);
+                    return this.repairBoard.items.filter(i => i.status !== 'completed' && i.category === this.repairForm.category && i.location).filter(i => {
+                        const o = norm(i.location); if (o.includes(loc) || loc.includes(o)) return true;
+                        const ot = String(i.location).toLowerCase().split(/[\s,\/()]+/).filter(t => t.length >= 3);
+                        return toks.some(t => ot.some(x => x === t));
+                    }).slice(0, 3);
+                },
+                repairFormReady() {
+                    const f = this.repairForm;
+                    return !!(this.repairAck && f.category && String(f.location || '').trim().length >= 3 && String(f.detail || '').trim().length >= 5 && String(f.house_number || '').trim());
+                },
+                // ═══ 🔧 แจ้งซ่อมส่วนกลาง: ค่าคำนวณ (จบ)
                 filteredMyCards() {
                     if (!this.cardCategory) return this.myCoupons;
                     return this.myCoupons.filter(c => this.cardCatOf(c) === this.cardCategory);
@@ -5024,7 +5212,7 @@
                     if (newVal === 'coupons') this.$nextTick(() => this.renderCouponBarcodes());
                     if (newVal === 'cars' && this.myCars.length === 0) this.loadMyCars();
                     if (newVal === 'complaints' && this.myComplaints.length === 0) this.loadMyComplaints();
-                    if (newVal === 'repairs' && this.myRepairs.length === 0) this.loadMyRepairs();
+                    if (newVal === 'repairs') this.loadRepairBoard();
                     if (newVal === 'profile' && !this.statusCheckResult) this.checkMyStatus();
                     if (newVal === 'profile') this.loadProfileMore(false);
                     // 💬 แชท: เข้าหน้า = โหลด + เริ่ม polling · ออกหน้า = หยุด (ไม่ polling เบื้องหลัง)
@@ -7350,23 +7538,48 @@
                 // ════════════════════════════════════════════════════════════
                 // 🔧 REPAIR REQUESTS (แจ้งซ่อม) — native tab เดียวกับ cars/complaints
                 // ════════════════════════════════════════════════════════════
-                async loadMyRepairs() {
-                    this.repairLoading = true;
+                async loadRepairBoard() {
+                    this.repairLoading = true; this.repairError = '';
                     try {
-                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/my_repairs?userId=${this.userProfile.userId}`);
-                        const d = await res.json();
-                        this.myRepairs = d.repairs || [];
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/repair_board?userId=${encodeURIComponent(this.userProfile.userId)}`);
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.error || ('โหลดไม่สำเร็จ (HTTP ' + res.status + ')'));
+                        this.repairBoard = d;
                         this.repairHouseNumber = d.house_number || null;
-                    } catch (e) { console.error('loadMyRepairs', e); }
+                        if (!this._repairGuideInit) {   // เข้าครั้งแรกกางระเบียบให้อ่าน · ครั้งถัดไปพับไว้ (จำในเครื่อง)
+                            this._repairGuideInit = true;
+                            let seen = false; try { seen = localStorage.getItem('crm_repair_guide_seen') === '1'; } catch (_) {}
+                            this.repairGuideOpen = !seen;
+                            try { localStorage.setItem('crm_repair_guide_seen', '1'); } catch (_) {}
+                        }
+                    } catch (e) { console.error('loadRepairBoard', e); this.repairError = e.message || 'โหลดไม่สำเร็จ'; }
                     finally { this.repairLoading = false; }
+                },
+                toggleRepairGuide() { this.repairGuideOpen = !this.repairGuideOpen; },
+                repairPickStatus(k) { this.repairView.scope = 'all'; this.repairView.status = this.repairView.status === k ? '' : k; this.repairView.cat = ''; this.repairView.shown = 20; this.$nextTick(() => { const el = document.querySelector('[data-testid="rp-status-chips"]'); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }); },
+                repairResetFilters() { this.repairView = { scope: 'all', status: '', cat: '', shown: 20 }; },
+                repairCatIcon(name) {
+                    const c = this.repairBoard && this.repairBoard.categories.find(x => x.name === name);
+                    return c ? c.icon : '🔧';
+                },
+                repairAgo(iso) {
+                    const t = new Date(iso).getTime(); if (!Number.isFinite(t)) return '';
+                    const m = Math.floor((Date.now() - t) / 60000);
+                    if (m < 1) return 'เมื่อสักครู่';
+                    if (m < 60) return m + ' นาทีที่แล้ว';
+                    if (m < 1440) return Math.floor(m / 60) + ' ชม.ที่แล้ว';
+                    if (m < 10080) return Math.floor(m / 1440) + ' วันที่แล้ว';
+                    return this.formatThaiDate(iso);
                 },
 
                 openRepairForm() {
+                    if (!this.repairBoard) return;
                     this.repairForm = {
                         house_number: this.repairHouseNumber || this.complaintHouseNumber || this.carHouseNumber || '',
-                        phone: this.repairForm.phone || this.memberData?.phone || '',
-                        category: 'ไฟฟ้า', detail: '', image_url: ''
+                        phone: this.repairForm.phone || this.repairBoard.phone || this.memberData?.phone || '',
+                        category: '', location: '', detail: '', image_url: ''
                     };
+                    this.repairAck = false; this.repairFormError = '';
                     this.repairFormModal = true;
                 },
 
@@ -7403,8 +7616,16 @@
                 },
 
                 async submitRepair() {
-                    if (!this.repairForm.house_number?.trim()) return Swal.fire('', 'กรุณากรอกบ้านเลขที่', 'warning');
-                    if (!this.repairForm.detail?.trim()) return Swal.fire('', 'กรุณากรอกรายละเอียด', 'warning');
+                    this.repairFormError = '';
+                    const f = this.repairForm;
+                    const ph0 = String(f.phone || '').replace(/\D/g, ''); const phone = ph0 === '0' ? '' : ph0;
+                    if (!this.repairAck) { this.repairFormError = 'กรุณาติ๊กรับทราบระเบียบการแจ้งซ่อม'; return; }
+                    if (!f.category) { this.repairFormError = 'กรุณาเลือกหมวดหมู่'; return; }
+                    if (String(f.location || '').trim().length < 3) { this.repairFormError = 'กรุณาระบุจุดที่เสียหายในพื้นที่ส่วนกลาง'; return; }
+                    if (String(f.detail || '').trim().length < 5) { this.repairFormError = 'กรุณาอธิบายปัญหาอย่างน้อย 5 ตัวอักษร'; return; }
+                    if (!String(f.house_number || '').trim()) { this.repairFormError = 'กรุณากรอกบ้านเลขที่ของผู้แจ้ง'; return; }
+                    if (phone && !/^0\d{8,9}$/.test(phone)) { this.repairFormError = 'เบอร์โทรไม่ถูกต้อง'; return; }
+                    if (this.repairSaving) return;
 
                     this.repairSaving = true;
                     try {
@@ -7415,21 +7636,24 @@
                                 uid: this.userProfile.userId,
                                 lineDisplayName: this.userProfile.displayName,
                                 linePictureUrl: this.userProfile.pictureUrl,
-                                houseNumber: this.repairForm.house_number,
-                                phoneNumber: this.repairForm.phone || null,
-                                category: this.repairForm.category,
-                                detail: this.repairForm.detail,
-                                imageUrl: this.repairForm.image_url || null,
+                                houseNumber: String(f.house_number).trim(),
+                                phoneNumber: phone || null,
+                                category: f.category,
+                                location: String(f.location).trim(),
+                                detail: String(f.detail).trim(),
+                                imageUrl: f.image_url || null,
+                                commonAreaAck: this.repairAck === true,
                             })
                         });
-                        const d = await res.json();
+                        const d = await res.json().catch(() => ({}));
                         if (!res.ok) throw new Error(d.error || 'ส่งเรื่องไม่สำเร็จ');
 
-                        Swal.fire({ icon: 'success', title: '🔧 แจ้งซ่อมแล้ว', html: '<small>รอการดำเนินการจากนิติบุคคล</small>', timer: 2200, showConfirmButton: false });
                         this.repairFormModal = false;
-                        await this.loadMyRepairs();
+                        this.repairResetFilters();
+                        Swal.fire({ icon: 'success', title: '🔧 แจ้งซ่อมแล้ว', html: '<small>ทุกคนเห็นเรื่องนี้ในรายการ และรอการดำเนินการจากนิติบุคคล</small>', timer: 2400, showConfirmButton: false });
+                        await this.loadRepairBoard();
                     } catch (err) {
-                        Swal.fire('ไม่สำเร็จ', err.message, 'error');
+                        this.repairFormError = err.message || 'ส่งเรื่องไม่สำเร็จ';
                     } finally {
                         this.repairSaving = false;
                     }
