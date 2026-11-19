@@ -2365,7 +2365,7 @@
         </div>
 
         <!-- ═══════ CCTV Tab (ขอดูกล้องวงจรปิด) ═══════ -->
-        <div v-if="currentTab === 'cctv' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-slate-100/50 overflow-y-auto z-20">
+        <div v-if="currentTab === 'cctv' && !loading" data-testid="cctv-page" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-slate-100/50 overflow-y-auto z-20">
             <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
                 <div class="mb-5 flex items-center gap-3">
                     <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500"><i class="fa-solid fa-arrow-left"></i></button>
@@ -2373,7 +2373,7 @@
                         <h2 class="text-2xl font-extrabold text-slate-800">ขอดูกล้องวงจรปิด</h2>
                         <p class="text-xs text-slate-500">ประวัติคำขอของฉัน</p>
                     </div>
-                    <button @click="openCctvForm" class="px-4 py-2 bg-slate-700 rounded-2xl text-white text-sm font-bold flex items-center gap-2 shadow-md">
+                    <button data-testid="cctv-new" @click="openCctvForm" class="px-4 py-2 bg-slate-700 rounded-2xl text-white text-sm font-bold flex items-center gap-2 shadow-md">
                         <i class="fa-solid fa-plus"></i> ขอดู
                     </button>
                 </div>
@@ -2387,7 +2387,7 @@
                     <div class="text-6xl mb-3">📹</div>
                     <p class="font-bold text-slate-700 mb-1">ยังไม่เคยขอดูกล้อง</p>
                     <p class="text-xs text-slate-400 mb-4">กดปุ่ม "ขอดู" เพื่อยื่นคำขอ</p>
-                    <button @click="openCctvForm" class="px-6 py-2.5 bg-slate-700 text-white rounded-2xl font-bold text-sm">+ ขอดูกล้อง</button>
+                    <button data-testid="cctv-new-empty" @click="openCctvForm" class="px-6 py-2.5 bg-slate-700 text-white rounded-2xl font-bold text-sm">+ ขอดูกล้อง</button>
                 </div>
 
                 <div v-else class="space-y-4">
@@ -2406,13 +2406,35 @@
                             <span>{{ { pending:'⏳ รอตรวจสอบ', approved:'✅ อนุมัติแล้ว', rejected:'❌ ไม่อนุมัติ' }[c.status] || c.status }}</span>
                             <span>{{ formatThaiDate(c.created_at) }}</span>
                         </div>
-                        <div class="p-4">
+                        <div class="p-4" :data-testid="'cctv-card-' + c.id">
+                            <div class="flex items-center justify-between gap-2 mb-1.5">
+                                <span class="text-[10px] font-mono text-slate-400" data-testid="cctv-ref">{{ c.ref_no }}</span>
+                                <span v-if="c.requester_name" class="text-[11px] text-slate-500 truncate" data-testid="cctv-requester">👤 {{ c.requester_name }}<span v-if="c.requester_relation"> · {{ c.requester_relation }}</span></span>
+                            </div>
                             <div class="text-xs font-bold text-slate-600 mb-1">📍 {{ c.camera_zone }}</div>
-                            <div class="text-xs text-slate-500 mb-2">📅 {{ c.request_date }} <span v-if="c.time_range">⏰ {{ c.time_range }}</span></div>
+                            <div class="text-xs text-slate-500 mb-2">📅 {{ formatThaiDate(c.request_date) }} <span v-if="c.time_range">⏰ {{ c.time_range }}</span><span v-if="c.incident_type" class="ml-1 px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold">{{ c.incident_type }}</span></div>
                             <div class="text-sm text-slate-700 bg-slate-50 rounded-xl p-2.5 mb-2">{{ c.reason }}</div>
-                            <a v-if="c.response_link" :href="c.response_link" target="_blank" class="text-xs text-blue-600 underline block mb-2">🔗 ลิงก์คลิปที่แนบไว้</a>
-                            <div v-if="c.admin_remark" class="bg-indigo-50 rounded-xl p-3 text-xs text-indigo-700">
-                                <div class="font-bold mb-0.5">💬 หมายเหตุจากนิติบุคคล</div>
+                            <template v-if="c.status === 'approved'">
+                                <div v-if="c.approved_cameras && c.approved_cameras.length" class="mb-2" data-testid="cctv-cameras">
+                                    <div class="text-[11px] font-bold text-emerald-700 mb-1">🎥 กล้องที่อนุมัติให้ดู</div>
+                                    <div class="flex flex-wrap gap-1"><span v-for="cam in c.approved_cameras" :key="cam" class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-200">{{ cam }}</span></div>
+                                </div>
+                                <div v-if="c.access && (c.access.valid_from || c.access.valid_until)" class="mb-2 rounded-xl p-2.5 text-xs border"
+                                     :class="{ 'bg-emerald-50 border-emerald-200 text-emerald-800': c.access.state === 'active', 'bg-amber-50 border-amber-200 text-amber-800': c.access.state === 'not_started', 'bg-rose-50 border-rose-200 text-rose-700': c.access.state === 'expired' }" data-testid="cctv-window">
+                                    <div class="font-bold">⏱ ช่วงเวลาที่ดูได้</div>
+                                    <div>{{ c.access.valid_from ? cctvFmtDT(c.access.valid_from) : 'ทันที' }} – {{ c.access.valid_until ? cctvFmtDT(c.access.valid_until) : 'ไม่กำหนด' }}</div>
+                                    <div class="mt-0.5 font-bold" data-testid="cctv-window-state">{{ { active: '● อยู่ในช่วงที่ดูได้', not_started: '● ยังไม่ถึงเวลาที่ดูได้', expired: '● หมดเวลาดูแล้ว' }[c.access.state] }}</div>
+                                </div>
+                                <a v-if="c.response_link" :href="c.response_link" target="_blank" rel="noopener" class="block text-center py-2.5 mb-2 rounded-xl bg-emerald-600 text-white text-sm font-bold" data-testid="cctv-open-link">🎬 เปิดดูภาพ</a>
+                                <div v-else-if="c.link_hidden" class="mb-2 text-[11px] text-slate-500 bg-slate-50 rounded-xl p-2.5" data-testid="cctv-link-hidden">🔒 {{ c.link_hidden === 'expired' ? 'หมดเวลาดูภาพแล้ว ลิงก์ถูกซ่อน — หากต้องการดูอีกให้ยื่นคำขอใหม่' : 'ยังไม่ถึงเวลาที่อนุญาต ลิงก์จะแสดงเมื่อถึงเวลาเริ่ม' }}</div>
+                                <div class="mb-2 text-[11px] font-bold text-rose-700 bg-rose-50 rounded-xl p-2.5">⚠️ ห้ามแคปภาพ/บันทึกหน้าจอ/เผยแพร่ภาพ ก่อนได้รับอนุญาตเด็ดขาด</div>
+                            </template>
+                            <div v-if="c.instructions" class="bg-amber-50 rounded-xl p-3 text-xs text-amber-900 mb-2" data-testid="cctv-instructions">
+                                <div class="font-bold mb-0.5">📌 คำแนะนำจากนิติบุคคล</div>
+                                {{ c.instructions }}
+                            </div>
+                            <div v-if="c.admin_remark" class="bg-indigo-50 rounded-xl p-3 text-xs text-indigo-700" data-testid="cctv-remark">
+                                <div class="font-bold mb-0.5">{{ c.status === 'rejected' ? '💬 เหตุผลที่ไม่อนุมัติ' : '💬 หมายเหตุจากนิติบุคคล' }}</div>
                                 {{ c.admin_remark }}
                             </div>
                         </div>
@@ -2422,17 +2444,38 @@
         </div>
 
         <!-- ═══════ CCTV Form Modal ═══════ -->
-        <div v-if="cctvFormModal && !loading" @click.self="cctvFormModal = false" class="fixed inset-0 modal-bg z-50 flex items-end md:items-center justify-center p-3">
+        <div v-if="cctvFormModal && !loading" @click.self="cctvFormModal = false" data-testid="cctv-form" class="fixed inset-0 modal-bg z-50 flex items-end md:items-center justify-center p-3">
             <div class="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl slide-up max-h-[90vh] overflow-y-auto">
                 <div class="flex items-center gap-2 mb-4">
                     <div class="text-2xl">📹</div>
                     <h3 class="text-lg font-extrabold text-slate-800">ขอดูกล้องวงจรปิด</h3>
                 </div>
                 <div class="space-y-3">
+                    <div class="flex items-center gap-2 text-[11px] bg-emerald-50 text-emerald-700 rounded-xl px-3 py-1.5 font-bold" data-testid="cctv-rules-chip"><i class="fa-solid fa-circle-check"></i> ยอมรับกฎระเบียบแล้ว (v{{ cctvRules ? cctvRules.version : '' }})</div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">ชื่อผู้ขอ (ชื่อ-นามสกุล) *</label>
+                        <input v-model="cctvForm.requester_name" type="text" maxlength="100" data-testid="cctv-name" placeholder="ชื่อ-นามสกุลจริง" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">ความเกี่ยวข้องกับบ้าน *</label>
+                            <select v-model="cctvForm.relation" data-testid="cctv-relation" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                                <option value="" disabled>เลือก...</option>
+                                <option v-for="r in cctvOptions.relations" :key="r" :value="r">{{ r }}</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">ประเภทเหตุ *</label>
+                            <select v-model="cctvForm.incident_type" data-testid="cctv-incident" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                                <option value="" disabled>เลือก...</option>
+                                <option v-for="r in cctvOptions.incidents" :key="r" :value="r">{{ r }}</option>
+                            </select>
+                        </div>
+                    </div>
                     <div class="grid grid-cols-2 gap-2">
                         <div>
                             <label class="block text-xs font-bold text-slate-700 mb-1">บ้านเลขที่ *</label>
-                            <input v-model="cctvForm.house_number" type="text" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                            <input v-model="cctvForm.house_number" type="text" data-testid="cctv-house" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-400 outline-none">
                         </div>
                         <div>
                             <label class="block text-xs font-bold text-slate-700 mb-1">เบอร์โทร</label>
@@ -2444,31 +2487,46 @@
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-700 mb-1">จุดที่ต้องการดู *</label>
-                        <select v-model="cctvForm.camera_zone" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
+                        <select v-model="cctvForm.camera_zone" data-testid="cctv-zone" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
                             <option v-for="z in cctvCameraZones" :key="z" :value="z">📍 {{ z }}</option>
                             <option value="__custom__">✏️ อื่นๆ พิมพ์เอง...</option>
                         </select>
                         <input v-if="cctvForm.camera_zone === '__custom__'" v-model="cctvForm.camera_zone_custom" type="text"
                                placeholder="ระบุจุดที่ต้องการดู" class="w-full mt-2 rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-400 outline-none">
                     </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">วันที่ต้องการดู *</label>
+                        <input v-model="cctvForm.request_date" type="date" :max="cctvTodayStr()" data-testid="cctv-date" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                    </div>
                     <div class="grid grid-cols-2 gap-2">
                         <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">วันที่ต้องการดู *</label>
-                            <input v-model="cctvForm.request_date" type="date" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                            <label class="block text-xs font-bold text-slate-700 mb-1">ตั้งแต่เวลา</label>
+                            <input v-model="cctvForm.time_from" type="time" data-testid="cctv-time-from" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-400 outline-none">
                         </div>
                         <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">ช่วงเวลา</label>
-                            <input v-model="cctvForm.time_range" type="text" placeholder="เช่น 14:00-15:00" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                            <label class="block text-xs font-bold text-slate-700 mb-1">ถึงเวลา</label>
+                            <input v-model="cctvForm.time_to" type="time" data-testid="cctv-time-to" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-400 outline-none">
                         </div>
+                        <p class="col-span-2 text-[10px] text-slate-400 -mt-1">ระบุช่วงเวลาให้แคบที่สุดเท่าที่ทำได้ จะช่วยให้พิจารณาและค้นภาพได้เร็วขึ้น (เว้นว่างได้ถ้าไม่ทราบ)</p>
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-700 mb-1">เหตุผลที่ขอดู *</label>
-                        <textarea v-model="cctvForm.reason" rows="2" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-400 outline-none resize-none" placeholder="อธิบายเหตุผล..."></textarea>
+                        <textarea v-model="cctvForm.reason" rows="2" data-testid="cctv-reason" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-400 outline-none resize-none" placeholder="อธิบายเหตุผล..."></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">รายละเอียดเพิ่มเติม (ถ้ามี)</label>
+                        <textarea v-model="cctvForm.details" rows="2" maxlength="1000" data-testid="cctv-details" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-slate-400 outline-none resize-none" placeholder="เช่น ลักษณะบุคคล/ยานพาหนะ ทะเบียนรถ สิ่งของที่หาย"></textarea>
+                    </div>
+                    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2">
+                        <label class="flex items-center gap-2.5 cursor-pointer text-xs font-bold text-slate-700">
+                            <input type="checkbox" v-model="cctvForm.police_report" data-testid="cctv-police" class="w-4 h-4 accent-slate-600"> แจ้งความแล้ว
+                        </label>
+                        <input v-if="cctvForm.police_report" v-model="cctvForm.police_report_no" type="text" maxlength="60" data-testid="cctv-police-no" placeholder="เลขที่ใบแจ้งความ / สถานีตำรวจ" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-slate-400 outline-none">
                     </div>
 
                     <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3">
                         <label class="flex items-start gap-2.5 cursor-pointer">
-                            <input type="checkbox" v-model="cctvForm.consent" class="mt-0.5 w-4 h-4 accent-slate-600 flex-shrink-0">
+                            <input type="checkbox" v-model="cctvForm.consent" data-testid="cctv-consent" class="mt-0.5 w-4 h-4 accent-slate-600 flex-shrink-0">
                             <span class="text-[11px] text-slate-600 leading-relaxed">
                                 ข้าพเจ้ายินยอมให้นิติบุคคลหมู่บ้านเก็บรวบรวมและใช้ข้อมูลที่แจ้งไว้ เพื่อวัตถุประสงค์ในการตรวจสอบและอนุมัติคำขอดูกล้องวงจรปิดเท่านั้น ตาม PDPA
                             </span>
@@ -2485,11 +2543,58 @@
                 </div>
                 <div class="flex gap-2 mt-5">
                     <button @click="cctvFormModal = false" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold">ยกเลิก</button>
-                    <button @click="submitCctvRequest" :disabled="cctvSaving" class="flex-1 py-3 bg-slate-700 hover:bg-slate-800 text-white rounded-2xl font-bold flex items-center justify-center gap-2">
+                    <button @click="submitCctvRequest" :disabled="cctvSaving" data-testid="cctv-submit" class="flex-1 py-3 bg-slate-700 hover:bg-slate-800 text-white rounded-2xl font-bold flex items-center justify-center gap-2">
                         <i v-if="cctvSaving" class="fa-solid fa-spinner fa-spin"></i>
                         <i v-else class="fa-solid fa-paper-plane"></i>
                         ส่งคำขอ
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════ CCTV Rules Modal (บังคับยอมรับก่อนเข้าฟอร์ม) ═══════ -->
+        <div v-if="cctvRulesModal && !loading" class="fixed inset-0 modal-bg z-[60] flex items-end md:items-center justify-center p-3" data-testid="cctv-rules-modal">
+            <div class="bg-white rounded-3xl max-w-md w-full shadow-2xl slide-up max-h-[92vh] flex flex-col overflow-hidden">
+                <div class="px-5 pt-5 pb-3 border-b border-slate-100">
+                    <div class="flex items-center gap-2">
+                        <div class="text-2xl">📹</div>
+                        <h3 class="text-lg font-extrabold text-slate-800" data-testid="cctv-rules-title">{{ cctvRules ? cctvRules.title : 'กฎระเบียบการขอดูกล้องวงจรปิด' }}</h3>
+                    </div>
+                    <p class="text-[11px] text-slate-500 mt-1">กรุณาอ่านจนจบและกดยอมรับ ก่อนกรอกแบบฟอร์มขอดูกล้อง</p>
+                </div>
+                <div ref="cctvRulesScroll" @scroll="cctvRulesOnScroll" class="px-5 py-4 overflow-y-auto flex-1 space-y-4" data-testid="cctv-rules-scroll" style="min-height:120px">
+                    <div v-if="cctvRulesLoading" class="text-center py-8 text-slate-400 text-sm" data-testid="cctv-rules-loading"><i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลดกฎระเบียบ...</div>
+                    <div v-else-if="cctvRulesErr" class="text-center py-6" data-testid="cctv-rules-error">
+                        <p class="text-sm text-rose-600 font-bold mb-3">{{ cctvRulesErr }}</p>
+                        <button @click="cctvEnter" class="px-4 py-2 rounded-2xl bg-slate-100 text-slate-700 text-sm font-bold" data-testid="cctv-rules-retry">ลองใหม่</button>
+                    </div>
+                    <template v-else-if="cctvRules">
+                        <p v-if="cctvRules.intro" class="text-sm text-slate-600 leading-relaxed whitespace-pre-line" data-testid="cctv-rules-intro">{{ cctvRules.intro }}</p>
+                        <div class="rounded-2xl border-2 border-rose-300 bg-rose-50 p-4" data-testid="cctv-rules-prohibit">
+                            <div class="font-extrabold text-rose-700 text-sm mb-2">🚫 ข้อห้ามเด็ดขาด</div>
+                            <ol class="space-y-2">
+                                <li v-for="(t, i) in cctvRules.prohibitions" :key="'p' + i" class="flex gap-2 text-[13px] text-rose-900 leading-relaxed"><span class="font-extrabold flex-shrink-0">{{ i + 1 }}.</span><span class="whitespace-pre-line">{{ t }}</span></li>
+                            </ol>
+                        </div>
+                        <div v-if="cctvRules.guidelines && cctvRules.guidelines.length" class="rounded-2xl border border-slate-200 bg-slate-50 p-4" data-testid="cctv-rules-guide">
+                            <div class="font-extrabold text-slate-700 text-sm mb-2">📋 ข้อปฏิบัติและเงื่อนไข</div>
+                            <ul class="space-y-2">
+                                <li v-for="(t, i) in cctvRules.guidelines" :key="'g' + i" class="flex gap-2 text-[13px] text-slate-700 leading-relaxed"><span class="flex-shrink-0">•</span><span class="whitespace-pre-line">{{ t }}</span></li>
+                            </ul>
+                        </div>
+                        <p v-if="cctvRules.footer" class="text-xs font-bold text-slate-700 leading-relaxed">{{ cctvRules.footer }}</p>
+                    </template>
+                </div>
+                <div class="px-5 pt-3 pb-5 border-t border-slate-100 bg-white">
+                    <label class="flex items-start gap-2.5" :class="cctvRulesRead && cctvRules ? 'cursor-pointer' : 'opacity-50'">
+                        <input type="checkbox" v-model="cctvRulesChecked" :disabled="!cctvRulesRead || !cctvRules" data-testid="cctv-rules-check" class="mt-0.5 w-5 h-5 accent-emerald-600 flex-shrink-0">
+                        <span class="text-[13px] font-bold text-slate-800 leading-relaxed">ข้าพเจ้าได้อ่านและยอมรับกฎระเบียบข้างต้นทุกข้อ และจะไม่แคปภาพหรือเผยแพร่ข้อมูลก่อนได้รับอนุญาต</span>
+                    </label>
+                    <p v-if="cctvRules && !cctvRulesRead" class="text-[11px] text-amber-600 mt-1.5 ml-7" data-testid="cctv-rules-hint">⬇️ เลื่อนอ่านให้ถึงท้ายสุดก่อน จึงจะกดยอมรับได้</p>
+                    <div class="flex gap-2 mt-3">
+                        <button @click="cctvDeclineRules" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold" data-testid="cctv-rules-decline">ไม่ยอมรับ</button>
+                        <button @click="cctvAcceptRules" :disabled="!cctvRulesChecked || !cctvRules" class="flex-1 py-3 bg-emerald-600 text-white rounded-2xl font-bold disabled:opacity-40 disabled:cursor-not-allowed" data-testid="cctv-rules-ok"><i class="fa-solid fa-check"></i> ตกลง</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -4402,8 +4507,10 @@
                     // ─── CCTV Requests (ขอดูกล้องวงจรปิด) ───
                     myCctvRequests: [], cctvLoading: false, cctvCameraZones: [],
                     cctvFormModal: false,
-                    cctvForm: { house_number: '', phone: '', camera_zone: '', camera_zone_custom: '', request_date: '', time_range: '', reason: '', consent: false },
+                    cctvForm: { requester_name: '', relation: '', incident_type: '', house_number: '', phone: '', camera_zone: '', camera_zone_custom: '', request_date: '', time_from: '', time_to: '', reason: '', details: '', police_report: false, police_report_no: '', consent: false },
                     cctvSaving: false, cctvSigDrawing: false, cctvSigHasDrawn: false,
+                    cctvRules: null, cctvRulesModal: false, cctvRulesLoading: false, cctvRulesErr: '', cctvRulesChecked: false, cctvRulesRead: false, cctvRulesAccepted: false,
+                    cctvOptions: { relations: ['เจ้าของบ้าน', 'สมาชิกในบ้าน', 'ผู้เช่า', 'ตัวแทน/อื่น ๆ'], incidents: ['รถเสียหาย/ถูกเฉี่ยวชน', 'ทรัพย์สินสูญหาย', 'บุคคลต้องสงสัย', 'อุบัติเหตุ', 'ทะเลาะวิวาท/ก่อความรำคาญ', 'สัตว์เลี้ยง', 'อื่น ๆ'] },
 
                     // ─── Gallery (แกลเลอรี่ภาพหมู่บ้าน) ───
                     galleryPhotos: [], galleryLoading: false,
@@ -4928,7 +5035,9 @@
                     } else this.chatAdmStopPoll();
                     this.trackCrmTab(newVal);
                     if (newVal === 'status') this.enterStatusPage();
-                    if (newVal === 'cctv' && this.myCctvRequests.length === 0) this.loadMyCctvRequests();
+                    if (newVal === 'cctv') this.loadMyCctvRequests();   // โหลดใหม่ทุกครั้ง: สถานะ/ช่วงเวลาที่ดูได้เปลี่ยนตามเวลาและตามที่นิติฯ ตอบ
+                    // 📹 เข้าหน้าขอดูกล้องทุกครั้ง = ต้องอ่าน+ยอมรับกฎระเบียบใหม่ก่อนกรอกฟอร์ม · ออกจากหน้า = ล้างสถานะยอมรับ
+                    if (newVal === 'cctv') this.cctvEnter(); else { this.cctvRulesAccepted = false; this.cctvRulesModal = false; this.cctvFormModal = false; }
                     if (newVal === 'gallery' && this.galleryPhotos.length === 0) this.loadGalleryPhotos();
                     if (newVal === 'news' && this.announcements.length === 0) this.loadAnnouncements();
                     // 🪪 เปิดจากลิงก์ ?tab=keycard (ไม่ผ่านปุ่ม openKeyCard) ต้องโหลดข้อมูลบ้าน/บัตรเอง — เดิมหน้าว่าง
@@ -5875,7 +5984,7 @@
                     this.chatStartPoll();
                 },
                 chatStartPoll() {
-                    this.chatStopPoll(); this.chat.tick = 0;
+                    this.chatStopPoll(); this.chat.tick = 0; this.chat.idle = 0;
                     this.chatTimer = setInterval(() => this.chatPoll(), 5000);
                 },
                 chatStopPoll() { if (this.chatTimer) { clearInterval(this.chatTimer); this.chatTimer = null; } },
@@ -5883,6 +5992,7 @@
                     if (this.currentTab !== 'chat') { this.chatStopPoll(); return; }
                     if (document.hidden || this.chat.polling || this.chat.inflight > 0 || this.chat.notReady) return;
                     this.chat.tick = (this.chat.tick || 0) + 1;
+                    if (!this.chatPollDue(this.chat)) return;   // เงียบนาน → ถอยห่าง (ลดจำนวน request/log)
                     if (this.chat.pollErr >= 3 && this.chat.tick % 6 !== 0) return;   // เน็ตมีปัญหา → ถอยห่างออก (ลองทุก ~30 วินาที)
                     const uid = this.chatUid(); if (!uid) return;
                     this.chat.polling = true;
@@ -5891,7 +6001,8 @@
                         const d = await this.chatApi(`chat_thread?userId=${encodeURIComponent(uid)}&after=${this.chatLastServerId(this.chat.msgs)}`);
                         if (this.currentTab !== 'chat') return;
                         this.chat.thread = d.thread || this.chat.thread; this.chat.pollErr = 0; this.chat.error = '';
-                        if (d.messages && d.messages.length) { this.chat.msgs = this.chatMerge(this.chat.msgs, d.messages); if (near) this.chatScrollDown('chatScroll'); }
+                        if (d.messages && d.messages.length) { this.chat.msgs = this.chatMerge(this.chat.msgs, d.messages); this.chat.idle = 0; if (near) this.chatScrollDown('chatScroll'); }
+                        else this.chat.idle = (this.chat.idle || 0) + 1;
                     } catch (e) { this.chat.pollErr = (this.chat.pollErr || 0) + 1; }
                     finally { this.chat.polling = false; }
                 },
@@ -5912,7 +6023,7 @@
                     if (text.length > 1000) { this.chat.sendErr = 'ข้อความยาวเกิน 1000 ตัวอักษร'; return; }
                     this.chat.sendErr = '';
                     const m = { id: -Date.now(), cid: this.chatNewCid(), local: true, state: 'sending', role: 'member', body: text, at: new Date().toISOString(), name: '' };
-                    this.chat.msgs = this.chat.msgs.concat([m]); this.chat.text = ''; this.chat.emojiOpen = false;
+                    this.chat.msgs = this.chat.msgs.concat([m]); this.chat.text = ''; this.chat.emojiOpen = false; this.chat.idle = 0;
                     this.$nextTick(() => { const ta = document.querySelector('[data-testid="chat-input"]'); if (ta) ta.style.height = 'auto'; });
                     this.chatScrollDown('chatScroll');
                     await this.chatTransmit(m);
@@ -5952,14 +6063,20 @@
                     await this.chatAdmLoad(true);
                     this.chatAdmStartPoll();
                 },
-                chatAdmStartPoll() { this.chatAdmStopPoll(); this.chatAdmTimer = setInterval(() => this.chatAdmPoll(), 6000); },
+                chatPollDue(o) { const idle = o.idle || 0, every = idle < 12 ? 1 : idle < 36 ? 3 : 6; return (o.tick || 0) % every === 0; },   // ถี่ปกติ ~1 นาทีแรก → ทุก 3 รอบ (15 วิ) → ทุก 6 รอบ (30 วิ) เมื่อไม่มีอะไรใหม่
+                chatAdmStartPoll() { this.chatAdm.tick = 0; this.chatAdm.idle = 0; this.chatAdmStopPoll(); this.chatAdmTimer = setInterval(() => this.chatAdmPoll(), 6000); },
                 chatAdmStopPoll() { if (this.chatAdmTimer) { clearInterval(this.chatAdmTimer); this.chatAdmTimer = null; } clearTimeout(this.chatAdmQTimer); },
                 async chatAdmPoll() {
                     if (this.currentTab !== 'chatadmin') { this.chatAdmStopPoll(); return; }
                     if (document.hidden || this.chatAdm.notReady) return;
+                    this.chatAdm.tick = (this.chatAdm.tick || 0) + 1;
+                    if (!this.chatPollDue(this.chatAdm)) return;   // เงียบนาน → ถอยห่าง
                     try {
+                        const sig = () => this.chatAdm.view === 'list' ? this.chatAdm.threads.map(t => t.id + ':' + t.last_message_id + ':' + t.status).join('|') : this.chatAdm.selMsgs.length + ':' + (this.chatAdm.sel && this.chatAdm.sel.last_message_id);
+                        const before = sig();
                         if (this.chatAdm.view === 'list') { if (!this.chatAdm.loading && this.chatAdm.offset === 0) await this.chatAdmLoad(false, true); }
                         else if (this.chatAdm.sel && !this.chatAdm.selLoading && !this.chatAdm.inflight && !this.chatAdm.selPolling) await this.chatAdmPollThread();
+                        this.chatAdm.idle = sig() === before ? (this.chatAdm.idle || 0) + 1 : 0;
                     } catch (e) { /* รอบหน้าลองใหม่ */ }
                 },
                 async chatAdmLoad(reset, silent) {
@@ -5984,13 +6101,13 @@
                 },
                 async chatAdmMore() { this.chatAdm.offset = this.chatAdm.threads.length; await this.chatAdmLoad(false); },
                 chatAdmBack() {
-                    if (this.chatAdm.view === 'thread') { this.chatAdm.selSeq++; this.chatAdm.profOpen = false; this.chatAdm.emojiOpen = false; this.chatAdm.view = 'list'; this.chatAdm.sel = null; this.chatAdmLoad(true); }
+                    if (this.chatAdm.view === 'thread') { this.chatAdm.selSeq++; this.chatAdm.idle = 0; this.chatAdm.profOpen = false; this.chatAdm.emojiOpen = false; this.chatAdm.view = 'list'; this.chatAdm.sel = null; this.chatAdmLoad(true); }
                     else this.currentTab = 'home';
                 },
                 async chatAdmOpen(t) {
                     const seq = ++this.chatAdm.selSeq;
                     this.chatAdm.view = 'thread'; this.chatAdm.sel = Object.assign({}, t); this.chatAdm.selMsgs = []; this.chatAdm.selHasMore = false;
-                    this.chatAdm.selErr = ''; this.chatAdm.sendErr = ''; this.chatAdm.text = ''; this.chatAdm.selLoading = true; this.chatAdm.profOpen = false; this.chatAdm.emojiOpen = false;
+                    this.chatAdm.selErr = ''; this.chatAdm.sendErr = ''; this.chatAdm.text = ''; this.chatAdm.selLoading = true; this.chatAdm.profOpen = false; this.chatAdm.emojiOpen = false; this.chatAdm.idle = 0;
                     if (!this.chatAdm.tplsLoaded) { this.chatAdm.tplsLoaded = true; this.kcaApi('chat_templates').then(d => { this.chatAdm.tpls = d.templates || []; }, () => { this.chatAdm.tplsLoaded = false; }); }   // ปุ่มตอบเร็วเหนือช่องพิมพ์
                     try {
                         const d = await this.kcaApi('chat_messages?thread_id=' + encodeURIComponent(t.id));
@@ -6030,7 +6147,7 @@
                     if (text.length > 1000) { this.chatAdm.sendErr = 'ข้อความยาวเกิน 1000 ตัวอักษร'; return; }
                     this.chatAdm.sendErr = '';
                     const m = { id: -Date.now(), cid: this.chatNewCid(), local: true, state: 'sending', role: 'admin', body: text, at: new Date().toISOString(), name: 'คุณ' };
-                    this.chatAdm.selMsgs = this.chatAdm.selMsgs.concat([m]); this.chatAdm.text = ''; this.chatAdm.emojiOpen = false;
+                    this.chatAdm.selMsgs = this.chatAdm.selMsgs.concat([m]); this.chatAdm.text = ''; this.chatAdm.emojiOpen = false; this.chatAdm.idle = 0;
                     this.$nextTick(() => { const ta = document.querySelector('[data-testid="cha-input"]'); if (ta) ta.style.height = 'auto'; });
                     this.chatScrollDown('chatAdmScroll');
                     await this.chatAdmTransmit(m);
@@ -6133,6 +6250,7 @@
                     if (this._chatVis) return; this._chatVis = true;
                     document.addEventListener('visibilitychange', () => {
                         if (document.hidden) return;
+                        this.chat.idle = 0; this.chatAdm.idle = 0;   // กลับมาเปิดแอป → กลับไปถี่ปกติ
                         const now = Date.now(); if (now - (this._chatVisAt || 0) < 20000) return; this._chatVisAt = now;
                         if (this.currentTab === 'home') this.loadMenuAccess();   // กลับมาเปิดแอป → รีเฟรชป้ายแดง
                     });
@@ -7537,13 +7655,44 @@
                     } catch (e) { console.warn('loadCctvZones', e); }
                 },
 
+                cctvTodayStr() { return new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10); },
+                cctvFmtDT(iso) { try { return new Date(iso).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return String(iso || ''); } },
+                // 📜 กฎระเบียบ: โหลดล่าสุดจากเซิร์ฟเวอร์ → แสดงโมดอลบังคับ → ต้องเลื่อนอ่านถึงท้าย + ติ๊กยอมรับ + กด "ตกลง" ถึงเปิดฟอร์มได้
+                async cctvEnter() {
+                    this.cctvRulesAccepted = false; this.cctvRulesChecked = false; this.cctvRulesRead = false; this.cctvRulesErr = '';
+                    this.cctvRulesModal = true; this.cctvRulesLoading = true;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/admin/audience/cctv_rules_get?fresh=1`);
+                        const d = await res.json();
+                        if (!res.ok || !d.rules) throw new Error(d.error || 'โหลดกฎระเบียบไม่สำเร็จ');
+                        this.cctvRules = d.rules;
+                        if (d.options && Array.isArray(d.options.relations) && Array.isArray(d.options.incidents)) this.cctvOptions = d.options;
+                    } catch (e) { this.cctvRules = null; this.cctvRulesErr = (e && e.message) || 'โหลดกฎระเบียบไม่สำเร็จ'; }
+                    finally { this.cctvRulesLoading = false; }
+                    this.$nextTick(() => this.cctvRulesOnScroll());
+                },
+                cctvRulesOnScroll() {
+                    const el = this.$refs.cctvRulesScroll; if (!el || !this.cctvRules) return;
+                    if (el.scrollHeight <= el.clientHeight + 8 || el.scrollTop + el.clientHeight >= el.scrollHeight - 8) this.cctvRulesRead = true;
+                },
+                cctvAcceptRules() {
+                    if (!this.cctvRulesChecked || !this.cctvRules || !this.cctvRulesRead) return;
+                    this.cctvRulesAccepted = true; this.cctvRulesModal = false;
+                    if (this._cctvKeepDraft) this.openCctvForm();   // กลับมายอมรับฉบับใหม่ระหว่างกรอกฟอร์ม → เปิดฟอร์มเดิมต่อ
+                },
+                cctvDeclineRules() { this._cctvKeepDraft = false; this.cctvRulesModal = false; this.cctvRulesAccepted = false; this.cctvFormModal = false; this.currentTab = 'home'; },
+
                 async openCctvForm() {
+                    if (!this.cctvRulesAccepted) { await this.cctvEnter(); return; }   // ยังไม่ยอมรับกฎระเบียบ = เปิดฟอร์มไม่ได้
                     if (this.cctvCameraZones.length === 0) await this.loadCctvZones();
+                    if (this._cctvKeepDraft) { this._cctvKeepDraft = false; this.cctvFormModal = true; this.$nextTick(() => this.cctvSigSetupCanvas()); return; }
                     this.cctvForm = {
+                        requester_name: this.cctvForm.requester_name || (this.statusCheckResult && this.statusCheckResult.profile && this.statusCheckResult.profile.fullname) || (this.memberData && this.memberData.fullname) || '',
+                        relation: '', incident_type: '',
                         house_number: this.repairHouseNumber || this.carHouseNumber || this.complaintHouseNumber || '',
                         phone: this.cctvForm.phone || this.memberData?.phone || '',
                         camera_zone: this.cctvCameraZones[0] || '', camera_zone_custom: '',
-                        request_date: '', time_range: '', reason: '', consent: false,
+                        request_date: '', time_from: '', time_to: '', reason: '', details: '', police_report: false, police_report_no: '', consent: false,
                     };
                     this.cctvFormModal = true;
                     this.$nextTick(() => this.cctvSigSetupCanvas());
@@ -7586,12 +7735,20 @@
                 },
 
                 async submitCctvRequest() {
-                    const zone = this.cctvForm.camera_zone === '__custom__' ? this.cctvForm.camera_zone_custom : this.cctvForm.camera_zone;
-                    if (!this.cctvForm.house_number?.trim()) return Swal.fire('', 'กรุณากรอกบ้านเลขที่', 'warning');
+                    const f = this.cctvForm;
+                    const zone = f.camera_zone === '__custom__' ? f.camera_zone_custom : f.camera_zone;
+                    if (!this.cctvRulesAccepted || !this.cctvRules) { this.cctvFormModal = false; return this.cctvEnter(); }
+                    if (Array.from((f.requester_name || '').trim()).length < 2) return Swal.fire('', 'กรุณากรอกชื่อผู้ขอ (ชื่อ-นามสกุล)', 'warning');
+                    if (!f.relation) return Swal.fire('', 'กรุณาเลือกความเกี่ยวข้องกับบ้าน', 'warning');
+                    if (!f.incident_type) return Swal.fire('', 'กรุณาเลือกประเภทเหตุที่ขอดู', 'warning');
+                    if (!f.house_number?.trim()) return Swal.fire('', 'กรุณากรอกบ้านเลขที่', 'warning');
                     if (!zone?.trim()) return Swal.fire('', 'กรุณาเลือก/ระบุจุดที่ต้องการดู', 'warning');
-                    if (!this.cctvForm.request_date) return Swal.fire('', 'กรุณาเลือกวันที่', 'warning');
-                    if (!this.cctvForm.reason?.trim()) return Swal.fire('', 'กรุณาระบุเหตุผล', 'warning');
-                    if (!this.cctvForm.consent) return Swal.fire('', 'กรุณายินยอมให้ใช้ข้อมูลตาม PDPA ก่อน', 'warning');
+                    if (!f.request_date) return Swal.fire('', 'กรุณาเลือกวันที่', 'warning');
+                    if (f.request_date > this.cctvTodayStr()) return Swal.fire('', 'วันที่ต้องการดูต้องไม่เป็นวันในอนาคต', 'warning');
+                    if ((f.time_from && !f.time_to) || (!f.time_from && f.time_to)) return Swal.fire('', 'กรุณาระบุเวลาให้ครบทั้งเวลาเริ่มและเวลาสิ้นสุด (หรือเว้นว่างทั้งคู่)', 'warning');
+                    if (f.time_from && f.time_from === f.time_to) return Swal.fire('', 'เวลาเริ่มและเวลาสิ้นสุดต้องไม่เท่ากัน', 'warning');
+                    if (!f.reason?.trim()) return Swal.fire('', 'กรุณาระบุเหตุผล', 'warning');
+                    if (!f.consent) return Swal.fire('', 'กรุณายินยอมให้ใช้ข้อมูลตาม PDPA ก่อน', 'warning');
                     if (!this.cctvSigHasDrawn) return Swal.fire('', 'กรุณาเซ็นชื่อรับรองก่อนส่งคำขอ', 'warning');
 
                     this.cctvSaving = true;
@@ -7611,24 +7768,40 @@
                                 uid: this.userProfile.userId,
                                 lineDisplayName: this.userProfile.displayName,
                                 linePictureUrl: this.userProfile.pictureUrl,
-                                houseNumber: this.cctvForm.house_number,
-                                phoneNumber: this.cctvForm.phone || null,
+                                requesterName: f.requester_name.trim(),
+                                relation: f.relation,
+                                incidentType: f.incident_type,
+                                houseNumber: f.house_number,
+                                phoneNumber: f.phone || null,
                                 cameraZone: zone,
-                                requestDate: this.cctvForm.request_date,
-                                timeRange: this.cctvForm.time_range || null,
-                                reason: this.cctvForm.reason,
+                                requestDate: f.request_date,
+                                timeFrom: f.time_from || null,
+                                timeTo: f.time_to || null,
+                                reason: f.reason,
+                                details: (f.details || '').trim() || null,
+                                policeReport: !!f.police_report,
+                                policeReportNo: f.police_report ? ((f.police_report_no || '').trim() || null) : null,
                                 pdpaConsent: true,
                                 signatureUrl: sigD.url,
+                                rulesAccepted: true,
+                                rulesVersion: this.cctvRules.version,
                             })
                         });
                         const d = await res.json();
-                        if (!res.ok) throw new Error(d.error || 'ส่งคำขอไม่สำเร็จ');
+                        if (!res.ok) { const err = new Error(d.error || 'ส่งคำขอไม่สำเร็จ'); err.code = d.code; err.rules = d.rules; throw err; }
 
-                        Swal.fire({ icon: 'success', title: '📹 ส่งคำขอแล้ว', html: '<small>รอการตรวจสอบจากนิติบุคคล</small>', timer: 2200, showConfirmButton: false });
+                        Swal.fire({ icon: 'success', title: '📹 ส่งคำขอแล้ว', html: '<small>เลขที่คำขอ ' + ((d.request && d.request.ref_no) || '') + '<br>รอการตรวจสอบจากนิติบุคคล — จะแจ้งผลกลับทาง LINE</small>', timer: 2600, showConfirmButton: false });
                         this.cctvFormModal = false;
                         await this.loadMyCctvRequests();
                     } catch (err) {
-                        Swal.fire('ไม่สำเร็จ', err.message, 'error');
+                        if (err && err.code === 'rules_changed') {
+                            // นิติฯ แก้กฎระหว่างที่กำลังกรอก → ต้องอ่าน+ยอมรับฉบับใหม่ (ข้อมูลที่กรอกไว้ยังอยู่)
+                            if (err.rules) this.cctvRules = err.rules;
+                            this.cctvRulesAccepted = false; this.cctvRulesChecked = false; this.cctvRulesRead = false; this.cctvRulesErr = '';
+                            this._cctvKeepDraft = true; this.cctvFormModal = false; this.cctvRulesModal = true;
+                            this.$nextTick(() => this.cctvRulesOnScroll());
+                            Swal.fire('กฎระเบียบมีการปรับปรุง', 'กรุณาอ่านและกดยอมรับฉบับใหม่ ข้อมูลที่กรอกไว้จะยังอยู่ (ต้องเซ็นชื่อใหม่)', 'info');
+                        } else Swal.fire('ไม่สำเร็จ', err.message, 'error');
                     } finally {
                         this.cctvSaving = false;
                     }
