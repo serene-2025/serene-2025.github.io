@@ -35,11 +35,17 @@
     const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     const EDGE_FUNCTION_URL = appCfg('EDGE_FUNCTION_URL', SUPABASE_URL + '/functions/v1/line-webhook');
 
+    // คำอธิบายสถานะ — ใช้ตรงกับ Flex ที่ระบบส่งให้สมาชิก/เจ้าของบ้าน (สมาชิกเคยสับสนระหว่างเจ้าของกับผู้อาศัย)
+    //   claim = ประโยคที่ให้สมาชิกยืนยันอีกครั้งก่อนส่ง ({h} = บ้านเลขที่)
     const STATUS_OPTIONS = [
-        { value:'เจ้าของบ้าน', icon:'🏠', desc:'เป็นเจ้าของกรรมสิทธิ์บ้านหลังนี้แต่เพียงผู้เดียว(หรือคนแรก)' },
-        { value:'เจ้าของร่วม', icon:'👥', desc:'เป็นเจ้าของร่วมกับคนอื่น (เจ้าของกรรมสิทธิ์ร่วม)' },
-        { value:'ผู้อาศัย',    icon:'🧑', desc:'พักอาศัยอยู่ แต่ไม่ใช่เจ้าของกรรมสิทธิ์(เช่น สามี-ภรรยา, พี่น้อง)' },
-        { value:'ผู้เช่า',      icon:'🔑', desc:'เช่าบ้านหลังนี้อยู่' },
+        { value:'เจ้าของบ้าน', icon:'🏠', desc:'ผู้ที่มีชื่ออยู่ในโฉนดที่ดินของบ้านหลังนี้ (เป็นเจ้าของคนเดียว) — ชื่อต้องตรงกับโฉนด',
+          claim:'ท่านมีชื่ออยู่ในโฉนดที่ดินของบ้านเลขที่ {h}', next:'📜 ระบบจะให้ตรวจชื่อของท่านกับข้อมูลโฉนดด้านล่าง' },
+        { value:'เจ้าของร่วม', icon:'👥', desc:'ผู้ที่มีชื่ออยู่ในโฉนดที่ดินของบ้านหลังนี้ร่วมกับเจ้าของคนอื่น — ชื่อต้องตรงกับโฉนด',
+          claim:'ท่านมีชื่ออยู่ในโฉนดที่ดินของบ้านเลขที่ {h} ร่วมกับเจ้าของคนอื่น', next:'📜 ระบบจะให้ตรวจชื่อของท่านกับข้อมูลโฉนดด้านล่าง' },
+        { value:'ผู้อาศัย',    icon:'🧑', desc:'สามี ภรรยา แฟน หรือญาติพี่น้องของเจ้าของ ที่อยู่บ้านเดียวกัน — ไม่มีชื่ออยู่ในโฉนด',
+          claim:'ท่านเป็นสามี ภรรยา แฟน หรือญาติพี่น้องของเจ้าของ อยู่บ้านเลขที่ {h} และไม่มีชื่ออยู่ในโฉนด' },
+        { value:'ผู้เช่า',      icon:'🔑', desc:'ผู้ที่เช่าบ้านหลังนี้จากเจ้าของบ้าน',
+          claim:'ท่านเช่าบ้านเลขที่ {h} จากเจ้าของบ้าน' },
     ];
 
     // 🔒 แนบ LINE access token ให้ server พิสูจน์ว่า uid นี้คือคนที่เปิดหน้านี้จริง
@@ -64,6 +70,7 @@
         const [houseMembers, setHouseMembers] = useState([]);
         const [selectedStatus, setSelectedStatus] = useState('');
         const [submitting, setSubmitting] = useState(false);
+        const [confirmDlg, setConfirmDlg] = useState(false);   // หน้าต่างสรุปก่อนส่ง: ให้สมาชิกอ่านความหมายสถานะซ้ำอีกครั้ง
         const [errorMsg, setErrorMsg] = useState('');
         const [toast, setToast] = useState(null);
         // 🏘️ ข้อมูลเจ้าของ/โฉนดตามทะเบียนที่ดิน (ให้เจ้าของบ้าน/เจ้าของร่วมตรวจสอบชื่อ)
@@ -174,6 +181,14 @@
                 }
             })();
         }, []);
+
+        // ✅ กดปุ่มยืนยัน → เปิดหน้าต่างสรุปความหมายสถานะก่อน (กันเลือกผิด เพราะยืนยันได้ครั้งเดียว)
+        const requestConfirm = () => {
+            if (!selectedStatus) return showToast('กรุณาเลือกสถานะของท่านก่อนค่ะ', 'error');
+            if (isOwnerStatus && ownerInfoError) return showToast('ยังโหลดข้อมูลโฉนดไม่ได้ กรุณากดโหลดใหม่ก่อนค่ะ', 'error');
+            if (!checkReady) return showToast('กรุณาตรวจสอบชื่อเจ้าของและเลขโฉนดก่อนค่ะ', 'error');
+            setConfirmDlg(true);
+        };
 
         const submitConfirm = async () => {
             if (!selectedStatus) return showToast('กรุณาเลือกสถานะของท่านก่อนค่ะ', 'error');
@@ -300,6 +315,9 @@
                 <div className="bg-white rounded-3xl shadow-lg p-5 border border-teal-100 space-y-3">
                     <p className="text-sm font-bold text-slate-700">📜 ตรวจสอบข้อมูลตามทะเบียนที่ดิน *</p>
                     <p className="text-[11px] text-slate-500">ระบบพบข้อมูลของบ้านเลขที่ <b>{myRecord.house_no}</b> ดังนี้ กรุณาตรวจว่าชื่อเจ้าของและเลขโฉนดถูกต้องหรือไม่</p>
+                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-[11px] text-amber-800 leading-relaxed" data-testid="owner-check-warn">
+                        ⚠️ เลือก “ถูกต้อง” ได้เฉพาะเมื่อ<b>ชื่อของท่านอยู่ในรายการโฉนดนี้</b> — ถ้าท่านเป็นสามี ภรรยา แฟน หรือญาติที่ไม่มีชื่อในโฉนด ให้กลับไปเลือก <b>“ผู้อาศัย”</b> ด้านบน
+                    </div>
                     <div className="space-y-2">
                         {owners.map((o, i) => (
                             <div key={o.id || i} className="bg-teal-50 border border-teal-100 rounded-2xl p-3">
@@ -351,7 +369,7 @@
                 matched:  ['bg-emerald-50 border-emerald-200 text-emerald-700', '✅ ชื่อตรงกับข้อมูลโฉนดในทะเบียน'],
                 pending:  ['bg-amber-50 border-amber-200 text-amber-700', '⏳ นิติบุคคลกำลังตรวจสอบชื่อเจ้าของที่ท่านแจ้ง' + (c.correct_name ? ' (' + c.correct_name + ')' : '')],
                 approved: ['bg-emerald-50 border-emerald-200 text-emerald-700', '✅ นิติบุคคลตรวจสอบข้อมูลเจ้าของเรียบร้อยแล้ว'],
-                rejected: ['bg-rose-50 border-rose-200 text-rose-700', '❌ ข้อมูลที่แจ้งยังไม่ผ่านการตรวจสอบ' + (c.admin_remark ? ' — ' + c.admin_remark : '')],
+                rejected: ['bg-rose-50 border-rose-200 text-rose-700', '❌ ข้อมูลที่แจ้งยังไม่ผ่านการตรวจสอบ' + (c.admin_remark ? ' — ' + c.admin_remark : '') + ' · เจ้าของบ้าน/เจ้าของร่วมต้องมีชื่ออยู่ในโฉนด ถ้าท่านเป็นสามี ภรรยา แฟน หรือญาติที่ไม่มีชื่อในโฉนด ให้เลือก "ผู้อาศัย"'],
             };
             const m = map[c.status];
             if (!m) return null;
@@ -367,7 +385,7 @@
                 pending:  ['bg-amber-50 border-amber-200 text-amber-700', '⏳ รอเจ้าของบ้านกดยืนยันสถานะ "' + st + '" ของท่านทาง LINE'],
                 no_owner: ['bg-amber-50 border-amber-200 text-amber-700', '⏳ บ้านนี้ยังไม่มีเจ้าของที่ยืนยันสิทธิ์ในระบบ — นิติบุคคลจะตรวจสอบให้ท่าน'],
                 approved: ['bg-emerald-50 border-emerald-200 text-emerald-700', '✅ ' + (a.decision_source === 'admin' ? 'นิติบุคคล' : 'เจ้าของบ้าน') + 'ยืนยันสถานะ "' + st + '" ของท่านแล้ว'],
-                rejected: ['bg-rose-50 border-rose-200 text-rose-700', '❌ ' + (a.decision_source === 'admin' ? 'นิติบุคคล' : 'เจ้าของบ้าน') + 'ไม่ยืนยันสถานะ "' + st + '" ของท่าน' + (a.admin_remark ? ' — ' + a.admin_remark : '') + ' กรุณาเลือกสถานะใหม่หรือติดต่อนิติบุคคล'],
+                rejected: ['bg-rose-50 border-rose-200 text-rose-700', '❌ ' + (a.decision_source === 'admin' ? 'นิติบุคคล' : 'เจ้าของบ้าน') + 'ไม่ยืนยันสถานะ "' + st + '" ของท่าน' + (a.admin_remark ? ' — ' + a.admin_remark : '') + ' กรุณาเลือกสถานะใหม่หรือติดต่อนิติบุคคล · (ผู้อาศัย/ผู้เช่า ต้องให้เจ้าของบ้านที่มีชื่อในโฉนดเป็นผู้ยืนยัน)'],
             };
             const m = map[a.status];
             if (!m) return null;
@@ -487,6 +505,16 @@
 
                             <div className="bg-white rounded-3xl shadow-lg p-5 border border-gray-100">
                                 <p className="text-sm font-bold text-slate-700 mb-3">กรุณาเลือกสถานะของท่าน *</p>
+                                <div className="bg-sky-50 border border-sky-200 rounded-2xl p-3 mb-3 text-[11px] text-sky-900 leading-relaxed" data-testid="status-guide">
+                                    <div className="font-bold text-xs">💡 ไม่แน่ใจเลือกแบบไหน? ถามตัวเองข้อเดียว</div>
+                                    <div className="font-bold my-1">“ชื่อของท่านอยู่ในโฉนดที่ดินของบ้านหลังนี้หรือไม่?”</div>
+                                    <ul className="space-y-1">
+                                        <li>✅ <b>มีชื่อในโฉนด</b> → <b>เจ้าของบ้าน</b> (ชื่อเดียว) หรือ <b>เจ้าของร่วม</b> (มีชื่อคนอื่นในโฉนดด้วย)</li>
+                                        <li>🙋 <b>ไม่มีชื่อในโฉนด</b> แต่เป็นสามี ภรรยา แฟน หรือญาติพี่น้องที่อยู่บ้านเดียวกับเจ้าของ → <b>ผู้อาศัย</b></li>
+                                        <li>🔑 <b>ไม่มีชื่อในโฉนด</b> และเช่าบ้านจากเจ้าของ → <b>ผู้เช่า</b></li>
+                                    </ul>
+                                    <div className="mt-1.5 text-sky-700">เลือกเจ้าของบ้าน/เจ้าของร่วมได้เฉพาะผู้ที่มีชื่อในโฉนดเท่านั้น ถ้าชื่อไม่ตรง นิติบุคคลจะส่งกลับให้เลือกใหม่</div>
+                                </div>
                                 <div className="space-y-2">
                                     {STATUS_OPTIONS.map(opt => {
                                         const full = OWNER_VALUES.includes(opt.value) && slotFull(opt.value);
@@ -502,6 +530,7 @@
                                                 {sl && <div className={'text-[11px] mt-1 font-bold ' + (full ? 'text-rose-500' : 'text-slate-400')}>
                                                     {full ? '🚫 มีผู้ยืนยันครบแล้ว (' + sl.used + '/' + sl.max + ') — หากข้อมูลไม่ถูกต้องให้ติดต่อนิติบุคคล' : 'ยืนยันแล้ว ' + sl.used + '/' + sl.max + ' ท่าน'}
                                                 </div>}
+                                                {opt.next && <div className="text-[11px] mt-1 text-teal-700">{opt.next}</div>}
                                                 {(opt.value === 'ผู้เช่า' || opt.value === 'ผู้อาศัย') && <div className="text-[11px] mt-1 text-amber-600">📨 ระบบจะส่งให้เจ้าของบ้านกดยืนยันทาง LINE</div>}
                                             </div>
                                             {selectedStatus === opt.value && <span className="text-teal-500 text-lg flex-shrink-0">✓</span>}
@@ -517,7 +546,7 @@
                                 ⚠️ <b>ยืนยันได้เพียงครั้งเดียว</b> กรุณาเลือกให้ถูกต้อง หากต้องการเปลี่ยนแปลงภายหลัง ต้องติดต่อนิติบุคคลหมู่บ้านเท่านั้น
                             </div>
 
-                            <button onClick={submitConfirm} disabled={submitting || !selectedStatus || !checkReady || slotFull(selectedStatus)}
+                            <button onClick={requestConfirm} data-testid="status-confirm-btn" disabled={submitting || !selectedStatus || !checkReady || slotFull(selectedStatus)}
                                 className="w-full py-3.5 bg-gradient-to-r from-teal-600 to-emerald-500 text-white rounded-2xl font-bold shadow-lg disabled:opacity-50">
                                 {submitting ? '⏳ กำลังยืนยัน...' : '✅ ยืนยันสถานะ'}
                             </button>
@@ -525,6 +554,29 @@
                     )}
 
                 </div>
+
+                {/* ✅ Modal สรุปก่อนยืนยันสถานะ */}
+                {confirmDlg && (() => {
+                    const o = STATUS_OPTIONS.find(x => x.value === selectedStatus) || {};
+                    const claim = String(o.claim || '').replace('{h}', (myRecord && myRecord.house_no) || '');
+                    return (
+                    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-5" data-testid="status-confirm-dialog" onClick={() => setConfirmDlg(false)}>
+                        <div className="bg-white rounded-3xl p-5 w-full max-w-xs animate-slide-up" onClick={e => e.stopPropagation()}>
+                            <p className="font-bold text-slate-800 mb-1">{o.icon} ยืนยันสถานะ “{selectedStatus}” ใช่ไหม?</p>
+                            <p className="text-sm text-slate-600 mb-2">ท่านยืนยันว่า <b>{claim}</b></p>
+                            {isOwnerStatus
+                                ? <p className="text-[11px] text-teal-700 bg-teal-50 rounded-xl p-2.5 mb-2">📜 นิติบุคคลจะตรวจชื่อของท่านกับโฉนด ถ้าไม่มีชื่อในโฉนด ให้กด “กลับไปแก้” แล้วเลือก “ผู้อาศัย”</p>
+                                : <p className="text-[11px] text-amber-700 bg-amber-50 rounded-xl p-2.5 mb-2">📨 ระบบจะส่ง LINE ให้เจ้าของบ้านที่มีชื่อในโฉนดกดยืนยัน ถ้าท่านมีชื่อในโฉนดเอง ให้กด “กลับไปแก้” แล้วเลือก “เจ้าของบ้าน/เจ้าของร่วม”</p>}
+                            <p className="text-[11px] text-rose-600 mb-4">⚠️ ยืนยันได้เพียงครั้งเดียว หากเลือกผิดต้องติดต่อนิติบุคคล</p>
+                            <div className="flex gap-2">
+                                <button data-testid="status-confirm-yes" onClick={() => { setConfirmDlg(false); submitConfirm(); }}
+                                    className="flex-1 py-2.5 bg-gradient-to-r from-teal-600 to-emerald-500 text-white rounded-2xl font-bold text-sm">ใช่ ยืนยัน</button>
+                                <button data-testid="status-confirm-back" onClick={() => setConfirmDlg(false)} className="px-4 py-2.5 bg-gray-100 rounded-2xl font-bold text-sm text-slate-500">กลับไปแก้</button>
+                            </div>
+                        </div>
+                    </div>
+                    );
+                })()}
 
                 {/* 🗑️ Modal ยืนยันแจ้งลบสมาชิก */}
                 {removalTarget && (
