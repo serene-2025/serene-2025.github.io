@@ -420,6 +420,13 @@
                             <div class="w-12 h-12 rounded-full flex items-center justify-center text-lg" :style="adminMenuStyle('teal')"><i class="fa-solid fa-house-user"></i></div>
                             <span class="text-xs font-bold text-slate-700 text-center leading-tight">ทะเบียนบ้าน &amp; สมาชิก</span>
                         </button>
+                        <!-- 🛠️ จัดการ แจ้งซ่อม / ร้องเรียน / ทะเบียนรถ / ขอดูกล้อง (ในหน้านี้เอง · เทียบเท่าหน้าเว็บใหญ่) — เห็นเมื่อบทบาทมีสิทธิ์โมดูลนั้น ๆ -->
+                        <button v-for="k in amToolKeys" :key="k" @click="amOpen(k)" :data-testid="'admin-menu-am-' + k"
+                           class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 border border-dashed border-slate-300 relative">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center text-lg" :style="adminMenuStyle(amSys[k].color)"><i :class="'fa-solid fa-' + amSys[k].icon"></i></div>
+                            <span class="text-xs font-bold text-slate-700 text-center leading-tight">{{ amSys[k].short }}</span>
+                            <span v-if="amBadgeOf(k) > 0" class="absolute top-1.5 right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-rose-500 text-white text-[10px] font-extrabold flex items-center justify-center" :data-testid="'am-badge-' + k">{{ amBadgeOf(k) > 99 ? '99+' : amBadgeOf(k) }}</span>
+                        </button>
                         <a v-for="m in menuAccess.admin_menus" :key="m.key" :href="m.url" :data-testid="'admin-menu-' + m.key"
                            class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 border border-dashed border-slate-300">
                             <div class="w-12 h-12 rounded-full flex items-center justify-center text-lg" :style="adminMenuStyle(m.color)"><i :class="'fa-solid fa-' + m.icon"></i></div>
@@ -3628,6 +3635,243 @@
             </div>
         </div>
 
+        <!-- 🛠️ ADMIN: จัดการ แจ้งซ่อม / ร้องเรียน / ทะเบียนรถ / ขอดูกล้อง (หน้าเดียว สลับระบบได้) — ใช้ API ฝั่งแอดมินเดียวกับหน้าเว็บใหญ่ · เซิร์ฟเวอร์ตรวจสิทธิ์โมดูลทุกครั้ง -->
+        <div v-if="currentTab === 'admmgr' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-sky-50/40 overflow-y-auto z-20" data-testid="am-page">
+            <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
+                <div class="mb-3 flex items-center gap-3">
+                    <button @click="amBack()" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" data-testid="am-back"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="flex-1 min-w-0">
+                        <span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-800 text-white tracking-wider">ADMIN</span>
+                        <h2 class="text-2xl font-extrabold text-slate-800 leading-tight" data-testid="am-title">{{ am.sys ? amSys[am.sys].title : '' }}</h2>
+                    </div>
+                    <button @click="amLoad()" :disabled="am.loading" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" title="รีเฟรช" data-testid="am-refresh"><i class="fa-solid fa-rotate" :class="am.loading ? 'fa-spin' : ''"></i></button>
+                </div>
+                <!-- สลับระบบ (เฉพาะที่มีสิทธิ์) -->
+                <div v-if="amToolKeys.length > 1" class="flex gap-1.5 overflow-x-auto pb-2 mb-1 -mx-1 px-1" data-testid="am-systems">
+                    <button v-for="k in amToolKeys" :key="k" @click="amSwitch(k)" class="shrink-0 px-3 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5" :class="am.sys === k ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 shadow-sm'" :data-testid="'am-sys-' + k">
+                        <i :class="'fa-solid fa-' + amSys[k].icon"></i> {{ amSys[k].short }}
+                        <span v-if="amBadgeOf(k) > 0" class="min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-extrabold flex items-center justify-center" :class="am.sys === k ? 'bg-white/25' : 'bg-rose-500 text-white'" :data-testid="'am-chip-badge-' + k">{{ amBadgeOf(k) > 99 ? '99+' : amBadgeOf(k) }}</span>
+                    </button>
+                </div>
+                <!-- กรองสถานะ -->
+                <div v-if="am.sys" class="flex gap-1.5 overflow-x-auto pb-2 mb-1 -mx-1 px-1" data-testid="am-filters">
+                    <button @click="amSetStatus('')" class="shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold" :class="!am.status ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 shadow-sm'" data-testid="am-filter-all">ทั้งหมด <span class="ml-0.5 opacity-70">{{ am.items.length }}</span></button>
+                    <button v-for="s in amSys[am.sys].st" :key="s[0]" @click="amSetStatus(s[0])" class="shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold" :class="am.status === s[0] ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 shadow-sm'" :data-testid="'am-filter-' + s[0]">{{ s[1] }} <span class="ml-0.5 opacity-70" :data-testid="'am-count-' + s[0]">{{ amCounts[s[0]] || 0 }}</span></button>
+                </div>
+                <div class="relative mb-3">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-sm"></i>
+                    <input v-model="am.q" @input="am.limit = 30" type="search" placeholder="ค้นหา ชื่อ / บ้านเลขที่ / ทะเบียน / รายละเอียด" class="w-full rounded-2xl bg-white shadow-sm border border-slate-100 pl-10 pr-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-sky-300" data-testid="am-search">
+                </div>
+                <div v-if="am.error" class="rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-sm p-4 mb-3" data-testid="am-error">{{ am.error }} <button @click="amLoad()" class="underline font-bold ml-1">ลองใหม่</button></div>
+                <div v-if="am.loading && !am.items.length" class="text-center text-slate-400 py-10"><i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลด...</div>
+                <div v-else-if="!am.error && !amRows.length" class="rounded-3xl bg-white shadow-sm p-8 text-center" data-testid="am-empty">
+                    <div class="text-4xl mb-2">{{ am.items.length ? '🔍' : '🎉' }}</div>
+                    <div class="font-bold text-slate-700">{{ am.items.length ? 'ไม่พบรายการที่ตรงกับตัวกรอง' : 'ยังไม่มีรายการ' }}</div>
+                </div>
+                <div class="text-[11px] text-slate-400 mb-2" v-if="amRows.length" data-testid="am-result-count">แสดง {{ amShown.length }} จาก {{ amRows.length }} รายการ</div>
+                <div class="space-y-2.5">
+                    <button v-for="r in amShown" :key="r.id" @click="amOpenRow(r)" class="w-full text-left rounded-3xl bg-white shadow-sm p-4 active:scale-[0.99] transition" :data-testid="'am-row-' + r.id">
+                        <div class="flex items-start gap-3">
+                            <div class="min-w-0 flex-1">
+                                <div class="text-sm font-extrabold text-slate-800 break-words">{{ r.title }}</div>
+                                <div class="text-[12px] text-slate-500 break-words" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">{{ r.sub }}</div>
+                                <div class="text-[11px] text-slate-400 mt-1 break-words">{{ r.meta }}</div>
+                            </div>
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" :class="r.badgeCls" :data-testid="'am-badge-row-' + r.id">{{ r.badge }}</span>
+                        </div>
+                        <div v-if="r.flags.length" class="flex flex-wrap gap-1 mt-2"><span v-for="f in r.flags" :key="f[0]" class="px-2 py-0.5 rounded-full text-[10px] font-bold" :class="f[1]">{{ f[0] }}</span></div>
+                    </button>
+                </div>
+                <button v-if="amShown.length < amRows.length" @click="am.limit += 30" class="w-full mt-3 py-3 rounded-2xl bg-white shadow-sm text-sm font-bold text-slate-600" data-testid="am-more">แสดงเพิ่ม</button>
+                <div class="text-[10px] text-slate-400 text-center mt-4">รายการและการดำเนินการชุดเดียวกับ Super Admin · ทุกการแก้ไขถูกบันทึกประวัติระบบ</div>
+            </div>
+        </div>
+
+        <!-- 🛠️ รายละเอียด/ดำเนินการ (แผ่นเลื่อนขึ้นจากด้านล่าง) -->
+        <div v-if="currentTab === 'admmgr' && amSel" class="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50" @click.self="amCloseSel()" data-testid="am-sheet">
+            <div class="w-full max-w-lg max-h-[92vh] overflow-y-auto bg-slate-50 rounded-t-3xl shadow-2xl">
+                <div class="sticky top-0 z-10 bg-slate-50/95 backdrop-blur px-4 pt-3 pb-2 flex items-center gap-3 border-b border-slate-100">
+                    <div class="min-w-0 flex-1">
+                        <div class="text-base font-extrabold text-slate-800 break-words" data-testid="am-sheet-title">{{ amRow(amSel).title }}</div>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="amRow(amSel).badgeCls" data-testid="am-sheet-badge">{{ amRow(amSel).badge }}</span>
+                    </div>
+                    <button @click="amCloseSel()" class="w-9 h-9 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" data-testid="am-sheet-close"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="px-4 pt-3 pb-8 space-y-3">
+
+                    <!-- ───── แจ้งซ่อม ───── -->
+                    <template v-if="am.sys === 'repair'">
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5 text-sm space-y-1.5">
+                            <div v-if="amSel.location" class="font-bold text-slate-800" data-testid="am-rp-loc">📍 {{ amSel.location }}</div>
+                            <div class="text-slate-600 whitespace-pre-line break-words">{{ amSel.detail }}</div>
+                            <div class="text-[11px] text-slate-400">🏷️ {{ amSel.category || '—' }} · แจ้งเมื่อ {{ amDt(amSel.created_at) }}</div>
+                            <img v-if="amSafeUrl(amSel.image_url)" :src="amSel.image_url" @click="amImg(amSel.image_url)" class="w-24 h-24 object-cover rounded-xl border border-slate-200" alt="รูปที่ลูกบ้านแนบ">
+                        </div>
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5 text-[12px] text-slate-600" data-testid="am-reporter">
+                            <div class="font-bold text-slate-700 mb-1">ผู้แจ้ง</div>
+                            <div>{{ amSel.line_display_name || 'ไม่ระบุ' }} · 🏠 {{ amSel.house_number || '—' }} · 📞 {{ amSel.phone_number || '—' }}</div>
+                        </div>
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5">
+                            <div class="text-xs font-bold text-slate-600 mb-1.5">สถานะ</div>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button v-for="s in amSys.repair.st" :key="s[0]" @click="am.form.status = s[0]" class="px-3 py-2 rounded-xl text-xs font-bold border-2" :class="am.form.status === s[0] ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-600'" :data-testid="'am-rp-st-' + s[0]">{{ s[1] }}</button>
+                            </div>
+                            <div class="text-xs font-bold text-slate-600 mt-3 mb-1.5">บันทึกผลการดำเนินการ</div>
+                            <textarea v-model="am.form.remark" rows="3" maxlength="1000" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none" placeholder="เช่น เปลี่ยนหลอดไฟเรียบร้อยแล้ว" data-testid="am-rp-remark"></textarea>
+                            <div class="text-xs font-bold text-slate-600 mt-3 mb-1.5">รูปหลังดำเนินการ (ไม่บังคับ)</div>
+                            <div class="flex items-center gap-3">
+                                <label class="px-3 py-2 rounded-xl bg-slate-100 text-xs font-bold text-slate-600 cursor-pointer"><i class="fa-solid fa-camera mr-1"></i> เลือกรูป<input type="file" accept="image/*" class="hidden" @change="amRpPick($event)" data-testid="am-rp-file"></label>
+                                <span v-if="am.form.uploading" class="text-xs text-slate-400"><i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลด...</span>
+                                <img v-if="amSafeUrl(am.form.imageUrl)" :src="am.form.imageUrl" class="w-14 h-14 object-cover rounded-xl border border-slate-200" alt="รูปหลังซ่อม" data-testid="am-rp-after">
+                                <button v-if="am.form.imageUrl" @click="am.form.imageUrl = ''" class="text-[11px] text-rose-500 font-bold">ลบรูป</button>
+                            </div>
+                            <div class="mt-3 text-[11px] text-amber-800 bg-amber-50 rounded-xl p-2.5" data-testid="am-rp-public">👁️ บันทึกผลและรูปหลังดำเนินการ <b>ลูกบ้านทุกคนจะเห็น</b> — อย่าใส่ชื่อ/เบอร์/ข้อมูลส่วนตัว</div>
+                        </div>
+                        <div v-if="am.err" class="text-sm text-rose-600 font-medium" data-testid="am-err">{{ am.err }}</div>
+                        <button @click="amRpSave()" :disabled="am.busy || am.form.uploading" class="w-full py-3 rounded-2xl bg-blue-600 text-white font-bold text-sm disabled:opacity-40" data-testid="am-rp-save">{{ am.busy ? 'กำลังบันทึก...' : '💾 บันทึก' }}</button>
+                    </template>
+
+                    <!-- ───── ร้องเรียน ───── -->
+                    <template v-if="am.sys === 'complaint'">
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5 text-sm space-y-1.5">
+                            <div class="text-xs font-bold text-rose-500">🏷️ {{ amSel.category || '—' }}</div>
+                            <div class="text-slate-600 whitespace-pre-line break-words" data-testid="am-cp-issue">{{ amSel.issue }}</div>
+                            <div class="flex gap-2 pt-1">
+                                <img v-if="amSafeUrl(amSel.image_url)" :src="amSel.image_url" @click="amImg(amSel.image_url)" class="w-20 h-20 object-cover rounded-xl border border-slate-200" alt="รูปประกอบ">
+                                <img v-if="amSafeUrl(amSel.signature_url)" :src="amSel.signature_url" @click="amImg(amSel.signature_url)" class="w-20 h-20 object-contain rounded-xl border border-slate-200 bg-white" alt="ลายเซ็น">
+                            </div>
+                            <div class="text-[11px] text-slate-400">ยื่นเมื่อ {{ amDt(amSel.created_at) }}</div>
+                        </div>
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5 text-[12px] text-slate-600" data-testid="am-reporter">
+                            <div class="font-bold text-slate-700 mb-1">ผู้แจ้ง</div>
+                            <div>{{ amSel.fullname || '—' }}<span v-if="amSel.line_display_name && amSel.line_display_name !== amSel.fullname" class="text-fuchsia-500"> (LINE: {{ amSel.line_display_name }})</span></div>
+                            <div>🏠 {{ amSel.house_no || '—' }} · 📞 {{ amSel.phone || '—' }}</div>
+                        </div>
+                        <div v-if="amSel.admin_note" class="rounded-2xl bg-indigo-50 text-indigo-700 text-xs p-3" data-testid="am-cp-note"><b>ตอบกลับล่าสุด:</b> {{ amSel.admin_note }}</div>
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5">
+                            <div class="text-xs font-bold text-slate-600 mb-1.5">เปลี่ยนสถานะ</div>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button v-for="s in amSys.complaint.st" :key="s[0]" @click="amCpStatus(s[0])" :disabled="am.busy" class="px-3 py-2 rounded-xl text-xs font-bold border-2 disabled:opacity-50" :class="amSel.status === s[0] ? 'bg-fuchsia-600 border-fuchsia-600 text-white' : 'bg-white border-slate-200 text-slate-600'" :data-testid="'am-cp-st-' + s[0]">{{ s[1] }}</button>
+                            </div>
+                        </div>
+                        <div v-if="am.err" class="text-sm text-rose-600 font-medium" data-testid="am-err">{{ am.err }}</div>
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5">
+                            <div class="text-xs font-bold text-slate-600 mb-1.5">💬 ตอบกลับผู้แจ้งทาง LINE</div>
+                            <template v-if="amSel.uid">
+                                <div class="flex flex-wrap gap-1.5 mb-2">
+                                    <button v-for="(t, i) in amCpTemplates" :key="t.key" @click="amCpTpl(i)" class="px-2.5 py-1.5 rounded-xl bg-slate-100 text-[11px] font-bold text-slate-600" :data-testid="'am-cp-tpl-' + t.key">{{ t.icon }} {{ t.label }}</button>
+                                </div>
+                                <textarea v-model="am.form.message" rows="4" maxlength="1000" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none" placeholder="เลือกข้อความสำเร็จรูป หรือพิมพ์เอง" data-testid="am-cp-msg"></textarea>
+                                <label class="flex items-center gap-2 text-xs text-slate-600 mt-2"><input type="checkbox" v-model="am.form.updateStatus" class="w-4 h-4 accent-fuchsia-600" data-testid="am-cp-upd"> อัปเดตสถานะตามข้อความที่เลือก</label>
+                                <button @click="amCpSend()" :disabled="am.busy || !am.form.message.trim()" class="w-full mt-3 py-3 rounded-2xl bg-fuchsia-600 text-white font-bold text-sm disabled:opacity-40" data-testid="am-cp-send">{{ am.busy ? 'กำลังส่ง...' : '📨 ส่งข้อความตอบกลับ' }}</button>
+                            </template>
+                            <div v-else class="text-xs text-slate-400" data-testid="am-cp-nouid">เรื่องนี้ไม่มี LINE UID ผู้แจ้ง (แจ้งผ่านช่องทางอื่น) — ส่งข้อความตอบกลับทาง LINE ไม่ได้</div>
+                        </div>
+                    </template>
+
+                    <!-- ───── ทะเบียนรถ ───── -->
+                    <template v-if="am.sys === 'car'">
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5 text-sm space-y-1.5">
+                            <img v-if="amSafeUrl(amSel.image_url)" :src="amSel.image_url" @click="amImg(amSel.image_url)" class="w-full max-h-52 object-cover rounded-xl border border-slate-200" alt="รูปรถ" data-testid="am-car-img">
+                            <div class="text-lg font-extrabold tracking-wider text-slate-800" data-testid="am-car-plate">{{ amSel.plate_number }} <span class="text-xs font-medium text-slate-500 tracking-normal">{{ amSel.province }}</span></div>
+                            <div class="text-xs text-slate-500">{{ amSel.car_type || '—' }}</div>
+                            <div class="text-xs text-slate-600">👤 {{ amSel.fullname || '—' }} · 🏠 {{ amSel.house_number || '—' }} · 📞 {{ amSel.phone || '—' }}</div>
+                            <div class="text-xs text-slate-600" data-testid="am-car-exp">⏰ {{ amSel.end_date ? ('หมดอายุ ' + amYmd(amSel.end_date) + ' (' + amDaysTxt(amSel.end_date) + ')') : 'ยังไม่ได้ตั้งวันหมดอายุ' }}</div>
+                            <div class="text-[11px] text-slate-400">ลงทะเบียนเมื่อ {{ amDt(amSel.created_at) }}</div>
+                        </div>
+                        <div v-if="amSel.status === 'delete_pending'" class="rounded-2xl bg-orange-50 border border-orange-200 p-3.5 text-xs text-orange-900" data-testid="am-car-delreq">
+                            <div class="font-extrabold mb-1">🗑️ สมาชิกขอลบรถคันนี้</div>
+                            <div><b>เหตุผล:</b> {{ amSel.delete_reason || '—' }}<span v-if="amSel.delete_note"> · {{ amSel.delete_note }}</span></div>
+                            <div class="text-orange-700 mt-0.5">ขอโดย {{ amSel.delete_requested_name || '—' }}<span v-if="amSel.delete_requested_at"> · {{ amDt(amSel.delete_requested_at) }}</span></div>
+                        </div>
+                        <div v-if="amSel.status === 'renewal_pending'" class="rounded-2xl bg-sky-50 border border-sky-200 p-3.5 text-xs text-sky-900" data-testid="am-car-renewreq">
+                            <div class="font-extrabold mb-1">🔁 สมาชิกยืนยันใช้งานต่อ — ขอต่ออายุ</div>
+                            <div v-if="amSel.renewal_note">{{ amSel.renewal_note }}</div>
+                        </div>
+                        <div v-if="amSel.status !== 'delete_pending' && amSel.delete_response" class="rounded-2xl bg-slate-100 text-slate-600 text-xs p-3" data-testid="am-car-delresp">ปฏิเสธคำขอลบก่อนหน้า: {{ amSel.delete_response }}</div>
+                        <div v-if="am.err" class="text-sm text-rose-600 font-medium" data-testid="am-err">{{ am.err }}</div>
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5 space-y-2" data-testid="am-car-actions">
+                            <template v-if="amSel.status === 'delete_pending'">
+                                <button @click="amCarDeleteApprove()" :disabled="am.busy" class="w-full py-3 rounded-2xl bg-orange-500 text-white font-bold text-sm disabled:opacity-40" data-testid="am-car-del-ok">🗑️ อนุมัติลบ</button>
+                                <button @click="amCarDeleteReject()" :disabled="am.busy" class="w-full py-3 rounded-2xl bg-slate-100 text-slate-700 font-bold text-sm disabled:opacity-40" data-testid="am-car-del-no">↩️ ปฏิเสธคำขอลบ</button>
+                            </template>
+                            <template v-else-if="amSel.status === 'renewal_pending'">
+                                <button @click="amCarRenew(true)" :disabled="am.busy" class="w-full py-3 rounded-2xl bg-emerald-600 text-white font-bold text-sm disabled:opacity-40" data-testid="am-car-renew-ok">✅ อนุมัติต่ออายุ</button>
+                                <button @click="amCarRenewReject()" :disabled="am.busy" class="w-full py-3 rounded-2xl bg-rose-50 text-rose-700 font-bold text-sm disabled:opacity-40" data-testid="am-car-renew-no">❌ ไม่อนุมัติต่ออายุ</button>
+                            </template>
+                            <template v-else>
+                                <button v-if="amSel.status !== 'approved' && amSel.status !== 'active'" @click="amCarOp('approve')" :disabled="am.busy" class="w-full py-3 rounded-2xl bg-emerald-600 text-white font-bold text-sm disabled:opacity-40" data-testid="am-car-approve">✅ อนุมัติ</button>
+                                <button v-if="amSel.status !== 'rejected'" @click="amCarOp('reject')" :disabled="am.busy" class="w-full py-3 rounded-2xl bg-rose-50 text-rose-700 font-bold text-sm disabled:opacity-40" data-testid="am-car-reject">❌ ไม่อนุมัติ</button>
+                                <button v-if="amSel.status === 'approved' || amSel.status === 'active'" @click="amCarRenew(false)" :disabled="am.busy" class="w-full py-3 rounded-2xl bg-orange-50 text-orange-700 font-bold text-sm disabled:opacity-40" data-testid="am-car-setexp">⏰ ตั้ง/ต่อวันหมดอายุ</button>
+                            </template>
+                            <div class="text-[10px] text-slate-400 text-center">การเพิ่มรถใหม่ แก้ไขข้อมูลรถ ลบรถโดยแอดมิน และตั้งวันหมดอายุทั้งหมด ทำได้ที่ Super Admin</div>
+                        </div>
+                    </template>
+
+                    <!-- ───── ขอดูกล้อง ───── -->
+                    <template v-if="am.sys === 'cctv'">
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5 text-sm space-y-1.5">
+                            <div class="flex items-center justify-between gap-2"><div class="font-extrabold text-slate-800">{{ amSel.requester_name || amSel.line_display_name || 'ไม่ระบุ' }}<span v-if="amSel.requester_relation" class="text-[11px] font-medium text-slate-500"> ({{ amSel.requester_relation }})</span></div><div class="text-[10px] font-mono text-slate-400" data-testid="am-cc-ref">{{ amSel.ref_no }}</div></div>
+                            <div class="text-xs text-slate-500">🏠 {{ amSel.house_number || '—' }}<template v-if="amSel.requester && amSel.requester.registered && amSel.requester.soi"> · ซอย {{ amSel.requester.soi }}</template><template v-if="amSel.requester && amSel.requester.registered && amSel.requester.living_status"> · {{ amSel.requester.living_status }}</template> · 📞 {{ amSel.phone_number || '—' }}</div>
+                            <div v-if="amRow(amSel).flags.length" class="flex flex-wrap gap-1"><span v-for="f in amRow(amSel).flags" :key="f[0]" class="px-2 py-0.5 rounded-full text-[10px] font-bold" :class="f[1]">{{ f[0] }}</span></div>
+                            <div class="text-xs font-bold text-slate-700">📍 {{ amSel.camera_zone || '—' }}<span v-if="amSel.incident_type" class="ml-1 px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-medium">{{ amSel.incident_type }}</span></div>
+                            <div class="text-xs text-slate-500">📅 {{ amYmd(amSel.request_date) }}<template v-if="amSel.time_range"> ⏰ {{ amSel.time_range }}</template></div>
+                            <div class="text-sm text-slate-600 bg-slate-50 rounded-xl p-3 whitespace-pre-line break-words" data-testid="am-cc-reason">{{ amSel.reason }}<div v-if="amSel.details" class="text-xs text-slate-500 mt-1.5 pt-1.5 border-t border-slate-200">🔎 {{ amSel.details }}</div></div>
+                            <div class="text-[11px] text-slate-500">🚔 {{ amSel.police_report ? ('แจ้งความแล้ว' + (amSel.police_report_no ? ' (' + amSel.police_report_no + ')' : '')) : 'ยังไม่ได้แจ้งความ' }}</div>
+                            <img v-if="amSafeUrl(amSel.signature_url)" :src="amSel.signature_url" @click="amImg(amSel.signature_url)" class="w-24 h-16 object-contain rounded-xl border border-slate-200 bg-white" alt="ลายเซ็น">
+                            <div class="text-[11px] text-slate-400">ขอเมื่อ {{ amDt(amSel.created_at) }} · {{ amSel.rules_version ? ('📜 ยอมรับกฎ v' + amSel.rules_version) : '📜 ไม่มีบันทึกการยอมรับกฎ' }}</div>
+                        </div>
+                        <div v-if="amSel.status !== 'pending'" class="rounded-2xl bg-white shadow-sm p-3.5 text-xs space-y-1" data-testid="am-cc-result">
+                            <div class="font-bold text-slate-700">ผลที่ตอบไปแล้ว</div>
+                            <div v-if="amSel.status === 'approved' && (amSel.approved_cameras || []).length" class="text-emerald-700">🎥 {{ amSel.approved_cameras.join(' · ') }}</div>
+                            <div v-if="amSel.status === 'approved' && amSel.access && (amSel.access.valid_from || amSel.access.valid_until)" class="text-slate-600">⏱ {{ amSel.access.valid_from ? amDtFull(amSel.access.valid_from) : 'ทันที' }} – {{ amSel.access.valid_until ? amDtFull(amSel.access.valid_until) : 'ไม่กำหนด' }}</div>
+                            <a v-if="amSafeUrl(amSel.response_link)" :href="amSel.response_link" target="_blank" rel="noopener" class="text-blue-600 underline block">🔗 ลิงก์ที่แนบไว้</a>
+                            <div v-if="amSel.instructions" class="text-amber-800">📌 {{ amSel.instructions }}</div>
+                            <div v-if="amSel.admin_remark" class="text-indigo-700">📝 {{ amSel.admin_remark }}</div>
+                            <div v-if="amSel.result_notify_ok === true" class="text-emerald-600">✅ แจ้งผู้ขอทาง LINE แล้ว</div>
+                            <div v-else-if="amSel.result_notify_ok === false" class="text-rose-600">⚠️ ส่งข้อความถึงผู้ขอไม่สำเร็จ</div>
+                        </div>
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5 space-y-3" data-testid="am-cc-form">
+                            <div class="flex gap-2">
+                                <button @click="amCcMode('approve')" class="flex-1 py-2.5 rounded-2xl font-bold text-sm border-2" :class="am.cc.mode === 'approve' ? 'bg-emerald-50 text-emerald-700 border-emerald-500' : 'bg-white text-slate-500 border-slate-200'" data-testid="am-cc-mode-approve">✅ อนุมัติ</button>
+                                <button @click="amCcMode('reject')" class="flex-1 py-2.5 rounded-2xl font-bold text-sm border-2" :class="am.cc.mode === 'reject' ? 'bg-rose-50 text-rose-700 border-rose-500' : 'bg-white text-slate-500 border-slate-200'" data-testid="am-cc-mode-reject">❌ ไม่อนุมัติ</button>
+                            </div>
+                            <template v-if="am.cc.mode === 'approve'">
+                                <div>
+                                    <div class="text-xs font-bold text-slate-600 mb-1">🎥 กล้องที่อนุมัติ</div>
+                                    <label v-for="(z, i) in am.cc.zones" :key="z" class="flex items-center gap-2 text-sm text-slate-700 py-1"><input type="checkbox" :value="z" v-model="am.cc.cams" class="w-4 h-4 accent-emerald-600" :data-testid="'am-cc-cam-' + i"> {{ z }}<span v-if="z === amSel.camera_zone" class="text-[10px] text-slate-400">(ที่ผู้ขอระบุ)</span></label>
+                                    <div class="flex gap-2 mt-1.5"><input v-model="am.cc.extra" @keydown.enter.prevent="amCcAddCam()" placeholder="เพิ่มจุดอื่น" maxlength="80" class="flex-1 border border-slate-200 rounded-xl px-3 py-1.5 text-xs" data-testid="am-cc-extra"><button @click="amCcAddCam()" class="px-3 py-1.5 rounded-xl bg-slate-100 text-xs font-bold" data-testid="am-cc-addcam">เพิ่ม</button></div>
+                                </div>
+                                <div>
+                                    <div class="flex items-center justify-between mb-1"><div class="text-xs font-bold text-slate-600">⏱ ช่วงเวลาที่ให้ดูภาพ</div><label class="text-xs text-slate-600 flex items-center gap-1.5"><input type="checkbox" v-model="am.cc.noWindow" class="accent-slate-600" data-testid="am-cc-nowin"> ไม่จำกัดเวลา</label></div>
+                                    <template v-if="!am.cc.noWindow">
+                                        <div class="grid grid-cols-2 gap-2"><div><div class="text-[10px] text-slate-400">เริ่ม</div><input type="datetime-local" v-model="am.cc.from" class="w-full border border-slate-200 rounded-xl px-2 py-2 text-sm" data-testid="am-cc-from"></div><div><div class="text-[10px] text-slate-400">สิ้นสุด</div><input type="datetime-local" v-model="am.cc.until" class="w-full border border-slate-200 rounded-xl px-2 py-2 text-sm" data-testid="am-cc-until"></div></div>
+                                        <div class="flex flex-wrap gap-1.5 mt-1.5"><button v-for="q in [[24,'24 ชม.'],[72,'3 วัน'],[168,'7 วัน'],[720,'30 วัน']]" :key="q[0]" @click="amCcQuick(q[0])" class="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-bold" :data-testid="'am-cc-quick-' + q[0]">{{ q[1] }}</button></div>
+                                    </template>
+                                </div>
+                                <div><div class="text-xs font-bold text-slate-600 mb-1">🔗 ลิงก์ดูภาพ (ถ้ามี)</div><input v-model="am.cc.link" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" placeholder="https://… (เช่น Google Drive)" data-testid="am-cc-link"></div>
+                            </template>
+                            <div>
+                                <div class="text-xs font-bold text-slate-600 mb-1">📌 คำแนะนำถึงผู้ขอ</div>
+                                <textarea v-model="am.cc.instr" rows="3" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none" placeholder="เช่น ติดต่อรับชมที่สำนักงานนิติบุคคล" data-testid="am-cc-instr"></textarea>
+                                <div v-if="am.cc.mode === 'approve'" class="flex flex-wrap gap-1.5 mt-1.5"><button v-for="(t, i) in amCcPresetInstr" :key="i" @click="amCcAppend('instr', t)" class="px-2.5 py-1 rounded-full bg-slate-100 text-[11px] text-slate-600 text-left">+ {{ t }}</button></div>
+                            </div>
+                            <div>
+                                <div class="text-xs font-bold text-slate-600 mb-1">{{ am.cc.mode === 'approve' ? '📝 หมายเหตุ (ไม่บังคับ)' : '📝 เหตุผลที่ไม่อนุมัติ (ผู้ขอจะได้รับข้อความนี้)' }}</div>
+                                <textarea v-model="am.cc.remark" rows="2" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none" data-testid="am-cc-remark"></textarea>
+                                <div v-if="am.cc.mode === 'reject'" class="flex flex-wrap gap-1.5 mt-1.5"><button v-for="(t, i) in amCcPresetReject" :key="i" @click="am.cc.remark = t" class="px-2.5 py-1 rounded-full bg-slate-100 text-[11px] text-slate-600 text-left">{{ t }}</button></div>
+                            </div>
+                            <label class="flex items-center gap-2 text-sm" :class="amSel.uid ? 'text-slate-700' : 'text-slate-400'"><input type="checkbox" v-model="am.cc.notify" :disabled="!amSel.uid" class="w-4 h-4 accent-slate-700" data-testid="am-cc-notify"> ส่งข้อความแจ้งผู้ขอทาง LINE<span v-if="!amSel.uid" class="text-[11px]"> (ไม่มี LINE UID)</span></label>
+                            <div v-if="am.cc.mode === 'approve'" class="text-[11px] font-bold text-rose-700 bg-rose-50 rounded-xl p-2.5">⚠️ ข้อความที่ส่งถึงผู้ขอจะมีข้อห้าม "ห้ามแคปภาพ บันทึกหน้าจอ หรือเผยแพร่ภาพ ก่อนได้รับอนุญาตเด็ดขาด" แนบไปด้วยอัตโนมัติ</div>
+                            <div v-if="amCcErrs.length || am.err" class="text-sm text-rose-600 font-medium" data-testid="am-err">{{ am.err || amCcErrs.join(' · ') }}</div>
+                            <button @click="amCcSend()" :disabled="am.busy || amCcErrs.length > 0" class="w-full py-3 rounded-2xl font-bold text-sm text-white disabled:opacity-40" :class="am.cc.mode === 'approve' ? 'bg-emerald-600' : 'bg-rose-600'" data-testid="am-cc-send">{{ am.busy ? 'กำลังส่ง...' : (am.cc.mode === 'approve' ? '✅ อนุมัติและส่งผล' : '❌ ไม่อนุมัติและส่งผล') }}</button>
+                            <div class="text-[10px] text-slate-400 text-center">แก้กฎระเบียบการขอดูกล้อง และรายชื่อจุดกล้อง ทำได้ที่ Super Admin</div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
         <!-- 📊 ADMIN: แดชบอร์ดการใช้งาน CRM -->
         <div v-if="currentTab === 'usage' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-violet-50/40 overflow-y-auto z-20" data-testid="us-page">
             <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
@@ -4507,6 +4751,31 @@
             return _origFetch(input, init);
         };
 
+        // 🛠️ จัดการ แจ้งซ่อม/ร้องเรียน/ทะเบียนรถ/ขอดูกล้อง ในมือถือ (เทียบเท่า Super Admin) — สถานะ/ป้ายกำกับ ใช้ชุดเดียวกับหน้าเว็บใหญ่
+        const AM_SYS = {
+            repair:    { tool: 'repair_admin',    title: 'จัดการแจ้งซ่อม',   short: 'แจ้งซ่อม',   icon: 'wrench',       color: 'blue',   list: 'repair_request_list_all', st: [['pending', '⏳ รอตรวจสอบ'], ['in_progress', '🔧 กำลังดำเนินการ'], ['completed', '✅ เสร็จแล้ว']] },
+            complaint: { tool: 'complaint_admin', title: 'จัดการร้องเรียน',  short: 'ร้องเรียน',  icon: 'comment-dots', color: 'pink',   list: 'complaint_admin_list',    st: [['pending', '⏳ รอตรวจสอบ'], ['in_progress', '🔧 กำลังดำเนินการ'], ['resolved', '✅ ดำเนินการแล้ว'], ['rejected', '❌ ไม่รับพิจารณา']] },
+            car:       { tool: 'car_admin',       title: 'จัดการทะเบียนรถ', short: 'ทะเบียนรถ', icon: 'car',          color: 'violet', list: 'car_admin_list',          st: [['pending', 'รอตรวจ'], ['renewal_pending', '🔁 รอต่ออายุ'], ['delete_pending', '🗑️ ขอลบ'], ['approved', 'อนุมัติ'], ['rejected', 'ไม่อนุมัติ']] },
+            cctv:      { tool: 'cctv_admin',      title: 'จัดการขอดูกล้อง', short: 'ขอดูกล้อง', icon: 'video',        color: 'slate',  list: 'cctv_request_list_all',   st: [['pending', '⏳ รอตรวจสอบ'], ['approved', '✅ อนุมัติแล้ว'], ['rejected', '❌ ไม่อนุมัติ']] },
+        };
+        const AM_BADGE = { amber: 'bg-amber-100 text-amber-700', blue: 'bg-blue-100 text-blue-700', emerald: 'bg-emerald-100 text-emerald-700', rose: 'bg-rose-100 text-rose-700', sky: 'bg-sky-100 text-sky-700', orange: 'bg-orange-100 text-orange-700', slate: 'bg-slate-100 text-slate-600' };
+        const AM_STATUS = {
+            repair:    { pending: ['รอตรวจสอบ', 'amber'], in_progress: ['กำลังดำเนินการ', 'blue'], completed: ['เสร็จแล้ว', 'emerald'] },
+            complaint: { pending: ['รอตรวจสอบ', 'amber'], in_progress: ['กำลังดำเนินการ', 'blue'], resolved: ['ดำเนินการแล้ว', 'emerald'], rejected: ['ไม่รับพิจารณา', 'rose'] },
+            car:       { pending: ['รอตรวจ', 'amber'], approved: ['อนุมัติ', 'emerald'], active: ['อนุมัติ', 'emerald'], rejected: ['ไม่อนุมัติ', 'rose'], renewal_pending: ['รอต่ออายุ', 'sky'], delete_pending: ['ขอลบ', 'orange'] },
+            cctv:      { pending: ['รอตรวจสอบ', 'amber'], approved: ['อนุมัติแล้ว', 'emerald'], rejected: ['ไม่อนุมัติ', 'rose'] },
+        };
+        // ข้อความสำเร็จรูป (ชุดเดียวกับหน้าเว็บใหญ่)
+        const AM_COMPLAINT_TEMPLATES = [
+            { key: 'received',    icon: '📩', label: 'รับเรื่องแล้ว', text: 'เจ้าหน้าที่ได้รับเรื่องร้องเรียนของท่านแล้ว กำลังตรวจสอบและจะดำเนินการโดยเร็วที่สุดค่ะ 🙏', status: 'in_progress' },
+            { key: 'in_progress', icon: '🔧', label: 'กำลังดำเนินการ', text: 'ขณะนี้เจ้าหน้าที่กำลังดำเนินการแก้ไขปัญหาตามที่ท่านแจ้งอยู่ค่ะ จะรีบแจ้งผลให้ทราบอีกครั้ง', status: 'in_progress' },
+            { key: 'resolved',    icon: '✅', label: 'ดำเนินการเสร็จแล้ว', text: 'เรื่องที่ท่านแจ้งได้รับการดำเนินการเรียบร้อยแล้วค่ะ ขอบคุณที่แจ้งให้ทราบ 🙏 หากยังพบปัญหาอยู่ สามารถแจ้งกลับมาได้เลยค่ะ', status: 'resolved' },
+            { key: 'contact',     icon: '📞', label: 'โปรดติดต่อกลับ', text: 'รบกวนติดต่อกลับที่สำนักงานนิติบุคคลด้วยค่ะ เพื่อขอข้อมูลเพิ่มเติมประกอบการดำเนินการ 🙏', status: null },
+            { key: 'rejected',    icon: '❌', label: 'ไม่สามารถดำเนินการได้', text: 'ขออภัยค่ะ เรื่องที่ท่านแจ้งไม่อยู่ในความรับผิดชอบของนิติบุคคล/ไม่สามารถดำเนินการได้ในกรณีนี้', status: 'rejected' },
+        ];
+        const AM_CC_PRESET_INSTR = ['ติดต่อรับชมภาพที่สำนักงานนิติบุคคลต่อหน้าเจ้าหน้าที่', 'ห้ามแคปภาพ/ถ่ายภาพหน้าจอ/เผยแพร่ภาพ ก่อนได้รับอนุญาต', 'รับชมได้เฉพาะภายในช่วงเวลาที่กำหนด', 'กรุณานำบัตรประชาชนมาแสดงตัวตนก่อนรับชม'];
+        const AM_CC_PRESET_REJECT = ['ข้อมูลไม่ครบถ้วน ไม่สามารถระบุเหตุการณ์ได้', 'ไม่มีภาพในช่วงเวลาที่ขอ (เกินระยะเวลาเก็บภาพ)', 'ไม่มีกล้องครอบคลุมจุดที่ขอ', 'กรณีนี้ต้องแจ้งความและให้เจ้าหน้าที่ตำรวจประสานขอข้อมูล', 'ไม่เข้าเงื่อนไขตามกฎระเบียบการขอดูกล้อง'];
+
         createApp({
             data() {
                 return {
@@ -4531,7 +4800,7 @@
                     ],
                     chatMemberQuick: ['🙏 ขอบคุณค่ะ/ครับ', '👍 รับทราบครับ/ค่ะ', '🙋 ขอสอบถามหน่อยค่ะ/ครับ', '💳 สอบถามเรื่องค่าส่วนกลาง', '🪪 สอบถามเรื่องคีย์การ์ด', '🔧 แจ้งซ่อม/แจ้งปัญหา'],
                     chatAdm: { emojiOpen: false, profOpen: false, profLoading: false, profErr: '', prof: null, profSeq: 0, tplsLoaded: false, view: 'list', loading: false, error: '', notReady: false, threads: [], total: 0, counts: null, status: 'open', filter: 'all', label: '', q: '', offset: 0, labels: [], seq: 0, sel: null, selSeq: 0, selMsgs: [], selHasMore: false, selLoading: false, selErr: '', selPolling: false, text: '', sendErr: '', inflight: 0, tplOpen: false, tpls: [], tplLoading: false, tplError: '' }, chatAdmTimer: null, chatAdmQTimer: null,
-                    inbox: { loading: false, error: '', data: null }, ibBusy: {}, usage: { loading: false, error: '', data: null, days: 30, showNever: false },
+                    am: { sys: '', loading: false, error: '', items: [], status: '', q: '', limit: 30, seq: 0, selId: null, busy: false, err: '', form: {}, cc: null }, inbox: { loading: false, error: '', data: null }, ibBusy: {}, usage: { loading: false, error: '', data: null, days: 30, showNever: false },
                     profileMore: null, profileMoreLoading: false, profileMoreError: '', profileMoreAt: 0, pmOpen: { line: false, members: false, reg: false },
                     ownerEdit: { open: false, type: 'sole', names: [''], note: '', saving: false, error: '', max: 4 },
                     // ─── บอร์ดประกาศ ───
@@ -4677,10 +4946,39 @@
                 },
                 // 🔴 แถบเตือนยังไม่ยืนยันสิทธิ์: แสดงทุกหน้ายกเว้นหน้ายืนยันสิทธิ์เอง/ตอนถูกล็อกอยู่แล้ว · ฟีเจอร์/เมนูยืนยันสิทธิ์ปิด = ไม่แสดง
                 showStatusBanner() { return !!this.statusUnconfirmed && !this.statusGate.active && this.currentTab !== 'status' && this.fOn('ownership') && this.mOn('status'); },
+                // 🛠️ จัดการ 4 ระบบ (หน้าแอดมินในมือถือ)
+                amSys() { return AM_SYS; },
+                amCpTemplates() { return AM_COMPLAINT_TEMPLATES; },
+                amCcPresetInstr() { return AM_CC_PRESET_INSTR; },
+                amCcPresetReject() { return AM_CC_PRESET_REJECT; },
+                amToolKeys() { const t = (this.menuAccess && this.menuAccess.tools) || {}; return Object.keys(AM_SYS).filter(k => t[AM_SYS[k].tool]); },
+                amSel() { const s = this.am.selId; return (s === null || s === undefined || !this.am.sys) ? null : (this.am.items.find(r => String(r.id) === String(s)) || null); },
+                amCounts() { const c = {}; this.am.items.forEach(r => { c[r.status] = (c[r.status] || 0) + 1; }); return c; },
+                amRows() {
+                    const q = String(this.am.q || '').toLowerCase().trim(), st = this.am.status;
+                    return this.am.items.filter(r => (!st || r.status === st) && (!q || this.amHay(r).includes(q))).map(r => this.amRow(r));
+                },
+                amShown() { return this.amRows.slice(0, this.am.limit); },
+                amCcErrs() {
+                    const c = this.am.cc, e = [];
+                    if (!c || this.am.sys !== 'cctv') return e;
+                    if (c.mode === 'approve') {
+                        if (!c.cams.length) e.push('เลือกกล้องที่อนุมัติอย่างน้อย 1 จุด');
+                        if (!c.noWindow) {
+                            const f = this.amLocalToIso(c.from), u = this.amLocalToIso(c.until);
+                            if (!u) e.push('กำหนดเวลาสิ้นสุดที่ให้ดู (หรือเลือก "ไม่จำกัดเวลา")');
+                            else if (f && new Date(u) <= new Date(f)) e.push('เวลาสิ้นสุดต้องหลังเวลาเริ่ม');
+                            else if (new Date(u).getTime() <= Date.now()) e.push('เวลาสิ้นสุดผ่านไปแล้ว');
+                        }
+                        if (String(c.link || '').trim() && !/^https?:\/\//i.test(String(c.link).trim())) e.push('ลิงก์ต้องขึ้นต้นด้วย http:// หรือ https://');
+                    } else if (!String(c.remark || '').trim()) e.push('ระบุเหตุผลที่ไม่อนุมัติ (ผู้ขอจะได้รับข้อความนี้)');
+                    if (Array.from(String(c.instr || '')).length > 1000 || Array.from(String(c.remark || '')).length > 1000) e.push('ข้อความยาวเกิน 1,000 ตัวอักษร');
+                    return e;
+                },
                 hasAdminTools() {
                     const m = this.menuAccess; if (!m) return false;
                     const t = m.tools || {};
-                    return !!((m.admin_menus && m.admin_menus.length) || t.keycard_admin || t.member_registry || t.admin_inbox || t.usage_dashboard || t.expiry_admin || t.chat_admin);
+                    return !!((m.admin_menus && m.admin_menus.length) || t.keycard_admin || t.member_registry || t.admin_inbox || t.usage_dashboard || t.expiry_admin || t.chat_admin || t.repair_admin || t.complaint_admin || t.car_admin || t.cctv_admin);
                 },
                 // ⏳ วันหมดอายุของบ้าน (สมาชิก)
                 expiryItems() { return (this.expiry && Array.isArray(this.expiry.items)) ? this.expiry.items : []; },
@@ -5521,6 +5819,12 @@
                     if (tabKey === 'usage') {
                         const url = new URL(window.location.href); url.searchParams.delete('tab'); history.replaceState(null, '', url.toString());
                         if (this.menuAccess && this.menuAccess.tools && this.menuAccess.tools.usage_dashboard) await this.openUsage();
+                        return;
+                    }
+                    if (/^adm(repair|complaint|car|cctv)$/.test(String(tabKey || ''))) {   // 🛠️ ?tab=admrepair|admcomplaint|admcar|admcctv — ลิงก์ลัดแอดมิน
+                        const url = new URL(window.location.href); url.searchParams.delete('tab'); history.replaceState(null, '', url.toString());
+                        const k = String(tabKey).slice(3);
+                        if (this.menuAccess && this.menuAccess.tools && this.menuAccess.tools[AM_SYS[k].tool]) await this.amOpen(k);
                         return;
                     }
                     if (tabKey && validTabs.includes(tabKey)) {
@@ -6480,6 +6784,243 @@
                     } finally { const b = Object.assign({}, this.ibBusy); delete b[it.id]; this.ibBusy = b; }
                 },
                 // ═════════ 📊 ADMIN: แดชบอร์ดการใช้งาน ═════════
+                // ═════════ 🛠️ ADMIN: จัดการ แจ้งซ่อม / ร้องเรียน / ทะเบียนรถ / ขอดูกล้อง (API ฝั่งแอดมินชุดเดียวกับหน้าเว็บใหญ่ · server ตรวจสิทธิ์โมดูลทุกครั้ง) ═════════
+                amBadgeOf(k) { const c = (this.menuAccess && this.menuAccess.admin_counts) || {}; return Number(c[k]) || 0; },
+                amSyncBadge() {
+                    const s = this.am.sys; if (!s) return;
+                    const it = this.am.items; let n = 0;
+                    if (s === 'car') n = it.filter(r => r.status === 'pending' || r.status === 'renewal_pending' || r.status === 'delete_pending').length;
+                    else n = it.filter(r => r.status === 'pending').length;
+                    const m = this.menuAccess || {};
+                    this.menuAccess = Object.assign({}, m, { admin_counts: Object.assign({}, m.admin_counts || {}, { [s]: n }) });
+                },
+                async amOpen(sys) {
+                    if (!AM_SYS[sys]) return;
+                    this.am = { sys, loading: false, error: '', items: [], status: '', q: '', limit: 30, seq: (this.am.seq || 0) + 1, selId: null, busy: false, err: '', form: {}, cc: null };
+                    this.currentTab = 'admmgr';
+                    await this.amLoad();
+                },
+                async amSwitch(sys) { if (sys === this.am.sys) return; await this.amOpen(sys); },
+                amBack() { if (this.amSel) { this.amCloseSel(); return; } this.currentTab = 'home'; },
+                async amLoad() {
+                    const s = this.am.sys; if (!s) return;
+                    const seq = ++this.am.seq;
+                    this.am.loading = true; this.am.error = '';
+                    try {
+                        const d = await this.kcaApi(AM_SYS[s].list);
+                        if (seq !== this.am.seq || s !== this.am.sys) return;
+                        this.am.items = Array.isArray(d.items) ? d.items : [];
+                        this.amSyncBadge();
+                    } catch (e) { if (seq === this.am.seq) this.am.error = (e.status === 403 ? 'ไม่มีสิทธิ์ใช้งานส่วนนี้' : 'โหลดข้อมูลไม่สำเร็จ') + (e.message ? ': ' + e.message : ''); }
+                    finally { if (seq === this.am.seq) this.am.loading = false; }
+                },
+                amSetStatus(s) { this.am.status = (this.am.status === s ? '' : s); this.am.limit = 30; },
+                amEsc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); },
+                amSafeUrl(u) { return /^https?:\/\//i.test(String(u || '')); },
+                amImg(u) { if (!this.amSafeUrl(u)) return; Swal.fire({ imageUrl: u, imageAlt: 'รูป', showConfirmButton: false, showCloseButton: true, width: '95%', padding: '1em' }); },
+                amDt(iso) { try { return iso ? new Date(iso).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'; } catch (e) { return String(iso || ''); } },
+                amDtFull(iso) { try { return new Date(iso).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return String(iso || ''); } },
+                amYmd(v) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || '')); if (!m) return String(v || '—'); return (+m[3]) + ' ' + ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'][+m[2] - 1] + ' ' + (+m[1] + 543); },
+                amToday() { return new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10); },
+                amDaysTxt(ymd) { const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(ymd || '')); if (!m) return ''; const d = Math.round((new Date(m[1] + 'T00:00:00Z') - new Date(this.amToday() + 'T00:00:00Z')) / 86400000); return d < 0 ? 'หมดแล้ว ' + (-d) + ' วัน' : d === 0 ? 'หมดอายุวันนี้' : 'เหลือ ' + d + ' วัน'; },
+                amAddYear(ymd) { const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})/); if (!m) return ''; const y = +m[1] + 1, mo = +m[2], last = new Date(Date.UTC(y, mo, 0)).getUTCDate(); return y + '-' + m[2] + '-' + String(Math.min(+m[3], last)).padStart(2, '0'); },
+                amBkkLocal(ms) { return new Date(ms + 7 * 3600000).toISOString().slice(0, 16); },
+                amLocalToIso(v) { if (!v) return null; const d = new Date(v + ':00+07:00'); return isNaN(d.getTime()) ? null : d.toISOString(); },
+                amHay(r) {
+                    const f = ({ repair: ['category', 'location', 'detail', 'house_number', 'line_display_name', 'phone_number'], complaint: ['category', 'issue', 'fullname', 'house_no', 'phone', 'line_display_name'],
+                        car: ['plate_number', 'province', 'fullname', 'house_number', 'phone', 'car_type'], cctv: ['ref_no', 'camera_zone', 'requester_name', 'house_number', 'phone_number', 'reason', 'incident_type'] })[this.am.sys] || [];
+                    return f.map(k => r[k]).filter(Boolean).join(' ').toLowerCase();
+                },
+                amRow(r) {
+                    const s = this.am.sys, st = (AM_STATUS[s] || {})[r.status] || [r.status || '—', 'slate'];
+                    const o = { id: r.id, badge: st[0], badgeCls: AM_BADGE[st[1]] || AM_BADGE.slate, flags: [], title: '', sub: '', meta: '' };
+                    if (s === 'repair') { o.title = r.category || '—'; o.sub = (r.location ? '📍 ' + r.location + ' · ' : '') + (r.detail || ''); o.meta = '🏠 ' + (r.house_number || '—') + ' · ' + this.amDt(r.created_at); }
+                    else if (s === 'complaint') { o.title = r.category || '—'; o.sub = r.issue || ''; o.meta = (r.fullname || '—') + ' · 🏠 ' + (r.house_no || '—') + ' · ' + this.amDt(r.created_at); }
+                    else if (s === 'car') {
+                        o.title = (r.plate_number || '—') + (r.province ? ' ' + r.province : ''); o.sub = (r.car_type || '') + ' · ' + (r.fullname || '—');
+                        o.meta = '🏠 ' + (r.house_number || '—') + ' · ' + (r.end_date ? 'หมดอายุ ' + this.amYmd(r.end_date) : 'ยังไม่ตั้งวันหมดอายุ');
+                        if (r.status === 'delete_pending' && r.delete_reason) o.flags.push(['ขอลบ: ' + r.delete_reason, 'bg-orange-100 text-orange-700']);
+                    } else if (s === 'cctv') {
+                        o.title = (r.ref_no ? r.ref_no + ' · ' : '') + (r.camera_zone || '—'); o.sub = (r.requester_name || r.line_display_name || 'ไม่ระบุ') + (r.incident_type ? ' · ' + r.incident_type : '');
+                        o.meta = '🏠 ' + (r.house_number || '—') + ' · 📅 ' + this.amYmd(r.request_date) + (r.time_range ? ' ' + r.time_range : '');
+                        const q = r.requester || {};
+                        if (r.requester && !q.registered) o.flags.push(['⚠️ ไม่พบในทะเบียนสมาชิก', 'bg-rose-100 text-rose-700']);
+                        else if (r.requester) { if (q.house_match === false) o.flags.push(['⚠️ บ้านไม่ตรงทะเบียน', 'bg-amber-100 text-amber-800']); if (!q.status_confirmed) o.flags.push(['ยังไม่ยืนยันสถานะ', 'bg-amber-100 text-amber-800']); }
+                        const h = r.history; if (h && h.total > 1) o.flags.push(['เคยขอมาก่อน ' + (h.total - 1) + ' ครั้ง', 'bg-slate-100 text-slate-600']);
+                    }
+                    return o;
+                },
+                amOpenRow(r) {
+                    const it = this.am.items.find(x => String(x.id) === String(r.id)); if (!it) return;
+                    this.am.err = ''; this.am.busy = false;
+                    if (this.am.sys === 'repair') this.am.form = { status: it.status, remark: it.admin_remark || '', imageUrl: it.admin_image_url || '', uploading: false };
+                    else if (this.am.sys === 'complaint') this.am.form = { message: '', tplStatus: null, updateStatus: true };
+                    else this.am.form = {};
+                    if (this.am.sys === 'cctv') this.amCcInit(it);
+                    this.am.selId = it.id;
+                },
+                amCloseSel() { this.am.selId = null; this.am.err = ''; },
+                amFail(e) { this.am.err = e && e.message ? e.message : 'ทำรายการไม่สำเร็จ'; if (e && e.status === 409) this.amLoad(); },
+
+                // ── แจ้งซ่อม ──
+                async amRpPick(ev) {
+                    const file = ev && ev.target && ev.target.files && ev.target.files[0]; if (!file) return;
+                    this.am.form.uploading = true; this.am.err = '';
+                    try {
+                        const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); });
+                        const canvas = document.createElement('canvas'); const scale = Math.min(1, 1200 / img.width);
+                        canvas.width = img.width * scale; canvas.height = img.height * scale;
+                        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                        const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.8));
+                        const fd = new FormData(); fd.append('file', blob, 'repair_after_' + Date.now() + '.jpg');
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/upload_repair_image`, { method: 'POST', body: fd });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.error || 'อัปโหลดไม่สำเร็จ');
+                        this.am.form.imageUrl = d.url;
+                    } catch (e) { this.am.err = 'อัปโหลดรูปไม่สำเร็จ: ' + (e.message || ''); }
+                    finally { this.am.form.uploading = false; if (ev && ev.target) ev.target.value = ''; }
+                },
+                async amRpSave() {
+                    const it = this.amSel, f = this.am.form; if (!it || this.am.busy) return;
+                    this.am.busy = true; this.am.err = '';
+                    try {
+                        const body = { id: it.id, adminRemark: String(f.remark || '').trim() };
+                        if (f.status && f.status !== it.status) body.status = f.status;
+                        if ((f.imageUrl || '') !== (it.admin_image_url || '')) body.adminImageUrl = f.imageUrl || '';
+                        await this.kcaApi('repair_request_update', { method: 'POST', body: JSON.stringify(body) });
+                        await this.amLoad(); this.amCloseSel();
+                        Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'บันทึกแล้ว', showConfirmButton: false, timer: 1800 });
+                    } catch (e) { this.amFail(e); } finally { this.am.busy = false; }
+                },
+
+                // ── ร้องเรียน ──
+                async amCpStatus(status) {
+                    const it = this.amSel; if (!it || this.am.busy || it.status === status) return;
+                    this.am.busy = true; this.am.err = '';
+                    try {
+                        await this.kcaApi('complaint_admin_status', { method: 'POST', body: JSON.stringify({ id: it.id, status }) });
+                        await this.amLoad();
+                        Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'อัปเดตสถานะแล้ว', showConfirmButton: false, timer: 1500 });
+                    } catch (e) { this.amFail(e); } finally { this.am.busy = false; }
+                },
+                amCpTpl(i) { const t = AM_COMPLAINT_TEMPLATES[i]; if (!t) return; this.am.form.message = t.text; this.am.form.tplStatus = t.status || null; },
+                async amCpSend() {
+                    const it = this.amSel, f = this.am.form; if (!it || this.am.busy) return;
+                    const message = String(f.message || '').trim(); if (!message) return;
+                    const go = await Swal.fire({ title: 'ส่งข้อความถึงผู้แจ้ง?', html: '<div style="text-align:left;font-size:13px;white-space:pre-line">' + this.amEsc(message) + '</div>', icon: 'question', showCancelButton: true, confirmButtonText: 'ส่งทาง LINE', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#c026d3' });
+                    if (!go.isConfirmed) return;
+                    this.am.busy = true; this.am.err = '';
+                    try {
+                        await this.kcaApi('complaint_reply_send', { method: 'POST', body: JSON.stringify({ complaintId: it.id, message, updateStatus: (f.updateStatus && f.tplStatus) ? f.tplStatus : null, saveNote: true }) });
+                        this.am.form.message = ''; this.am.form.tplStatus = null;
+                        await this.amLoad();
+                        Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'ส่งข้อความตอบกลับแล้ว', showConfirmButton: false, timer: 1800 });
+                    } catch (e) { this.amFail(e); } finally { this.am.busy = false; }
+                },
+
+                // ── ทะเบียนรถ ──
+                async amCarOp(op) {
+                    const it = this.amSel; if (!it || this.am.busy) return;
+                    const ok = op === 'approve';
+                    const go = await Swal.fire({ title: ok ? 'อนุมัติทะเบียนรถ?' : 'ไม่อนุมัติทะเบียนรถ?', icon: ok ? 'question' : 'warning',
+                        html: '<div style="font-size:13px"><b>' + this.amEsc(it.plate_number) + '</b> · บ้าน ' + this.amEsc(it.house_number || '—') + '<br>' + this.amEsc(it.fullname || '') + (ok ? '<br><span style="color:#64748b">ระบบจะเพิ่ม/อัปเดตทะเบียนนี้ใน allowed_cars (รอซิงก์เข้ากล้อง) ตั้งวันหมดอายุ 1 ปี หากยังไม่มี</span>' : '') + '</div>',
+                        showCancelButton: true, confirmButtonText: ok ? 'อนุมัติ' : 'ไม่อนุมัติ', cancelButtonText: 'ยกเลิก', confirmButtonColor: ok ? '#059669' : '#e11d48' });
+                    if (!go.isConfirmed) return;
+                    await this.amCarPost({ id: it.id, op }, ok ? 'อนุมัติแล้ว' : 'ไม่อนุมัติแล้ว');
+                },
+                async amCarPost(body, okMsg) {
+                    this.am.busy = true; this.am.err = '';
+                    try {
+                        await this.kcaApi('car_admin_action', { method: 'POST', body: JSON.stringify(body) });
+                        await this.amLoad(); this.amCloseSel();
+                        Swal.fire({ toast: true, position: 'top', icon: 'success', title: okMsg, showConfirmButton: false, timer: 1800 });
+                    } catch (e) { this.amFail(e); } finally { this.am.busy = false; }
+                },
+                async amCarDeleteApprove() {
+                    const it = this.amSel; if (!it || this.am.busy) return;
+                    const go = await Swal.fire({ title: 'อนุมัติลบรถ?', icon: 'warning',
+                        html: '<div style="font-size:13px;text-align:left"><b>' + this.amEsc(it.plate_number) + '</b> · บ้าน ' + this.amEsc(it.house_number || '—') + '<br><div style="margin-top:6px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:8px;font-size:12px"><b>เหตุผล:</b> ' + this.amEsc(it.delete_reason || '—') + (it.delete_note ? '<br>' + this.amEsc(it.delete_note) : '') + '</div><div style="margin-top:6px;color:#475569;font-size:12px">ระบบจะถอดทะเบียนนี้ออกจาก allowed_cars (สั่งลบออกจากกล้องในรอบซิงก์) แล้วลบรายการรถ</div></div>',
+                        showCancelButton: true, confirmButtonText: 'อนุมัติลบ', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#f97316' });
+                    if (!go.isConfirmed) return;
+                    await this.amCarPost({ id: it.id, op: 'delete_approve' }, 'อนุมัติลบแล้ว');
+                },
+                async amCarDeleteReject() {
+                    const it = this.amSel; if (!it || this.am.busy) return;
+                    const go = await Swal.fire({ title: 'ปฏิเสธคำขอลบ?', icon: 'question', html: '<div style="font-size:13px">ทะเบียน <b>' + this.amEsc(it.plate_number) + '</b><br><span style="color:#64748b">รถจะกลับเป็นสถานะเดิม และสมาชิกจะเห็นข้อความด้านล่าง</span></div>',
+                        input: 'textarea', inputPlaceholder: 'ข้อความถึงสมาชิก (ถ้ามี)', inputAttributes: { maxlength: 300 }, showCancelButton: true, confirmButtonText: 'ปฏิเสธคำขอลบ', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#64748b' });
+                    if (!go.isConfirmed) return;
+                    await this.amCarPost({ id: it.id, op: 'delete_reject', note: String(go.value || '').trim() }, 'ปฏิเสธคำขอลบแล้ว');
+                },
+                // ต่ออายุ/ตั้งวันหมดอายุ — ใช้ expiry_admin_action เดิม (อัปเดต allowed_cars + แจ้งลูกบ้านทาง LINE + บันทึกประวัติ)
+                async amCarRenew(isRequest) {
+                    const it = this.amSel; if (!it || this.am.busy) return;
+                    const today = this.amToday(), base = (it.end_date && String(it.end_date).slice(0, 10) > today) ? String(it.end_date).slice(0, 10) : today;
+                    const def = this.amAddYear(base);
+                    const r = await Swal.fire({ title: isRequest ? 'อนุมัติต่ออายุ' : 'ตั้ง/ต่อวันหมดอายุ', confirmButtonText: 'บันทึก', cancelButtonText: 'ยกเลิก', showCancelButton: true, confirmButtonColor: '#059669',
+                        html: '<div style="text-align:left;font-size:13px"><b>' + this.amEsc(it.plate_number) + '</b> · บ้าน ' + this.amEsc(it.house_number || '—') + '<br>หมดอายุเดิม ' + this.amEsc(it.end_date ? this.amYmd(it.end_date) : 'ยังไม่มี') +
+                            '<input type="date" id="am-car-date" value="' + def + '" min="' + today + '" style="width:100%;margin:10px 0 8px;border:1px solid #cbd5e1;border-radius:10px;padding:8px;font-size:14px;box-sizing:border-box">' +
+                            '<label style="display:flex;gap:8px;align-items:center;font-size:12px"><input type="checkbox" id="am-car-notify" checked> แจ้งลูกบ้านทาง LINE</label></div>',
+                        preConfirm: () => { const date = document.getElementById('am-car-date').value; if (!date) { Swal.showValidationMessage('กรุณาเลือกวันที่'); return false; } if (date <= today) { Swal.showValidationMessage('วันหมดอายุต้องเป็นวันหลังจากวันนี้'); return false; } return { date, notify: document.getElementById('am-car-notify').checked }; } });
+                    if (!r.isConfirmed || !r.value) return;
+                    this.am.busy = true; this.am.err = '';
+                    try {
+                        await this.kcaApi('expiry_admin_action', { method: 'POST', body: JSON.stringify({ type: 'car', id: it.id, op: 'renew', date: r.value.date, notify: r.value.notify }) });
+                        await this.amLoad(); this.amCloseSel();
+                        Swal.fire({ toast: true, position: 'top', icon: 'success', title: isRequest ? 'อนุมัติต่ออายุแล้ว' : 'บันทึกวันหมดอายุแล้ว', showConfirmButton: false, timer: 1800 });
+                    } catch (e) { this.amFail(e); } finally { this.am.busy = false; }
+                },
+                async amCarRenewReject() {
+                    const it = this.amSel; if (!it || this.am.busy) return;
+                    const r = await Swal.fire({ title: 'ไม่อนุมัติต่ออายุ?', icon: 'warning', html: '<div style="font-size:13px">ทะเบียน <b>' + this.amEsc(it.plate_number) + '</b><br><span style="color:#64748b">รถกลับเป็น "อนุมัติ" (วันหมดอายุเดิม) และแจ้งลูกบ้านทาง LINE</span></div>',
+                        input: 'text', inputLabel: 'เหตุผล (ส่งให้ลูกบ้าน)', inputPlaceholder: 'เช่น ทะเบียนไม่ตรงกับเล่ม', inputAttributes: { maxlength: 200 }, inputValidator: (v) => (!String(v || '').trim() ? 'กรุณาระบุเหตุผล' : undefined),
+                        showCancelButton: true, confirmButtonText: 'ไม่อนุมัติ', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#e11d48' });
+                    if (!r.isConfirmed) return;
+                    this.am.busy = true; this.am.err = '';
+                    try {
+                        await this.kcaApi('expiry_admin_action', { method: 'POST', body: JSON.stringify({ type: 'car', id: it.id, op: 'reject', reason: String(r.value).trim() }) });
+                        await this.amLoad(); this.amCloseSel();
+                        Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'ไม่อนุมัติต่ออายุแล้ว', showConfirmButton: false, timer: 1800 });
+                    } catch (e) { this.amFail(e); } finally { this.am.busy = false; }
+                },
+
+                // ── ขอดูกล้อง ──
+                async amCcInit(it) {
+                    const cams = (it.approved_cameras || []).length ? it.approved_cameras.slice() : (it.camera_zone ? [it.camera_zone] : []);
+                    const hasWin = !!(it.valid_from || it.valid_until);
+                    this.am.cc = { mode: it.status === 'rejected' ? 'reject' : 'approve', zones: Array.from(new Set([...cams, it.camera_zone].filter(Boolean))), cams, extra: '',
+                        noWindow: it.status === 'approved' && !hasWin, from: it.valid_from ? this.amBkkLocal(new Date(it.valid_from).getTime()) : this.amBkkLocal(Date.now()),
+                        until: it.valid_until ? this.amBkkLocal(new Date(it.valid_until).getTime()) : this.amBkkLocal(Date.now() + 7 * 86400000),
+                        link: it.response_link || '', instr: it.instructions || '', remark: it.admin_remark || '', notify: !!it.uid };
+                    try {   // รายชื่อจุดกล้องทั้งหมด (ตั้งค่าไว้ที่ Super Admin) — โหลดไม่สำเร็จ = ใช้เฉพาะจุดที่ผู้ขอระบุ
+                        const d = await this.kcaApi('cctv_camera_zones_list');
+                        const zs = Array.isArray(d.zones) ? d.zones.map(z => (typeof z === 'string' ? z : (z && (z.name || z.label)) || '')).filter(Boolean) : [];
+                        if (this.am.cc && this.am.selId !== null && String(this.am.selId) === String(it.id)) this.am.cc.zones = Array.from(new Set([...zs, ...this.am.cc.zones]));
+                    } catch (e) { /* ใช้ค่าเดิม */ }
+                },
+                amCcMode(m) { if (this.am.cc) { this.am.cc.mode = m; this.am.err = ''; } },
+                amCcAddCam() { const c = this.am.cc, v = String(c.extra || '').trim().slice(0, 80); if (!v) return; if (!c.zones.includes(v)) c.zones.push(v); if (!c.cams.includes(v)) c.cams.push(v); c.extra = ''; },
+                amCcQuick(h) { const c = this.am.cc; c.from = this.amBkkLocal(Date.now()); c.until = this.amBkkLocal(Date.now() + h * 3600000); },
+                amCcAppend(field, t) { const c = this.am.cc, cur = String(c[field] || '').trim(); c[field] = (cur ? cur + '\n' : '') + t; },
+                async amCcSend() {
+                    const it = this.amSel, c = this.am.cc; if (!it || !c || this.am.busy || this.amCcErrs.length) return;
+                    const ok = c.mode === 'approve';
+                    const win = c.noWindow ? 'ไม่จำกัดเวลา' : ((c.from ? this.amDtFull(this.amLocalToIso(c.from)) : 'ทันที') + ' – ' + (c.until ? this.amDtFull(this.amLocalToIso(c.until)) : 'ไม่กำหนด'));
+                    const go = await Swal.fire({ title: ok ? 'อนุมัติคำขอดูกล้อง?' : 'ไม่อนุมัติคำขอดูกล้อง?', icon: ok ? 'question' : 'warning',
+                        html: '<div style="text-align:left;font-size:13px"><b>' + this.amEsc(it.ref_no || '') + '</b> · ' + this.amEsc(it.requester_name || '') + (ok ? '<br>🎥 ' + c.cams.map(z => this.amEsc(z)).join(' · ') + '<br>⏱ ' + this.amEsc(win) : '<br>เหตุผล: ' + this.amEsc(String(c.remark).trim())) +
+                            '<div style="margin-top:8px;font-size:12px;color:' + (c.notify ? '#047857' : '#92400e') + '">' + (c.notify ? '✅ จะส่งผลถึงผู้ขอทาง LINE ทันที' : '⚠️ จะไม่ส่งข้อความแจ้งผู้ขอ') + '</div></div>',
+                        showCancelButton: true, confirmButtonText: ok ? 'อนุมัติ' : 'ไม่อนุมัติ', cancelButtonText: 'ยกเลิก', confirmButtonColor: ok ? '#059669' : '#e11d48' });
+                    if (!go.isConfirmed) return;
+                    this.am.busy = true; this.am.err = '';
+                    const body = { id: it.id, status: ok ? 'approved' : 'rejected', adminRemark: String(c.remark || '').trim(), instructions: String(c.instr || '').trim(), notify: !!c.notify };
+                    if (ok) { body.responseLink = String(c.link || '').trim(); body.approvedCameras = c.cams.slice(); body.validFrom = c.noWindow ? null : this.amLocalToIso(c.from); body.validUntil = c.noWindow ? null : this.amLocalToIso(c.until); }
+                    try {
+                        const d = await this.kcaApi('cctv_request_update', { method: 'POST', body: JSON.stringify(body) });
+                        await this.amLoad(); this.amCloseSel();
+                        const msg = (ok ? 'อนุมัติแล้ว' : 'ไม่อนุมัติแล้ว') + (d.notified === true ? ' · แจ้งผู้ขอทาง LINE แล้ว' : d.notified === false ? ' · แต่ส่งข้อความถึงผู้ขอไม่สำเร็จ' : '');
+                        Swal.fire({ toast: true, position: 'top', icon: d.notified === false ? 'warning' : 'success', title: msg, showConfirmButton: false, timer: 2600 });
+                        if (d.degraded) Swal.fire({ icon: 'info', title: 'ยังไม่ได้รัน migration_cctv_v2.sql', text: 'บันทึกกล้อง/ช่วงเวลา/คำแนะนำไม่ได้ (บันทึกเฉพาะสถานะ ลิงก์ และหมายเหตุ)' });
+                    } catch (e) { this.amFail(e); } finally { this.am.busy = false; }
+                },
                 async openUsage() { this.currentTab = 'usage'; await this.loadUsage(this.usage.days); },
                 async loadUsage(days) {
                     if (this.usage.loading) return;
