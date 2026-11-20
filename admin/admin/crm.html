@@ -2030,6 +2030,13 @@
                     <p class="text-sm text-slate-500 font-bold">กำลังโหลด...</p>
                 </div>
 
+                <div v-else-if="complaintLoadErr && !myComplaints.length" class="bg-white rounded-3xl p-8 text-center shadow-sm" data-testid="cp-load-error">
+                    <div class="text-4xl mb-2">⚠️</div>
+                    <p class="font-bold text-slate-700 mb-1">โหลดรายการไม่สำเร็จ</p>
+                    <p class="text-xs text-slate-500 mb-4 break-words">{{ complaintLoadErr }}</p>
+                    <button @click="loadMyComplaints()" class="px-6 py-2.5 bg-orange-500 text-white rounded-2xl font-bold text-sm">ลองใหม่</button>
+                </div>
+
                 <div v-else-if="myComplaints.length === 0" class="bg-white rounded-3xl p-10 text-center shadow-sm">
                     <div class="text-6xl mb-3">📢</div>
                     <p class="font-bold text-slate-700 mb-1">ยังไม่เคยยื่นเรื่องร้องเรียน</p>
@@ -2037,103 +2044,243 @@
                     <button @click="openComplaintForm" class="px-6 py-2.5 bg-orange-500 text-white rounded-2xl font-bold text-sm">+ ยื่นเรื่อง</button>
                 </div>
 
-                <div v-else class="space-y-4">
-                    <div v-for="c in myComplaints" :key="c.id" class="rounded-3xl shadow-md overflow-hidden border-2 bg-white"
-                         :class="{
-                             'border-emerald-400': c.status === 'resolved',
-                             'border-amber-400':   c.status === 'pending' || c.status === 'in_progress',
-                             'border-rose-400':    c.status === 'rejected'
-                         }">
-                        <div class="px-4 py-2 flex items-center justify-between text-xs font-bold"
-                             :class="{
-                                 'bg-emerald-500 text-white': c.status === 'resolved',
-                                 'bg-amber-500 text-white':   c.status === 'pending' || c.status === 'in_progress',
-                                 'bg-rose-500 text-white':    c.status === 'rejected'
-                             }">
-                            <span>{{ { pending:'⏳ รอตรวจสอบ', in_progress:'🔧 กำลังดำเนินการ', resolved:'✅ แก้ไขแล้ว', rejected:'❌ ไม่ดำเนินการ' }[c.status] || c.status }}</span>
+                <div v-else class="space-y-3">
+                    <div class="rounded-2xl bg-orange-50 border border-orange-100 text-[11px] text-orange-800 px-3.5 py-2.5 leading-relaxed" data-testid="cp-intro">
+                        📋 เรื่องร้องเรียนทุกเรื่องมี <b>เลขที่เรื่อง</b> และบันทึกประวัติการดำเนินการ ใช้อ้างอิงกับนิติบุคคลได้
+                        <span v-if="complaintCfg">· เป้าหมายรับเรื่องภายใน {{ complaintCfg.ack_days }} วัน และปิดเรื่องภายใน {{ complaintCfg.resolve_days }} วัน</span>
+                    </div>
+                    <div v-if="complaintLoadErr" class="rounded-2xl bg-rose-50 text-rose-700 text-xs p-3" data-testid="cp-refresh-error">รีเฟรชรายการไม่สำเร็จ: {{ complaintLoadErr }}</div>
+                    <button v-for="c in myComplaints" :key="c.id" @click="complaintDetailId = c.id" class="w-full text-left rounded-3xl shadow-md overflow-hidden border-2 bg-white active:scale-[0.99] transition" :data-testid="'cp-card-' + c.id"
+                         :class="cpStatusBorder(c.status)">
+                        <div class="px-4 py-2 flex items-center justify-between text-xs font-bold text-white" :class="cpStatusBar(c.status)">
+                            <span :data-testid="'cp-status-' + c.id">{{ cpStatusIcon(c.status) }} {{ cpStatusLabel(c.status) }}</span>
                             <span>{{ formatThaiDate(c.created_at) }}</span>
                         </div>
                         <div class="p-4">
-                            <div class="text-xs font-bold text-orange-600 mb-1">{{ c.category }}</div>
-                            <div class="text-sm text-slate-700 mb-3">{{ c.issue }}</div>
-                            <img v-if="c.image_url" :src="isValidImageUrl(c.image_url)" class="w-full h-32 object-cover rounded-2xl border border-slate-100 mb-3" @error="$event.target.style.display='none'">
-                            <div v-if="c.admin_note" class="bg-indigo-50 rounded-xl p-3 text-xs text-indigo-700">
-                                <div class="font-bold mb-0.5">💬 ตอบกลับจากนิติบุคคล</div>
-                                {{ c.admin_note }}
+                            <div class="text-[11px] font-bold text-slate-500 mb-0.5" :data-testid="'cp-case-' + c.id">เลขที่ {{ c.case_no }}</div>
+                            <div class="text-sm font-extrabold text-slate-800 break-words">{{ c.subject || c.category }}</div>
+                            <div class="text-[11px] font-bold text-orange-600 mt-0.5 mb-1.5" v-if="c.subject">{{ c.category }}</div>
+                            <div class="text-xs text-slate-600 break-words" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">{{ c.issue }}</div>
+                            <div class="flex flex-wrap gap-1.5 mt-2.5 text-[10px] font-bold">
+                                <span v-if="c.sla && c.sla.open" class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">เปิดมา {{ c.sla.days_open }} วัน</span>
+                                <span v-if="c.ack_at" class="px-2 py-0.5 rounded-full bg-sky-100 text-sky-700">รับเรื่องแล้ว</span>
+                                <span v-if="c.closed_reason || c.admin_note" class="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">💬 มีข้อความจากนิติบุคคล</span>
                             </div>
                         </div>
-                    </div>
+                    </button>
                 </div>
             </div>
         </div>
 
-        <!-- ═══════ Complaint Form Modal ═══════ -->
-        <div v-if="complaintFormModal && !loading" @click.self="complaintFormModal = false" class="fixed inset-0 modal-bg z-50 flex items-end md:items-center justify-center p-3">
-            <div class="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl slide-up max-h-[90vh] overflow-y-auto">
-                <div class="flex items-center gap-2 mb-4">
+        <!-- ═══════ Complaint Form Modal (แบบทางการ) ═══════ -->
+        <div v-if="complaintFormModal && !loading && complaintCfg" @click.self="complaintFormModal = false" class="fixed inset-0 modal-bg z-50 flex items-end md:items-center justify-center p-3" data-testid="cp-form">
+            <div class="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl slide-up max-h-[92vh] overflow-y-auto">
+                <div class="flex items-center gap-2 mb-1">
                     <div class="text-2xl">📢</div>
-                    <h3 class="text-lg font-extrabold text-slate-800">ยื่นเรื่องร้องเรียน</h3>
+                    <h3 class="text-lg font-extrabold text-slate-800">แบบคำร้องเรียน</h3>
                 </div>
-                <div class="space-y-3">
-                    <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">ชื่อผู้แจ้ง *</label>
-                        <input v-model="complaintForm.fullname" type="text" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none">
-                    </div>
-                    <div class="grid grid-cols-2 gap-2">
+                <p class="text-[11px] text-slate-500 mb-4 leading-relaxed">กรอกข้อเท็จจริงให้ครบ — ใคร ทำอะไร เมื่อไร ที่ไหน ต้องการให้ดำเนินการอย่างไร เรื่องที่ส่งแล้ว<b>แก้ไขไม่ได้</b> และจะได้รับเลขที่เรื่องไว้ติดตาม</p>
+                <div class="space-y-3.5">
+                    <div class="rounded-2xl bg-slate-50 p-3 space-y-2.5">
+                        <div class="text-[11px] font-extrabold text-slate-500">ข้อมูลผู้ร้อง</div>
                         <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">บ้านเลขที่ *</label>
-                            <input v-model="complaintForm.house_number" type="text" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none">
+                            <label class="block text-xs font-bold text-slate-700 mb-1">ชื่อ-นามสกุล *</label>
+                            <input id="cp-f-fullname" v-model="complaintForm.fullname" type="text" maxlength="120" data-testid="cp-in-fullname" class="w-full rounded-2xl border px-3 py-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none" :class="cpErrCls('fullname')">
+                            <p v-if="complaintErr && complaintErr.field === 'fullname'" class="text-[11px] text-rose-600 mt-1" data-testid="cp-err">{{ complaintErr.msg }}</p>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">บ้านเลขที่ *</label>
+                                <input id="cp-f-houseNo" v-model="complaintForm.house_number" type="text" maxlength="30" data-testid="cp-in-house" class="w-full rounded-2xl border px-3 py-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none" :class="cpErrCls('houseNo')">
+                                <p v-if="complaintErr && complaintErr.field === 'houseNo'" class="text-[11px] text-rose-600 mt-1" data-testid="cp-err">{{ complaintErr.msg }}</p>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">เบอร์โทร *</label>
+                                <input id="cp-f-phone" v-model="complaintForm.phone" type="tel" maxlength="10" inputmode="numeric" data-testid="cp-in-phone"
+                                       @input="complaintForm.phone = complaintForm.phone.replace(/[^0-9]/g,'').replace(/^0*/,'0')"
+                                       placeholder="0xxxxxxxxx"
+                                       class="w-full rounded-2xl border px-3 py-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none" :class="cpErrCls('phone')">
+                                <p v-if="complaintErr && complaintErr.field === 'phone'" class="text-[11px] text-rose-600 mt-1" data-testid="cp-err">{{ complaintErr.msg }}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="rounded-2xl bg-slate-50 p-3 space-y-2.5">
+                        <div class="text-[11px] font-extrabold text-slate-500">เรื่องที่ร้องเรียน</div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">ประเภทเรื่อง *</label>
+                            <select id="cp-f-category" v-model="complaintForm.category" data-testid="cp-in-category" class="w-full rounded-2xl border px-3 py-2.5 text-sm bg-white" :class="cpErrCls('category')">
+                                <option value="" disabled>— เลือกประเภท —</option>
+                                <option v-for="k in complaintCfg.categories" :key="k" :value="k">{{ k }}</option>
+                            </select>
+                            <p v-if="complaintErr && complaintErr.field === 'category'" class="text-[11px] text-rose-600 mt-1" data-testid="cp-err">{{ complaintErr.msg }}</p>
                         </div>
                         <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">เบอร์โทร *</label>
-                            <input v-model="complaintForm.phone" type="tel" maxlength="10" inputmode="numeric"
-                                   @input="complaintForm.phone = complaintForm.phone.replace(/[^0-9]/g,'').replace(/^0*/,'0')"
-                                   placeholder="0xxxxxxxxx"
-                                   class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none">
+                            <label class="block text-xs font-bold text-slate-700 mb-1">หัวข้อเรื่อง * <span class="font-normal text-slate-400">(สรุปสั้นๆ อย่างน้อย 5 ตัวอักษร)</span></label>
+                            <input id="cp-f-subject" v-model="complaintForm.subject" type="text" maxlength="120" data-testid="cp-in-subject" placeholder="เช่น เสียงดังจากการต่อเติมบ้านข้างเคียง" class="w-full rounded-2xl border px-3 py-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none" :class="cpErrCls('subject')">
+                            <p v-if="complaintErr && complaintErr.field === 'subject'" class="text-[11px] text-rose-600 mt-1" data-testid="cp-err">{{ complaintErr.msg }}</p>
+                        </div>
+                        <div class="grid grid-cols-1 gap-2.5">
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">วัน-เวลาที่เกิดเหตุ *</label>
+                                <input id="cp-f-incidentAt" v-model="complaintForm.incident_at" type="datetime-local" :max="amBkkLocal(Date.now())" data-testid="cp-in-incident-at" class="w-full rounded-2xl border px-3 py-2.5 text-sm bg-white focus:ring-2 focus:ring-orange-400 outline-none" :class="cpErrCls('incidentAt')">
+                                <p v-if="complaintErr && complaintErr.field === 'incidentAt'" class="text-[11px] text-rose-600 mt-1" data-testid="cp-err">{{ complaintErr.msg }}</p>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">สถานที่เกิดเหตุ *</label>
+                                <input id="cp-f-incidentPlace" v-model="complaintForm.incident_place" type="text" maxlength="200" data-testid="cp-in-place" placeholder="เช่น หน้าบ้าน 998/120 ซอย 5" class="w-full rounded-2xl border px-3 py-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none" :class="cpErrCls('incidentPlace')">
+                                <p v-if="complaintErr && complaintErr.field === 'incidentPlace'" class="text-[11px] text-rose-600 mt-1" data-testid="cp-err">{{ complaintErr.msg }}</p>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">รายละเอียดข้อเท็จจริง * <span class="font-normal" :class="complaintForm.issue.trim().length >= 20 ? 'text-emerald-600' : 'text-slate-400'" data-testid="cp-issue-count">({{ complaintForm.issue.trim().length }}/20 ตัวอักษรขั้นต่ำ)</span></label>
+                            <textarea id="cp-f-issue" v-model="complaintForm.issue" rows="5" maxlength="3000" data-testid="cp-in-issue" class="w-full rounded-2xl border px-3 py-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none resize-none" :class="cpErrCls('issue')" placeholder="เล่าเหตุการณ์ตามลำดับ: ใครทำอะไร เกิดขึ้นบ่อยแค่ไหน ส่งผลกระทบอย่างไร — เขียนตามที่เห็น/ได้ยินจริง ไม่ต้องคาดเดา"></textarea>
+                            <p v-if="complaintErr && complaintErr.field === 'issue'" class="text-[11px] text-rose-600 mt-1" data-testid="cp-err">{{ complaintErr.msg }}</p>
                         </div>
                     </div>
-                    <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">หมวดหมู่ *</label>
-                        <select v-model="complaintForm.category" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm bg-white">
-                            <option>ความสะอาด/ขยะ</option>
-                            <option>พื้นที่ส่วนกลาง/ไฟถนน</option>
-                            <option>เสียงรบกวน</option>
-                            <option>ความปลอดภัย</option>
-                            <option>สัตว์เลี้ยง</option>
-                            <option>อื่นๆ</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">รายละเอียด *</label>
-                        <textarea v-model="complaintForm.issue" rows="3" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none resize-none" placeholder="อธิบายปัญหาที่พบ..."></textarea>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">รูปภาพประกอบ (ไม่บังคับ)</label>
-                        <input type="file" accept="image/*" @change="onComplaintImageChange" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                        <div v-if="complaintForm.image_url" class="mt-2">
-                            <img :src="isValidImageUrl(complaintForm.image_url)" class="h-24 w-full object-cover rounded-xl border" @error="$event.target.style.display='none'">
+
+                    <div class="rounded-2xl bg-slate-50 p-3 space-y-2.5">
+                        <div class="text-[11px] font-extrabold text-slate-500">ผู้เกี่ยวข้อง และผลที่ต้องการ (ไม่บังคับ)</div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">ผู้ถูกร้อง / ผู้เกี่ยวข้อง</label>
+                            <input v-model="complaintForm.respondent" type="text" maxlength="300" data-testid="cp-in-respondent" placeholder="ชื่อ / บ้านเลขที่ / ลักษณะ (ถ้าทราบ)" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none">
                         </div>
-                        <div v-if="complaintImageUploading" class="mt-1 text-xs text-orange-500 flex items-center gap-1">
-                            <i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลด...
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">พยาน / ผู้รู้เห็นเหตุการณ์</label>
+                            <input v-model="complaintForm.witnesses" type="text" maxlength="500" data-testid="cp-in-witnesses" placeholder="ชื่อ / บ้านเลขที่ / เบอร์ติดต่อ" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">ต้องการให้นิติบุคคลดำเนินการอย่างไร</label>
+                            <textarea v-model="complaintForm.desired_outcome" rows="2" maxlength="500" data-testid="cp-in-outcome" placeholder="เช่น ขอให้ตักเตือน / ตรวจสอบกล้องวงจรปิด / แก้ไขภายใน 7 วัน" class="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-orange-400 outline-none resize-none"></textarea>
                         </div>
                     </div>
+
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">ลายเซ็นรับรอง *</label>
-                        <canvas ref="complaintSigCanvas" class="w-full border-2 border-dashed border-slate-300 rounded-2xl bg-white touch-none" style="height:120px"
+                        <label class="block text-xs font-bold text-slate-700 mb-1">รูปหลักฐาน (ไม่บังคับ · ไม่เกิน {{ complaintCfg.max_evidence }} รูป)</label>
+                        <div class="flex flex-wrap gap-2" data-testid="cp-evidence">
+                            <div v-for="(u, i) in complaintForm.evidence" :key="u" class="relative w-20 h-20">
+                                <img :src="isValidImageUrl(u)" class="w-20 h-20 object-cover rounded-xl border" @error="$event.target.style.display='none'">
+                                <button type="button" @click="complaintForm.evidence.splice(i, 1)" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-rose-500 text-white text-xs flex items-center justify-center shadow" :data-testid="'cp-ev-del-' + i" aria-label="ลบรูป"><i class="fa-solid fa-xmark"></i></button>
+                            </div>
+                            <label v-if="complaintForm.evidence.length < complaintCfg.max_evidence" class="w-20 h-20 rounded-xl border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 text-[10px] font-bold cursor-pointer" data-testid="cp-ev-add">
+                                <i class="fa-solid fa-camera text-lg mb-0.5"></i>เพิ่มรูป
+                                <input type="file" accept="image/*" multiple class="hidden" @change="onComplaintImageChange" data-testid="cp-ev-file">
+                            </label>
+                        </div>
+                        <div v-if="complaintImageUploading" class="mt-1 text-xs text-orange-500 flex items-center gap-1"><i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลด...</div>
+                        <p v-if="complaintErr && complaintErr.field === 'evidenceUrls'" class="text-[11px] text-rose-600 mt-1" data-testid="cp-err">{{ complaintErr.msg }}</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">ลายเซ็นผู้ร้อง *</label>
+                        <canvas id="cp-f-signatureUrl" ref="complaintSigCanvas" class="w-full border-2 border-dashed rounded-2xl bg-white touch-none" :class="complaintErr && complaintErr.field === 'signatureUrl' ? 'border-rose-400' : 'border-slate-300'" style="height:120px" data-testid="cp-sig"
                                 @mousedown="sigStart" @mousemove="sigMove" @mouseup="sigEnd" @mouseleave="sigEnd"
                                 @touchstart.prevent="sigStart" @touchmove.prevent="sigMove" @touchend.prevent="sigEnd"></canvas>
-                        <button type="button" @click="sigClear" class="text-xs text-slate-400 mt-1 underline">ล้างลายเซ็น</button>
+                        <button type="button" @click="sigClear" class="text-xs text-slate-400 mt-1 underline" data-testid="cp-sig-clear">ล้างลายเซ็น</button>
+                        <p v-if="complaintErr && complaintErr.field === 'signatureUrl'" class="text-[11px] text-rose-600 mt-1" data-testid="cp-err">{{ complaintErr.msg }}</p>
+                    </div>
+
+                    <div id="cp-f-declaration" class="rounded-2xl border p-3 space-y-3" :class="complaintErr && complaintErr.field === 'declaration' ? 'border-rose-400 bg-rose-50' : 'border-slate-200 bg-slate-50'">
+                        <label class="flex items-start gap-2.5 text-[11px] text-slate-700 leading-relaxed cursor-pointer">
+                            <input type="checkbox" v-model="complaintForm.declaration" class="w-5 h-5 mt-0.5 accent-orange-500 shrink-0" data-testid="cp-in-declaration">
+                            <span><b>คำรับรอง</b> {{ complaintCfg.declaration }}</span>
+                        </label>
+                        <label class="flex items-start gap-2.5 text-[11px] text-slate-700 leading-relaxed cursor-pointer">
+                            <input type="checkbox" v-model="complaintForm.pdpa" class="w-5 h-5 mt-0.5 accent-orange-500 shrink-0" data-testid="cp-in-pdpa">
+                            <span><b>ความยินยอมข้อมูลส่วนบุคคล</b> {{ complaintCfg.pdpa }}</span>
+                        </label>
+                        <p v-if="complaintErr && complaintErr.field === 'declaration'" class="text-[11px] text-rose-600" data-testid="cp-err">{{ complaintErr.msg }}</p>
                     </div>
                 </div>
                 <div class="flex gap-2 mt-5">
-                    <button @click="complaintFormModal = false" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold">ยกเลิก</button>
-                    <button @click="submitComplaint" :disabled="complaintSaving || complaintImageUploading" class="flex-1 py-3 bg-orange-500 hover:bg-orange-600 disabled:bg-slate-300 text-white rounded-2xl font-bold flex items-center justify-center gap-2">
+                    <button @click="complaintFormModal = false" class="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold" data-testid="cp-cancel">ยกเลิก</button>
+                    <button @click="submitComplaint" :disabled="complaintSaving || complaintImageUploading" class="flex-1 py-3 bg-orange-500 hover:bg-orange-600 disabled:bg-slate-300 text-white rounded-2xl font-bold flex items-center justify-center gap-2" data-testid="cp-submit">
                         <i v-if="complaintSaving" class="fa-solid fa-spinner fa-spin"></i>
                         <i v-else class="fa-solid fa-paper-plane"></i>
-                        ส่งเรื่อง
+                        ยื่นเรื่อง
                     </button>
                 </div>
             </div>
+        </div>
+
+        <!-- ═══════ ใบรับเรื่องหลังยื่น ═══════ -->
+        <div v-if="complaintReceipt" class="fixed inset-0 modal-bg z-[60] flex items-center justify-center p-4" data-testid="cp-receipt">
+            <div class="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl text-center">
+                <div class="text-5xl mb-2">{{ complaintReceipt.duplicate ? '📄' : '✅' }}</div>
+                <h3 class="text-lg font-extrabold text-slate-800">{{ complaintReceipt.duplicate ? 'เรื่องนี้ส่งไว้แล้ว' : 'รับเรื่องร้องเรียนแล้ว' }}</h3>
+                <div class="text-[11px] text-slate-500 mt-3">เลขที่เรื่อง</div>
+                <div class="text-2xl font-extrabold text-orange-600 tracking-wide break-all" data-testid="cp-receipt-case">{{ complaintReceipt.c.case_no }}</div>
+                <div class="text-xs text-slate-600 mt-1 break-words">{{ complaintReceipt.c.subject || complaintReceipt.c.category }}</div>
+                <div class="text-[11px] text-slate-400 mt-1">ยื่นเมื่อ {{ amDtFull(complaintReceipt.c.created_at) }}</div>
+                <div v-if="complaintReceipt.c.content_hash" class="mt-3 rounded-xl bg-slate-50 p-2.5 text-[10px] text-slate-500 break-all text-left" data-testid="cp-receipt-hash">
+                    <div class="font-bold text-slate-600 mb-0.5">ลายนิ้วมือข้อมูล (SHA-256)</div>{{ complaintReceipt.c.content_hash }}
+                </div>
+                <div v-if="complaintReceipt.degraded" class="mt-3 rounded-xl bg-amber-50 text-amber-800 p-2.5 text-[11px] text-left" data-testid="cp-receipt-degraded">⚠️ ระบบบันทึกแบบพื้นฐาน (ยังไม่เปิดใช้ลายนิ้วมือข้อมูล/ประวัติแบบตรวจสอบได้) — เก็บเลขที่เรื่องไว้อ้างอิงกับนิติบุคคล</div>
+                <p class="text-[11px] text-slate-500 mt-3 leading-relaxed">เก็บเลขที่เรื่องไว้ติดตามสถานะ · ควรพิมพ์หรือบันทึกใบสรุปเก็บไว้เป็นหลักฐานของท่านเอง</p>
+                <div class="grid grid-cols-2 gap-2 mt-4">
+                    <button @click="cpPrintMember(complaintReceipt.c)" class="py-2.5 rounded-2xl bg-slate-800 text-white text-xs font-bold" data-testid="cp-receipt-print"><i class="fa-solid fa-print mr-1"></i> พิมพ์/บันทึก PDF</button>
+                    <button @click="complaintDetailId = complaintReceipt.c.id; complaintReceipt = null" class="py-2.5 rounded-2xl bg-orange-500 text-white text-xs font-bold" data-testid="cp-receipt-open">ดูรายละเอียด</button>
+                </div>
+                <button @click="complaintReceipt = null" class="mt-2 w-full py-2.5 rounded-2xl bg-slate-100 text-slate-600 text-xs font-bold" data-testid="cp-receipt-close">ปิด</button>
+            </div>
+        </div>
+
+        <!-- ═══════ รายละเอียดเรื่องร้องเรียน (ฝั่งสมาชิก) ═══════ -->
+        <div v-if="complaintDetailItem" class="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-slate-900/50" @click.self="complaintDetailId = null" data-testid="cp-detail">
+            <div class="w-full max-w-lg max-h-[92vh] overflow-y-auto bg-slate-50 rounded-t-3xl md:rounded-3xl shadow-2xl">
+                <div class="sticky top-0 z-10 bg-slate-50/95 backdrop-blur px-4 pt-3 pb-2 flex items-center gap-3 border-b border-slate-100">
+                    <div class="min-w-0 flex-1">
+                        <div class="text-[11px] font-bold text-slate-500" data-testid="cp-d-case">เลขที่ {{ complaintDetailItem.case_no }}</div>
+                        <div class="text-base font-extrabold text-slate-800 break-words">{{ complaintDetailItem.subject || complaintDetailItem.category }}</div>
+                        <span class="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full text-white mt-0.5" :class="cpStatusBar(complaintDetailItem.status)" data-testid="cp-d-status">{{ cpStatusIcon(complaintDetailItem.status) }} {{ cpStatusLabel(complaintDetailItem.status) }}</span>
+                    </div>
+                    <button @click="complaintDetailId = null" class="w-9 h-9 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" data-testid="cp-d-close" aria-label="ปิด"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="px-4 pt-3 pb-8 space-y-3">
+                    <div v-if="complaintDetailItem.closed_reason || complaintDetailItem.admin_note" class="rounded-2xl bg-indigo-50 text-indigo-800 text-xs p-3.5" data-testid="cp-d-response">
+                        <div class="font-bold mb-0.5">💬 {{ complaintDetailItem.closed_reason ? 'ผลการพิจารณาจากนิติบุคคล' : 'ตอบกลับจากนิติบุคคล' }}</div>
+                        <div class="whitespace-pre-line break-words">{{ complaintDetailItem.closed_reason || complaintDetailItem.admin_note }}</div>
+                    </div>
+                    <div class="rounded-2xl bg-white shadow-sm p-3.5 text-xs space-y-2" data-testid="cp-d-facts">
+                        <div><span class="text-slate-400">ประเภท</span><div class="font-bold text-slate-700">{{ complaintDetailItem.category }}</div></div>
+                        <div v-if="complaintDetailItem.incident_at || complaintDetailItem.incident_place"><span class="text-slate-400">เกิดเหตุ</span><div class="font-bold text-slate-700">{{ complaintDetailItem.incident_at ? amDtFull(complaintDetailItem.incident_at) : '' }}<span v-if="complaintDetailItem.incident_place"> · {{ complaintDetailItem.incident_place }}</span></div></div>
+                        <div><span class="text-slate-400">รายละเอียด</span><div class="text-slate-700 whitespace-pre-line break-words">{{ complaintDetailItem.issue }}</div></div>
+                        <div v-if="complaintDetailItem.respondent"><span class="text-slate-400">ผู้ถูกร้อง/ผู้เกี่ยวข้อง</span><div class="text-slate-700 break-words">{{ complaintDetailItem.respondent }}</div></div>
+                        <div v-if="complaintDetailItem.witnesses"><span class="text-slate-400">พยาน</span><div class="text-slate-700 break-words">{{ complaintDetailItem.witnesses }}</div></div>
+                        <div v-if="complaintDetailItem.desired_outcome"><span class="text-slate-400">ผลที่ต้องการ</span><div class="text-slate-700 break-words">{{ complaintDetailItem.desired_outcome }}</div></div>
+                        <div v-if="(complaintDetailItem.evidence_urls || []).length || complaintDetailItem.image_url" class="flex flex-wrap gap-2">
+                            <img v-for="u in (complaintDetailItem.evidence_urls && complaintDetailItem.evidence_urls.length ? complaintDetailItem.evidence_urls : [complaintDetailItem.image_url])" :key="u" :src="isValidImageUrl(u)" @click="amImg(u)" class="w-20 h-20 object-cover rounded-xl border border-slate-200" alt="หลักฐาน" @error="$event.target.style.display='none'">
+                        </div>
+                    </div>
+                    <div class="rounded-2xl bg-white shadow-sm p-3.5" data-testid="cp-d-timeline">
+                        <div class="text-xs font-bold text-slate-600 mb-2">ประวัติการดำเนินการ</div>
+                        <div v-if="!(complaintDetailItem.timeline || []).length" class="text-xs text-slate-400">ยังไม่มีบันทึก</div>
+                        <ol class="relative border-l-2 border-slate-200 ml-2 space-y-3">
+                            <li v-for="(e, i) in complaintDetailItem.timeline" :key="i" class="ml-4">
+                                <span class="absolute -left-[7px] w-3 h-3 rounded-full bg-orange-400 border-2 border-white"></span>
+                                <div class="text-[11px] text-slate-400">{{ amDtFull(e.at) }} · {{ e.actor }}</div>
+                                <div class="text-xs text-slate-700 whitespace-pre-line break-words">{{ cpEvText(e) }}</div>
+                            </li>
+                        </ol>
+                    </div>
+                    <div v-if="complaintDetailItem.content_hash" class="rounded-2xl bg-white shadow-sm p-3.5 text-[10px] text-slate-500 break-all" data-testid="cp-d-hash">
+                        <div class="text-xs font-bold text-slate-600 mb-1">ลายนิ้วมือข้อมูล (SHA-256) ของเรื่องที่ยื่น</div>{{ complaintDetailItem.content_hash }}
+                        <div class="mt-1 text-slate-400">ค่านี้คำนวณจากเนื้อหาที่ท่านยื่น ณ เวลายื่นเรื่อง ใช้ยืนยันภายหลังว่าเนื้อหาไม่ถูกแก้ไข</div>
+                    </div>
+                    <button @click="cpPrintMember(complaintDetailItem)" class="w-full py-3 rounded-2xl bg-slate-800 text-white font-bold text-sm" data-testid="cp-d-print"><i class="fa-solid fa-print mr-1.5"></i> พิมพ์ / บันทึกเป็น PDF</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════ ใบสรุปเรื่องร้องเรียน (พิมพ์ / PDF) — ใช้ร่วมกันทั้งสมาชิกและแอดมิน ═══════ -->
+        <div v-if="cpPrint.open" class="fixed inset-0 z-[90] bg-slate-900/70 flex flex-col" data-testid="cp-print">
+            <div class="flex items-center gap-2 px-3 py-2 bg-slate-900 text-white">
+                <div class="flex-1 text-sm font-bold truncate">{{ cpPrint.title }}</div>
+                <button @click="cpPrintNow()" class="px-3 py-1.5 rounded-xl bg-white text-slate-900 text-xs font-bold" data-testid="cp-print-go"><i class="fa-solid fa-print mr-1"></i> พิมพ์ / PDF</button>
+                <button @click="cpPrint.open = false" class="px-3 py-1.5 rounded-xl bg-slate-700 text-white text-xs font-bold" data-testid="cp-print-close">ปิด</button>
+            </div>
+            <div class="px-3 py-1.5 bg-amber-100 text-amber-900 text-[11px]">ถ้ากดพิมพ์ไม่ได้ในแอป LINE ให้เปิดหน้านี้ในเบราว์เซอร์ หรือบันทึกภาพหน้าจอเก็บไว้</div>
+            <iframe ref="cpPrintFrame" :srcdoc="cpPrint.html" sandbox="allow-same-origin allow-modals" class="flex-1 w-full bg-white" title="ใบสรุปเรื่องร้องเรียน" data-testid="cp-print-frame"></iframe>
         </div>
 
         <!-- ═══════ Repairs Tab (แจ้งซ่อมส่วนกลาง · แดชบอร์ด + รายการทั้งหมด) ═══════ -->
@@ -3658,9 +3805,13 @@
                     <button @click="amSetStatus('')" class="shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold" :class="!am.status ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 shadow-sm'" data-testid="am-filter-all">ทั้งหมด <span class="ml-0.5 opacity-70">{{ am.items.length }}</span></button>
                     <button v-for="s in amSys[am.sys].st" :key="s[0]" @click="amSetStatus(s[0])" class="shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold" :class="am.status === s[0] ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 shadow-sm'" :data-testid="'am-filter-' + s[0]">{{ s[1] }} <span class="ml-0.5 opacity-70" :data-testid="'am-count-' + s[0]">{{ amCounts[s[0]] || 0 }}</span></button>
                 </div>
+                <div v-if="am.sys === 'complaint'" class="flex gap-1.5 overflow-x-auto pb-2 mb-1 -mx-1 px-1" data-testid="am-cp-filters">
+                    <button @click="am.overdue = !am.overdue; am.limit = 30" class="shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold" :class="am.overdue ? 'bg-rose-600 text-white' : 'bg-white text-slate-600 shadow-sm'" data-testid="am-cp-f-overdue">⏰ เกินกำหนด <span class="ml-0.5 opacity-70">{{ amCpOverdueCount }}</span></button>
+                    <button v-for="p in cpPrios" :key="p[0]" @click="am.prio = (am.prio === p[0] ? '' : p[0]); am.limit = 30" class="shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold" :class="am.prio === p[0] ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 shadow-sm'" :data-testid="'am-cp-f-pr-' + p[0]">{{ p[1] }}</button>
+                </div>
                 <div class="relative mb-3">
                     <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-sm"></i>
-                    <input v-model="am.q" @input="am.limit = 30" type="search" placeholder="ค้นหา ชื่อ / บ้านเลขที่ / ทะเบียน / รายละเอียด" class="w-full rounded-2xl bg-white shadow-sm border border-slate-100 pl-10 pr-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-sky-300" data-testid="am-search">
+                    <input v-model="am.q" @input="am.limit = 30" type="search" placeholder="ค้นหา เลขที่เรื่อง / ชื่อ / บ้านเลขที่ / ทะเบียน / รายละเอียด" class="w-full rounded-2xl bg-white shadow-sm border border-slate-100 pl-10 pr-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-sky-300" data-testid="am-search">
                 </div>
                 <div v-if="am.error" class="rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-sm p-4 mb-3" data-testid="am-error">{{ am.error }} <button @click="amLoad()" class="underline font-bold ml-1">ลองใหม่</button></div>
                 <div v-if="am.loading && !am.items.length" class="text-center text-slate-400 py-10"><i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลด...</div>
@@ -3733,28 +3884,79 @@
 
                     <!-- ───── ร้องเรียน ───── -->
                     <template v-if="am.sys === 'complaint'">
-                        <div class="rounded-2xl bg-white shadow-sm p-3.5 text-sm space-y-1.5">
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5 flex items-center gap-2 flex-wrap" data-testid="am-cp-head">
+                            <span class="text-sm font-extrabold text-slate-800" data-testid="am-cp-caseno">เลขที่ {{ amSel.case_no || '—' }}</span>
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="cpPrioCls(amSel.priority)" data-testid="am-cp-prio-badge">ความเร่งด่วน: {{ cpPrioLabel(amSel.priority) }}</span>
+                            <span v-if="amSel.sla && amSel.sla.ack_overdue" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700" data-testid="am-cp-ack-over">เกินกำหนดรับเรื่อง</span>
+                            <span v-if="amSel.sla && amSel.sla.resolve_overdue" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700" data-testid="am-cp-res-over">เกินกำหนดปิดเรื่อง</span>
+                            <span v-if="amSel.sla" class="text-[10px] text-slate-400">เปิดมา {{ amSel.sla.days_open }} วัน</span>
+                        </div>
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5 text-sm space-y-2">
+                            <div v-if="amSel.subject" class="text-sm font-extrabold text-slate-800 break-words" data-testid="am-cp-subject">{{ amSel.subject }}</div>
                             <div class="text-xs font-bold text-rose-500">🏷️ {{ amSel.category || '—' }}</div>
+                            <div v-if="amSel.incident_at || amSel.incident_place" class="text-[12px] text-slate-600" data-testid="am-cp-incident">🕒 เกิดเหตุ {{ amSel.incident_at ? amDtFull(amSel.incident_at) : '—' }}<span v-if="amSel.incident_place"> · 📍 {{ amSel.incident_place }}</span></div>
                             <div class="text-slate-600 whitespace-pre-line break-words" data-testid="am-cp-issue">{{ amSel.issue }}</div>
-                            <div class="flex gap-2 pt-1">
-                                <img v-if="amSafeUrl(amSel.image_url)" :src="amSel.image_url" @click="amImg(amSel.image_url)" class="w-20 h-20 object-cover rounded-xl border border-slate-200" alt="รูปประกอบ">
-                                <img v-if="amSafeUrl(amSel.signature_url)" :src="amSel.signature_url" @click="amImg(amSel.signature_url)" class="w-20 h-20 object-contain rounded-xl border border-slate-200 bg-white" alt="ลายเซ็น">
+                            <div v-if="amSel.respondent" class="text-[12px] text-slate-600 break-words" data-testid="am-cp-respondent"><b>ผู้ถูกร้อง/ผู้เกี่ยวข้อง:</b> {{ amSel.respondent }}</div>
+                            <div v-if="amSel.witnesses" class="text-[12px] text-slate-600 break-words"><b>พยาน:</b> {{ amSel.witnesses }}</div>
+                            <div v-if="amSel.desired_outcome" class="text-[12px] text-slate-600 break-words"><b>ผลที่ต้องการ:</b> {{ amSel.desired_outcome }}</div>
+                            <div class="flex flex-wrap gap-2 pt-1">
+                                <img v-for="u in cpEvidence(amSel)" :key="u" :src="u" @click="amImg(u)" class="w-20 h-20 object-cover rounded-xl border border-slate-200" alt="รูปหลักฐาน">
+                                <img v-if="amSafeUrl(amSel.signature_url)" :src="amSel.signature_url" @click="amImg(amSel.signature_url)" class="w-20 h-20 object-contain rounded-xl border border-slate-200 bg-white" alt="ลายเซ็น" data-testid="am-cp-sig">
                             </div>
-                            <div class="text-[11px] text-slate-400">ยื่นเมื่อ {{ amDt(amSel.created_at) }}</div>
+                            <div class="text-[11px] text-slate-400">ยื่นเมื่อ {{ amDt(amSel.created_at) }}<span v-if="amSel.ack_at"> · รับเรื่อง {{ amDt(amSel.ack_at) }}</span></div>
                         </div>
                         <div class="rounded-2xl bg-white shadow-sm p-3.5 text-[12px] text-slate-600" data-testid="am-reporter">
                             <div class="font-bold text-slate-700 mb-1">ผู้แจ้ง</div>
                             <div>{{ amSel.fullname || '—' }}<span v-if="amSel.line_display_name && amSel.line_display_name !== amSel.fullname" class="text-fuchsia-500"> (LINE: {{ amSel.line_display_name }})</span></div>
                             <div>🏠 {{ amSel.house_no || '—' }} · 📞 {{ amSel.phone || '—' }}</div>
+                            <div v-if="amSel.declaration_at" class="mt-1.5 text-[11px] text-slate-500" data-testid="am-cp-decl">✍️ ติ๊กรับรองความถูกต้อง + ยินยอมข้อมูลส่วนบุคคล เมื่อ {{ amDtFull(amSel.declaration_at) }} (ข้อความเวอร์ชัน {{ amSel.declaration_version || '—' }})</div>
+                            <div v-else class="mt-1.5 text-[11px] text-amber-700" data-testid="am-cp-nodecl">⚠️ เรื่องนี้ไม่มีบันทึกการรับรอง/ยินยอม (ยื่นผ่านช่องทางเดิมหรือก่อนเปิดระบบแบบทางการ)</div>
+                            <div v-if="amSel.client_ip || amSel.user_agent" class="mt-1 text-[10px] text-slate-400 break-all" data-testid="am-cp-tech">ข้อมูลอุปกรณ์ตอนยื่น: IP {{ amSel.client_ip || '—' }} · {{ amSel.user_agent || '—' }}</div>
                         </div>
-                        <div v-if="amSel.admin_note" class="rounded-2xl bg-indigo-50 text-indigo-700 text-xs p-3" data-testid="am-cp-note"><b>ตอบกลับล่าสุด:</b> {{ amSel.admin_note }}</div>
+
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5 text-[12px]" data-testid="am-cp-verify">
+                            <div class="flex items-center gap-2 mb-1.5"><span class="font-bold text-slate-700">🔐 ความครบถ้วนของข้อมูล</span><button v-if="amCp.err" @click="amCpLoad(amSel.id)" class="text-[11px] underline text-sky-600 font-bold" data-testid="am-cp-retry">ลองใหม่</button></div>
+                            <div v-if="amCp.loading" class="text-slate-400"><i class="fa-solid fa-spinner fa-spin"></i> กำลังตรวจ...</div>
+                            <div v-else-if="amCp.err" class="text-rose-600" data-testid="am-cp-load-err">{{ amCp.err }}</div>
+                            <template v-else-if="amCp.data">
+                                <div class="flex flex-wrap gap-1.5">
+                                    <span class="px-2 py-0.5 rounded-full font-bold text-[10px]" :class="cpVerifyCls(amCp.data.verify.content)" data-testid="am-cp-v-content">{{ ({ ok: '✅ เนื้อหาตรงกับที่ยื่น', mismatch: '⛔ เนื้อหาไม่ตรงกับตอนยื่น', none: '— ไม่มีลายนิ้วมือข้อมูล' })[amCp.data.verify.content] }}</span>
+                                    <span class="px-2 py-0.5 rounded-full font-bold text-[10px]" :class="cpVerifyCls(amCp.data.verify.chain)" data-testid="am-cp-v-chain">{{ ({ ok: '✅ โซ่ประวัติครบ (' + amCp.data.verify.events + ' เหตุการณ์)', broken: '⛔ โซ่ประวัติขาด/ถูกแก้ ที่ลำดับ ' + amCp.data.verify.broken_at, none: '— ไม่มีโซ่ประวัติ' })[amCp.data.verify.chain] }}</span>
+                                    <span v-if="amCp.data.verify.status_consistent === false" class="px-2 py-0.5 rounded-full font-bold text-[10px] bg-rose-100 text-rose-700" data-testid="am-cp-v-status">⛔ สถานะปัจจุบันไม่ตรงกับประวัติ (อาจถูกแก้ตรงในฐานข้อมูล)</span>
+                                </div>
+                                <div v-if="amCp.data.source === 'audit'" class="mt-1.5 text-[11px] text-amber-700" data-testid="am-cp-v-degraded">ยังไม่ได้รัน migration_complaint_formal.sql — ประวัติมาจาก Audit Log ไม่มีการตรวจโซ่ hash</div>
+                                <div v-if="amSel.content_hash" class="mt-1.5 text-[10px] text-slate-400 break-all">SHA-256: {{ amSel.content_hash }}</div>
+                            </template>
+                        </div>
+
+                        <div v-if="amSel.closed_reason || amSel.admin_note" class="rounded-2xl bg-indigo-50 text-indigo-700 text-xs p-3" data-testid="am-cp-note"><b>{{ amSel.closed_reason ? 'ผลการพิจารณา (ผู้ร้องเห็น):' : 'ตอบกลับล่าสุด:' }}</b> {{ amSel.closed_reason || amSel.admin_note }}</div>
+
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5">
+                            <div class="text-xs font-bold text-slate-600 mb-1.5">ระดับความเร่งด่วน <span class="font-normal text-slate-400">(ภายในเท่านั้น ผู้ร้องไม่เห็น)</span></div>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button v-for="p in cpPrios" :key="p[0]" @click="amCpPriority(p[0])" :disabled="am.busy" class="px-3 py-2 rounded-xl text-xs font-bold border-2 disabled:opacity-50" :class="(amSel.priority || 'normal') === p[0] ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-600'" :data-testid="'am-cp-pr-' + p[0]">{{ p[1] }}</button>
+                            </div>
+                        </div>
+
                         <div class="rounded-2xl bg-white shadow-sm p-3.5">
                             <div class="text-xs font-bold text-slate-600 mb-1.5">เปลี่ยนสถานะ</div>
                             <div class="flex flex-wrap gap-1.5">
-                                <button v-for="s in amSys.complaint.st" :key="s[0]" @click="amCpStatus(s[0])" :disabled="am.busy" class="px-3 py-2 rounded-xl text-xs font-bold border-2 disabled:opacity-50" :class="amSel.status === s[0] ? 'bg-fuchsia-600 border-fuchsia-600 text-white' : 'bg-white border-slate-200 text-slate-600'" :data-testid="'am-cp-st-' + s[0]">{{ s[1] }}</button>
+                                <button v-for="s in amSys.complaint.st" :key="s[0]" @click="amCpStart(s[0])" :disabled="am.busy" class="px-3 py-2 rounded-xl text-xs font-bold border-2 disabled:opacity-50" :class="amCp.pending === s[0] ? 'bg-amber-500 border-amber-500 text-white' : (amSel.status === s[0] ? 'bg-fuchsia-600 border-fuchsia-600 text-white' : 'bg-white border-slate-200 text-slate-600')" :data-testid="'am-cp-st-' + s[0]">{{ s[1] }}</button>
+                            </div>
+                            <div v-if="amCp.pending" class="mt-3 rounded-xl bg-amber-50 border border-amber-200 p-3" data-testid="am-cp-st-panel">
+                                <div class="text-xs font-bold text-amber-900 mb-1">เปลี่ยนเป็น "{{ cpStatusLabel(amCp.pending) }}"</div>
+                                <label class="block text-[11px] font-bold text-slate-600 mb-1">{{ cpClosing(amCp.pending) ? 'เหตุผล / ผลการพิจารณา * (ผู้ร้องจะเห็นข้อความนี้ · อย่างน้อย 10 ตัวอักษร)' : 'หมายเหตุถึงผู้ร้อง (ไม่บังคับ)' }}</label>
+                                <textarea v-model="amCp.reason" rows="3" maxlength="2000" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none bg-white" :placeholder="cpClosing(amCp.pending) ? 'เช่น ตรวจสอบแล้ว ได้ตักเตือนผู้เกี่ยวข้องเป็นลายลักษณ์อักษรเมื่อวันที่ … / ไม่พบข้อเท็จจริงตามที่ร้อง เนื่องจาก …' : ''" data-testid="am-cp-st-reason"></textarea>
+                                <div v-if="cpClosing(amCp.pending)" class="text-[11px] mt-1" :class="amCp.reason.trim().length >= 10 ? 'text-emerald-600' : 'text-slate-400'" data-testid="am-cp-st-count">{{ amCp.reason.trim().length }}/10</div>
+                                <label v-if="amSel.uid" class="flex items-center gap-2 text-xs text-slate-600 mt-2"><input type="checkbox" v-model="amCp.notify" class="w-4 h-4 accent-fuchsia-600" data-testid="am-cp-st-notify"> แจ้งผู้ร้องทาง LINE</label>
+                                <div class="flex gap-2 mt-3">
+                                    <button @click="amCp.pending = null" class="flex-1 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 text-xs font-bold" data-testid="am-cp-st-cancel">ยกเลิก</button>
+                                    <button @click="amCpConfirm()" :disabled="am.busy || (cpClosing(amCp.pending) && amCp.reason.trim().length < 10)" class="flex-1 py-2.5 rounded-xl bg-fuchsia-600 text-white text-xs font-bold disabled:opacity-40" data-testid="am-cp-st-confirm">{{ am.busy ? 'กำลังบันทึก...' : 'ยืนยันเปลี่ยนสถานะ' }}</button>
+                                </div>
                             </div>
                         </div>
                         <div v-if="am.err" class="text-sm text-rose-600 font-medium" data-testid="am-err">{{ am.err }}</div>
+
                         <div class="rounded-2xl bg-white shadow-sm p-3.5">
                             <div class="text-xs font-bold text-slate-600 mb-1.5">💬 ตอบกลับผู้แจ้งทาง LINE</div>
                             <template v-if="amSel.uid">
@@ -3767,6 +3969,28 @@
                             </template>
                             <div v-else class="text-xs text-slate-400" data-testid="am-cp-nouid">เรื่องนี้ไม่มี LINE UID ผู้แจ้ง (แจ้งผ่านช่องทางอื่น) — ส่งข้อความตอบกลับทาง LINE ไม่ได้</div>
                         </div>
+
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5">
+                            <div class="text-xs font-bold text-slate-600 mb-1.5">🔒 บันทึกภายใน <span class="font-normal text-slate-400">(ผู้ร้องไม่เห็น · เพิ่มได้อย่างเดียว แก้/ลบไม่ได้)</span></div>
+                            <textarea v-model="amCp.note" rows="2" maxlength="2000" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none" placeholder="เช่น โทรสอบถามผู้ถูกร้องแล้ว / นัดตรวจสถานที่วันที่ …" data-testid="am-cp-note-in"></textarea>
+                            <button @click="amCpNote()" :disabled="am.busy || amCp.note.trim().length < 3" class="w-full mt-2 py-2.5 rounded-xl bg-slate-700 text-white font-bold text-xs disabled:opacity-40" data-testid="am-cp-note-save">เพิ่มบันทึกภายใน</button>
+                        </div>
+
+                        <div class="rounded-2xl bg-white shadow-sm p-3.5" data-testid="am-cp-timeline">
+                            <div class="text-xs font-bold text-slate-600 mb-2">ประวัติการดำเนินการ</div>
+                            <div v-if="amCp.loading" class="text-xs text-slate-400">กำลังโหลด...</div>
+                            <div v-else-if="amCp.data && !amCp.data.timeline.length" class="text-xs text-slate-400" data-testid="am-cp-tl-empty">ยังไม่มีบันทึก</div>
+                            <ol v-else-if="amCp.data" class="relative border-l-2 border-slate-200 ml-2 space-y-3">
+                                <li v-for="(e, i) in amCp.data.timeline" :key="i" class="ml-4" :data-testid="'am-cp-ev-' + i">
+                                    <span class="absolute -left-[7px] w-3 h-3 rounded-full border-2 border-white" :class="e.visibility === 'internal' ? 'bg-slate-400' : 'bg-fuchsia-500'"></span>
+                                    <div class="text-[11px] text-slate-400">{{ e.seq ? '#' + e.seq + ' · ' : '' }}{{ amDtFull(e.at) }} · {{ e.actor }}<span v-if="e.visibility === 'internal'" class="ml-1 font-bold text-slate-500">🔒 ภายใน</span></div>
+                                    <div class="text-xs text-slate-700 whitespace-pre-line break-words">{{ cpEvText(e, true) }}</div>
+                                </li>
+                            </ol>
+                        </div>
+
+                        <button @click="amCpExport()" :disabled="am.busy" class="w-full py-3 rounded-2xl bg-slate-800 text-white font-bold text-sm disabled:opacity-40" data-testid="am-cp-export"><i class="fa-solid fa-print mr-1.5"></i> พิมพ์ / บันทึก PDF (ใบสรุปเรื่องพร้อมประวัติ)</button>
+                        <div class="text-[10px] text-slate-400 text-center">การพิมพ์/ส่งออกถูกบันทึกในประวัติของเรื่อง (ภายใน)</div>
                     </template>
 
                     <!-- ───── ทะเบียนรถ ───── -->
@@ -4776,6 +5000,57 @@
         const AM_CC_PRESET_INSTR = ['ติดต่อรับชมภาพที่สำนักงานนิติบุคคลต่อหน้าเจ้าหน้าที่', 'ห้ามแคปภาพ/ถ่ายภาพหน้าจอ/เผยแพร่ภาพ ก่อนได้รับอนุญาต', 'รับชมได้เฉพาะภายในช่วงเวลาที่กำหนด', 'กรุณานำบัตรประชาชนมาแสดงตัวตนก่อนรับชม'];
         const AM_CC_PRESET_REJECT = ['ข้อมูลไม่ครบถ้วน ไม่สามารถระบุเหตุการณ์ได้', 'ไม่มีภาพในช่วงเวลาที่ขอ (เกินระยะเวลาเก็บภาพ)', 'ไม่มีกล้องครอบคลุมจุดที่ขอ', 'กรณีนี้ต้องแจ้งความและให้เจ้าหน้าที่ตำรวจประสานขอข้อมูล', 'ไม่เข้าเงื่อนไขตามกฎระเบียบการขอดูกล้อง'];
 
+        // ═══ 📢 ร้องเรียน: ตัวช่วยร่วม (สมาชิก + แอดมิน) · ใบสรุปสำหรับพิมพ์/PDF ═══
+        const CP_ST = { pending: 'รอตรวจสอบ', in_progress: 'กำลังดำเนินการ', resolved: 'แก้ไขแล้ว', rejected: 'ไม่ดำเนินการ' };
+        const CP_PRIOS = [['low', 'ต่ำ'], ['normal', 'ปกติ'], ['high', 'สูง'], ['urgent', 'เร่งด่วน']];
+        function cpEsc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
+        function cpDtFull(iso) { try { return iso ? new Date(iso).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'long', timeStyle: 'short' }) : '—'; } catch (e) { return String(iso || ''); } }
+        function cpEvLine(e, admin) {
+            const d = e.detail || {};
+            if (e.type === 'submitted') return 'ยื่นเรื่องร้องเรียน';
+            if (e.type === 'status_change') return 'เปลี่ยนสถานะ' + (d.from ? ' จาก "' + (CP_ST[d.from] || d.from) + '"' : '') + ' เป็น "' + (CP_ST[d.to] || d.to) + '"' + (d.reason ? '\nเหตุผล/หมายเหตุ: ' + d.reason : '');
+            if (e.type === 'reply') return 'ตอบกลับผู้ร้อง: ' + (d.message || '');
+            if (!admin) return e.type;
+            if (e.type === 'note') return 'บันทึกภายใน: ' + (d.text || '');
+            if (e.type === 'priority_change') return 'เปลี่ยนความเร่งด่วน ' + ((CP_PRIOS.find(p => p[0] === d.from) || [])[1] || d.from) + ' → ' + ((CP_PRIOS.find(p => p[0] === d.to) || [])[1] || d.to);
+            if (e.type === 'exported') return 'พิมพ์/ส่งออกใบสรุปเรื่อง';
+            return e.type;
+        }
+        // สร้างเอกสาร HTML (ทุกค่า escape · ไม่มีสคริปต์) — o: { item, timeline, admin, verify, source, exportedBy, exportedAt, declText, pdpaText, org }
+        function cpDocHtml(o) {
+            const c = o.item || {}, admin = !!o.admin, E = cpEsc;
+            const row = (k, v) => v ? `<tr><th>${E(k)}</th><td>${E(v).replace(/\n/g, '<br>')}</td></tr>` : '';
+            const ev = (Array.isArray(c.evidence_urls) && c.evidence_urls.length ? c.evidence_urls : (c.image_url ? [c.image_url] : [])).filter(u => /^https:\/\//i.test(String(u)));
+            const tl = (o.timeline || []).map(e => `<tr><td class="n">${E(e.seq != null ? e.seq : '')}</td><td class="t">${E(cpDtFull(e.at))}</td><td>${E(e.actor || '')}${e.visibility === 'internal' ? ' <i>(ภายใน)</i>' : ''}</td><td>${E(cpEvLine(e, admin)).replace(/\n/g, '<br>')}</td></tr>`).join('');
+            const v = o.verify;
+            const vtxt = v ? `เนื้อหาเทียบกับลายนิ้วมือตอนยื่น: ${({ ok: 'ตรงกัน', mismatch: 'ไม่ตรงกัน', none: 'ไม่มีข้อมูลสำหรับเทียบ' })[v.content] || '—'} · โซ่ประวัติ: ${({ ok: 'ครบถ้วน (' + v.events + ' เหตุการณ์)', broken: 'ขาด/ถูกแก้ ที่ลำดับ ' + v.broken_at, none: 'ไม่มี' })[v.chain] || '—'}${v.status_consistent === false ? ' · สถานะปัจจุบันไม่ตรงกับประวัติ' : ''}${o.source === 'audit' ? ' · (ยังไม่ได้รัน migration: ไม่มีโซ่ hash)' : ''}` : '';
+            return `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>${E('เรื่องร้องเรียน ' + (c.case_no || ''))}</title><style>
+@page{size:A4;margin:16mm}*{box-sizing:border-box}body{font-family:'Sarabun','Noto Sans Thai','TH Sarabun New',Tahoma,sans-serif;font-size:13px;color:#111;line-height:1.55;margin:0;padding:18px}
+h1{font-size:20px;margin:0 0 2px}h2{font-size:14px;margin:18px 0 6px;padding-bottom:3px;border-bottom:1.5px solid #333}.sub{color:#555;font-size:12px}
+table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px 8px;vertical-align:top;text-align:left;word-break:break-word}th{width:28%;background:#f3f3f3;font-weight:600}
+.tl th{width:auto}.tl td.n{width:34px;text-align:center}.tl td.t{width:150px;white-space:nowrap}.case{font-size:18px;font-weight:700}.box{border:1px solid #bbb;padding:8px 10px;margin-top:6px;font-size:12px}.hash{font-family:monospace;font-size:11px;word-break:break-all}
+.imgs img{height:90px;margin:4px 6px 0 0;border:1px solid #ccc}.sig img{height:70px;border:1px solid #ccc;background:#fff}.mark{display:inline-block;border:1.5px solid #b00;color:#b00;padding:1px 8px;font-size:11px;font-weight:700;margin-top:6px}.foot{margin-top:18px;font-size:11px;color:#555;border-top:1px dashed #999;padding-top:8px}
+</style></head><body>
+<div class="sub">${E(o.org || '')}</div><h1>ใบสรุปเรื่องร้องเรียน</h1>
+<div class="case">เลขที่เรื่อง ${E(c.case_no || '—')}</div>
+<div class="sub">สถานะปัจจุบัน: <b>${E(CP_ST[c.status] || c.status || '—')}</b>${admin ? ` · ความเร่งด่วน: ${E((CP_PRIOS.find(p => p[0] === (c.priority || 'normal')) || [])[1] || '')}` : ''}</div>
+${admin ? '<div class="mark">สำเนาสำหรับเจ้าหน้าที่ — มีข้อมูลส่วนบุคคล ห้ามเผยแพร่</div>' : ''}
+<h2>1. ผู้ร้อง</h2><table>${row('ชื่อ-นามสกุล', c.fullname)}${row('บ้านเลขที่', c.house_no)}${row('เบอร์โทร', c.phone)}${row('ยื่นเมื่อ', cpDtFull(c.created_at))}</table>
+<h2>2. ข้อเท็จจริงที่ร้อง</h2><table>${row('ประเภท', c.category)}${row('หัวข้อ', c.subject)}${row('วัน-เวลาที่เกิดเหตุ', c.incident_at ? cpDtFull(c.incident_at) : '')}${row('สถานที่เกิดเหตุ', c.incident_place)}${row('รายละเอียด', c.issue)}${row('ผู้ถูกร้อง/ผู้เกี่ยวข้อง', c.respondent)}${row('พยาน', c.witnesses)}${row('ผลที่ต้องการ', c.desired_outcome)}</table>
+${ev.length ? `<div class="imgs">${ev.map(u => `<img src="${E(u)}" alt="หลักฐาน">`).join('')}</div>` : ''}
+<h2>3. คำรับรองและความยินยอม</h2>
+${c.declaration_at ? `<div class="box">ผู้ร้องติ๊กรับรองความถูกต้องของข้อมูลและให้ความยินยอมเกี่ยวกับข้อมูลส่วนบุคคล เมื่อ ${E(cpDtFull(c.declaration_at))} (ข้อความเวอร์ชัน ${E(c.declaration_version || '—')})${o.declText ? `<br><br><b>คำรับรอง:</b> ${E(o.declText)}` : ''}${o.pdpaText ? `<br><br><b>ความยินยอม:</b> ${E(o.pdpaText)}` : ''}</div>` : '<div class="box">ไม่มีบันทึกการรับรอง/ยินยอมของเรื่องนี้ (ยื่นก่อนเปิดระบบแบบทางการหรือผ่านช่องทางเดิม)</div>'}
+${/^https:\/\//i.test(String(c.signature_url || '')) ? `<div class="sig"><div class="sub" style="margin-top:8px">ลายเซ็นผู้ร้อง</div><img src="${E(c.signature_url)}" alt="ลายเซ็น"></div>` : ''}
+${c.closed_reason ? `<h2>4. ผลการพิจารณา</h2><div class="box">${E(c.closed_reason).replace(/\n/g, '<br>')}</div>` : ''}
+<h2>${c.closed_reason ? '5' : '4'}. ประวัติการดำเนินการ</h2>
+${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำเนินการ</th><th>รายการ</th></tr>${tl}</table>` : '<div class="box">ไม่มีบันทึก</div>'}
+<h2>${c.closed_reason ? '6' : '5'}. ความครบถ้วนของข้อมูล</h2>
+<div class="box">${c.content_hash ? `ลายนิ้วมือข้อมูล (SHA-256) ของเนื้อหาที่ยื่น ณ เวลายื่นเรื่อง:<div class="hash">${E(c.content_hash)}</div>` : 'ไม่มีลายนิ้วมือข้อมูลสำหรับเรื่องนี้'}${vtxt ? `<div style="margin-top:6px">${E(vtxt)}</div>` : ''}
+<div style="margin-top:6px;color:#555">ค่านี้คำนวณจากเนื้อหาที่ผู้ร้องยื่น หากเนื้อหาในระบบถูกแก้ไขภายหลังค่าที่คำนวณใหม่จะไม่ตรงกับค่านี้</div></div>
+<div class="foot">เอกสารนี้เป็นสำเนาที่ระบบสร้างขึ้น ณ ${E(cpDtFull(o.exportedAt || new Date().toISOString()))}${o.exportedBy ? ' โดย ' + E(o.exportedBy) : ''} เพื่อประกอบการพิจารณา ไม่ใช่คำวินิจฉัยของนิติบุคคลและไม่ได้เป็นหลักฐานที่ศาลรับรองโดยอัตโนมัติ — หากจะใช้ในกระบวนการทางกฎหมาย ควรปรึกษาผู้เชี่ยวชาญ</div>
+</body></html>`;
+        }
+
         createApp({
             data() {
                 return {
@@ -4800,7 +5075,7 @@
                     ],
                     chatMemberQuick: ['🙏 ขอบคุณค่ะ/ครับ', '👍 รับทราบครับ/ค่ะ', '🙋 ขอสอบถามหน่อยค่ะ/ครับ', '💳 สอบถามเรื่องค่าส่วนกลาง', '🪪 สอบถามเรื่องคีย์การ์ด', '🔧 แจ้งซ่อม/แจ้งปัญหา'],
                     chatAdm: { emojiOpen: false, profOpen: false, profLoading: false, profErr: '', prof: null, profSeq: 0, tplsLoaded: false, view: 'list', loading: false, error: '', notReady: false, threads: [], total: 0, counts: null, status: 'open', filter: 'all', label: '', q: '', offset: 0, labels: [], seq: 0, sel: null, selSeq: 0, selMsgs: [], selHasMore: false, selLoading: false, selErr: '', selPolling: false, text: '', sendErr: '', inflight: 0, tplOpen: false, tpls: [], tplLoading: false, tplError: '' }, chatAdmTimer: null, chatAdmQTimer: null,
-                    am: { sys: '', loading: false, error: '', items: [], status: '', q: '', limit: 30, seq: 0, selId: null, busy: false, err: '', form: {}, cc: null }, inbox: { loading: false, error: '', data: null }, ibBusy: {}, usage: { loading: false, error: '', data: null, days: 30, showNever: false },
+                    am: { sys: '', loading: false, error: '', items: [], status: '', q: '', limit: 30, seq: 0, selId: null, busy: false, err: '', form: {}, cc: null, overdue: false, prio: '' }, amCp: { id: null, loading: false, err: '', data: null, pending: null, reason: '', notify: true, note: '', seq: 0 }, cpPrint: { open: false, html: '', title: '' }, inbox: { loading: false, error: '', data: null }, ibBusy: {}, usage: { loading: false, error: '', data: null, days: 30, showNever: false },
                     profileMore: null, profileMoreLoading: false, profileMoreError: '', profileMoreAt: 0, pmOpen: { line: false, members: false, reg: false },
                     ownerEdit: { open: false, type: 'sole', names: [''], note: '', saving: false, error: '', max: 4 },
                     // ─── บอร์ดประกาศ ───
@@ -4863,7 +5138,8 @@
                     // ─── Complaints (ร้องเรียน) ───
                     myComplaints: [], complaintHouseNumber: null, complaintLoading: false,
                     complaintFormModal: false,
-                    complaintForm: { fullname: '', house_number: '', phone: '', category: 'ความสะอาด/ขยะ', issue: '', image_url: '' },
+                    complaintForm: { fullname: '', house_number: '', phone: '', category: '', subject: '', incident_at: '', incident_place: '', issue: '', respondent: '', witnesses: '', desired_outcome: '', evidence: [], declaration: false, pdpa: false },
+                    complaintCfg: null, complaintPrefill: null, complaintErr: null, complaintLoadErr: '', complaintReceipt: null, complaintDetailId: null,
                     complaintSaving: false, complaintImageUploading: false,
                     sigDrawing: false, sigHasDrawn: false, // ลายเซ็นร้องเรียน
 
@@ -4949,6 +5225,9 @@
                 // 🛠️ จัดการ 4 ระบบ (หน้าแอดมินในมือถือ)
                 amSys() { return AM_SYS; },
                 amCpTemplates() { return AM_COMPLAINT_TEMPLATES; },
+                cpPrios() { return CP_PRIOS; },
+                complaintDetailItem() { const id = this.complaintDetailId; return (id === null || id === undefined) ? null : (this.myComplaints.find(c => String(c.id) === String(id)) || null); },
+                amCpOverdueCount() { return this.am.sys === 'complaint' ? this.am.items.filter(r => r.sla && (r.sla.ack_overdue || r.sla.resolve_overdue)).length : 0; },
                 amCcPresetInstr() { return AM_CC_PRESET_INSTR; },
                 amCcPresetReject() { return AM_CC_PRESET_REJECT; },
                 amToolKeys() { const t = (this.menuAccess && this.menuAccess.tools) || {}; return Object.keys(AM_SYS).filter(k => t[AM_SYS[k].tool]); },
@@ -4956,7 +5235,8 @@
                 amCounts() { const c = {}; this.am.items.forEach(r => { c[r.status] = (c[r.status] || 0) + 1; }); return c; },
                 amRows() {
                     const q = String(this.am.q || '').toLowerCase().trim(), st = this.am.status;
-                    return this.am.items.filter(r => (!st || r.status === st) && (!q || this.amHay(r).includes(q))).map(r => this.amRow(r));
+                    const cp = this.am.sys === 'complaint', od = cp && this.am.overdue, pr = cp ? this.am.prio : '';
+                    return this.am.items.filter(r => (!st || r.status === st) && (!q || this.amHay(r).includes(q)) && (!od || (r.sla && (r.sla.ack_overdue || r.sla.resolve_overdue))) && (!pr || (r.priority || 'normal') === pr)).map(r => this.amRow(r));
                 },
                 amShown() { return this.amRows.slice(0, this.am.limit); },
                 amCcErrs() {
@@ -5509,7 +5789,7 @@
                     if (newVal === 'payments' && !this.invoiceLoading && !this.houseFeesLoading && !this.houseFees) this.openPayments();
                     if (newVal === 'coupons') this.$nextTick(() => this.renderCouponBarcodes());
                     if (newVal === 'cars' && this.myCars.length === 0) this.loadMyCars();
-                    if (newVal === 'complaints' && this.myComplaints.length === 0) this.loadMyComplaints();
+                    if (newVal === 'complaints') this.loadMyComplaints(true);
                     if (newVal === 'repairs') this.loadRepairBoard();
                     if (newVal === 'profile' && !this.statusCheckResult) this.checkMyStatus();
                     if (newVal === 'profile') this.loadProfileMore(false);
@@ -6796,7 +7076,7 @@
                 },
                 async amOpen(sys) {
                     if (!AM_SYS[sys]) return;
-                    this.am = { sys, loading: false, error: '', items: [], status: '', q: '', limit: 30, seq: (this.am.seq || 0) + 1, selId: null, busy: false, err: '', form: {}, cc: null };
+                    this.am = { sys, loading: false, error: '', items: [], status: '', q: '', limit: 30, seq: (this.am.seq || 0) + 1, selId: null, busy: false, err: '', form: {}, cc: null, overdue: false, prio: '' }; this.amCpReset();
                     this.currentTab = 'admmgr';
                     await this.amLoad();
                 },
@@ -6827,7 +7107,7 @@
                 amBkkLocal(ms) { return new Date(ms + 7 * 3600000).toISOString().slice(0, 16); },
                 amLocalToIso(v) { if (!v) return null; const d = new Date(v + ':00+07:00'); return isNaN(d.getTime()) ? null : d.toISOString(); },
                 amHay(r) {
-                    const f = ({ repair: ['category', 'location', 'detail', 'house_number', 'line_display_name', 'phone_number'], complaint: ['category', 'issue', 'fullname', 'house_no', 'phone', 'line_display_name'],
+                    const f = ({ repair: ['category', 'location', 'detail', 'house_number', 'line_display_name', 'phone_number'], complaint: ['case_no', 'subject', 'category', 'issue', 'respondent', 'fullname', 'house_no', 'phone', 'line_display_name'],
                         car: ['plate_number', 'province', 'fullname', 'house_number', 'phone', 'car_type'], cctv: ['ref_no', 'camera_zone', 'requester_name', 'house_number', 'phone_number', 'reason', 'incident_type'] })[this.am.sys] || [];
                     return f.map(k => r[k]).filter(Boolean).join(' ').toLowerCase();
                 },
@@ -6835,7 +7115,12 @@
                     const s = this.am.sys, st = (AM_STATUS[s] || {})[r.status] || [r.status || '—', 'slate'];
                     const o = { id: r.id, badge: st[0], badgeCls: AM_BADGE[st[1]] || AM_BADGE.slate, flags: [], title: '', sub: '', meta: '' };
                     if (s === 'repair') { o.title = r.category || '—'; o.sub = (r.location ? '📍 ' + r.location + ' · ' : '') + (r.detail || ''); o.meta = '🏠 ' + (r.house_number || '—') + ' · ' + this.amDt(r.created_at); }
-                    else if (s === 'complaint') { o.title = r.category || '—'; o.sub = r.issue || ''; o.meta = (r.fullname || '—') + ' · 🏠 ' + (r.house_no || '—') + ' · ' + this.amDt(r.created_at); }
+                    else if (s === 'complaint') {
+                        o.title = (r.case_no ? r.case_no + ' · ' : '') + (r.subject || r.category || '—'); o.sub = r.issue || ''; o.meta = (r.fullname || '—') + ' · 🏠 ' + (r.house_no || '—') + ' · ' + this.amDt(r.created_at);
+                        if (r.priority === 'urgent') o.flags.push(['🔴 เร่งด่วน', 'bg-rose-100 text-rose-700']); else if (r.priority === 'high') o.flags.push(['🟠 ความเร่งด่วนสูง', 'bg-orange-100 text-orange-700']);
+                        if (r.sla && r.sla.ack_overdue) o.flags.push(['เกินกำหนดรับเรื่อง', 'bg-rose-100 text-rose-700']);
+                        if (r.sla && r.sla.resolve_overdue) o.flags.push(['เกินกำหนดปิดเรื่อง', 'bg-rose-100 text-rose-700']);
+                    }
                     else if (s === 'car') {
                         o.title = (r.plate_number || '—') + (r.province ? ' ' + r.province : ''); o.sub = (r.car_type || '') + ' · ' + (r.fullname || '—');
                         o.meta = '🏠 ' + (r.house_number || '—') + ' · ' + (r.end_date ? 'หมดอายุ ' + this.amYmd(r.end_date) : 'ยังไม่ตั้งวันหมดอายุ');
@@ -6854,12 +7139,12 @@
                     const it = this.am.items.find(x => String(x.id) === String(r.id)); if (!it) return;
                     this.am.err = ''; this.am.busy = false;
                     if (this.am.sys === 'repair') this.am.form = { status: it.status, remark: it.admin_remark || '', imageUrl: it.admin_image_url || '', uploading: false };
-                    else if (this.am.sys === 'complaint') this.am.form = { message: '', tplStatus: null, updateStatus: true };
+                    else if (this.am.sys === 'complaint') { this.am.form = { message: '', tplStatus: null, updateStatus: true }; this.amCpReset(); this.amCpLoad(it.id); }
                     else this.am.form = {};
                     if (this.am.sys === 'cctv') this.amCcInit(it);
                     this.am.selId = it.id;
                 },
-                amCloseSel() { this.am.selId = null; this.am.err = ''; },
+                amCloseSel() { this.am.selId = null; this.am.err = ''; if (this.am.sys === 'complaint') this.amCpReset(); },
                 amFail(e) { this.am.err = e && e.message ? e.message : 'ทำรายการไม่สำเร็จ'; if (e && e.status === 409) this.amLoad(); },
 
                 // ── แจ้งซ่อม ──
@@ -6894,13 +7179,60 @@
                 },
 
                 // ── ร้องเรียน ──
-                async amCpStatus(status) {
+                amCpReset() { this.amCp = { id: null, loading: false, err: '', data: null, pending: null, reason: '', notify: true, note: '', seq: (this.amCp && this.amCp.seq || 0) + 1 }; },
+                async amCpLoad(id) {
+                    const seq = ++this.amCp.seq;
+                    this.amCp.id = id; this.amCp.loading = true; this.amCp.err = '';
+                    try {
+                        const d = await this.kcaApi('complaint_admin_get?id=' + encodeURIComponent(id));
+                        if (seq !== this.amCp.seq) return;
+                        this.amCp.data = d;
+                    } catch (e) { if (seq === this.amCp.seq) { this.amCp.data = null; this.amCp.err = (e.status === 403 ? 'ไม่มีสิทธิ์ดูประวัติ' : 'โหลดประวัติไม่สำเร็จ') + (e.message ? ': ' + e.message : ''); } }
+                    finally { if (seq === this.amCp.seq) this.amCp.loading = false; }
+                },
+                amCpStart(status) {
                     const it = this.amSel; if (!it || this.am.busy || it.status === status) return;
+                    this.am.err = ''; this.amCp.pending = status; this.amCp.reason = ''; this.amCp.notify = true;
+                },
+                async amCpConfirm() {
+                    const it = this.amSel, st = this.amCp.pending; if (!it || !st || this.am.busy) return;
+                    const reason = String(this.amCp.reason || '').trim();
+                    if (this.cpClosing(st) && reason.length < 10) { this.am.err = 'การปิดเรื่องต้องระบุเหตุผล/ผลการพิจารณาอย่างน้อย 10 ตัวอักษร'; return; }
                     this.am.busy = true; this.am.err = '';
                     try {
-                        await this.kcaApi('complaint_admin_status', { method: 'POST', body: JSON.stringify({ id: it.id, status }) });
-                        await this.amLoad();
-                        Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'อัปเดตสถานะแล้ว', showConfirmButton: false, timer: 1500 });
+                        const d = await this.kcaApi('complaint_admin_status', { method: 'POST', body: JSON.stringify({ id: it.id, status: st, reason, notify: !!(this.amCp.notify && it.uid), expectedStatus: it.status }) });
+                        this.amCp.pending = null; this.amCp.reason = '';
+                        await this.amLoad(); this.amCpLoad(it.id);
+                        const warn = d.pushed === false;
+                        Swal.fire({ toast: true, position: 'top', icon: warn ? 'warning' : 'success', title: warn ? 'เปลี่ยนสถานะแล้ว แต่ส่ง LINE ไม่สำเร็จ' : (d.pushed ? 'เปลี่ยนสถานะและแจ้งผู้ร้องแล้ว' : 'เปลี่ยนสถานะแล้ว'), showConfirmButton: false, timer: warn ? 3200 : 1800 });
+                    } catch (e) { this.amFail(e); if (e && e.status === 409) { this.amCp.pending = null; this.amCpLoad(it.id); } } finally { this.am.busy = false; }
+                },
+                async amCpPriority(p) {
+                    const it = this.amSel; if (!it || this.am.busy || (it.priority || 'normal') === p) return;
+                    this.am.busy = true; this.am.err = '';
+                    try {
+                        await this.kcaApi('complaint_admin_priority', { method: 'POST', body: JSON.stringify({ id: it.id, priority: p }) });
+                        await this.amLoad(); this.amCpLoad(it.id);
+                        Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'ตั้งความเร่งด่วนแล้ว', showConfirmButton: false, timer: 1400 });
+                    } catch (e) { this.amFail(e); } finally { this.am.busy = false; }
+                },
+                async amCpNote() {
+                    const it = this.amSel, text = String(this.amCp.note || '').trim(); if (!it || this.am.busy || text.length < 3) return;
+                    this.am.busy = true; this.am.err = '';
+                    try {
+                        const d = await this.kcaApi('complaint_admin_note', { method: 'POST', body: JSON.stringify({ id: it.id, text }) });
+                        this.amCp.note = '';
+                        await this.amCpLoad(it.id);
+                        Swal.fire({ toast: true, position: 'top', icon: d.durable === false ? 'warning' : 'success', title: d.durable === false ? 'บันทึกแล้ว (โหมดพื้นฐาน — ยังไม่ได้รัน migration)' : 'เพิ่มบันทึกภายในแล้ว', showConfirmButton: false, timer: 1800 });
+                    } catch (e) { this.amFail(e); } finally { this.am.busy = false; }
+                },
+                async amCpExport() {
+                    const it = this.amSel; if (!it || this.am.busy) return;
+                    this.am.busy = true; this.am.err = '';
+                    try {
+                        const d = await this.kcaApi('complaint_admin_export', { method: 'POST', body: JSON.stringify({ id: it.id }) });
+                        this.cpOpenPrint(cpDocHtml({ item: d.item, timeline: d.timeline, admin: true, verify: d.verify, source: d.source, exportedBy: d.exported_by, exportedAt: d.exported_at, org: '' }), 'ใบสรุปเรื่อง ' + (d.item.case_no || ''));
+                        this.amCpLoad(it.id);
                     } catch (e) { this.amFail(e); } finally { this.am.busy = false; }
                 },
                 amCpTpl(i) { const t = AM_COMPLAINT_TEMPLATES[i]; if (!t) return; this.am.form.message = t.text; this.am.form.tplStatus = t.status || null; },
@@ -6913,7 +7245,7 @@
                     try {
                         await this.kcaApi('complaint_reply_send', { method: 'POST', body: JSON.stringify({ complaintId: it.id, message, updateStatus: (f.updateStatus && f.tplStatus) ? f.tplStatus : null, saveNote: true }) });
                         this.am.form.message = ''; this.am.form.tplStatus = null;
-                        await this.amLoad();
+                        await this.amLoad(); this.amCpLoad(it.id);
                         Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'ส่งข้อความตอบกลับแล้ว', showConfirmButton: false, timer: 1800 });
                     } catch (e) { this.amFail(e); } finally { this.am.busy = false; }
                 },
@@ -7938,53 +8270,91 @@
                 // ════════════════════════════════════════════════════════════
                 // 📢 COMPLAINTS (ร้องเรียน) — native tab เดียวกับ cars
                 // ════════════════════════════════════════════════════════════
-                async loadMyComplaints() {
-                    this.complaintLoading = true;
+                async loadMyComplaints(silent) {
+                    if (!silent || !this.myComplaints.length) this.complaintLoading = true;
+                    this.complaintLoadErr = '';
                     try {
-                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/my_complaints?userId=${this.userProfile.userId}`);
-                        const d = await res.json();
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/my_complaints?userId=${encodeURIComponent(this.userProfile.userId)}`);
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.error || ('HTTP ' + res.status));
                         this.myComplaints = d.complaints || [];
                         this.complaintHouseNumber = d.house_number || null;
-                    } catch (e) { console.error('loadMyComplaints', e); }
+                        this.complaintCfg = d.form || null;
+                        this.complaintPrefill = { fullname: d.fullname || '', phone: d.phone || '' };
+                    } catch (e) { console.error('loadMyComplaints', e); this.complaintLoadErr = (e && e.message) || 'เชื่อมต่อไม่ได้'; }
                     finally { this.complaintLoading = false; }
                 },
 
-                openComplaintForm() {
+                async openComplaintForm() {
+                    if (!this.complaintCfg) {
+                        await this.loadMyComplaints();
+                        if (!this.complaintCfg) return Swal.fire('โหลดแบบฟอร์มไม่สำเร็จ', 'กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่ (หากยังไม่ได้ ให้ปิดแล้วเปิดแอปใหม่เพื่ออัปเดตเวอร์ชัน)', 'warning');
+                    }
+                    const p = this.complaintPrefill || {};
                     this.complaintForm = {
-                        fullname: this.complaintForm.fullname || this.memberData?.fullname || this.userProfile?.displayName || '',
+                        fullname: this.complaintForm.fullname || this.memberData?.fullname || p.fullname || this.userProfile?.displayName || '',
                         house_number: this.complaintHouseNumber || this.carHouseNumber || '',
-                        phone: this.complaintForm.phone || this.memberData?.phone || '',
-                        category: 'ความสะอาด/ขยะ', issue: '', image_url: ''
+                        phone: this.complaintForm.phone || this.memberData?.phone || p.phone || '',
+                        category: '', subject: '', incident_at: '', incident_place: '', issue: '', respondent: '', witnesses: '', desired_outcome: '',
+                        evidence: [], declaration: false, pdpa: false
                     };
+                    this.complaintErr = null;
                     this.complaintFormModal = true;
                     this.$nextTick(() => this.sigSetupCanvas());
                 },
 
+                // ── ตัวช่วยแสดงผล ──
+                cpStatusLabel(s) { return CP_ST[s] || s || '—'; },
+                cpStatusIcon(s) { return ({ pending: '⏳', in_progress: '🔧', resolved: '✅', rejected: '❌' })[s] || ''; },
+                cpStatusBar(s) { return ({ resolved: 'bg-emerald-500', rejected: 'bg-rose-500', in_progress: 'bg-amber-500', pending: 'bg-amber-500' })[s] || 'bg-slate-500'; },
+                cpStatusBorder(s) { return ({ resolved: 'border-emerald-400', rejected: 'border-rose-400', in_progress: 'border-amber-400', pending: 'border-amber-400' })[s] || 'border-slate-200'; },
+                cpErrCls(f) { return this.complaintErr && this.complaintErr.field === f ? 'border-rose-400 bg-rose-50' : 'border-slate-200'; },
+                cpEvText(e, admin) { return cpEvLine(e, !!admin); },
+                cpClosing(s) { return s === 'resolved' || s === 'rejected'; },
+                cpPrioLabel(p) { return (CP_PRIOS.find(x => x[0] === (p || 'normal')) || [])[1] || 'ปกติ'; },
+                cpPrioCls(p) { return ({ low: 'bg-slate-100 text-slate-600', normal: 'bg-sky-100 text-sky-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-rose-100 text-rose-700' })[p || 'normal'] || 'bg-slate-100 text-slate-600'; },
+                cpVerifyCls(s) { return s === 'ok' ? 'bg-emerald-100 text-emerald-700' : s === 'mismatch' || s === 'broken' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-500'; },
+                cpEvidence(c) { return (Array.isArray(c.evidence_urls) && c.evidence_urls.length ? c.evidence_urls : (c.image_url ? [c.image_url] : [])).filter(u => this.amSafeUrl(u)); },
+                cpOpenPrint(html, title) { this.cpPrint = { open: true, html, title }; },
+                cpPrintMember(c) {
+                    const cfg = this.complaintCfg || {};
+                    this.cpOpenPrint(cpDocHtml({ item: c, timeline: c.timeline || [], admin: false, declText: cfg.declaration, pdpaText: cfg.pdpa, exportedBy: c.fullname || '', org: (function () { try { return appCfgIn('VILLAGE_DEFAULTS', 'village_name', '') || ''; } catch (e) { return ''; } })() }), 'ใบสรุปเรื่อง ' + (c.case_no || ''));
+                },
+                cpPrintNow() {
+                    try { const f = this.$refs.cpPrintFrame; if (f && f.contentWindow) { f.contentWindow.focus(); f.contentWindow.print(); return; } } catch (e) { /* ไปทางสำรอง */ }
+                    Swal.fire('พิมพ์ไม่ได้ในหน้านี้', 'ให้เปิดหน้านี้ในเบราว์เซอร์ หรือบันทึกภาพหน้าจอเก็บไว้', 'info');
+                },
+
                 async onComplaintImageChange(e) {
-                    const file = e.target.files[0];
-                    if (!file) return;
+                    const files = Array.from(e.target.files || []);
+                    e.target.value = '';
+                    if (!files.length) return;
+                    const max = (this.complaintCfg && this.complaintCfg.max_evidence) || 5;
                     this.complaintImageUploading = true;
                     try {
-                        const canvas = document.createElement('canvas');
-                        const img = await new Promise((res, rej) => {
-                            const i = new Image();
-                            i.onload = () => res(i);
-                            i.onerror = rej;
-                            i.src = URL.createObjectURL(file);
-                        });
-                        const maxW = 1200;
-                        const scale = Math.min(1, maxW / img.width);
-                        canvas.width = img.width * scale;
-                        canvas.height = img.height * scale;
-                        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-                        const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.8));
+                        for (const file of files) {
+                            if (this.complaintForm.evidence.length >= max) { Swal.fire('', `แนบรูปได้ไม่เกิน ${max} รูป`, 'info'); break; }
+                            const canvas = document.createElement('canvas');
+                            const img = await new Promise((res, rej) => {
+                                const i = new Image();
+                                i.onload = () => res(i);
+                                i.onerror = rej;
+                                i.src = URL.createObjectURL(file);
+                            });
+                            const maxW = 1200;
+                            const scale = Math.min(1, maxW / img.width);
+                            canvas.width = img.width * scale;
+                            canvas.height = img.height * scale;
+                            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                            const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.8));
 
-                        const formData = new FormData();
-                        formData.append('file', blob, `complaint_${Date.now()}.jpg`);
-                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/upload_complaint_image`, { method: 'POST', body: formData });
-                        const d = await res.json();
-                        if (!res.ok) throw new Error(d.error || 'อัปโหลดไม่สำเร็จ');
-                        this.complaintForm.image_url = d.url;
+                            const formData = new FormData();
+                            formData.append('file', blob, `complaint_${Date.now()}.jpg`);
+                            const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/upload_complaint_image`, { method: 'POST', body: formData });
+                            const d = await res.json().catch(() => ({}));
+                            if (!res.ok) throw new Error(d.error || 'อัปโหลดไม่สำเร็จ');
+                            this.complaintForm.evidence.push(d.url);
+                        }
                     } catch (err) {
                         Swal.fire('อัปโหลดไม่สำเร็จ', err.message, 'error');
                     } finally {
@@ -8029,12 +8399,34 @@
                     this.sigHasDrawn = false;
                 },
 
+                // ตรวจก่อนส่ง (ชุดเดียวกับเซิร์ฟเวอร์ · เรียงตามลำดับในฟอร์ม) → { field, msg } | null
+                cpValidate() {
+                    const f = this.complaintForm, cfg = this.complaintCfg || {}, t = (v) => String(v || '').trim();
+                    const bad = (field, msg) => ({ field, msg });
+                    if (t(f.fullname).length < 2) return bad('fullname', 'กรุณากรอกชื่อ-นามสกุลผู้ร้อง');
+                    if (!t(f.house_number)) return bad('houseNo', 'กรุณากรอกบ้านเลขที่');
+                    if (!/^0\d{8,9}$/.test(t(f.phone))) return bad('phone', 'เบอร์โทรไม่ถูกต้อง (9–10 หลัก ขึ้นต้นด้วย 0)');
+                    if (!(cfg.categories || []).includes(f.category)) return bad('category', 'กรุณาเลือกประเภทเรื่องร้องเรียน');
+                    if (t(f.subject).length < 5) return bad('subject', 'หัวข้อเรื่องต้องมีอย่างน้อย 5 ตัวอักษร');
+                    const iso = this.amLocalToIso(f.incident_at);
+                    if (!iso) return bad('incidentAt', 'กรุณาระบุวัน-เวลาที่เกิดเหตุ');
+                    if (new Date(iso).getTime() > Date.now() + 5 * 60000) return bad('incidentAt', 'วัน-เวลาที่เกิดเหตุอยู่ในอนาคต');
+                    if (new Date(iso).getTime() < Date.now() - 3 * 365 * 86400000) return bad('incidentAt', 'วัน-เวลาที่เกิดเหตุเก่าเกิน 3 ปี กรุณาตรวจสอบอีกครั้ง');
+                    if (t(f.incident_place).length < 2) return bad('incidentPlace', 'กรุณาระบุสถานที่เกิดเหตุ');
+                    if (t(f.issue).length < 20) return bad('issue', 'รายละเอียดข้อเท็จจริงต้องมีอย่างน้อย 20 ตัวอักษร — ระบุ ใคร ทำอะไร เมื่อไร ที่ไหน');
+                    if (!this.sigHasDrawn) return bad('signatureUrl', 'กรุณาเซ็นชื่อรับรองก่อนส่งเรื่อง');
+                    if (!f.declaration || !f.pdpa) return bad('declaration', 'ต้องติ๊กรับรองความถูกต้องของข้อมูลและให้ความยินยอมข้อมูลส่วนบุคคลทั้งสองข้อก่อนส่งเรื่อง');
+                    return null;
+                },
+                cpFocusField(field) {
+                    this.$nextTick(() => { const el = document.getElementById('cp-f-' + field); if (el) { try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); if (el.focus) el.focus({ preventScroll: true }); } catch (e) { /* ข้าม */ } } });
+                },
+
                 async submitComplaint() {
-                    if (!this.complaintForm.fullname?.trim()) return Swal.fire('', 'กรุณากรอกชื่อผู้แจ้ง', 'warning');
-                    if (!this.complaintForm.house_number?.trim()) return Swal.fire('', 'กรุณากรอกบ้านเลขที่', 'warning');
-                    if (!this.complaintForm.phone?.trim()) return Swal.fire('', 'กรุณากรอกเบอร์โทร', 'warning');
-                    if (!this.complaintForm.issue?.trim()) return Swal.fire('', 'กรุณากรอกรายละเอียด', 'warning');
-                    if (!this.sigHasDrawn) return Swal.fire('', 'กรุณาเซ็นชื่อรับรองก่อนส่งเรื่อง', 'warning');
+                    if (this.complaintSaving) return;
+                    const v = this.cpValidate();
+                    if (v) { this.complaintErr = v; this.cpFocusField(v.field); return; }
+                    this.complaintErr = null;
 
                     this.complaintSaving = true;
                     try {
@@ -8044,9 +8436,10 @@
                         const sigFormData = new FormData();
                         sigFormData.append('file', sigBlob, `sig_${Date.now()}.png`);
                         const sigRes = await fetch(`${EDGE_FUNCTION_URL}/api/crm/upload_complaint_image`, { method: 'POST', body: sigFormData });
-                        const sigD = await sigRes.json();
+                        const sigD = await sigRes.json().catch(() => ({}));
                         if (!sigRes.ok) throw new Error(sigD.error || 'อัปโหลดลายเซ็นไม่สำเร็จ');
 
+                        const f = this.complaintForm;
                         const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/submit_complaint`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -8054,21 +8447,24 @@
                                 uid: this.userProfile.userId,
                                 lineDisplayName: this.userProfile.displayName,
                                 linePictureUrl: this.userProfile.pictureUrl,
-                                fullname: this.complaintForm.fullname,
-                                houseNo: this.complaintForm.house_number,
-                                phone: this.complaintForm.phone,
-                                category: this.complaintForm.category,
-                                issue: this.complaintForm.issue,
-                                imageUrl: this.complaintForm.image_url || null,
+                                fullname: f.fullname.trim(), houseNo: f.house_number.trim(), phone: f.phone.trim(),
+                                category: f.category, subject: f.subject.trim(),
+                                incidentAt: this.amLocalToIso(f.incident_at), incidentPlace: f.incident_place.trim(),
+                                issue: f.issue.trim(), respondent: f.respondent.trim(), witnesses: f.witnesses.trim(), desiredOutcome: f.desired_outcome.trim(),
+                                evidenceUrls: f.evidence.slice(),
                                 signatureUrl: sigD.url,
+                                declaration: f.declaration === true, pdpa: f.pdpa === true,
                             })
                         });
-                        const d = await res.json();
-                        if (!res.ok) throw new Error(d.error || 'ส่งเรื่องไม่สำเร็จ');
-
-                        Swal.fire({ icon: 'success', title: '📢 ส่งเรื่องร้องเรียนแล้ว', html: '<small>รอการตรวจสอบจากนิติบุคคล</small>', timer: 2200, showConfirmButton: false });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) {
+                            if (d.code === 'outdated_client') { Swal.fire('ต้องอัปเดตหน้านี้', d.error || 'กรุณาปิดแล้วเปิดหน้านี้ใหม่', 'info'); return; }
+                            if (d.field) { this.complaintErr = { field: d.field, msg: d.error || 'ข้อมูลไม่ถูกต้อง' }; this.cpFocusField(d.field); return; }
+                            throw new Error(d.error || 'ส่งเรื่องไม่สำเร็จ');
+                        }
                         this.complaintFormModal = false;
-                        await this.loadMyComplaints();
+                        this.complaintReceipt = { c: d.complaint, duplicate: !!d.duplicate, degraded: !!d.degraded };
+                        await this.loadMyComplaints(true);
                     } catch (err) {
                         Swal.fire('ไม่สำเร็จ', err.message, 'error');
                     } finally {
