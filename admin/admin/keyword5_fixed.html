@@ -363,6 +363,7 @@
         let currentView = 'keywords';
         let isSidebarOpen = false;
         let currentKeywords = [];
+        let kwTitleCol = null;   // 🏷️ มีคอลัมน์ keywords.title (หัวข้อสำหรับแอดมิน) หรือยัง — null = ยังไม่ตรวจ · false = ยังไม่รัน migration_keyword_title.sql
         let editingDataAiId = null;
 
 
@@ -3670,10 +3671,13 @@ if (viewName === 'dashboard') await renderDashboardView();
             const from = (currentPage - 1) * ITEMS_PER_PAGE;
             const to = from + ITEMS_PER_PAGE - 1;
 
+            if (kwTitleCol === null) {   // ตรวจครั้งเดียวว่ามีคอลัมน์ title หรือไม่ (ถ้าไม่มี ห้ามใส่ title ในคำค้น ไม่งั้นทั้งหน้าพัง)
+                try { const pr = await supabaseClient.from('keywords').select('title').limit(1); kwTitleCol = !pr.error; } catch (_) { kwTitleCol = false; }
+            }
             let query = supabaseClient.from('keywords').select('*', { count: 'exact' }).order('id', { ascending: false });
 
             if (searchQuery) {
-                query = query.or(`keyword.ilike.%${searchQuery}%,reply_postback.ilike.%${searchQuery}%`);
+                query = query.or(`keyword.ilike.%${searchQuery}%,reply_postback.ilike.%${searchQuery}%` + (kwTitleCol ? `,title.ilike.%${searchQuery}%` : ''));
             }
 
             query = query.range(from, to);
@@ -3699,7 +3703,7 @@ if (viewName === 'dashboard') await renderDashboardView();
                         <div class="flex gap-2">
                             <div class="relative group">
                                 <i data-lucide="search" class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-600 group-focus-within:text-indigo-700 transition-colors"></i>
-                                <input type="text" id="searchInput" placeholder="ค้นหา Keyword..." onkeydown="if(event.key === 'Enter') handleSearch(this.value)" value="${searchQuery}"
+                                <input type="text" id="searchInput" placeholder="${kwTitleCol ? 'ค้นหาหัวข้อ / Keyword...' : 'ค้นหา Keyword...'}" onkeydown="if(event.key === 'Enter') handleSearch(this.value)" value="${searchQuery}"
                                     class="pl-12 pr-5 py-3 border-0 rounded-2xl w-full sm:w-60 bg-white/70 backdrop-blur-sm shadow-sm ring-1 ring-slate-200 focus:ring-2 focus:ring-fuchsia-500 transition-all outline-none" />
                             </div>
                             <button onclick="handleSearch(document.getElementById('searchInput').value)" class="px-4 py-3 bg-fuchsia-50 text-fuchsia-600 rounded-2xl font-semibold hover:bg-fuchsia-100 transition-colors">
@@ -3727,7 +3731,7 @@ if (viewName === 'dashboard') await renderDashboardView();
                         <table class="w-full text-left border-collapse">
                             <thead>
                                 <tr class="border-b border-gray-200/50 bg-slate-50/50">
-                                    <th class="px-8 py-5 text-xs font-bold text-slate-500 uppercase tracking-widest w-1/4">Trigger</th>
+                                    <th class="px-8 py-5 text-xs font-bold text-slate-500 uppercase tracking-widest w-1/4">หัวข้อ / Trigger</th>
                                     <th class="px-6 py-5 text-xs font-bold text-slate-500 uppercase tracking-widest">Type</th>
                                     <th class="px-6 py-5 text-xs font-bold text-slate-500 uppercase tracking-widest">Duration</th>
                                     <th class="px-6 py-5 text-xs font-bold text-slate-500 uppercase tracking-widest">VIP</th>
@@ -3752,6 +3756,7 @@ if (viewName === 'dashboard') await renderDashboardView();
                 data.forEach(kw => {
 
                     let trigger = '<div class="flex flex-col gap-2">';
+                    if (kw.title) trigger += `<div data-testid="kw-title-${kw.id}" class="text-[15px] font-bold text-slate-800 leading-snug flex items-start gap-1.5"><i data-lucide="tag" class="w-4 h-4 text-fuchsia-500 mt-0.5 shrink-0"></i><span>${escapeHtml(kw.title)}</span></div>`;
                     if (kw.keyword) {
                         const tags = kw.keyword.split(',').map(t => `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">${escapeHtml(t.trim())}</span>`).join('');
                         trigger += `<div class="flex flex-wrap items-center gap-1.5"><span class="text-slate-500 text-[10px] font-mono mr-1">TXT:</span>${tags}</div>`;
@@ -3806,6 +3811,7 @@ if (viewName === 'dashboard') await renderDashboardView();
                 data.forEach(kw => {
 
                     let trigger = '<div class="flex flex-col gap-1.5 mb-2">';
+                    if (kw.title) trigger += `<div data-testid="kwm-title-${kw.id}" class="text-sm font-bold text-slate-800 leading-snug flex items-start gap-1.5"><i data-lucide="tag" class="w-3.5 h-3.5 text-fuchsia-500 mt-0.5 shrink-0"></i><span>${escapeHtml(kw.title)}</span></div>`;
                     if (kw.keyword) {
                         const tags = kw.keyword.split(',').map(t => `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 break-all">${escapeHtml(t.trim())}</span>`).join('');
                         trigger += `<div class="flex flex-wrap items-center gap-1"><span class="text-slate-400 text-[9px] font-mono mr-1">TXT:</span>${tags}</div>`;
@@ -4699,7 +4705,7 @@ async function updateAllUserProfiles() {
 
         async function openKeywordModal(id = null) {
             editingKeywordId = null;
-            let data = { keyword: '', reply_postback: '', replyType: 'text', content: '', startdatetime: '', enddatetime: '', require_vip: false, reply_richmenu: '' };
+            let data = { title: '', keyword: '', reply_postback: '', replyType: 'text', content: '', startdatetime: '', enddatetime: '', require_vip: false, reply_richmenu: '' };
             let title = 'เพิ่ม Keyword ใหม่';
 
             if (id) {
@@ -4732,6 +4738,12 @@ async function updateAllUserProfiles() {
                         <h3 class="text-xs font-bold text-slate-400 mb-4 uppercase tracking-widest flex items-center gap-2">
                              <span class="bg-fuchsia-100 text-indigo-500 p-1 rounded-md"><i data-lucide="zap" class="w-3 h-3"></i></span> 1. เงื่อนไขการทำงาน (Trigger)
                         </h3>
+                        <div class="mb-5">
+                            <label for="kw-title-input" class="block text-sm font-semibold text-slate-700 mb-1.5">หัวข้อ <span class="text-slate-400 font-normal">(ไม่บังคับ — ให้แอดมินดูว่าอันนี้เกี่ยวกับอะไร)</span></label>
+                            <input type="text" id="kw-title-input" name="title" data-testid="kw-title-input" maxlength="80" value="${escapeHtml(data.title || '')}" placeholder="เช่น เลขบัญชีนิติบุคคล · เวลาทำการสำนักงาน · วิธีแจ้งซ่อม"
+                                class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm bg-white shadow-sm outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
+                            <p class="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1"><i data-lucide="eye-off" class="w-3 h-3"></i> แสดงเฉพาะในหน้าแอดมิน · ลูกค้าไม่เห็น · ค้นหาจากช่องค้นหาด้านบนได้${kwTitleCol === false ? ' · <b class="text-amber-600">ยังไม่ได้รัน migration_keyword_title.sql จึงยังบันทึกหัวข้อไม่ได้</b>' : ''}</p>
+                        </div>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
                             <div>
                                 <label class="block text-sm font-semibold text-slate-700 mb-1.5">Keyword (คำค้นหา)</label>
@@ -5178,6 +5190,7 @@ async function updateAllUserProfiles() {
                 richMenuId = document.getElementById('manualRichMenuInput').value.trim();
             }
 
+            const titleVal = String((f.title && f.title.value) || '').trim().slice(0, 80);
             const payload = {
                 keyword: f.keyword.value.trim() || null,
                 reply_postback: f.reply_postback.value.trim() || null,
@@ -5189,14 +5202,20 @@ async function updateAllUserProfiles() {
             };
 
             payload[`reply_${replyType}`] = content;
+            if (kwTitleCol !== false && (titleVal || kwTitleCol === true)) payload.title = titleVal || null;   // 🏷️ หัวข้อ (ล้างค่าได้ถ้ามีคอลัมน์แล้ว)
 
-            let error;
-            if (editingKeywordId) {
-                const { error: err } = await supabaseClient.from('keywords').update(payload).eq('id', editingKeywordId);
-                error = err;
-            } else {
-                const { error: err } = await supabaseClient.from('keywords').insert([payload]);
-                error = err;
+            const saveKw = async (pl) => {
+                const r = editingKeywordId
+                    ? await supabaseClient.from('keywords').update(pl).eq('id', editingKeywordId)
+                    : await supabaseClient.from('keywords').insert([pl]);
+                return r.error;
+            };
+            let titleDropped = (kwTitleCol === false && !!titleVal);   // พิมพ์หัวข้อแต่ฐานข้อมูลยังไม่มีคอลัมน์ → แจ้งหลังบันทึก
+            let error = await saveKw(payload);
+            if (error && 'title' in payload && /title/i.test(String(error.message || '')) && /column|schema cache|PGRST204|42703/i.test(String(error.code || '') + ' ' + String(error.message || ''))) {
+                // ยังไม่ได้รัน migration_keyword_title.sql → บันทึกส่วนอื่นให้ก่อน ไม่ให้งานหาย
+                kwTitleCol = false; delete payload.title; titleDropped = !!titleVal;
+                error = await saveKw(payload);
             }
 
             if (error) {
@@ -5204,7 +5223,8 @@ async function updateAllUserProfiles() {
                 setBtnLoading(submitBtn, false);
             }
             else {
-                showToast('บันทึกสำเร็จ');
+                if (titleDropped) showToast('บันทึกแล้ว แต่ยังไม่ได้เก็บ "หัวข้อ" — ต้องรัน migration_keyword_title.sql ในฐานข้อมูลก่อน', 'warning');
+                else showToast('บันทึกสำเร็จ');
                 closeModal();
                 renderKeywordsTable();
 
@@ -20295,6 +20315,9 @@ async function renderUserhomeView() {
                     <button onclick="openSyncAllModal()" class="px-4 py-2.5 bg-purple-500 hover:bg-purple-600 text-white rounded-2xl font-bold shadow-md flex items-center gap-2 text-sm">
                         <i data-lucide="git-merge" class="w-4 h-4"></i> Sync ข้อมูลทั้งหมด
                     </button>
+                    <button onclick="openUserMenuList()" data-testid="uh-mu-list-btn" class="px-4 py-2.5 bg-violet-500 hover:bg-violet-600 text-white rounded-2xl font-bold shadow-md flex items-center gap-2 text-sm" title="รายชื่อคนที่ถูกตั้งสิทธิ์เมนู CRM เป็นกรณีพิเศษ">
+                        <i data-lucide="layout-grid" class="w-4 h-4"></i> สิทธิ์เมนูรายบุคคล <span id="uh-mu-count" class="hidden bg-white/25 rounded-full px-2 py-0.5 text-[11px]"></span>
+                    </button>
                     <button onclick="refreshUserhomeLineProfiles(this)" class="px-4 py-2.5 bg-slate-600 hover:bg-slate-700 text-white rounded-2xl font-bold shadow-md flex items-center gap-2 text-sm">
                         <i data-lucide="refresh-cw" class="w-4 h-4"></i> อัปเดต LINE Profile
                     </button>
@@ -20598,6 +20621,7 @@ function applyUserhomeFilters() {
 }
 
 function renderUserhomeTable() {
+    if (!_uhMu.loading && Date.now() - _uhMu.at > 60000) uhMuLoad(false);   // 👤 ชิป "สิทธิ์พิเศษ" (โหลดเบื้องหลัง ไม่บล็อกตาราง)
     document.getElementById('uh-result-count').innerText = `แสดง ${userhomeFiltered.length.toLocaleString()} รายการ จาก ${userhomeData.length.toLocaleString()} ทั้งหมด`;
 
     if (userhomeFiltered.length === 0) {
@@ -20639,6 +20663,7 @@ function renderUserhomeTable() {
             <td class="p-3">
                 <div class="font-bold text-slate-800 text-sm">${escapeHtml(r.fullname || '—')}</div>
                 <div class="text-[11px] text-slate-500">LINE: <span class="uh-linename">${escapeHtml(r.line_name || '—')}</span></div>
+                <span class="uh-mu" data-mu-uid="${escapeHtml(r.uid || '')}">${uhMuChipHtml(r.uid)}</span>
                 ${r.follow_status === 'unfollow' ? '<span class="text-[9px] font-bold text-rose-500">🚫 เลิกติดตามบอทแล้ว</span>' : ''}
             </td>
             <td class="p-3">
@@ -20677,6 +20702,7 @@ function renderUserhomeTable() {
                     <button onclick="syncOneUser('${escapeHtml(r.uid)}', '${escapeHtml(r.fullname || '').replace(/'/g, '&apos;')}')" class="p-1.5 text-purple-600 hover:bg-purple-50 rounded-lg" title="Sync ข้อมูล"><i data-lucide="git-merge" class="w-4 h-4"></i></button>
                     <button onclick="refreshOneLineProfile(this, '${escapeHtml(r.uid)}')" class="p-1.5 text-sky-600 hover:bg-sky-50 rounded-lg" title="อัปเดต LINE Profile"><i data-lucide="user-check" class="w-4 h-4"></i></button>
                     <button onclick="editUserhome('${escapeHtml(r.uid)}')" class="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="แก้ไข"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
+                    <button data-testid="uh-mu-btn" data-uid="${escapeHtml(r.uid)}" data-name="${escapeHtml(r.fullname || r.line_name || '').replace(/"/g,'&quot;')}" onclick="openUserMenuPerms(this.dataset.uid, this.dataset.name)" class="p-1.5 text-violet-600 hover:bg-violet-50 rounded-lg" title="สิทธิ์เมนู CRM รายบุคคล"><i data-lucide="layout-grid" class="w-4 h-4"></i></button>
                     <button onclick="quickPushUser('${escapeHtml(r.uid)}', '${escapeHtml(r.fullname || r.line_name || '').replace(/'/g, '&apos;')}')" class="p-1.5 text-fuchsia-600 hover:bg-fuchsia-50 rounded-lg" title="ส่งข้อความ"><i data-lucide="send" class="w-4 h-4"></i></button>
                     <button data-uid="${escapeHtml(r.uid)}" data-name="${escapeHtml(r.fullname || r.line_name || '').replace(/"/g,'&quot;')}" onclick="openUserRichMenuPicker(this.dataset.uid, this.dataset.name)" class="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg" title="เปลี่ยน Rich Menu"><i data-lucide="layout-grid" class="w-4 h-4"></i></button>
                     <button onclick="deleteUserhome('${escapeHtml(r.uid)}', '${escapeHtml(r.fullname || '').replace(/'/g, '&apos;')}')" class="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg" title="ลบ"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
@@ -20815,6 +20841,141 @@ async function applyBulkTag() {
 }
 
 // จำผล Rich Menu รายคน 5 นาที: วาดตารางใหม่ (ค้นหา/กรอง/เปลี่ยนหน้า) แล้วใช้ค่าที่จำไว้ทันที ไม่ยิง API ซ้ำและไม่กลับไปเป็นวงกลมหมุน
+// ═══ 👤 สิทธิ์เมนูสมาชิก (CRM) รายบุคคล (UI เริ่ม)
+//   ปุ่มในแถวของ "ทะเบียนบ้าน & สมาชิก" → ตั้งข้อยกเว้นรายเมนู: ตามบทบาท / อนุญาต / ห้าม  (ซ้อนบนหน้า "สิทธิ์เมนูสมาชิก (CRM)" ที่ตั้งตามบทบาท)
+//   ข้อมูลผ่าน /api/admin/audience/menu_user_{get,save,list} (สิทธิ์โมดูล memberMenus) · มีผลทันที · บันทึก Audit Log
+const _uhMu = { map: {}, at: 0, loading: false, total: 0, menus: [], items: [], error: '' };
+function uhMuMenuLabel(k) { const m = (_uhMu.menus || []).find(x => x.key === k); return m ? m.label : k; }
+function uhMuChipHtml(uid) {
+    const o = uid && _uhMu.map[uid]; if (!o) return '';
+    const n = (o.allow || []).length + (o.deny || []).length;
+    const tip = (o.allow.length ? 'อนุญาต: ' + o.allow.map(uhMuMenuLabel).join(', ') : '') + (o.allow.length && o.deny.length ? ' | ' : '') + (o.deny.length ? 'ห้าม: ' + o.deny.map(uhMuMenuLabel).join(', ') : '');
+    return `<span data-testid="uh-mu-chip" class="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-700 mt-0.5" title="${escapeHtml(tip)}">⭐ สิทธิ์พิเศษ ${n} เมนู</span>`;
+}
+function uhMuRepaint() {
+    document.querySelectorAll('.uh-mu[data-mu-uid]').forEach(el => { el.innerHTML = uhMuChipHtml(el.getAttribute('data-mu-uid')); });
+    const c = document.getElementById('uh-mu-count'); if (c) { c.textContent = _uhMu.total; c.classList.toggle('hidden', !_uhMu.total); }
+}
+async function uhMuLoad(force) {
+    if (_uhMu.loading) return;
+    _uhMu.loading = true;
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/menu_user_list`);
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error || 'โหลดไม่สำเร็จ');
+        _uhMu.items = d.items || []; _uhMu.menus = d.menus || []; _uhMu.total = d.total || 0; _uhMu.map = {};
+        _uhMu.items.forEach(i => { _uhMu.map[i.uid] = i; });
+        _uhMu.at = Date.now(); _uhMu.error = '';
+    } catch (e) { _uhMu.error = e.message || String(e); _uhMu.at = Date.now() - 30000; }   // ไม่มีสิทธิ์/ล้ม → ลองใหม่ใน 30 วินาที ไม่รบกวนหน้าตาราง
+    finally { _uhMu.loading = false; uhMuRepaint(); }
+}
+
+let _ump = null;
+function umpFmtAt(at) { try { return at ? new Date(at).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }) : ''; } catch (_) { return ''; } }
+async function openUserMenuPerms(uid, name) {
+    if (!uid) return showToast('สมาชิกคนนี้ไม่มี LINE UID จึงตั้งสิทธิ์รายบุคคลไม่ได้', 'warning');
+    _ump = { uid, name: name || '', loading: true };
+    document.getElementById('modal-title').innerHTML = '👤 สิทธิ์เมนู CRM รายบุคคล';
+    document.getElementById('modal-content').innerHTML = '<div class="text-center py-10 text-slate-400 text-sm" data-testid="ump-loading">⏳ กำลังโหลด...</div>';
+    openModal(); if (window.lucide) lucide.createIcons();
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/menu_user_get?uid=${encodeURIComponent(uid)}`);
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error || 'โหลดไม่สำเร็จ');
+        const cur = {}, orig = {};
+        (d.menus || []).forEach(m => { if (m.override) { cur[m.key] = m.override; orig[m.key] = m.override; } });
+        _ump = { uid, name: name || d.user.name || '', user: d.user, menus: d.menus, cur, orig, note: (d.override_meta && d.override_meta.note) || '', origNote: (d.override_meta && d.override_meta.note) || '', meta: d.override_meta, busy: false, error: '' };
+        umpRender();
+    } catch (e) {
+        document.getElementById('modal-content').innerHTML = `<div class="text-center py-8" data-testid="ump-load-error"><p class="text-rose-600 text-sm font-bold mb-4">${escapeHtml(e.message || String(e))}</p><button onclick="openUserMenuPerms('${escapeHtml(uid)}','${escapeHtml(name || '').replace(/'/g, '&apos;')}')" class="px-5 py-2 bg-slate-800 text-white rounded-xl text-sm font-bold">ลองใหม่</button></div>`;
+    }
+}
+function umpEff(m) { const v = _ump.cur[m.key]; const e = v === 'allow' ? true : v === 'deny' ? false : m.by_role; return e && !m.feature_off; }
+function umpDirty() {
+    const a = _ump.orig, b = _ump.cur, ks = new Set([...Object.keys(a), ...Object.keys(b)]);
+    let n = 0; ks.forEach(k => { if ((a[k] || '') !== (b[k] || '')) n++; });
+    return n;
+}
+function umpSet(key, val) { if (!_ump || _ump.busy) return; if (val) _ump.cur[key] = val; else delete _ump.cur[key]; umpRender(); }
+function umpRender() {
+    const u = _ump.user, groups = [];
+    _ump.menus.forEach(m => { let g = groups.find(x => x.name === m.group); if (!g) { g = { name: m.group, items: [] }; groups.push(g); } g.items.push(m); });
+    const dirty = umpDirty(), noteDirty = (_ump.note || '') !== (_ump.origNote || ''), hasAny = Object.keys(_ump.cur).length > 0;
+    const seg = (m, val, label, cls) => {
+        const on = (_ump.cur[m.key] || '') === val;
+        return `<button type="button" data-testid="ump-opt-${m.key}-${val || 'inherit'}" aria-pressed="${on}" onclick="umpSet('${m.key}','${val}')" class="px-2.5 py-1.5 text-[11px] font-bold border-l first:border-l-0 border-slate-200 transition ${on ? cls : 'bg-white text-slate-500 hover:bg-slate-50'}">${label}</button>`;
+    };
+    const rows = groups.map(g => `<div class="mb-3"><div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">${escapeHtml(g.name)}</div>` + g.items.map(m => {
+        const eff = umpEff(m), v = _ump.cur[m.key] || '';
+        const roleBadge = m.feature_off ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-500">ปิดทั้งหมู่บ้าน</span>' : (m.by_role ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600">บทบาทเปิด</span>' : '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-50 text-rose-500">บทบาทห้าม</span>');
+        return `<div data-testid="ump-row-${m.key}" class="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2 border-b border-slate-100 last:border-0 ${v ? 'bg-amber-50/50 -mx-2 px-2 rounded-lg' : ''}">
+            <div class="flex items-center gap-2 flex-1 min-w-[160px]"><i class="fas fa-${escapeHtml(m.icon)} text-slate-400 w-4 text-center text-xs"></i><span class="text-sm font-semibold text-slate-700">${escapeHtml(m.label)}</span>${roleBadge}</div>
+            <div class="inline-flex rounded-xl overflow-hidden border border-slate-200" role="group">${seg(m, '', 'ตามบทบาท', 'bg-slate-700 text-white')}${seg(m, 'allow', 'อนุญาต', 'bg-emerald-500 text-white')}${seg(m, 'deny', 'ห้าม', 'bg-rose-500 text-white')}</div>
+            <span data-testid="ump-eff-${m.key}" class="w-[84px] text-right text-[11px] font-bold ${eff ? 'text-emerald-600' : 'text-rose-500'}">${eff ? '✅ ใช้ได้' : '⛔ ใช้ไม่ได้'}</span>
+        </div>`;
+    }).join('') + '</div>').join('');
+    document.getElementById('modal-title').innerHTML = '👤 สิทธิ์เมนู CRM รายบุคคล';
+    document.getElementById('modal-content').innerHTML = `
+        <div data-testid="ump-root">
+            <div class="p-4 bg-white/70 rounded-2xl border border-slate-100 mb-4">
+                <div class="flex flex-wrap items-center gap-2"><span class="font-bold text-slate-800" data-testid="ump-name">${escapeHtml(_ump.name || u.name || '—')}</span>
+                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-violet-100 text-violet-700" data-testid="ump-role">บทบาท: ${escapeHtml(u.role_label)}</span>
+                    ${u.admin_role ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-800 text-white">แอดมิน: ${escapeHtml(u.admin_role)}</span>` : ''}</div>
+                <div class="text-[11px] text-slate-500 mt-1">บ้าน ${escapeHtml(u.house_no || '—')} · ${escapeHtml(u.living_status || '—')} ${u.status_confirmed ? '🔒 ยืนยันสถานะแล้ว' : '⏳ ยังไม่ยืนยันสถานะ'} · <span class="font-mono">${escapeHtml(u.uid.slice(0, 8))}…</span></div>
+                <p class="text-[11px] text-slate-500 mt-2 leading-relaxed">ค่าเริ่มต้นคือ <b>ตามบทบาท</b> (ตั้งที่หน้า "สิทธิ์เมนูสมาชิก (CRM)") · เลือก <b class="text-emerald-600">อนุญาต</b> / <b class="text-rose-500">ห้าม</b> เพื่อยกเว้นเฉพาะคนนี้ · มีผลทันทีหลังบันทึก · เมนูที่ปิดทั้งหมู่บ้านยังซ่อนเสมอ</p>
+                ${_ump.meta ? `<div class="text-[10px] text-amber-700 mt-1.5">⭐ ตั้งข้อยกเว้นไว้แล้ว${_ump.meta.by ? ' โดย ' + escapeHtml(_ump.meta.by) : ''} ${escapeHtml(umpFmtAt(_ump.meta.at))}</div>` : ''}
+            </div>
+            <div class="max-h-[46vh] overflow-y-auto pr-1" data-testid="ump-list">${rows}</div>
+            <div class="mt-3"><label class="block text-xs font-bold text-slate-600 mb-1">เหตุผล / หมายเหตุ <span class="font-normal text-slate-400">(ไม่บังคับ · เก็บใน Audit Log)</span></label>
+                <input id="ump-note" data-testid="ump-note" maxlength="200" value="${escapeHtml(_ump.note || '')}" oninput="_ump.note=this.value;umpRefreshFooter()" placeholder="เช่น ผู้เช่าระยะยาว อนุญาตให้ลงทะเบียนรถ" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-400"></div>
+            <div id="ump-err" data-testid="ump-err" class="${_ump.error ? '' : 'hidden'} mt-2 text-xs font-bold text-rose-600 bg-rose-50 rounded-lg px-3 py-2">${escapeHtml(_ump.error || '')}</div>
+            <div class="flex flex-wrap items-center gap-2 mt-4">
+                <button data-testid="ump-reset" onclick="umpResetAll()" ${hasAny && !_ump.busy ? '' : 'disabled'} class="px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-40">ตั้งทุกเมนูเป็น "ตามบทบาท"</button>
+                <span id="ump-dirty" data-testid="ump-dirty" class="text-[11px] text-slate-400 flex-1 text-right">${dirty ? 'แก้ไข ' + dirty + ' เมนู (ยังไม่บันทึก)' : (noteDirty ? 'แก้หมายเหตุ (ยังไม่บันทึก)' : 'ยังไม่มีการเปลี่ยนแปลง')}</span>
+                <button onclick="closeModal()" class="px-4 py-2 text-sm font-bold rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200">ปิด</button>
+                <button id="ump-save" data-testid="ump-save" onclick="umpSave()" ${(dirty || (noteDirty && hasAny)) && !_ump.busy ? '' : 'disabled'} class="px-5 py-2 text-sm font-bold rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 flex items-center gap-1.5">${_ump.busy ? '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>' : ''}บันทึก</button>
+            </div>
+        </div>`;
+    if (window.lucide) lucide.createIcons();
+}
+function umpRefreshFooter() {
+    const dirty = umpDirty(), noteDirty = (_ump.note || '') !== (_ump.origNote || ''), hasAny = Object.keys(_ump.cur).length > 0;
+    const d = document.getElementById('ump-dirty'); if (d) d.textContent = dirty ? 'แก้ไข ' + dirty + ' เมนู (ยังไม่บันทึก)' : (noteDirty ? 'แก้หมายเหตุ (ยังไม่บันทึก)' : 'ยังไม่มีการเปลี่ยนแปลง');
+    const b = document.getElementById('ump-save'); if (b) b.disabled = !((dirty || (noteDirty && hasAny)) && !_ump.busy);
+}
+function umpResetAll() { if (!_ump || _ump.busy) return; _ump.cur = {}; umpRender(); }
+async function umpSave() {
+    if (!_ump || _ump.busy) return;
+    _ump.busy = true; _ump.error = ''; umpRender();
+    try {
+        const overrides = {}; Object.keys(_ump.cur).forEach(k => { overrides[k] = _ump.cur[k]; });
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/menu_user_save`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: _ump.uid, overrides, note: _ump.note || '' }) });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+        if (d.override) { _uhMu.map[_ump.uid] = Object.assign({ uid: _ump.uid, name: _ump.name }, d.override); } else { delete _uhMu.map[_ump.uid]; }
+        _uhMu.items = Object.values(_uhMu.map); _uhMu.total = _uhMu.items.length; uhMuRepaint();
+        showToast(d.cleared ? 'ล้างข้อยกเว้นแล้ว — ' + (_ump.name || '') + ' ใช้สิทธิ์ตามบทบาท' : 'บันทึกสิทธิ์เมนูรายบุคคลแล้ว (มีผลทันที)', 'success');
+        closeModal();
+    } catch (e) { _ump.busy = false; _ump.error = e.message || String(e); umpRender(); }
+}
+async function openUserMenuList() {
+    document.getElementById('modal-title').innerHTML = '👤 สิทธิ์เมนู CRM รายบุคคล — ผู้ที่ตั้งไว้';
+    document.getElementById('modal-content').innerHTML = '<div class="text-center py-10 text-slate-400 text-sm">⏳ กำลังโหลด...</div>';
+    openModal();
+    _uhMu.loading = false; await uhMuLoad(true);
+    const box = document.getElementById('modal-content');
+    if (_uhMu.error) { box.innerHTML = `<div class="text-center py-8" data-testid="umpl-error"><p class="text-rose-600 text-sm font-bold">${escapeHtml(_uhMu.error)}</p></div>`; return; }
+    if (!_uhMu.items.length) { box.innerHTML = '<div class="text-center py-10 text-slate-400 text-sm" data-testid="umpl-empty">ยังไม่มีใครถูกตั้งสิทธิ์เมนูเป็นกรณีพิเศษ<br><span class="text-xs">กดไอคอน <b>▦</b> ที่แถวสมาชิกเพื่อตั้งรายบุคคล</span></div>'; return; }
+    box.innerHTML = `<div data-testid="umpl-root"><p class="text-[11px] text-slate-500 mb-3">${_uhMu.total} คน · ค่าที่ตั้งไว้ทับสิทธิ์ตามบทบาท</p><div class="max-h-[58vh] overflow-y-auto space-y-2">` + _uhMu.items.map(i => `
+        <div data-testid="umpl-item" class="p-3 bg-white/70 rounded-2xl border border-slate-100 flex flex-wrap items-start gap-3">
+            <div class="flex-1 min-w-[180px]"><div class="font-bold text-sm text-slate-800">${escapeHtml(i.name || '—')}</div><div class="text-[11px] text-slate-500">บ้าน ${escapeHtml(i.house_no || '—')} · ${escapeHtml(i.living_status || '—')}</div>
+                <div class="flex flex-wrap gap-1 mt-1.5">${i.allow.map(k => `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">✅ ${escapeHtml(uhMuMenuLabel(k))}</span>`).join('')}${i.deny.map(k => `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-50 text-rose-600">⛔ ${escapeHtml(uhMuMenuLabel(k))}</span>`).join('')}</div>
+                ${i.note ? `<div class="text-[11px] text-slate-500 mt-1">📝 ${escapeHtml(i.note)}</div>` : ''}<div class="text-[10px] text-slate-400 mt-0.5">${escapeHtml(i.by || '')} ${escapeHtml(umpFmtAt(i.at))}</div></div>
+            <button data-uid="${escapeHtml(i.uid)}" data-name="${escapeHtml(i.name || '').replace(/"/g, '&quot;')}" onclick="openUserMenuPerms(this.dataset.uid, this.dataset.name)" class="px-3 py-1.5 text-xs font-bold rounded-xl bg-violet-100 text-violet-700 hover:bg-violet-200">แก้ไข</button>
+        </div>`).join('') + '</div></div>';
+}
+// ═══ 👤 สิทธิ์เมนูสมาชิก (CRM) รายบุคคล (UI จบ)
+
 const _uhRmUser = {};   // uid → { html, title, at }
 const UH_RM_TTL = 5 * 60 * 1000;
 function uhRmFresh(uid) { const c = _uhRmUser[uid]; return !!(c && Date.now() - c.at < UH_RM_TTL); }
