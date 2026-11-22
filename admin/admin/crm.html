@@ -345,6 +345,10 @@
                         <span class="text-xs font-bold text-slate-700">รถของฉัน</span>
                         <span v-if="myCars.filter(c => c.status === 'pending').length > 0" class="absolute top-2 right-2 min-w-[20px] h-5 px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">{{ myCars.filter(c => c.status === 'pending').length }}</span>
                     </button>
+                    <button v-if="(fOn('cars')) && mOn('visitor_car')" @click="currentTab = 'visitor'" data-testid="home-visitor-tile" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 relative">
+                        <div class="w-12 h-12 rounded-full bg-sky-100 text-sky-600 flex items-center justify-center text-lg"><i class="fa-solid fa-van-shuttle"></i></div>
+                        <span class="text-xs font-bold text-slate-700">รถผู้มาติดต่อ</span>
+                    </button>
                     <a v-if="(fOn('finance')) && mOn('finance')" href="finance.html" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 relative">
                         <div class="w-12 h-12 rounded-full bg-teal-100 text-teal-600 flex items-center justify-center text-lg"><i class="fa-solid fa-chart-pie"></i></div>
                         <span class="text-xs font-bold text-slate-700">รายรับ-รายจ่าย</span>
@@ -1849,6 +1853,106 @@
         </div>
 
         <!-- ═══════ CAR TAB ═══════ -->
+        <!-- ═══ 🚪 รถผู้มาติดต่อ (ผ่านเข้า-ออกวันเดียว) ═══ -->
+        <div v-if="currentTab === 'visitor' && !loading" class="fixed inset-0 bg-gradient-to-br from-sky-50 via-white to-indigo-50/50 overflow-y-auto z-20" data-testid="visitor-page">
+            <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
+                <div class="mb-4 flex items-center gap-3">
+                    <button @click="currentTab = 'cars'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" data-testid="visitor-back"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="flex-1 min-w-0">
+                        <h2 class="text-2xl font-extrabold text-slate-800 leading-tight">รถผู้มาติดต่อ</h2>
+                        <p class="text-xs text-slate-500">ลงทะเบียนรถแขก ผ่านเข้า-ออกหมู่บ้านได้เฉพาะวันนี้</p>
+                    </div>
+                </div>
+
+                <!-- กำลังโหลด -->
+                <div v-if="visitorLoading && !visitorData" class="text-center py-16 text-slate-400" data-testid="visitor-loading"><i class="fa-solid fa-circle-notch fa-spin text-2xl"></i><div class="text-sm mt-2">กำลังตรวจสอบสิทธิ์...</div></div>
+
+                <!-- โหลดไม่สำเร็จ -->
+                <div v-else-if="visitorErr && !visitorData" class="rounded-3xl bg-white border border-rose-100 p-6 text-center shadow-sm" data-testid="visitor-error">
+                    <div class="text-4xl mb-2">⚠️</div>
+                    <div class="font-bold text-slate-700">โหลดข้อมูลไม่สำเร็จ</div>
+                    <div class="text-xs text-slate-500 mt-1">{{ visitorErr }}</div>
+                    <button @click="loadVisitorPass()" class="mt-4 px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold" data-testid="visitor-retry">ลองใหม่</button>
+                </div>
+
+                <!-- ไม่มีสิทธิ์ใช้งาน (ไม่พบบ้าน / ค้างค่าส่วนกลาง) -->
+                <div v-else-if="visitorData && !visitorData.access.allowed" class="rounded-3xl overflow-hidden bg-white shadow-lg border border-rose-100" data-testid="visitor-denied">
+                    <div class="bg-rose-500 px-5 pt-8 pb-8 text-center">
+                        <div class="w-20 h-20 rounded-full bg-white/20 flex items-center justify-center mx-auto mb-3 text-4xl">🚫</div>
+                        <h3 class="text-xl font-extrabold text-white" data-testid="visitor-denied-title">{{ visitorData.access.title }}</h3>
+                    </div>
+                    <div class="p-5 text-center">
+                        <div class="bg-rose-50 border border-rose-100 rounded-2xl p-4 text-sm text-slate-700" data-testid="visitor-denied-detail">{{ visitorData.access.detail }}</div>
+                        <button @click="currentTab = 'cars'" class="mt-4 w-full py-3 rounded-xl bg-slate-800 text-white font-bold">กลับ</button>
+                    </div>
+                </div>
+
+                <template v-else-if="visitorData">
+                    <!-- การ์ดวันที่ -->
+                    <div class="bg-white rounded-2xl p-4 shadow-md border border-slate-100 mb-4 flex items-center justify-between" data-testid="visitor-date-card">
+                        <div class="flex items-center gap-3">
+                            <div class="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-xl border border-indigo-100">📅</div>
+                            <div>
+                                <p class="text-[11px] font-bold text-indigo-500">สิทธิ์เข้า-ออก</p>
+                                <p class="text-base font-extrabold text-slate-800">เฉพาะวันนี้</p>
+                                <p class="text-[10px] text-slate-400">หมดสิทธิ์เที่ยงคืน</p>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-3xl font-black text-indigo-600 leading-none" data-testid="visitor-day">{{ visitorDayParts.day }}</p>
+                            <p class="text-[11px] text-slate-600 font-bold mt-1 bg-slate-100 px-1.5 py-0.5 rounded inline-block" data-testid="visitor-month">{{ visitorDayParts.month }}</p>
+                        </div>
+                    </div>
+
+                    <!-- ฟอร์ม -->
+                    <form @submit.prevent="submitVisitorPass()" class="bg-white rounded-3xl shadow-sm border border-slate-100 p-4 space-y-4" data-testid="visitor-form">
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 mb-1.5">🆔 เลขทะเบียนรถ <span class="text-rose-500">*</span></label>
+                            <input data-testid="visitor-plate" :value="visitorForm.plate" @input="onVisitorPlateInput($event)" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" placeholder="เช่น 1กข2345"
+                                   class="block w-full py-3.5 px-4 text-center text-3xl font-extrabold uppercase tracking-widest rounded-xl border-[3px] bg-white text-slate-900 outline-none focus:ring-2 focus:ring-indigo-400"
+                                   :class="visitorErrs.plate ? 'border-rose-400 bg-rose-50' : 'border-slate-800'">
+                            <p v-if="visitorErrs.plate" class="text-[11px] text-rose-600 mt-1" data-testid="visitor-err-plate">{{ visitorErrs.plate }}</p>
+                            <p v-else class="text-[11px] text-center text-slate-400 mt-1">💡 กรอกติดกันโดยไม่ต้องเว้นวรรค</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 mb-1.5">📍 จังหวัดป้ายทะเบียน <span class="text-rose-500">*</span></label>
+                            <input data-testid="visitor-province" v-model="visitorForm.province" @input="visitorErrs.province = ''" list="carProvinceList" type="text" autocomplete="off" placeholder="พิมพ์ค้นหา/เลือกจังหวัด"
+                                   class="block w-full py-3 px-4 rounded-xl border-2 text-center text-base font-medium outline-none focus:ring-2 focus:ring-indigo-400"
+                                   :class="visitorErrs.province ? 'border-rose-400 bg-rose-50' : 'border-slate-200'">
+                            <p v-if="visitorErrs.province" class="text-[11px] text-rose-600 mt-1" data-testid="visitor-err-province">{{ visitorErrs.province }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 mb-1.5">🏠 ติดต่อบ้านเลขที่</label>
+                            <input data-testid="visitor-house" :value="visitorData.house_no" readonly type="text" class="block w-full py-3 px-4 rounded-xl border-2 border-slate-200 bg-slate-50 text-center text-base text-slate-500 font-semibold cursor-not-allowed">
+                        </div>
+                        <button type="submit" data-testid="visitor-submit" :disabled="visitorSubmitting || (visitorData.limit.max > 0 && visitorData.limit.used >= visitorData.limit.max)"
+                                class="w-full bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-bold text-lg py-3.5 rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-60 active:scale-[.98] transition">
+                            <i class="fa-solid" :class="visitorSubmitting ? 'fa-circle-notch fa-spin' : 'fa-circle-check'"></i>
+                            <span>{{ visitorSubmitting ? 'กำลังบันทึก...' : 'ยืนยันการลงทะเบียน' }}</span>
+                        </button>
+                        <p v-if="visitorData.limit.max > 0 && visitorData.limit.used >= visitorData.limit.max" class="text-[11px] text-center text-amber-700" data-testid="visitor-limit-full">วันนี้ลงทะเบียนครบ {{ visitorData.limit.max }} คันแล้ว กรุณาติดต่อนิติบุคคลหากต้องการเพิ่ม</p>
+                    </form>
+
+                    <!-- รายการวันนี้ -->
+                    <div class="mt-6" data-testid="visitor-list">
+                        <div class="flex items-center gap-2 mb-3">
+                            <div class="w-1 h-5 bg-indigo-500 rounded-full"></div>
+                            <h3 class="text-base font-bold text-slate-700">ลงทะเบียนวันนี้ <span class="text-slate-400 font-medium">({{ visitorData.passes.length }}<template v-if="visitorData.limit.max > 0">/{{ visitorData.limit.max }}</template>)</span></h3>
+                        </div>
+                        <div v-if="!visitorData.passes.length" class="text-center text-sm text-slate-400 py-6 bg-white/70 rounded-2xl border border-dashed border-slate-200" data-testid="visitor-empty">ยังไม่มีรถผู้มาติดต่อวันนี้</div>
+                        <div v-for="p in visitorData.passes" :key="p.id" class="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex items-center gap-3 mb-2" data-testid="visitor-item">
+                            <div class="w-10 h-10 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-lg">🚗</div>
+                            <div class="flex-1 min-w-0">
+                                <div class="font-extrabold text-slate-800 truncate" data-testid="visitor-item-plate">{{ p.plate_number }} <span class="text-xs font-semibold text-slate-500">{{ p.province }}</span></div>
+                                <div class="text-[11px] text-slate-500">{{ p.status === 'synced' ? '✅ ใช้งานได้' : '⏳ รอซิงก์เข้าระบบกล้อง' }}<template v-if="!p.mine && p.by"> · โดย {{ p.by }}</template></div>
+                            </div>
+                            <button @click="cancelVisitorPass(p)" :disabled="visitorCancelId === p.id" data-testid="visitor-cancel" class="px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 text-xs font-bold border border-rose-100 active:scale-95 disabled:opacity-50">ยกเลิก</button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
         <div v-if="currentTab === 'cars' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 via-white to-indigo-50/40 overflow-y-auto z-20" data-testid="cars-page">
             <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
 
@@ -1886,6 +1990,16 @@
                         <span v-if="carStats.rejected" class="px-2 py-1 rounded-full bg-white/25">🚫 ไม่อนุมัติ {{ carStats.rejected }}</span>
                     </div>
                 </div>
+
+                <!-- 🚪 ทางเข้าหน้า "รถผู้มาติดต่อ" (ผ่านเข้า-ออกวันเดียว) -->
+                <button v-if="mOn('visitor_car')" @click="currentTab = 'visitor'" data-testid="visitor-entry-btn" class="w-full mb-4 rounded-2xl bg-white border border-sky-100 shadow-sm p-3 flex items-center gap-3 text-left active:scale-[.99] transition">
+                    <div class="w-11 h-11 rounded-xl bg-sky-100 text-sky-600 flex items-center justify-center text-lg shrink-0"><i class="fa-solid fa-van-shuttle"></i></div>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm font-extrabold text-slate-800">มีแขกมาหา? ลงทะเบียนรถผู้มาติดต่อ</div>
+                        <div class="text-[11px] text-slate-500">ผ่านเข้า-ออกได้เฉพาะวันนี้ · ได้ E-Pass ส่งเข้าแชท</div>
+                    </div>
+                    <i class="fa-solid fa-chevron-right text-slate-300"></i>
+                </button>
 
                 <!-- สรุป: มีรถกี่คันที่ต้องยืนยันสิทธิ์การใช้งานต่อ (ใกล้หมด/หมดอายุ) -->
                 <div v-if="!carLoading && myCars.some(c => c.can_confirm_usage)"
@@ -5151,6 +5265,8 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                     flippedCardIds: [],   // เก็บ id ของ card ที่กำลังพลิกอยู่
                     // ─── Car Management ───
                     myCars: [], carHouseNumber: null, carLoading: false,
+                    // 🚪 รถผู้มาติดต่อ (ผ่านวันเดียว)
+                    visitorData: null, visitorLoading: false, visitorErr: '', visitorForm: { plate: '', province: '' }, visitorErrs: {}, visitorSubmitting: false, visitorCancelId: null,
                     carFormModal: false,
                     carForm: { fullname: '', house_number: '', car_type: 'รถยนต์', plate_number: '', province: 'ระยอง', phone: '', image_url: '' },
                     carSaving: false, carImageUploading: false,
@@ -5237,6 +5353,11 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                 }
             },
             computed: {
+                // 🚪 วัน/เดือน บนการ์ด "เฉพาะวันนี้" (จาก date_th ที่ server ส่งมา เช่น "22 พ.ย. 2569")
+                visitorDayParts() {
+                    const t = String((this.visitorData && this.visitorData.date_th) || '').split(' ');
+                    return { day: t[0] || '--', month: t.slice(1).join(' ') || '--' };
+                },
                 // บรรทัดสรุปหลังหัวข้อ: รู้ทันทีว่าแจ้งไปแล้วหรือยัง
                 kcaNlLine() {
                     const d = this.kcaNl.data;
@@ -5817,6 +5938,7 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                     if (newVal === 'payments' && !this.invoiceLoading && !this.houseFeesLoading && !this.houseFees) this.openPayments();
                     if (newVal === 'coupons') this.$nextTick(() => this.renderCouponBarcodes());
                     if (newVal === 'cars' && this.myCars.length === 0) this.loadMyCars();
+                    if (newVal === 'visitor') this.loadVisitorPass();
                     if (newVal === 'complaints') this.loadMyComplaints(true);
                     if (newVal === 'repairs') this.loadRepairBoard();
                     if (newVal === 'profile' && !this.statusCheckResult) this.checkMyStatus();
@@ -5847,7 +5969,7 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                 mOn(key) { const m = this.menuAccess && this.menuAccess.menus; return !m || m[key] !== false; },
                 guardTab(tab) {
                     const map = { rewards: 'rewards', coupons: 'coupons', history: 'history', checkin: 'checkin', agm: 'agm', payments: 'payments', keycard: 'keycard',
-                                  cars: 'cars', chat: 'chat', complaints: 'complaints', repairs: 'repairs', cctv: 'cctv', gallery: 'gallery', status: 'status', news: 'news', housemembers: 'house_members' };
+                                  cars: 'cars', visitor: 'visitor_car', chat: 'chat', complaints: 'complaints', repairs: 'repairs', cctv: 'cctv', gallery: 'gallery', status: 'status', news: 'news', housemembers: 'house_members' };
                     const k = map[tab];
                     return !k || this.mOn(k);
                 },
@@ -6094,9 +6216,9 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
 
                     // ─── B) Switch to tab ──────────────────────────────
                     // ชื่อเรียกอื่นที่ใช้ในลิงก์ได้ (เช่น ?tab=car หรือ ?tab=confirm)
-                    const tabAlias = { car: 'cars', vehicle: 'cars', confirm: 'status', ownership: 'status', verify: 'status', complaint: 'complaints', repair: 'repairs', camera: 'cctv' };
+                    const tabAlias = { car: 'cars', vehicle: 'cars', visitor_pass: 'visitor', guest: 'visitor', epass: 'visitor', confirm: 'status', ownership: 'status', verify: 'status', complaint: 'complaints', repair: 'repairs', camera: 'cctv' };
                     const validTabs = ['home', 'rewards', 'coupons', 'news', 'profile', 'history', 'checkin', 'agm', 'payments', 'keycard',
-                                       'cars', 'complaints', 'repairs', 'cctv', 'gallery', 'status', 'housemembers', 'chat'];
+                                       'cars', 'visitor', 'complaints', 'repairs', 'cctv', 'gallery', 'status', 'housemembers', 'chat'];
                     const tabKey = tabAlias[tabName] || tabName;
                     // 🪪 ลิงก์ลัดแอดมิน ?tab=kcadmin — เปิดได้เมื่อ server บอกว่าบัญชีนี้ใช้เครื่องมือนี้ได้ (ตัวบังคับจริงอยู่ที่ API)
                     if (tabKey === 'kcadmin') {
@@ -7392,7 +7514,7 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                 },
                 usChartH(n) { return Math.max(0, Math.round((Number(n) || 0) * 100 / this.usChartMax)); },
                 usDay(d) { const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})/); if (!m) return ''; try { return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }); } catch (e) { return d; } },
-                usTabLabel(t) { return ({ home: 'หน้าหลัก', rewards: 'รางวัล', coupons: 'คูปอง', history: 'ประวัติแต้ม', news: 'ข่าว', payments: 'ค่าส่วนกลาง', cars: 'ทะเบียนรถ', complaints: 'ร้องเรียน', repairs: 'แจ้งซ่อม', cctv: 'ขอดูกล้อง', gallery: 'แกลเลอรี่', checkin: 'เช็คอินกิจกรรม', agm: 'ประชุมใหญ่', agm_detail: 'รายละเอียดประชุม', keycard: 'คีย์การ์ด', status: 'ยืนยันสิทธิ์', profile: 'ข้อมูลส่วนตัว', housemembers: 'สมาชิกในบ้าน' })[t] || t; },
+                usTabLabel(t) { return ({ home: 'หน้าหลัก', rewards: 'รางวัล', coupons: 'คูปอง', history: 'ประวัติแต้ม', news: 'ข่าว', payments: 'ค่าส่วนกลาง', cars: 'ทะเบียนรถ', visitor: 'รถผู้มาติดต่อ', complaints: 'ร้องเรียน', repairs: 'แจ้งซ่อม', cctv: 'ขอดูกล้อง', gallery: 'แกลเลอรี่', checkin: 'เช็คอินกิจกรรม', agm: 'ประชุมใหญ่', agm_detail: 'รายละเอียดประชุม', keycard: 'คีย์การ์ด', status: 'ยืนยันสิทธิ์', profile: 'ข้อมูลส่วนตัว', housemembers: 'สมาชิกในบ้าน' })[t] || t; },
                 // ───────── 🏠 ข้อมูลส่วนตัวเพิ่มเติม: LINE · สมาชิกในบ้าน · ข้อมูลลงทะเบียน · ข้อมูลบ้าน/โฉนด (เจ้าของเท่านั้น) ─────────
                 async loadProfileMore(force) {
                     const uid = this.userProfile && this.userProfile.userId;
@@ -7945,6 +8067,87 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                             })
                         });
                     } catch (e) { console.warn('notifyAdmin failed', e); }
+                },
+
+                // ════════════════════════════════════════════════════════════
+                // 🚪 รถผู้มาติดต่อ (ผ่านเข้า-ออกวันเดียว) — ทุกอย่างผ่าน server (ตรวจบ้าน/ด่านค่าส่วนกลาง/ลิมิตที่ server ไม่เชื่อค่าจากหน้าเว็บ)
+                // ════════════════════════════════════════════════════════════
+                async loadVisitorPass() {
+                    const uid = this.userProfile && this.userProfile.userId; if (!uid) return;
+                    this.visitorLoading = true; this.visitorErr = '';
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/visitor_pass_status?userId=${encodeURIComponent(uid)}`, { headers: this.lineAuthHeaders() });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.error || 'โหลดข้อมูลไม่สำเร็จ');
+                        this.visitorData = d;
+                    } catch (e) { this.visitorErr = (e && e.message) || 'โหลดข้อมูลไม่สำเร็จ'; }
+                    finally { this.visitorLoading = false; }
+                },
+                onVisitorPlateInput(ev) {
+                    const v = String(ev.target.value || '').replace(/\s+/g, '').toUpperCase().slice(0, 12);
+                    if (ev.target.value !== v) ev.target.value = v;
+                    this.visitorForm.plate = v; this.visitorErrs.plate = '';
+                },
+                validateVisitorForm() {
+                    const errs = {};
+                    const plate = String(this.visitorForm.plate || '').replace(/\s+/g, '').toUpperCase();
+                    if (!plate) errs.plate = 'กรุณากรอกทะเบียนรถ';
+                    else if (!/^[0-9A-Z฀-๿-]{1,12}$/.test(plate)) errs.plate = 'ใช้ได้เฉพาะตัวอักษรไทย/อังกฤษ ตัวเลข และขีด (-)';
+                    const pv = String(this.visitorForm.province || '').trim();
+                    if (!pv) errs.province = 'กรุณาเลือกจังหวัดป้ายทะเบียน';
+                    else if (this.carProvinces && this.carProvinces.length && !this.carProvinces.includes(pv)) errs.province = 'กรุณาเลือกจังหวัดจากรายการ';
+                    this.visitorErrs = errs;
+                    return !Object.keys(errs).length;
+                },
+                async submitVisitorPass() {
+                    if (this.visitorSubmitting) return;
+                    if (!this.validateVisitorForm()) return;
+                    const uid = this.userProfile && this.userProfile.userId; if (!uid) return;
+                    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+                    this.visitorSubmitting = true;
+                    try {
+                        const plate = this.visitorForm.plate, province = String(this.visitorForm.province || '').trim();
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/visitor_pass_create`, {
+                            method: 'POST', headers: this.lineAuthHeaders({ 'Content-Type': 'application/json' }),
+                            body: JSON.stringify({ userId: uid, displayName: this.userProfile.displayName || '', pictureUrl: this.userProfile.pictureUrl || '', plate_number: plate, province }),
+                        });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) {
+                            if (d && d.access && d.access.allowed === false && this.visitorData) this.visitorData = Object.assign({}, this.visitorData, { access: d.access });
+                            if (d && (d.code === 'duplicate' || d.code === 'limit')) this.loadVisitorPass();
+                            await Swal.fire({ icon: (d.code === 'fee_blocked' || d.code === 'no_house') ? 'error' : 'warning',
+                                title: d.code === 'duplicate' ? 'ลงทะเบียนซ้ำ' : (d.code === 'limit' ? 'ครบจำนวนวันนี้แล้ว' : 'ลงทะเบียนไม่สำเร็จ'), text: d.error || 'กรุณาลองใหม่', confirmButtonColor: '#4f46e5' });
+                            return;
+                        }
+                        this.visitorForm = { plate: '', province: '' }; this.visitorErrs = {};
+                        await this.loadVisitorPass();
+                        // 🎫 ส่ง Flex E-Pass เข้าแชทของผู้ลงทะเบียน (เฉพาะเปิดในแอป LINE — ส่งไม่ได้ก็ไม่กระทบการลงทะเบียน)
+                        let sent = false;
+                        try {
+                            if (d.epass && typeof liff !== 'undefined' && liff.isInClient && liff.isInClient()) {
+                                await liff.sendMessages([{ type: 'flex', altText: d.epass.altText, contents: d.epass.contents }]); sent = true;
+                            }
+                        } catch (e) { console.warn('visitor epass flex', e); }
+                        await Swal.fire({ icon: 'success', title: 'ลงทะเบียนสำเร็จ!', html: `รถทะเบียน <b>${esc(plate)} ${esc(province)}</b><br>เข้า-ออกได้ถึงเที่ยงคืนวันนี้${sent ? '<br><span style="font-size:12px;color:#64748b">ส่ง E-Pass เข้าแชทให้แล้ว</span>' : ''}`, confirmButtonColor: '#4f46e5' });
+                    } catch (e) {
+                        await Swal.fire({ icon: 'error', title: 'เกิดข้อผิดพลาด', text: (e && e.message) || 'กรุณาลองใหม่', confirmButtonColor: '#4f46e5' });
+                    } finally { this.visitorSubmitting = false; }
+                },
+                async cancelVisitorPass(p) {
+                    if (!p || this.visitorCancelId) return;
+                    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+                    const ok = await Swal.fire({ icon: 'question', title: 'ยกเลิกรถผู้มาติดต่อ?', html: `ทะเบียน <b>${esc(p.plate_number)}</b><br><span style="font-size:12px;color:#64748b">ใช้เมื่อลงทะเบียนผิด — สิทธิ์เข้า-ออกของวันนี้จะถูกยกเลิก</span>`, showCancelButton: true, confirmButtonText: 'ยกเลิกรายการ', cancelButtonText: 'ไม่ยกเลิก', confirmButtonColor: '#e11d48' });
+                    if (!ok.isConfirmed) return;
+                    const uid = this.userProfile && this.userProfile.userId; if (!uid) return;
+                    this.visitorCancelId = p.id;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/visitor_pass_cancel`, { method: 'POST', headers: this.lineAuthHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ userId: uid, id: p.id }) });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.error || 'ยกเลิกไม่สำเร็จ');
+                        await this.loadVisitorPass();
+                        try { Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'ยกเลิกแล้ว', timer: 1600, showConfirmButton: false }); } catch (_) {}
+                    } catch (e) { await Swal.fire({ icon: 'error', title: 'ยกเลิกไม่สำเร็จ', text: (e && e.message) || '', confirmButtonColor: '#4f46e5' }); }
+                    finally { this.visitorCancelId = null; }
                 },
 
                 // ════════════════════════════════════════════════════════════
