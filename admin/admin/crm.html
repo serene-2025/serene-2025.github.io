@@ -429,6 +429,12 @@
                             <div class="w-12 h-12 rounded-full flex items-center justify-center text-lg" :style="adminMenuStyle('teal')"><i class="fa-solid fa-house-user"></i></div>
                             <span class="text-xs font-bold text-slate-700 text-center leading-tight">ทะเบียนบ้าน &amp; สมาชิก</span>
                         </button>
+                        <!-- 🔔 ตั้งค่าแจ้งเตือนทุกระบบ (Telegram / LINE กลุ่ม) — เห็นเมื่อบทบาทมีสิทธิ์โมดูล notificationChannels -->
+                        <button v-if="menuAccess.tools && menuAccess.tools.notify_settings" @click="openNs()" data-testid="admin-menu-ns"
+                           class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 border border-dashed border-slate-300">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center text-lg" :style="adminMenuStyle('cyan')"><i class="fa-solid fa-bell-concierge"></i></div>
+                            <span class="text-xs font-bold text-slate-700 text-center leading-tight">ตั้งค่าแจ้งเตือน</span>
+                        </button>
                         <!-- 🛠️ จัดการ แจ้งซ่อม / ร้องเรียน / ทะเบียนรถ / ขอดูกล้อง (ในหน้านี้เอง · เทียบเท่าหน้าเว็บใหญ่) — เห็นเมื่อบทบาทมีสิทธิ์โมดูลนั้น ๆ -->
                         <button v-for="k in amToolKeys" :key="k" @click="amOpen(k)" :data-testid="'admin-menu-am-' + k"
                            class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 border border-dashed border-slate-300 relative">
@@ -1916,9 +1922,12 @@
                         </div>
                         <div>
                             <label class="block text-sm font-bold text-slate-700 mb-1.5">📍 จังหวัดป้ายทะเบียน <span class="text-rose-500">*</span></label>
-                            <input data-testid="visitor-province" v-model="visitorForm.province" @input="visitorErrs.province = ''" list="carProvinceList" type="text" autocomplete="off" placeholder="พิมพ์ค้นหา/เลือกจังหวัด"
-                                   class="block w-full py-3 px-4 rounded-xl border-2 text-center text-base font-medium outline-none focus:ring-2 focus:ring-indigo-400"
-                                   :class="visitorErrs.province ? 'border-rose-400 bg-rose-50' : 'border-slate-200'">
+                            <select data-testid="visitor-province" v-model="visitorForm.province" @change="visitorErrs.province = ''"
+                                    class="block w-full py-3 px-4 rounded-xl border-2 bg-white text-center text-base font-medium outline-none focus:ring-2 focus:ring-indigo-400"
+                                    :class="visitorErrs.province ? 'border-rose-400 bg-rose-50' : 'border-slate-200'">
+                                <option value="">— เลือกจังหวัดป้ายทะเบียน —</option>
+                                <option v-for="p in carProvinces" :key="p" :value="p">{{ p }}</option>
+                            </select>
                             <p v-if="visitorErrs.province" class="text-[11px] text-rose-600 mt-1" data-testid="visitor-err-province">{{ visitorErrs.province }}</p>
                         </div>
                         <div>
@@ -3504,6 +3513,121 @@
                 <button v-if="kcaFiltered.length > kcaShown.length" @click="kcaPage++" class="w-full mt-3 py-3 rounded-2xl bg-white shadow-sm text-sm font-bold text-slate-600">แสดงเพิ่ม ({{ kcaFiltered.length - kcaShown.length }})</button>
                 <div v-if="kcaTruncated" class="mt-3 text-[11px] text-amber-700 text-center">แสดงเฉพาะ 10,000 ใบล่าสุด</div>
                 <div v-if="kcaPickIds.length" class="h-24" aria-hidden="true"></div>
+            </div>
+        </div>
+
+        <!-- ═════════ 🔔 ADMIN: ตั้งค่าแจ้งเตือนทุกระบบ (Telegram / LINE กลุ่ม) ═════════ -->
+        <div v-if="currentTab === 'notifyset' && !loading" class="fixed inset-0 bg-gradient-to-br from-slate-50 to-cyan-50/40 overflow-y-auto z-20" data-testid="ns-page">
+            <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
+                <div class="mb-4 flex items-center gap-3">
+                    <button @click="currentTab = 'home'" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" data-testid="ns-back"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2"><span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-800 text-white tracking-wider">ADMIN</span></div>
+                        <h2 class="text-2xl font-extrabold text-slate-800 leading-tight">ตั้งค่าแจ้งเตือน</h2>
+                        <p class="text-xs text-slate-500">เลือกว่าแต่ละระบบจะแจ้งเข้า Telegram / กลุ่ม LINE ไหน</p>
+                    </div>
+                    <button @click="nsLoad()" :disabled="nset.loading" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" title="รีเฟรช" data-testid="ns-refresh"><i class="fa-solid fa-rotate" :class="nset.loading ? 'fa-spin' : ''"></i></button>
+                </div>
+
+                <div v-if="nset.loading && !nset.data" class="text-center py-16 text-slate-400" data-testid="ns-loading"><i class="fa-solid fa-circle-notch fa-spin text-2xl"></i></div>
+                <div v-else-if="nset.error && !nset.data" class="rounded-3xl bg-white border border-rose-100 p-6 text-center shadow-sm" data-testid="ns-error">
+                    <div class="text-4xl mb-2">⚠️</div>
+                    <div class="font-bold text-slate-700">โหลดไม่สำเร็จ</div>
+                    <div class="text-xs text-slate-500 mt-1">{{ nset.error }}</div>
+                    <button @click="nsLoad()" class="mt-4 px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold">ลองใหม่</button>
+                </div>
+
+                <template v-else-if="nset.data">
+                    <div class="rounded-2xl p-3 mb-4 text-xs border flex items-start gap-2" :class="nset.data.default_telegram ? 'bg-sky-50 border-sky-100 text-sky-800' : 'bg-amber-50 border-amber-200 text-amber-800'" data-testid="ns-default-banner">
+                        <div class="text-lg leading-none">{{ nset.data.default_telegram ? '📨' : '⚠️' }}</div>
+                        <div class="flex-1">
+                            <template v-if="nset.data.default_telegram"><b>มีกลุ่ม Telegram หลักของระบบ</b> — ระบบที่ยังไม่ตั้งช่องเอง (ป้าย "ใช้กลุ่มหลัก") จะส่งเข้ากลุ่มหลักนั้น</template>
+                            <template v-else><b>ยังไม่มีกลุ่ม Telegram หลักของระบบ</b> — ระบบที่ยังไม่ตั้งช่องเองจะ <b>ไม่มีการแจ้งเตือนเลย</b> ตั้งช่องให้แต่ละระบบด้านล่าง</template>
+                        </div>
+                    </div>
+
+                    <div v-for="g in nsGroups" :key="g.name" class="mb-5" :data-testid="'ns-group-' + g.name">
+                        <div class="text-[11px] font-extrabold text-slate-400 tracking-wide mb-2 px-1">{{ g.name }}</div>
+                        <div class="space-y-2">
+                            <div v-for="it in g.items" :key="it.key" class="bg-white rounded-2xl border border-slate-100 shadow-sm p-3" :data-testid="'ns-item-' + it.key">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" :class="it.state === 'channel' ? 'bg-emerald-100 text-emerald-600' : it.state === 'muted' ? 'bg-slate-100 text-slate-400' : it.state === 'default' ? 'bg-sky-100 text-sky-600' : 'bg-amber-100 text-amber-600'"><i class="fa-solid" :class="'fa-' + it.icon"></i></div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="text-sm font-extrabold text-slate-800 leading-tight">{{ it.label }}</div>
+                                        <div class="text-[11px] text-slate-500 leading-snug">{{ it.desc }}</div>
+                                    </div>
+                                </div>
+                                <div class="mt-2 flex items-center gap-2 flex-wrap">
+                                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="nsStateInfo(it).cls" :data-testid="'ns-state-' + it.key">{{ nsStateInfo(it).text }}</span>
+                                    <span v-if="it.telegram.ready" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-50 text-sky-700">Telegram</span>
+                                    <span v-if="it.line.ready" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">LINE กลุ่ม</span>
+                                    <div class="flex-1"></div>
+                                    <button @click="nsToggleMute(it)" :disabled="nset.busy === it.key" class="flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-lg active:scale-95" :class="it.muted ? 'bg-slate-200 text-slate-600' : 'bg-emerald-50 text-emerald-700'" :data-testid="'ns-mute-' + it.key">
+                                        <i class="fa-solid" :class="it.muted ? 'fa-bell-slash' : 'fa-bell'"></i>{{ it.muted ? 'ปิดอยู่' : 'เปิดอยู่' }}
+                                    </button>
+                                    <button @click="nsOpen(it)" class="text-[11px] font-bold px-3 py-1 rounded-lg bg-indigo-600 text-white active:scale-95" :data-testid="'ns-edit-' + it.key">ตั้งค่า</button>
+                                </div>
+                                <div v-if="it.state === 'none' && it.fallback === 'none'" class="mt-1.5 text-[10px] text-amber-700">ระบบนี้ไม่ตกไปกลุ่มหลัก — ถ้าไม่ตั้งช่อง จะไม่มีการแจ้งเตือน</div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- ฟอร์มตั้งค่าแจ้งเตือนของระบบหนึ่ง -->
+        <div v-if="nset.sel && currentTab === 'notifyset'" class="fixed inset-0 z-[45] bg-black/50 flex items-end justify-center" @click.self="nsClose()" data-testid="ns-modal">
+            <div class="bg-white w-full max-w-lg rounded-t-3xl max-h-[92vh] overflow-y-auto p-5 pb-8">
+                <div class="flex items-start gap-3 mb-3">
+                    <div class="flex-1 min-w-0">
+                        <h3 class="text-lg font-extrabold text-slate-800 leading-tight" data-testid="ns-modal-title">{{ nset.sel.label }}</h3>
+                        <p class="text-xs text-slate-500">{{ nset.sel.desc }}</p>
+                    </div>
+                    <button @click="nsClose()" class="w-9 h-9 rounded-full bg-slate-100 text-slate-500"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+
+                <div class="rounded-2xl bg-sky-50/60 border border-sky-100 p-3 mb-3">
+                    <div class="text-sm font-extrabold text-sky-800 mb-2"><i class="fa-brands fa-telegram mr-1"></i> Telegram</div>
+                    <label class="block text-[11px] font-bold text-slate-500 mb-1">Bot Token <span class="font-normal text-slate-400">(ได้จาก @BotFather)</span></label>
+                    <input v-model="nset.form.telegram_bot_token" type="password" autocomplete="off" data-testid="ns-tg-token" :placeholder="nset.sel.telegram.has_token ? 'ตั้งไว้แล้ว ' + nset.sel.telegram.token_hint + ' — เว้นว่างเพื่อคงเดิม' : '123456789:AA...'"
+                           class="w-full rounded-xl border px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-sky-300 font-mono" :class="nset.errs.telegram_bot_token ? 'border-rose-400 bg-rose-50' : 'border-slate-200'">
+                    <p v-if="nset.errs.telegram_bot_token" class="text-[11px] text-rose-600 mt-1" data-testid="ns-err-telegram_bot_token">{{ nset.errs.telegram_bot_token }}</p>
+                    <label class="block text-[11px] font-bold text-slate-500 mt-2 mb-1">Chat ID <span class="font-normal text-slate-400">(กลุ่มขึ้นต้นด้วย -100… หรือ @แชนแนล)</span></label>
+                    <input v-model="nset.form.telegram_chat_id" type="text" autocomplete="off" data-testid="ns-tg-chat" placeholder="-1001234567890"
+                           class="w-full rounded-xl border px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-sky-300 font-mono" :class="nset.errs.telegram_chat_id ? 'border-rose-400 bg-rose-50' : 'border-slate-200'">
+                    <p v-if="nset.errs.telegram_chat_id" class="text-[11px] text-rose-600 mt-1" data-testid="ns-err-telegram_chat_id">{{ nset.errs.telegram_chat_id }}</p>
+                    <button v-if="nset.sel.telegram.has_token || nset.sel.telegram.chat_id" @click="nsClear('telegram')" class="mt-2 text-[11px] font-bold text-rose-600" data-testid="ns-clear-tg">ล้างการตั้งค่า Telegram</button>
+                </div>
+
+                <div class="rounded-2xl bg-emerald-50/60 border border-emerald-100 p-3 mb-3">
+                    <div class="text-sm font-extrabold text-emerald-800 mb-2"><i class="fa-brands fa-line mr-1"></i> กลุ่ม LINE <span class="text-[11px] font-normal text-slate-400">(ไม่บังคับ)</span></div>
+                    <label class="block text-[11px] font-bold text-slate-500 mb-1">Channel Access Token</label>
+                    <input v-model="nset.form.line_channel_access_token" type="password" autocomplete="off" data-testid="ns-line-token" :placeholder="nset.sel.line.has_token ? 'ตั้งไว้แล้ว ' + nset.sel.line.token_hint + ' — เว้นว่างเพื่อคงเดิม' : 'Channel access token (long-lived)'"
+                           class="w-full rounded-xl border px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-300 font-mono" :class="nset.errs.line_channel_access_token ? 'border-rose-400 bg-rose-50' : 'border-slate-200'">
+                    <p v-if="nset.errs.line_channel_access_token" class="text-[11px] text-rose-600 mt-1" data-testid="ns-err-line_channel_access_token">{{ nset.errs.line_channel_access_token }}</p>
+                    <label class="block text-[11px] font-bold text-slate-500 mt-2 mb-1">Group ID <span class="font-normal text-slate-400">(ขึ้นต้น C…)</span></label>
+                    <input v-model="nset.form.line_group_id" type="text" autocomplete="off" data-testid="ns-line-group" placeholder="Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                           class="w-full rounded-xl border px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-300 font-mono" :class="nset.errs.line_group_id ? 'border-rose-400 bg-rose-50' : 'border-slate-200'">
+                    <p v-if="nset.errs.line_group_id" class="text-[11px] text-rose-600 mt-1" data-testid="ns-err-line_group_id">{{ nset.errs.line_group_id }}</p>
+                    <button v-if="nset.sel.line.has_token || nset.sel.line.group_id" @click="nsClear('line')" class="mt-2 text-[11px] font-bold text-rose-600" data-testid="ns-clear-line">ล้างการตั้งค่า LINE</button>
+                </div>
+
+                <label class="flex items-center gap-2 text-sm text-slate-700 mb-1"><input type="checkbox" v-model="nset.form.is_active" data-testid="ns-active" class="w-4 h-4"> ใช้งานช่องทางนี้</label>
+                <label class="flex items-center gap-2 text-sm text-slate-700 mb-3"><input type="checkbox" v-model="nset.form.notify_on" data-testid="ns-on" class="w-4 h-4"> เปิดการแจ้งเตือนของระบบนี้ <span class="text-[11px] text-slate-400">(ปิด = ไม่ส่งที่ไหนเลย)</span></label>
+
+                <div v-if="nset.testResult" class="rounded-2xl p-3 mb-3 text-xs border" :class="nset.testResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'" data-testid="ns-test-result">
+                    <div class="font-bold mb-1">{{ nset.testResult.success ? '✅ ส่งทดสอบแล้ว — ตรวจที่ปลายทางว่าได้รับข้อความ' : '❌ ส่งทดสอบไม่สำเร็จ' }}</div>
+                    <div v-if="nset.testResult.results && nset.testResult.results.telegram" data-testid="ns-test-tg">Telegram: {{ nset.testResult.results.telegram.ok ? 'ส่งสำเร็จ' : 'ไม่สำเร็จ — ' + nset.testResult.results.telegram.error }}</div>
+                    <div v-if="nset.testResult.results && nset.testResult.results.line" data-testid="ns-test-line">LINE: {{ nset.testResult.results.line.ok ? 'ส่งสำเร็จ' : 'ไม่สำเร็จ — ' + nset.testResult.results.line.error }}</div>
+                    <div v-if="nset.testResult.error" data-testid="ns-test-error">{{ nset.testResult.error }}</div>
+                    <div v-if="nset.testResult.muted" class="mt-1 text-amber-700">หมายเหตุ: ระบบนี้ปิดการแจ้งเตือนอยู่ — ข้อความจริงจะไม่ถูกส่ง</div>
+                </div>
+
+                <div class="flex gap-2">
+                    <button @click="nsTest()" :disabled="nset.testing || nset.saving || !nset.sel.has_row" class="flex-1 py-3 rounded-xl bg-cyan-100 text-cyan-800 font-bold text-sm disabled:opacity-50" data-testid="ns-test-btn">{{ nset.testing ? 'กำลังส่ง...' : '🧪 ทดสอบส่ง' }}</button>
+                    <button @click="nsSave()" :disabled="nset.saving || nset.testing" class="flex-1 py-3 rounded-xl bg-indigo-600 text-white font-bold text-sm disabled:opacity-60" data-testid="ns-save-btn">{{ nset.saving ? 'กำลังบันทึก...' : 'บันทึก' }}</button>
+                </div>
+                <p class="text-[10px] text-slate-400 mt-2">ทดสอบส่งใช้ค่าที่ <b>บันทึกแล้ว</b> — แก้ค่าแล้วให้กดบันทึกก่อนทดสอบ</p>
             </div>
         </div>
 
@@ -5239,6 +5363,8 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                     kcaHistOpen: false, kcaHist: [], kcaHistLoading: false, kcaNl: { open: false, loading: false, data: null, err: null, id: null }, kcaPendingBadge: 0, kcaDupSheet: false, kcaDupTab: 'front', kcaDupCancelled: false,
                     // ─── 🏘️ ADMIN: ทะเบียนบ้าน & สมาชิก ───
                     mrgQuery: '', mrgSoi: '', mrgLiving: '', mrgFilter: 'all', mrgPage: 1, mrgLoading: false, mrgError: null, mrgData: null, mrgSeq: 0, mrgTimer: null,
+                    // 🔔 ตั้งค่าแจ้งเตือนทุกระบบ
+                    nset: { loading: false, error: null, data: null, sel: null, form: {}, errs: {}, saving: false, testing: false, testResult: null, busy: null },
                     mrgSel: null, mrgSub: null, mrgDetail: null, mrgDetailLoading: false, mrgDetailError: null, mrgDetailSeq: 0,
                     mrgChips: [
                         { key: 'all', label: 'ทั้งหมด' }, { key: 'with_members', label: 'มีสมาชิก' }, { key: 'no_members', label: 'ยังไม่มีสมาชิก' },
@@ -5353,6 +5479,12 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                 }
             },
             computed: {
+                // 🔔 จัดกลุ่มระบบในหน้าตั้งค่าแจ้งเตือน (คงลำดับตามที่ server ส่ง)
+                nsGroups() {
+                    const items = (this.nset.data && this.nset.data.items) || []; const out = [];
+                    for (const it of items) { let g = out.find(x => x.name === it.group); if (!g) { g = { name: it.group, items: [] }; out.push(g); } g.items.push(it); }
+                    return out;
+                },
                 // 🚪 วัน/เดือน บนการ์ด "เฉพาะวันนี้" (จาก date_th ที่ server ส่งมา เช่น "22 พ.ย. 2569")
                 visitorDayParts() {
                     const t = String((this.visitorData && this.visitorData.date_th) || '').split(' ');
@@ -5407,7 +5539,7 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                 hasAdminTools() {
                     const m = this.menuAccess; if (!m) return false;
                     const t = m.tools || {};
-                    return !!((m.admin_menus && m.admin_menus.length) || t.keycard_admin || t.member_registry || t.admin_inbox || t.usage_dashboard || t.expiry_admin || t.chat_admin || t.repair_admin || t.complaint_admin || t.car_admin || t.cctv_admin);
+                    return !!((m.admin_menus && m.admin_menus.length) || t.keycard_admin || t.member_registry || t.admin_inbox || t.usage_dashboard || t.expiry_admin || t.chat_admin || t.repair_admin || t.complaint_admin || t.car_admin || t.cctv_admin || t.notify_settings);
                 },
                 // ⏳ วันหมดอายุของบ้าน (สมาชิก)
                 expiryItems() { return (this.expiry && Array.isArray(this.expiry.items)) ? this.expiry.items : []; },
@@ -6234,6 +6366,11 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                     if (tabKey === 'inbox') {   // 📥 ?tab=inbox — ลิงก์จากข้อความแจ้งเตือนแอดมิน
                         const url = new URL(window.location.href); url.searchParams.delete('tab'); history.replaceState(null, '', url.toString());
                         if (this.menuAccess && this.menuAccess.tools && this.menuAccess.tools.admin_inbox) await this.openInbox();
+                        return;
+                    }
+                    if (tabKey === 'notifyset') {   // 🔔 ?tab=notifyset — ลิงก์ลัดแอดมิน
+                        const url = new URL(window.location.href); url.searchParams.delete('tab'); history.replaceState(null, '', url.toString());
+                        if (this.menuAccess && this.menuAccess.tools && this.menuAccess.tools.notify_settings) await this.openNs();
                         return;
                     }
                     if (tabKey === 'expiry') {   // ⏳ ?tab=expiry — ลิงก์ลัดแอดมิน
@@ -9759,6 +9896,72 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                 mrgCarLabel(st) { return ({ approved: 'อนุมัติ', active: 'อนุมัติ', pending: 'รอตรวจ', rejected: 'ไม่อนุมัติ', renewal_pending: 'รอต่ออายุ', delete_pending: 'ขอลบ', pending_delete: 'รอถอดออก' })[st] || st || '—'; },
                 mrgCarClass(st) { return (st === 'approved' || st === 'active') ? 'bg-emerald-100 text-emerald-700' : (st === 'rejected' || st === 'delete_pending' || st === 'pending_delete') ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'; },
                 closeMrgHouse() { this.mrgDetailSeq++; this.mrgSub = null; this.mrgSel = null; this.mrgDetail = null; this.mrgDetailError = null; this.mrgDetailLoading = false; },
+
+                // ═════════ 🔔 ADMIN: ตั้งค่าแจ้งเตือนทุกระบบ — token ไม่ถูกส่งกลับเต็ม (เว้นว่าง = คงค่าเดิม) ═════════
+                async openNs() { this.currentTab = 'notifyset'; await this.nsLoad(); },
+                async nsLoad() {
+                    this.nset.loading = true; this.nset.error = null;
+                    try { this.nset.data = await this.kcaApi('notify_settings_list'); }
+                    catch (e) { this.nset.error = e.status === 403 ? 'บัญชีนี้ไม่มีสิทธิ์ตั้งค่าแจ้งเตือน (' + e.message + ')' : e.message; }
+                    finally { this.nset.loading = false; }
+                },
+                nsStateInfo(it) {
+                    if (it.state === 'muted') return { text: '🔕 ปิดการแจ้งเตือน', cls: 'bg-slate-200 text-slate-600' };
+                    if (it.state === 'channel') return { text: '✅ ใช้ช่องของระบบนี้', cls: 'bg-emerald-100 text-emerald-700' };
+                    if (it.state === 'default') return { text: '📨 ใช้กลุ่มหลักของระบบ', cls: 'bg-sky-100 text-sky-700' };
+                    return { text: '⚠️ ยังไม่มีปลายทาง', cls: 'bg-amber-100 text-amber-700' };
+                },
+                nsOpen(it) {
+                    this.nset.sel = it;
+                    this.nset.form = { telegram_bot_token: '', telegram_chat_id: it.telegram.chat_id || '', line_channel_access_token: '', line_group_id: it.line.group_id || '', is_active: it.has_row ? it.is_active : true, notify_on: !it.muted };
+                    this.nset.errs = {}; this.nset.testResult = null;
+                },
+                nsClose() { this.nset.sel = null; this.nset.errs = {}; this.nset.testResult = null; },
+                nsApplyItem(item) {
+                    if (!item || !this.nset.data) return;
+                    const i = this.nset.data.items.findIndex(x => x.key === item.key);
+                    if (i >= 0) this.nset.data.items.splice(i, 1, item); else this.nset.data.items.push(item);
+                    if (this.nset.sel && this.nset.sel.key === item.key) this.nset.sel = item;
+                },
+                async nsToggleMute(it) {
+                    if (this.nset.busy) return;
+                    this.nset.busy = it.key;
+                    try {
+                        const d = await this.kcaApi('notify_settings_save', { method: 'POST', body: JSON.stringify({ key: it.key, muted: !it.muted }) });
+                        this.nsApplyItem(d.item);
+                        try { Swal.fire({ toast: true, position: 'top', icon: 'success', title: d.item.muted ? 'ปิดการแจ้งเตือนแล้ว' : 'เปิดการแจ้งเตือนแล้ว', timer: 1400, showConfirmButton: false }); } catch (_) {}
+                    } catch (e) { await Swal.fire({ icon: 'error', title: 'บันทึกไม่สำเร็จ', text: e.message, confirmButtonColor: '#4f46e5' }); }
+                    finally { this.nset.busy = null; }
+                },
+                async nsSave(extra) {
+                    const it = this.nset.sel; if (!it || this.nset.saving) return;
+                    const f = this.nset.form; const body = { key: it.key, telegram_chat_id: String(f.telegram_chat_id || '').trim(), line_group_id: String(f.line_group_id || '').trim(), is_active: !!f.is_active, muted: !f.notify_on };
+                    if (String(f.telegram_bot_token || '').trim()) body.telegram_bot_token = String(f.telegram_bot_token).trim();
+                    if (String(f.line_channel_access_token || '').trim()) body.line_channel_access_token = String(f.line_channel_access_token).trim();
+                    Object.assign(body, extra || {});
+                    this.nset.saving = true; this.nset.errs = {};
+                    try {
+                        const d = await this.kcaApi('notify_settings_save', { method: 'POST', body: JSON.stringify(body) });
+                        this.nsApplyItem(d.item);
+                        this.nsOpen(d.item);
+                        try { Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'บันทึกแล้ว', timer: 1400, showConfirmButton: false }); } catch (_) {}
+                    } catch (e) {
+                        if (e.data && e.data.field) this.nset.errs = { [e.data.field]: e.message };
+                        else await Swal.fire({ icon: 'error', title: 'บันทึกไม่สำเร็จ', text: e.message, confirmButtonColor: '#4f46e5' });
+                    } finally { this.nset.saving = false; }
+                },
+                async nsClear(which) {
+                    const ok = await Swal.fire({ icon: 'warning', title: which === 'telegram' ? 'ล้างการตั้งค่า Telegram?' : 'ล้างการตั้งค่า LINE กลุ่ม?', text: 'Token และปลายทางที่ตั้งไว้จะถูกลบ', showCancelButton: true, confirmButtonText: 'ล้าง', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#e11d48' });
+                    if (!ok.isConfirmed) return;
+                    await this.nsSave(which === 'telegram' ? { clear_telegram: true } : { clear_line: true });
+                },
+                async nsTest() {
+                    const it = this.nset.sel; if (!it || this.nset.testing) return;
+                    this.nset.testing = true; this.nset.testResult = null;
+                    try { this.nset.testResult = await this.kcaApi('notify_settings_test', { method: 'POST', body: JSON.stringify({ key: it.key }) }); }
+                    catch (e) { this.nset.testResult = Object.assign({ success: false, error: e.message }, e.data || {}); }
+                    finally { this.nset.testing = false; }
+                },
 
                 // ═════════ 🪪 ADMIN: จัดการคีย์การ์ด (ใช้ API เดียวกับหน้าแอดมินเว็บ — บังคับสิทธิ์ keycardManagement ที่ server) ═════════
                 kcaHeaders(extra) {
