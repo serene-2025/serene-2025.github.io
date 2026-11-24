@@ -353,6 +353,7 @@
                 { id: 'adminRoles', label: 'จัดการสิทธิ์ Admin' },
                 { id: 'auditLog', label: 'Audit Log' },
                 { id: 'sysSettings', label: 'ตั้งค่าระบบ' },
+                { id: 'siteDowntime', label: 'ปิดปรับปรุงระบบ (CRM)' },
             ]},
         ];
 
@@ -779,6 +780,7 @@
                                     <button onclick="loadView('adminRoles');" id="nav-adminRoles" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="shield" class="w-5 h-5 text-red-500"></i> <span>จัดการสิทธิ์ Admin</span></button>
                                     <button onclick="loadView('auditLog');" id="nav-auditLog" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="file-clock" class="w-5 h-5 text-slate-500"></i> <span>Audit Log</span></button>
                                     <button onclick="loadView('sysSettings');" id="nav-sysSettings" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="settings-2" class="w-5 h-5 text-slate-500"></i> <span>ตั้งค่าระบบ</span></button>
+                                    <button onclick="loadView('siteDowntime');" id="nav-siteDowntime" class="nav-item w-full flex items-center gap-3 pl-6 pr-4 py-2.5 rounded-xl text-slate-600 hover:bg-white/60 hover:text-fuchsia-600 text-[15px] font-medium transition-all"><i data-lucide="construction" class="w-5 h-5 text-amber-500"></i> <span>ปิดปรับปรุงระบบ (CRM)</span></button>
                                 </div>
                             </div>
 
@@ -2392,7 +2394,7 @@
         // ─── 🛡️ ตารางสิทธิ์เมนู (Role × Module Matrix) ─────────────────
         const GUARDABLE_MODULES = [
             { key: 'keywords', label: 'คีย์เวิร์ด' }, { key: 'dataai', label: 'ฐานความรู้ AI' }, { key: 'ainews', label: 'ข่าวสาร AI' },
-            { key: 'adminRoles', label: 'จัดการสิทธิ์ Admin' }, { key: 'auditLog', label: 'Audit Log' },
+            { key: 'adminRoles', label: 'จัดการสิทธิ์ Admin' }, { key: 'auditLog', label: 'Audit Log' }, { key: 'siteDowntime', label: 'ปิดปรับปรุงระบบ (CRM)' },
             { key: 'carManagement', label: 'จัดการทะเบียนรถ' }, { key: 'complaintManagement', label: 'จัดการเรื่องร้องเรียน' },
             { key: 'notificationChannels', label: 'ช่องทางแจ้งเตือน' }, { key: 'geminiKeys', label: 'Gemini API Keys' },
             { key: 'landRegistry', label: 'ฐานข้อมูลกลาง (ที่ดิน)' }, { key: 'tenantRegistry', label: 'ทะเบียนผู้เช่า' },
@@ -3588,6 +3590,7 @@ if (viewName === 'dashboard') await renderDashboardView();
             else if (viewName === 'healthMonitor')      await renderHealthMonitorView();
             else if (viewName === 'dailyReport')        await renderDailyReportView();
             else if (viewName === 'sysSettings')        await renderSysSettingsView();
+            else if (viewName === 'siteDowntime')       await renderSiteDowntimeView();
             else if (viewName === 'crmMembers') await renderCrmMembersView();
             else if (viewName === 'userhome') await renderUserhomeView();
             else if (viewName === 'landRegistry') await renderLandRegistryView();
@@ -21198,6 +21201,140 @@ async function atuSave() {
     } catch (e) { _atu.busy = false; _atu.error = e.message || String(e); atuRender(); }
 }
 // ═══ 🧰 เครื่องมือแอดมินใน CRM (UI จบ)
+
+// ═══ 🚧 ปิดปรับปรุงระบบ CRM — หน้าควบคุมในเว็บใหญ่ (UI เริ่ม)
+//   เปิด/ปิดโหมด + ข้อความ + เวลาคาดว่าเสร็จ + เปิดกลับอัตโนมัติ + ให้แอดมินยังเข้า CRM ได้
+//   ข้อมูลผ่าน /api/admin/audience/maintenance_{get,save} (สิทธิ์โมดูล siteDowntime) · เว็บใหญ่ไม่ถูกโหมดนี้กั้น
+const _dt = { loading: false, loaded: false, error: '', data: null, saving: false, formErr: '', draft: null };
+function dtFmt(iso) { try { return iso ? new Date(iso).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }) + ' น.' : ''; } catch (_) { return ''; } }
+function dtLocalInput(iso) { if (!iso) return ''; const d = new Date(iso); if (isNaN(d)) return ''; const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; }
+async function renderSiteDowntimeView() {
+    document.getElementById('content-area').innerHTML = `
+        <div class="slide-in p-2" data-testid="dt-root">
+            <div class="mb-5">
+                <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-3 font-display">
+                    <span class="bg-amber-100 text-amber-600 p-2.5 rounded-2xl shadow-sm"><i data-lucide="construction" class="w-8 h-8"></i></span>
+                    ปิดปรับปรุงระบบ (CRM)
+                </h1>
+                <p class="text-sm text-slate-500 mt-2 ml-1 font-medium">เปิดโหมดนี้ก่อนอัปเดตโค้ด — สมาชิกที่เข้า CRM ทางไหนก็ตามจะเห็นหน้า "ปิดปรับปรุงชั่วคราว" · เว็บใหญ่นี้ยังใช้งานได้ตามปกติ</p>
+            </div>
+            <div id="dt-body"><div class="glass rounded-3xl p-10 text-center text-slate-400 text-sm">กำลังโหลด...</div></div>
+        </div>`;
+    if (window.lucide) lucide.createIcons();
+    _dt.loaded = false; await dtLoad();
+}
+async function dtLoad() {
+    _dt.loading = true; _dt.error = '';
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/maintenance_get`);
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error || 'โหลดไม่สำเร็จ');
+        _dt.data = d; _dt.loaded = true; _dt.draft = null;
+    } catch (e) { _dt.error = e.message || String(e); }
+    _dt.loading = false; dtRender();
+}
+function dtBanner(d) {
+    if (d.active) return `<div data-testid="dt-banner" data-state="on" class="rounded-3xl p-4 md:p-5 bg-rose-50 border border-rose-200"><div class="font-extrabold text-rose-700">🔴 กำลังปิดปรับปรุงอยู่</div>
+        <div class="text-xs text-rose-700/90 mt-1 leading-relaxed">ตั้งแต่ ${escapeHtml(dtFmt(d.started_at) || '—')}${d.by ? ' · โดย ' + escapeHtml(d.by) : ''}${d.until ? ' · จะเปิดกลับอัตโนมัติ ' + escapeHtml(dtFmt(d.until)) : ' · ยังไม่ได้ตั้งเวลาเปิดกลับ (ต้องกด "ปิดโหมด" เอง)'}<br>${d.allow_admin ? 'แอดมิน/เจ้าหน้าที่ยังเข้า CRM ได้ (เห็นป้ายเตือน)' : 'ปิดทุกคน รวมถึงแอดมินใน CRM'}</div></div>`;
+    if (d.expired) return `<div data-testid="dt-banner" data-state="expired" class="rounded-3xl p-4 md:p-5 bg-amber-50 border border-amber-200"><div class="font-extrabold text-amber-700">⏱ หมดเวลาแล้ว — ระบบเปิดกลับอัตโนมัติแล้ว</div>
+        <div class="text-xs text-amber-700/90 mt-1">ตั้งไว้ถึง ${escapeHtml(dtFmt(d.until))} · กด "ปิดโหมด" เพื่อล้างสถานะค้าง หรือเปิดใหม่ด้วยเวลาใหม่</div></div>`;
+    return `<div data-testid="dt-banner" data-state="off" class="rounded-3xl p-4 md:p-5 bg-emerald-50 border border-emerald-200"><div class="font-extrabold text-emerald-700">🟢 ระบบเปิดใช้งานปกติ</div>
+        <div class="text-xs text-emerald-700/90 mt-1">ยังไม่ได้เปิดโหมดปิดปรับปรุง</div></div>`;
+}
+function dtRender() {
+    const root = document.getElementById('dt-body'); if (!root) return;
+    if (_dt.loading && !_dt.loaded) { root.innerHTML = '<div class="glass rounded-3xl p-10 text-center text-slate-400 text-sm" data-testid="dt-loading">กำลังโหลด...</div>'; return; }
+    if (_dt.error) { root.innerHTML = `<div class="glass rounded-3xl p-8 text-center" data-testid="dt-error"><p class="text-rose-500 text-sm font-bold mb-3">${escapeHtml(_dt.error)}</p><button onclick="dtLoad()" class="px-4 py-2 rounded-xl bg-violet-500 text-white text-sm font-bold">ลองใหม่</button></div>`; return; }
+    const d = _dt.data, on = d.active;
+    const f = _dt.draft;   // ค่าที่กำลังกรอก (คงไว้ตอนบันทึก/ล้มเหลว ไม่ให้ฟอร์มถูกล้าง)
+    const title = f ? f.title : (d.on ? d.title : ''), msg = f ? f.message : (d.on ? d.message : ''), etaV = f ? f.eta_text : (d.on ? d.eta_text : ''), untilV = f ? f.until : d.until, allowV = f ? f.allow_admin : d.allow_admin;
+    root.innerHTML = `<div class="space-y-4">
+        ${dtBanner(d)}
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div class="glass rounded-3xl p-4 md:p-5 space-y-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 mb-1" for="dt-title">หัวข้อ <span class="font-normal text-slate-400">(ไม่ใส่ = "${escapeHtml(d.defaults.title)}")</span></label>
+                    <input id="dt-title" data-testid="dt-title" maxlength="60" value="${escapeHtml(title)}" oninput="dtPreview()" class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm" placeholder="${escapeHtml(d.defaults.title)}">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 mb-1" for="dt-message">ข้อความถึงสมาชิก <span id="dt-count" class="font-normal text-slate-400"></span></label>
+                    <textarea id="dt-message" data-testid="dt-message" maxlength="500" rows="4" oninput="dtPreview()" class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm" placeholder="${escapeHtml(d.defaults.message)}">${escapeHtml(msg)}</textarea>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 mb-1" for="dt-eta">คาดว่าจะกลับมาใช้งานได้ <span class="font-normal text-slate-400">(ข้อความอิสระ · ไม่บังคับ)</span></label>
+                    <input id="dt-eta" data-testid="dt-eta" maxlength="80" value="${escapeHtml(etaV)}" oninput="dtPreview()" class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm" placeholder="เช่น ประมาณ 20:00 น. / ภายในคืนนี้">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 mb-1" for="dt-until">เปิดระบบกลับอัตโนมัติเมื่อถึงเวลา <span class="font-normal text-slate-400">(ไม่บังคับ · กันลืมปิดโหมด)</span></label>
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <input id="dt-until" data-testid="dt-until" type="datetime-local" value="${escapeHtml(dtLocalInput(untilV))}" oninput="dtPreview()" class="px-3 py-2 border border-slate-200 rounded-xl text-sm">
+                        ${[[30, '+30 นาที'], [60, '+1 ชม.'], [180, '+3 ชม.']].map(([m, l]) => `<button type="button" data-testid="dt-until-${m}" onclick="dtUntilIn(${m})" class="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200">${l}</button>`).join('')}
+                        <button type="button" data-testid="dt-until-clear" onclick="dtUntilIn(0)" class="px-2.5 py-1.5 text-xs font-bold rounded-lg text-slate-400 hover:bg-slate-100">ล้าง</button>
+                    </div>
+                </div>
+                <label class="flex items-start gap-2 text-sm text-slate-700 cursor-pointer"><input id="dt-allow-admin" data-testid="dt-allow-admin" type="checkbox" class="mt-1 w-4 h-4 accent-violet-500" ${allowV ? 'checked' : ''}>
+                    <span><b>ให้แอดมิน/เจ้าหน้าที่ยังใช้ CRM ได้</b> <span class="text-xs text-slate-500">— ไว้ทดสอบหลังอัปเดตก่อนเปิดให้ทุกคน (ยืนยันตัวตน LINE ที่ server) · ไม่ติ๊ก = ปิดทุกคน</span></span></label>
+                <div id="dt-form-err" data-testid="dt-form-err" class="${_dt.formErr ? '' : 'hidden'} text-xs font-bold text-rose-600 bg-rose-50 rounded-lg px-3 py-2">${escapeHtml(_dt.formErr)}</div>
+                <div class="flex flex-wrap gap-2 pt-1">
+                    ${on ? `<button data-testid="dt-save" onclick="dtSave(true)" class="px-5 py-2.5 bg-violet-500 hover:bg-violet-600 text-white rounded-xl text-sm font-bold disabled:opacity-50" ${_dt.saving ? 'disabled' : ''}>💾 อัปเดตข้อความ</button>
+                           <button data-testid="dt-off" onclick="dtSave(false)" class="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-sm font-bold disabled:opacity-50" ${_dt.saving ? 'disabled' : ''}>✅ ปิดโหมด — เปิดระบบ</button>`
+                        : `<button data-testid="dt-on" onclick="dtSave(true)" class="px-5 py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-sm font-bold disabled:opacity-50" ${_dt.saving ? 'disabled' : ''}>🚧 เปิดโหมดปิดปรับปรุง</button>
+                           ${d.on ? `<button data-testid="dt-off" onclick="dtSave(false)" class="px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-bold">ล้างสถานะค้าง</button>` : ''}`}
+                </div>
+            </div>
+            <div class="space-y-4">
+                <div class="glass rounded-3xl p-4 md:p-5">
+                    <div class="text-xs font-bold text-slate-500 mb-2">👁️ ตัวอย่างหน้าที่สมาชิกจะเห็น</div>
+                    <div data-testid="dt-preview" class="rounded-2xl border border-slate-200 bg-gradient-to-b from-emerald-50 to-slate-50 p-5 text-center">
+                        <div class="mx-auto mb-3 w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-400 to-emerald-600 text-white flex items-center justify-center shadow"><i data-lucide="settings" class="w-7 h-7"></i></div>
+                        <div id="dt-pv-title" data-testid="dt-pv-title" class="text-lg font-extrabold text-slate-800"></div>
+                        <div id="dt-pv-msg" data-testid="dt-pv-msg" class="text-sm text-slate-500 mt-1 whitespace-pre-line break-words"></div>
+                        <div id="dt-pv-eta" data-testid="dt-pv-eta" class="hidden mt-3 text-left bg-white border border-emerald-100 rounded-xl px-3 py-2"><div class="text-[11px] font-bold text-emerald-600">คาดว่าจะกลับมาใช้งานได้</div><div id="dt-pv-eta-v" data-testid="dt-pv-eta-v" class="text-sm font-extrabold text-slate-800 break-words"></div><div id="dt-pv-until" data-testid="dt-pv-until" class="text-[11px] text-slate-500"></div></div>
+                    </div>
+                </div>
+                <div class="glass rounded-3xl p-4 md:p-5 text-xs text-slate-600 leading-relaxed">
+                    <div class="font-extrabold text-slate-700 mb-1">ขั้นตอนแนะนำเมื่ออัปเดตโค้ด</div>
+                    1) เปิดโหมดปิดปรับปรุง (ตั้งเวลาเปิดกลับอัตโนมัติไว้กันลืม) → 2) อัปเดต/Deploy โค้ด → 3) ทดสอบด้วยบัญชีแอดมิน (ถ้าติ๊ก "ให้แอดมินยังใช้ได้") → 4) กด "ปิดโหมด — เปิดระบบ"<br>
+                    <b>ข้อควรรู้:</b> โหมดนี้กั้น CRM (หน้า crm.html และ API <code>/api/crm/*</code>) · ไม่ได้ปิดหน้าอื่นที่สมาชิกเข้าจากแชทโดยตรง เช่น หน้าลงทะเบียนรถ/ร้องเรียน/ชำระเงิน และไม่ได้ปิด LINE Bot
+                </div>
+            </div>
+        </div></div>`;
+    if (window.lucide) lucide.createIcons();
+    dtPreview();
+}
+function dtVals() {
+    const g = id => (document.getElementById(id) || {}).value || '';
+    const untilLocal = g('dt-until');
+    return { title: g('dt-title').trim(), message: g('dt-message').trim(), eta_text: g('dt-eta').trim(), until: untilLocal ? (new Date(untilLocal).getTime() ? new Date(untilLocal).toISOString() : '') : '', allow_admin: !!(document.getElementById('dt-allow-admin') || {}).checked };
+}
+function dtPreview() {
+    const v = dtVals(), df = (_dt.data && _dt.data.defaults) || { title: '', message: '' };
+    const set = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
+    set('dt-pv-title', v.title || df.title); set('dt-pv-msg', v.message || df.message);
+    const box = document.getElementById('dt-pv-eta');
+    if (box) { box.classList.toggle('hidden', !(v.eta_text || v.until)); set('dt-pv-eta-v', v.eta_text); set('dt-pv-until', v.until ? 'เปิดให้ใช้งานอัตโนมัติ ' + dtFmt(v.until) : ''); const ev = document.getElementById('dt-pv-eta-v'); if (ev) ev.classList.toggle('hidden', !v.eta_text); }
+    set('dt-count', '(' + v.message.length + '/500)');
+}
+function dtUntilIn(min) {
+    const el = document.getElementById('dt-until'); if (!el) return;
+    el.value = min ? dtLocalInput(new Date(Date.now() + min * 60000).toISOString()) : '';
+    dtPreview();
+}
+async function dtSave(on) {
+    if (_dt.saving) return;
+    const v = dtVals(); _dt.formErr = ''; _dt.draft = v;
+    if (on && v.until && new Date(v.until).getTime() <= Date.now()) { _dt.formErr = 'เวลาเปิดกลับอัตโนมัติต้องอยู่ในอนาคต'; return dtRender(); }
+    if (on && !_dt.data.active && !confirm('เปิดโหมดปิดปรับปรุง?\n\nสมาชิกที่เข้า CRM จะเห็นหน้า "ปิดปรับปรุงชั่วคราว" ทันที' + (v.allow_admin ? '\n(แอดมิน/เจ้าหน้าที่ยังเข้าได้)' : '\n(ปิดทุกคน รวมแอดมินใน CRM)'))) return;
+    _dt.saving = true; dtRender();
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/audience/maintenance_save`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on, title: v.title, message: v.message, eta_text: v.eta_text, until: v.until || null, allow_admin: v.allow_admin }) });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+        showToast(on ? (_dt.data.active ? 'อัปเดตข้อความแล้ว' : 'เปิดโหมดปิดปรับปรุงแล้ว — สมาชิกเห็นหน้าปิดปรับปรุงภายในไม่กี่วินาที') : 'ปิดโหมดแล้ว — ระบบเปิดใช้งานตามปกติ', 'success');
+        _dt.saving = false; await dtLoad();
+    } catch (e) { _dt.saving = false; _dt.formErr = e.message || String(e); dtRender(); }
+}
+// ═══ 🚧 ปิดปรับปรุงระบบ CRM — หน้าควบคุมในเว็บใหญ่ (UI จบ)
 
 const _uhRmUser = {};   // uid → { html, title, at }
 const UH_RM_TTL = 5 * 60 * 1000;
