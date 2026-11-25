@@ -2559,7 +2559,7 @@
         const AL_ACTION_LABEL = {
             delete: ['🗑️', 'ลบข้อมูล'], update_role: ['👮', 'เปลี่ยนบทบาทผู้ใช้'], send_escalation: ['⚖️', 'ส่งหนังสือเตือน'], save_settings: ['⚙️', 'บันทึกการตั้งค่า'],
             role_permission_change: ['🛡️', 'เปลี่ยนสิทธิ์เมนู'], dbq_insert: ['➕', 'เพิ่มข้อมูล'], dbq_update: ['✏️', 'แก้ไขข้อมูล'], dbq_delete: ['🗑️', 'ลบข้อมูล'], dbq_upsert: ['💾', 'บันทึก/อัปเดตข้อมูล'],
-            car_bulk_set_expiry: ['🚗', 'ตั้งวันหมดอายุรถหลายคัน'], gemini_key_save: ['🔑', 'บันทึก Gemini Key'], richmenu_create: ['🧩', 'สร้าง Rich Menu'], richmenu_set_default: ['🧩', 'ตั้ง Rich Menu เริ่มต้น'], richmenu_swap_apply: ['🔁', 'สลับ Rich Menu (ย้ายสิ่งที่ชี้)'], richmenu_swap_finish: ['🔁', 'สลับ Rich Menu (ลบเมนูเก่า)'], gemini_key_delete: ['🔑', 'ลบ Gemini Key'],
+            car_bulk_set_expiry: ['🚗', 'ตั้งวันหมดอายุรถหลายคัน'], gemini_key_save: ['🔑', 'บันทึก Gemini Key'], richmenu_create: ['🧩', 'สร้าง Rich Menu'], richmenu_set_default: ['🧩', 'ตั้ง Rich Menu เริ่มต้น'], richmenu_swap_apply: ['🔁', 'สลับ Rich Menu (ย้ายสิ่งที่ชี้)'], richmenu_swap_finish: ['🔁', 'สลับ Rich Menu (ลบเมนูเก่า)'], gemini_key_delete: ['🔑', 'ลบ Gemini Key'], ai_model_save: ['🤖', 'บันทึกโมเดล AI'], ai_model_reset: ['🤖', 'คืนค่าโมเดล AI เริ่มต้น'], repair_rate: ['⭐', 'ผู้แจ้งให้คะแนนงานซ่อม'],
         };
         const AL_TABLE_LABEL = {
             keywords: 'คีย์เวิร์ด', dataai: 'คลังความรู้ AI', ai_news: 'ข่าวสาร AI', rich_menus: 'Rich Menu', user_profiles: 'ผู้ใช้', userhome: 'ทะเบียนบ้าน', system_settings: 'ตั้งค่าระบบ',
@@ -17385,8 +17385,9 @@ const CAR_PER_PAGE = 30;
                 '<p class="text-sm text-slate-500 mt-2 ml-1">ใส่หลายคีย์ได้ — ถ้าคีย์ไหนโดน rate limit (429) หรือ error ระบบสลับไปใช้ตัวถัดไปอัตโนมัติ</p></div>' +
                 '<button onclick="openGeminiKeyModal()" class="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i> เพิ่มคีย์</button>' +
                 '</div>' +
-                '<div id="gemini-keys-list"></div></div>';
+                '<div id="ai-model-card"></div><div id="gemini-keys-list"></div></div>';
             lucide.createIcons();
+            aiMdlInit();   // 🤖 การ์ดโมเดล AI (โหลดคู่กัน ไม่รอกัน)
             await loadGeminiKeysList();
         }
 
@@ -17501,6 +17502,138 @@ const CAR_PER_PAGE = 30;
                 loadGeminiKeysList();
             } catch(e) { showToast('❌ ' + e.message, 'error'); }
         }
+
+        // ═══ 🤖 โมเดล AI หลัก+สำรอง (UI เริ่ม)
+        // ตั้งโมเดลหลัก + ลำดับสำรองของ AI แชท · เก็บที่เซิร์ฟเวอร์ (ai_model_get/save/reset/test) · ล้มเหลว (503/429/ไม่พบโมเดล) → ลองตัวถัดไปด้วยคีย์เดิมก่อนสลับคีย์
+        let aiMdlData = null, aiMdlErr = '', aiMdlDraft = null, aiMdlBusy = false, aiMdlServerErr = '', aiMdlTests = {};
+        const AIMDL_MAX = 4, AIMDL_RE = /^gemini-[a-z0-9][a-z0-9.\-]{1,58}$/;
+        async function aiMdlInit() {
+            const el = document.getElementById('ai-model-card'); if (!el) return;
+            el.innerHTML = '<div class="glass rounded-3xl p-6 mb-6 text-center text-slate-400" data-testid="am-loading">⏳ กำลังโหลดการตั้งค่าโมเดล...</div>';
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/ai_model_get`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดการตั้งค่าโมเดลไม่สำเร็จ');
+                aiMdlData = d; aiMdlErr = '';
+                aiMdlDraft = { models: [d.config.primary, ...d.config.fallbacks] }; aiMdlServerErr = ''; aiMdlTests = {};
+            } catch (e) { aiMdlData = null; aiMdlErr = e.message || 'โหลดการตั้งค่าโมเดลไม่สำเร็จ'; }
+            aiMdlRender();
+        }
+        function aiMdlValidate(models) {
+            const rows = {}, top = [];
+            const seen = {};
+            models.forEach((raw, i) => {
+                const n = String(raw || '').trim().toLowerCase(); let m = '';
+                if (!n) m = i === 0 ? 'ต้องระบุโมเดลหลัก' : 'ชื่อโมเดลว่างอยู่';
+                else if (!AIMDL_RE.test(n)) m = 'ชื่อต้องขึ้นต้นด้วย gemini- และใช้ได้เฉพาะ a-z 0-9 . -';
+                else if (/embedding|imagen|veo|tts/.test(n)) m = 'ไม่ใช่โมเดลแชท (embedding/ภาพ/วิดีโอ/เสียง)';
+                else if (seen[n] !== undefined) m = `ซ้ำกับลำดับที่ ${seen[n] + 1}`;
+                if (!m && n) seen[n] = i;
+                if (m) rows[i] = m;
+            });
+            if (models.length > AIMDL_MAX) top.push(`รวมโมเดลได้ไม่เกิน ${AIMDL_MAX} ตัว`);
+            return { rows, top, ok: !Object.keys(rows).length && !top.length };
+        }
+        function aiMdlSame() {
+            if (!aiMdlData) return true;
+            const a = [aiMdlData.config.primary, ...aiMdlData.config.fallbacks].join('|'), b = aiMdlDraft.models.map(x => String(x || '').trim().toLowerCase()).join('|');
+            return a === b;
+        }
+        function aiMdlTestChip(n) {
+            const t = aiMdlTests[n]; if (!t) return '';
+            if (t.loading) return '<span class="text-[11px] text-slate-400" data-testid="am-result">⏳ กำลังทดสอบ...</span>';
+            if (t.ok) return `<span class="text-[11px] font-bold text-emerald-600" data-testid="am-result">✅ ใช้ได้ · ${t.ms} ms</span>`;
+            const msg = { model: '❌ ใช้โมเดลนี้ไม่ได้ — ' + (t.message || ''), transient: '⚠️ Google ตอบ ' + (t.status || 'error') + ' ตอนนี้ (ชื่อโมเดลอาจถูกต้อง ลองใหม่อีกที)', rate: '⚠️ โควตาคีย์เต็มชั่วคราว (429)', auth: '❌ คีย์ถูกปฏิเสธ — ' + (t.message || ''), nokey: '❌ ' + (t.message || 'ไม่มีคีย์ที่พร้อมใช้') }[t.kind] || ('❌ ' + (t.message || 'ทดสอบไม่สำเร็จ'));
+            return `<span class="text-[11px] font-bold ${t.kind === 'transient' || t.kind === 'rate' ? 'text-amber-600' : 'text-rose-600'}" data-testid="am-result">${escapeHtml(msg)}</span>`;
+        }
+        function aiMdlRender() {
+            const el = document.getElementById('ai-model-card'); if (!el) return;
+            if (!aiMdlData) {
+                el.innerHTML = `<div class="glass rounded-3xl p-5 mb-6 border border-rose-100 flex items-center justify-between gap-3 flex-wrap" data-testid="am-card"><div class="text-sm text-rose-600 font-medium" data-testid="am-error">${escapeHtml(aiMdlErr || 'ยังไม่ได้โหลดการตั้งค่า')}</div><button onclick="aiMdlInit()" class="px-4 py-2 rounded-2xl bg-white text-slate-700 font-bold text-sm border border-slate-200 hover:bg-slate-50" data-testid="am-retry">ลองใหม่</button></div>`;
+                return;
+            }
+            const d = aiMdlDraft, v = aiMdlValidate(d.models), dirty = !aiMdlSame();
+            const rows = d.models.map((m, i) => `<div class="rounded-2xl bg-white/80 border ${v.rows[i] ? 'border-rose-300' : 'border-slate-200'} p-3" data-testid="am-row-${i}">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-[11px] font-bold px-2 py-1 rounded-full ${i === 0 ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-500'} whitespace-nowrap" data-testid="am-role-${i}">${i === 0 ? 'โมเดลหลัก' : 'สำรองที่ ' + i}</span>
+                        <input type="text" list="am-suggest" value="${escapeHtml(m)}" oninput="aiMdlSet(${i},this.value)" placeholder="เช่น gemini-2.5-flash" autocomplete="off" spellcheck="false" class="flex-1 min-w-[180px] px-3 py-2 rounded-xl border border-slate-200 text-sm font-mono outline-none focus:ring-2 focus:ring-violet-400" data-testid="am-input-${i}">
+                        <div class="flex items-center gap-1">
+                            <button onclick="aiMdlMove(${i},-1)" ${i === 0 ? 'disabled' : ''} class="p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-30" title="เลื่อนขึ้น" data-testid="am-up-${i}">▲</button>
+                            <button onclick="aiMdlMove(${i},1)" ${i === d.models.length - 1 ? 'disabled' : ''} class="p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-30" title="เลื่อนลง" data-testid="am-down-${i}">▼</button>
+                            <button onclick="aiMdlTest(${i})" ${v.rows[i] ? 'disabled' : ''} class="px-3 py-1.5 rounded-lg bg-violet-50 text-violet-700 hover:bg-violet-100 text-xs font-bold disabled:opacity-40" data-testid="am-test-${i}">🧪 ทดสอบ</button>
+                            <button onclick="aiMdlRemove(${i})" ${d.models.length <= 1 ? 'disabled' : ''} class="p-1.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 disabled:opacity-30" title="ลบ" data-testid="am-del-${i}">✕</button>
+                        </div>
+                    </div>
+                    <div class="mt-1 min-h-[16px]" id="am-res-${i}">${aiMdlTestChip(String(m || '').trim().toLowerCase())}</div>
+                    <div class="text-[11px] text-rose-600 mt-1 ${v.rows[i] ? '' : 'hidden'}" id="am-err-${i}" data-testid="am-rowerr-${i}">${escapeHtml(v.rows[i] || '')}</div>
+                </div>`).join('');
+            el.innerHTML = `<div class="glass rounded-3xl p-5 mb-6 border border-violet-100" data-testid="am-card">
+                <div class="flex items-start justify-between gap-3 flex-wrap">
+                    <div><div class="font-bold text-slate-800 flex items-center gap-2">🤖 โมเดล AI ${aiMdlData.custom ? '' : '<span class="text-[11px] font-normal text-slate-400">ค่าเริ่มต้น</span>'}<span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 ${dirty ? '' : 'hidden'}" id="am-dirty" data-testid="am-dirty">ยังไม่ได้บันทึก</span></div>
+                    <div class="text-[12px] text-slate-500 mt-1 max-w-2xl">AI ตอบด้วยโมเดลหลักก่อน ถ้าโดน 503 / 429 / ไม่พบโมเดล จะลองโมเดลสำรองตามลำดับด้วยคีย์เดิม แล้วค่อยสลับคีย์ · เพิ่มได้รวมไม่เกิน ${AIMDL_MAX} ตัว</div></div>
+                </div>
+                <datalist id="am-suggest">${(aiMdlData.suggestions || []).map(s => `<option value="${escapeHtml(s)}"></option>`).join('')}</datalist>
+                <div class="mt-3 space-y-2" data-testid="am-rows">${rows}</div>
+                <div class="mt-3"><button onclick="aiMdlAdd()" ${d.models.length >= AIMDL_MAX ? 'disabled' : ''} class="px-3 py-1.5 rounded-xl bg-violet-50 text-violet-700 font-bold text-sm hover:bg-violet-100 disabled:opacity-40" data-testid="am-add">+ เพิ่มโมเดลสำรอง</button>
+                    <span class="text-[11px] text-slate-400 ml-2" id="am-count">${d.models.length}/${AIMDL_MAX}</span></div>
+                <div class="text-sm text-rose-600 font-medium mt-3 ${v.top.length || aiMdlServerErr ? '' : 'hidden'}" id="am-top-err" data-testid="am-top-err">${escapeHtml(aiMdlServerErr || v.top.join(' · '))}</div>
+                <div class="text-[11px] text-slate-400 mt-3">ชื่อโมเดลที่ใช้ได้ขึ้นกับคีย์ของคุณและเปลี่ยนตามเวลา — กด "ทดสอบ" ก่อนบันทึกทุกครั้ง · ปุ่มทดสอบไม่นับโควตาและไม่กระทบสถานะคีย์</div>
+                <div class="flex flex-col-reverse sm:flex-row gap-3 mt-4">
+                    <button onclick="aiMdlReset()" class="sm:flex-none px-5 py-2.5 rounded-2xl bg-slate-100 text-slate-600 font-bold text-sm hover:bg-slate-200" data-testid="am-reset">คืนค่าเริ่มต้น</button>
+                    <button onclick="aiMdlSave()" id="am-save" ${v.ok && dirty ? '' : 'disabled'} class="flex-1 px-5 py-2.5 rounded-2xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="am-save">💾 บันทึก</button>
+                </div></div>`;
+        }
+        // พิมพ์ในช่อง → อัปเดตเฉพาะส่วนที่เปลี่ยน (ไม่วาดใหม่ ช่องไม่เสียโฟกัส)
+        function aiMdlLive() {
+            const d = aiMdlDraft, v = aiMdlValidate(d.models), dirty = !aiMdlSame(); const set = (id, fn) => { const e = document.getElementById(id); if (e) fn(e); };
+            set('am-save', e => e.disabled = !(v.ok && dirty) || aiMdlBusy);
+            set('am-dirty', e => e.classList.toggle('hidden', !dirty));
+            set('am-top-err', e => { const m = aiMdlServerErr || v.top.join(' · '); e.textContent = m; e.classList.toggle('hidden', !m); });
+            d.models.forEach((m, i) => {
+                set('am-err-' + i, e => { e.textContent = v.rows[i] || ''; e.classList.toggle('hidden', !v.rows[i]); const box = e.closest('[data-testid^="am-row-"]'); if (box) { box.classList.toggle('border-rose-300', !!v.rows[i]); box.classList.toggle('border-slate-200', !v.rows[i]); } });
+                set('am-res-' + i, e => e.innerHTML = aiMdlTestChip(String(m || '').trim().toLowerCase()));
+                const tb = document.querySelector(`[data-testid="am-test-${i}"]`); if (tb) tb.disabled = !!v.rows[i];
+            });
+        }
+        function aiMdlSet(i, val) { aiMdlDraft.models[i] = val; aiMdlServerErr = ''; aiMdlLive(); }
+        function aiMdlAdd() { if (aiMdlDraft.models.length >= AIMDL_MAX) return; aiMdlDraft.models.push(''); aiMdlServerErr = ''; aiMdlRender(); const e = document.querySelector(`[data-testid="am-input-${aiMdlDraft.models.length - 1}"]`); if (e) e.focus(); }
+        function aiMdlRemove(i) { if (aiMdlDraft.models.length <= 1) return; aiMdlDraft.models.splice(i, 1); aiMdlServerErr = ''; aiMdlRender(); }
+        function aiMdlMove(i, dir) { const j = i + dir, a = aiMdlDraft.models; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; aiMdlRender(); }
+        async function aiMdlTest(i) {
+            const name = String(aiMdlDraft.models[i] || '').trim().toLowerCase(); if (!name || aiMdlValidate(aiMdlDraft.models).rows[i]) return;
+            aiMdlTests[name] = { loading: true }; aiMdlLive();
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/ai_model_test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: name }) });
+                const d = await res.json().catch(() => ({}));
+                aiMdlTests[name] = res.ok ? d : { ok: false, kind: 'other', message: d.error || 'ทดสอบไม่สำเร็จ' };
+            } catch (e) { aiMdlTests[name] = { ok: false, kind: 'other', message: e.message || 'ทดสอบไม่สำเร็จ' }; }
+            aiMdlLive();
+        }
+        async function aiMdlSave() {
+            if (aiMdlBusy || !aiMdlDraft) return;
+            const v = aiMdlValidate(aiMdlDraft.models); if (!v.ok) { aiMdlLive(); return; }
+            const list = aiMdlDraft.models.map(x => String(x).trim().toLowerCase());
+            aiMdlBusy = true; const btn = document.getElementById('am-save'); if (btn) { btn.disabled = true; btn.textContent = 'กำลังบันทึก...'; }
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/ai_model_save`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ primary: list[0], fallbacks: list.slice(1) }) });
+                const d = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+                aiMdlData = { ...aiMdlData, config: d.config, custom: true }; aiMdlDraft = { models: [d.config.primary, ...d.config.fallbacks] }; aiMdlServerErr = '';
+                aiMdlBusy = false; aiMdlRender(); showToast('✅ บันทึกโมเดล AI แล้ว (มีผลกับคำถามถัดไปทันที)', 'success');
+            } catch (e) { aiMdlBusy = false; aiMdlServerErr = e.message || 'บันทึกไม่สำเร็จ'; aiMdlRender(); }
+        }
+        function aiMdlReset() {
+            showConfirmModal('คืนค่าเริ่มต้น?', 'โมเดลหลักและโมเดลสำรองจะกลับเป็นค่าเริ่มต้นของระบบ (หลัก gemini-3.1-flash-lite-preview · สำรอง gemini-2.5-flash-lite → gemini-2.5-flash)', async () => {
+                try {
+                    const res = await fetch(`${API_BASE_URL}/api/admin/audience/ai_model_reset`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                    const d = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(d.error || 'คืนค่าเริ่มต้นไม่สำเร็จ');
+                    aiMdlData = { ...aiMdlData, config: d.config, custom: false }; aiMdlDraft = { models: [d.config.primary, ...d.config.fallbacks] }; aiMdlServerErr = '';
+                    aiMdlRender(); showToast('✅ คืนค่าเริ่มต้นแล้ว', 'success');
+                } catch (e) { showToast('❌ ' + (e.message || 'คืนค่าเริ่มต้นไม่สำเร็จ'), 'error'); }
+            });
+        }
+        // ═══ 🤖 โมเดล AI หลัก+สำรอง (UI จบ)
 
         // ─── 📸 จัดการแกลเลอรี่ภาพหมู่บ้าน (gallery.html) ────────────────
         const GALLERY_STATUS_LABELS = {
@@ -18804,26 +18937,51 @@ const CAR_PER_PAGE = 30;
             }
         }
 
+        // เปลี่ยนสถานะจากเมนูลัด: "รอตรวจสอบ" บันทึกทันที (ไม่แจ้งผู้แจ้ง) · สถานะอื่นเปิดหน้ารายละเอียดให้เลือกว่าจะแจ้งผู้แจ้งทาง LINE หรือไม่
         async function quickUpdateRepairStatus(idx, newStatus) {
             const r = window._repairItems[parseInt(idx)];
             if (!r) return;
+            if (newStatus !== 'pending') { openRepairDetailModal(idx, newStatus); return; }
             try {
                 const res = await fetch(`${API_BASE_URL}/api/admin/audience/repair_request_update`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id: r.id, status: newStatus })
                 });
-                if (!res.ok) throw new Error('อัปเดตไม่สำเร็จ');
+                if (!res.ok) throw new Error('อัปเดตสถานะไม่สำเร็จ');
                 showToast('✅ อัปเดตสถานะแล้ว', 'success');
                 loadRepairList();
             } catch(e) { showToast('❌ ' + e.message, 'error'); loadRepairList(); }
         }
 
-        function openRepairDetailModal(idx) {
+        function repairStars(n) { n = parseInt(n) || 0; return '★★★★★'.slice(0, n) + '☆☆☆☆☆'.slice(0, 5 - n); }
+
+        function repairNotifyHint(status) {
+            if (status === 'completed') return 'ผู้แจ้งจะได้รับการ์ดสวย ๆ พร้อมรูปที่แจ้ง รูปหลังซ่อม และปุ่ม "ให้คะแนน" / "แจ้งกลับ"';
+            if (status === 'in_progress') return 'ผู้แจ้งจะได้รับการ์ดแจ้งว่ากำลังดำเนินการซ่อม พร้อมหมายเหตุของคุณ';
+            return 'สถานะ "รอตรวจสอบ" ไม่ส่งแจ้งเตือน';
+        }
+
+        function onRepairStatusChange() {
+            const st = document.getElementById('repair-status')?.value;
+            const box = document.getElementById('repair-notify');
+            const hint = document.getElementById('repair-notify-hint');
+            if (box) box.disabled = (st === 'pending');
+            if (hint) hint.innerText = repairNotifyHint(st);
+        }
+
+        function openRepairDetailModal(idx, presetStatus) {
             const r = window._repairItems[parseInt(idx)];
             if (!r) return;
+            const st0 = (presetStatus && REPAIR_STATUS_LABELS[presetStatus]) ? presetStatus : r.status;
+            const canNotify = !!r.uid;
             showModal('🔧 รายละเอียดแจ้งซ่อม — ' + escapeHtml(r.house_number||''),
                 '<div class="space-y-3 text-left">' +
                 '<div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-2.5">' + (r.location ? '<div class="font-bold text-slate-700 mb-1">📍 ' + escapeHtml(r.location) + '</div>' : '') + escapeHtml(r.detail||'') + '</div>' +
+                (r.rating ? '<div class="text-xs bg-amber-50 text-amber-800 rounded-xl p-2.5" data-testid="rpa-rating"><b>คะแนนจากผู้แจ้ง:</b> <span class="text-amber-500 tracking-wider">' + repairStars(r.rating) + '</span> ' + parseInt(r.rating) + '/5' + (r.rating_comment ? '<div class="mt-1 text-slate-600">“' + escapeHtml(r.rating_comment) + '”</div>' : '') + '</div>' : '') +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">สถานะ</label>' +
+                '<select id="repair-status" onchange="onRepairStatusChange()" class="w-full text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white">' +
+                Object.entries(REPAIR_STATUS_LABELS).map(([k,v]) => '<option value="' + k + '"' + (k===st0?' selected':'') + '>' + v.icon + ' ' + v.label + '</option>').join('') +
+                '</select></div>' +
                 '<div class="text-[11px] text-amber-800 bg-amber-50 rounded-xl p-2.5" data-testid="rpa-public-hint">👁️ บันทึกผลและรูปหลังดำเนินการ <b>ลูกบ้านทุกคนจะเห็น</b> ในหน้าแจ้งซ่อม — อย่าใส่ชื่อ เบอร์โทร หรือข้อมูลส่วนตัวของผู้แจ้ง</div>' +
                 '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">บันทึกผลการดำเนินการ</label>' +
                 '<textarea id="repair-remark" rows="3" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none" placeholder="เช่น เปลี่ยนหลอดไฟเรียบร้อยแล้ว...">' + escapeHtml(r.admin_remark||'') + '</textarea></div>' +
@@ -18831,9 +18989,13 @@ const CAR_PER_PAGE = 30;
                 '<input type="file" id="repair-admin-image" accept="image/*" class="w-full text-xs border border-slate-200 rounded-xl px-3 py-2">' +
                 (r.admin_image_url ? '<img src="' + escapeHtml(r.admin_image_url) + '" class="w-20 h-20 object-cover rounded-xl border border-slate-200 mt-2">' : '') +
                 '</div>' +
+                '<div class="rounded-xl border border-emerald-200 bg-emerald-50 p-3" data-testid="rpa-notify-box">' +
+                '<label class="flex items-center gap-2 text-sm font-bold text-emerald-800"><input type="checkbox" id="repair-notify" class="w-4 h-4 accent-emerald-600"' + (canNotify && st0 !== 'pending' ? ' checked' : '') + (!canNotify || st0 === 'pending' ? ' disabled' : '') + '> 💬 แจ้งผู้แจ้งทาง LINE</label>' +
+                '<div id="repair-notify-hint" class="text-[11px] text-emerald-700 mt-1 ml-6">' + (canNotify ? escapeHtml(repairNotifyHint(st0)) : 'รายการนี้ไม่มี LINE ของผู้แจ้ง จึงแจ้งเตือนไม่ได้') + '</div>' +
+                '</div>' +
                 '<div class="flex gap-2 pt-2">' +
                 '<button data-idx="' + idx + '" onclick="saveRepairDetail(this.dataset.idx)" class="flex-1 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-2xl font-bold text-sm">💾 บันทึก</button>' +
-                '<button onclick="closeModal()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+                '<button onclick="closeModal();loadRepairList()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
                 '</div></div>'
             );
         }
@@ -18842,6 +19004,8 @@ const CAR_PER_PAGE = 30;
             const r = window._repairItems[parseInt(idx)];
             if (!r) return;
             const remark = document.getElementById('repair-remark')?.value?.trim();
+            const status = document.getElementById('repair-status')?.value || undefined;
+            const notify = !!(document.getElementById('repair-notify')?.checked && !document.getElementById('repair-notify')?.disabled);
             const fileInput = document.getElementById('repair-admin-image');
             const file = fileInput?.files?.[0];
 
@@ -18856,11 +19020,15 @@ const CAR_PER_PAGE = 30;
 
                 const res = await fetch(`${API_BASE_URL}/api/admin/audience/repair_request_update`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: r.id, adminRemark: remark, adminImageUrl })
+                    body: JSON.stringify({ id: r.id, status, adminRemark: remark, adminImageUrl, notify })
                 });
-                if (!res.ok) throw new Error('บันทึกไม่สำเร็จ');
+                const d = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
                 closeModal();
-                showToast('✅ บันทึกแล้ว', 'success');
+                if (d.notified && d.pushed) showToast('✅ บันทึกแล้ว และแจ้งผู้แจ้งทาง LINE เรียบร้อย', 'success');
+                else if (d.notified && !d.pushed) showToast('⚠️ บันทึกแล้ว แต่ส่ง LINE หาผู้แจ้งไม่สำเร็จ' + (d.push_error ? ' (' + d.push_error + ')' : ''), 'warning');
+                else if (notify && d.notify_skipped) showToast('✅ บันทึกแล้ว (ไม่ได้ส่ง LINE: ' + (d.notify_skipped === 'no_uid' ? 'ไม่มี LINE ของผู้แจ้ง' : 'สถานะรอตรวจสอบไม่ส่งแจ้งเตือน') + ')', 'warning');
+                else showToast('✅ บันทึกแล้ว', 'success');
                 loadRepairList();
             } catch(e) { showToast('❌ ' + e.message, 'error'); }
         }
@@ -19766,17 +19934,53 @@ const CAR_PER_PAGE = 30;
             } catch(e) { showToast('❌ ' + e.message, 'error'); }
         }
 
-        async function updateComplaintStatus(idx, newStatus) {
+        // เปลี่ยนสถานะเรื่องร้องเรียน → ผ่าน complaint_admin_status เดียวกับ CRM (บันทึกเหตุผล/ไทม์ไลน์ + ติ๊กแจ้งผู้ร้องทาง LINE ได้)
+        function updateComplaintStatus(idx, newStatus) {
             const c = window._complaintItems[parseInt(idx)];
             if (!c) return;
+            if (newStatus === c.status) return;
+            const closing = (newStatus === 'resolved' || newStatus === 'rejected');
+            const st = COMPLAINT_STATUS_LABELS[newStatus] || { icon:'', label:newStatus };
+            const canNotify = !!c.uid;
+            showModal('เปลี่ยนสถานะ → ' + st.icon + ' ' + escapeHtml(st.label),
+                '<div class="space-y-3 text-left">' +
+                '<div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-2.5">เรื่อง: ' + escapeHtml((c.issue||'').slice(0,80)) + (c.issue?.length > 80 ? '...' : '') + '</div>' +
+                '<div><label class="block text-xs font-bold text-slate-600 mb-1.5">' + (closing ? 'เหตุผล / ผลการพิจารณา <span class="text-rose-500">*</span> (อย่างน้อย 10 ตัวอักษร · ผู้ร้องจะเห็นข้อความนี้)' : 'หมายเหตุถึงผู้ร้อง (ไม่บังคับ)') + '</label>' +
+                '<textarea id="cp-status-reason" rows="3" maxlength="2000" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none" placeholder="' + (closing ? 'เช่น ตักเตือนผู้ที่เกี่ยวข้องแล้ว และติดตามผลต่อเนื่อง' : 'เช่น เจ้าหน้าที่กำลังตรวจสอบ') + '"></textarea></div>' +
+                '<div class="rounded-xl border border-fuchsia-200 bg-fuchsia-50 p-3" data-testid="cp-notify-box">' +
+                '<label class="flex items-center gap-2 text-sm font-bold text-fuchsia-800"><input type="checkbox" id="cp-status-notify" class="w-4 h-4 accent-fuchsia-600"' + (canNotify ? ' checked' : ' disabled') + '> 💬 แจ้งผู้ร้องเรียนทาง LINE</label>' +
+                '<div class="text-[11px] text-fuchsia-700 mt-1 ml-6">' + (canNotify ? 'ผู้ร้องจะได้รับการ์ดสถานะพร้อมปุ่ม "ดูเรื่องของฉัน"' : 'รายการนี้ไม่มี LINE ของผู้ร้อง จึงแจ้งเตือนไม่ได้') + '</div></div>' +
+                '<div id="cp-status-err" class="hidden text-xs text-rose-600 font-bold"></div>' +
+                '<div class="flex gap-2 pt-2">' +
+                '<button data-idx="' + idx + '" data-st="' + escapeHtml(newStatus) + '" onclick="confirmComplaintStatus(this.dataset.idx, this.dataset.st)" class="flex-1 py-2.5 bg-fuchsia-500 hover:bg-fuchsia-600 text-white rounded-2xl font-bold text-sm">💾 บันทึกสถานะ</button>' +
+                '<button onclick="closeModal();loadComplaintList()" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>' +
+                '</div></div>'
+            );
+        }
+
+        async function confirmComplaintStatus(idx, newStatus) {
+            const c = window._complaintItems[parseInt(idx)];
+            if (!c) return;
+            const reason = (document.getElementById('cp-status-reason')?.value || '').trim();
+            const nb = document.getElementById('cp-status-notify');
+            const notify = !!(nb && nb.checked && !nb.disabled);
+            const err = document.getElementById('cp-status-err');
+            const closing = (newStatus === 'resolved' || newStatus === 'rejected');
+            const showErr = (m) => { if (err) { err.innerText = m; err.classList.remove('hidden'); } };
+            if (closing && reason.length < 10) return showErr('การปิดเรื่องต้องระบุเหตุผลอย่างน้อย 10 ตัวอักษร');
             try {
-                const { error } = await supabaseClient.from('complaints')
-                    .update({ status: newStatus, resolved_at: newStatus === 'resolved' ? new Date().toISOString() : null, resolved_by: currentUserProfile?.displayName || 'admin' })
-                    .eq('id', c.id);
-                if (error) throw error;
-                showToast('✅ อัปเดตสถานะแล้ว', 'success');
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/complaint_admin_status`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: c.id, status: newStatus, reason, notify, expectedStatus: c.status })
+                });
+                const d = await res.json().catch(() => ({}));
+                if (!res.ok) { if (d.code === 'stale' || d.code === 'same_status') { closeModal(); showToast('⚠️ ' + (d.error || 'สถานะเปลี่ยนไปแล้ว'), 'warning'); loadComplaintList(); return; } return showErr(d.error || 'บันทึกไม่สำเร็จ'); }
+                closeModal();
+                if (notify && d.pushed) showToast('✅ อัปเดตสถานะแล้ว และแจ้งผู้ร้องทาง LINE เรียบร้อย', 'success');
+                else if (notify && d.pushed === false) showToast('⚠️ อัปเดตสถานะแล้ว แต่ส่ง LINE หาผู้ร้องไม่สำเร็จ' + (d.push_error ? ' (' + d.push_error + ')' : ''), 'warning');
+                else showToast('✅ อัปเดตสถานะแล้ว', 'success');
                 loadComplaintList();
-            } catch(e) { showToast('❌ ' + e.message, 'error'); loadComplaintList(); }
+            } catch(e) { showErr(e.message || 'บันทึกไม่สำเร็จ'); }
         }
 
 async function renderCarManagementView() {
