@@ -3685,7 +3685,7 @@ if (viewName === 'dashboard') await renderDashboardView();
 
             query = query.range(from, to);
 
-            const [{ data, error, count }] = await Promise.all([query, loadCq(false)]);
+            const [{ data, error, count }] = await Promise.all([query, loadCq(false), loadIr(false)]);
             if (error) { showToast(error.message, 'error'); return; }
             currentKeywords = data;
 
@@ -3728,6 +3728,7 @@ if (viewName === 'dashboard') await renderDashboardView();
                 </div>
 
                 ${cqCardHtml()}
+                ${irCardHtml()}
                 <div class="glass rounded-3xl overflow-hidden slide-in border-0 shadow-xl" style="animation-delay: 0.1s;">
                     <!-- Desktop Table View -->
                     <div class="hidden md:block overflow-x-auto">
@@ -4161,6 +4162,193 @@ async function updateAllUserProfiles() {
             });
         }
         // ═══ 📨 Quick Reply "ติดต่อแอดมิน" (UI จบ)
+
+        // ═══ 🖼️ ข้อความ+ปุ่มตอบกลับเมื่อสมาชิกส่งรูป (UI เริ่ม)
+        // ตั้งค่าข้อความที่บอทตอบเมื่อสมาชิกส่งรูปเข้า LINE + ปุ่มหัวข้อ (Quick Reply) · เก็บที่เซิร์ฟเวอร์ (image_reply_get/save/reset) — ข้อจำกัดตาม LINE
+        let irData = null, irErr = '', irAt = 0, irDraft = null, irBusy = false, irServerErr = '';
+        const IR_LIM = { items: 13, label: 20, text: 1000, send: 300, uri: 1000 };
+        const IR_KINDS = { fee: 'บันทึกค่าส่วนกลาง (ลิงก์ระบบ)', message: 'ส่งข้อความกลับ', uri: 'เปิดลิงก์เว็บ' };
+        async function loadIr(force) {
+            if (!force && irData && Date.now() - irAt < 30000) return;
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/image_reply_get`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดการตั้งค่าตอบกลับรูปภาพไม่สำเร็จ');
+                irData = d; irAt = Date.now(); irErr = '';
+            } catch (e) { irErr = e.message || 'โหลดการตั้งค่าตอบกลับรูปภาพไม่สำเร็จ'; }
+        }
+        function irCardHtml() {
+            let inner;
+            if (!irData) {
+                inner = `<div class="text-sm text-rose-600 font-medium flex-1" data-testid="ir-error">${escapeHtml(irErr || 'ยังไม่ได้โหลดการตั้งค่า')}</div>
+                    <button onclick="irRetry()" class="px-4 py-2.5 rounded-2xl bg-white text-slate-700 font-bold text-sm border border-slate-200 hover:bg-slate-50" data-testid="ir-retry">ลองใหม่</button>`;
+            } else {
+                const c = irData.config, n = c.items.length;
+                const chip = `<span class="px-2 py-0.5 rounded-full ${n ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'} text-[11px] font-bold" data-testid="ir-status">${n ? n + ' ปุ่ม' : 'ไม่มีปุ่ม · ข้อความล้วน'}</span>`;
+                const labels = c.items.slice(0, 8).map(i => `<span class="px-2.5 py-1 rounded-full bg-white border border-slate-200 text-[12px] text-slate-700 font-medium">${escapeHtml(i.label)}</span>`).join('') + (n > 8 ? `<span class="text-[12px] text-slate-400 self-center">+${n - 8}</span>` : '');
+                const warn = (c.items.some(i => i.kind === 'fee') && irData.feeUrlReady === false) ? `<div class="mt-2 text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5" data-testid="ir-fee-warn">⚠️ ยังไม่ได้ตั้งลิงก์ LIFF ของหน้าบันทึกค่าส่วนกลาง — ปุ่ม "บันทึกค่าส่วนกลาง" จะไม่แสดงใน LINE จนกว่าจะตั้งค่า</div>` : '';
+                inner = `<div class="flex-1 min-w-0">
+                        <div class="flex flex-wrap items-center gap-2"><span class="font-bold text-slate-800">ข้อความ+ปุ่มตอบกลับเมื่อสมาชิกส่งรูป</span>${chip}${irData.custom ? '' : '<span class="text-[11px] text-slate-400">ค่าเริ่มต้น</span>'}</div>
+                        <div class="mt-1 text-[12px] text-slate-500 whitespace-pre-line line-clamp-2" data-testid="ir-text">${escapeHtml(c.text)}</div>
+                        ${n ? `<div class="mt-2 flex flex-wrap gap-1.5" data-testid="ir-chips">${labels}</div>` : ''}${warn}
+                    </div>
+                    <button onclick="openIrEditor()" class="px-5 py-2.5 rounded-2xl bg-sky-600 text-white font-bold text-sm hover:bg-sky-700 transition flex items-center gap-2 whitespace-nowrap" data-testid="ir-open"><i data-lucide="settings-2" class="w-4 h-4"></i> ตั้งค่า</button>`;
+            }
+            return `<div id="ir-card-wrap"><div class="mb-6 rounded-3xl p-5 bg-gradient-to-br from-sky-50 to-white border border-sky-100 shadow-sm flex flex-col sm:flex-row sm:items-center gap-4 slide-in" data-testid="ir-card">
+                <div class="hidden sm:flex w-11 h-11 rounded-2xl bg-sky-100 text-sky-600 items-center justify-center shrink-0"><i data-lucide="image" class="w-6 h-6"></i></div>${inner}</div></div>`;
+        }
+        function irRefreshCard() {
+            const w = document.getElementById('ir-card-wrap'); if (!w) return;
+            w.outerHTML = irCardHtml(); if (window.lucide) lucide.createIcons();
+        }
+        async function irRetry() { await loadIr(true); irRefreshCard(); }
+        function irReserved(t) {
+            const x = String(t || '').toLowerCase().trim();
+            if (x === 'ai on' || x === 'ai off') return 'ตรงกับคำสั่ง ai on/ai off';
+            if (x.startsWith('qr ') || x.startsWith('qr:')) return 'ขึ้นต้นด้วยคำสั่ง qr';
+            return '';
+        }
+        // ตรวจแบบเดียวกับเซิร์ฟเวอร์ → { top: [...], items: { index: msg }, ok }
+        function irValidate(d) {
+            const top = [], items = {};
+            if (!String(d.text || '').trim()) top.push('ข้อความตอบกลับว่างไม่ได้');
+            else if (cqLen(d.text.trim()) > IR_LIM.text) top.push(`ข้อความตอบกลับยาวเกิน ${IR_LIM.text} ตัวอักษร`);
+            if (d.items.length > IR_LIM.items) top.push(`ปุ่มได้ไม่เกิน ${IR_LIM.items} ปุ่ม`);
+            d.items.forEach((it, i) => {
+                const label = String(it.label || '').trim(); let m = '';
+                if (!label) m = 'ต้องมีชื่อปุ่ม';
+                else if (cqLen(label) > IR_LIM.label) m = `ชื่อปุ่มยาวเกิน ${IR_LIM.label} ตัวอักษร (LINE จำกัด)`;
+                else if (it.kind === 'message') {
+                    const t = String(it.text || '').trim() || label;
+                    if (cqLen(t) > IR_LIM.send) m = `ข้อความที่ส่งยาวเกิน ${IR_LIM.send} ตัวอักษร`;
+                    else if (irReserved(t)) m = 'ข้อความที่ส่ง' + irReserved(t);
+                } else if (it.kind === 'uri') {
+                    const u = String(it.uri || '').trim();
+                    if (!u) m = 'ต้องใส่ลิงก์';
+                    else if (!/^https:\/\/[^\s]+$/i.test(u)) m = 'ลิงก์ต้องขึ้นต้นด้วย https:// และห้ามมีช่องว่าง';
+                    else if (u.length > IR_LIM.uri) m = `ลิงก์ยาวเกิน ${IR_LIM.uri} ตัวอักษร`;
+                }
+                if (m) items[i] = m;
+            });
+            return { top, items, ok: !top.length && !Object.keys(items).length };
+        }
+        function openIrEditor() {
+            if (!irData) return;
+            const c = irData.config;
+            irDraft = { text: c.text, items: c.items.map(i => ({ kind: i.kind, label: i.label, text: i.text || '', uri: i.uri || '' })) };
+            irServerErr = '';
+            document.getElementById('modal-title').innerText = 'ตั้งค่าตอบกลับเมื่อสมาชิกส่งรูป';
+            irRenderEditor();
+            const ov = document.getElementById('modal-overlay'); ov.classList.remove('hidden');
+            setTimeout(() => { ov.classList.remove('opacity-0'); document.getElementById('modal-container').classList.remove('scale-95'); }, 10);
+        }
+        function irPreviewHtml() {
+            const d = irDraft;
+            const chips = d.items.map(i => `<span class="shrink-0 px-3 py-1.5 rounded-full bg-white border border-sky-300 text-sky-700 text-[12px] font-semibold whitespace-nowrap" data-testid="ir-pv-chip">${escapeHtml(String(i.label || '').trim() || '…')}</span>`).join('');
+            return `<div class="rounded-2xl bg-slate-200/70 p-3"><div class="max-w-[85%] rounded-2xl rounded-tl-sm bg-white px-3 py-2 text-[13px] text-slate-700 whitespace-pre-line shadow-sm" data-testid="ir-pv-text">${escapeHtml(String(d.text || '').trim())}</div>
+                ${chips ? `<div class="mt-2 flex gap-2 overflow-x-auto pb-1">${chips}</div>` : ''}</div>
+                <div class="mt-1 text-[11px] text-slate-400">${chips ? 'ตัวอย่างที่สมาชิกเห็น (ปุ่มเลื่อนซ้าย-ขวาใน LINE)' : 'ไม่มีปุ่ม — บอทตอบเป็นข้อความล้วน'}</div>`;
+        }
+        function irRenderEditor() {
+            const d = irDraft, v = irValidate(d);
+            const rows = d.items.map((it, i) => {
+                const kindSel = `<select onchange="irSetKind(${i},this.value)" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white outline-none focus:ring-2 focus:ring-sky-400" data-testid="ir-kind-${i}">${Object.keys(IR_KINDS).map(k => `<option value="${k}" ${it.kind === k ? 'selected' : ''}>${IR_KINDS[k]}</option>`).join('')}</select>`;
+                const extra = it.kind === 'message'
+                    ? `<input type="text" value="${escapeHtml(it.text)}" oninput="irSetItem(${i},'text',this.value)" placeholder="ข้อความที่ส่งกลับเมื่อกดปุ่ม (ว่าง = ใช้ชื่อปุ่ม)" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-sky-400" data-testid="ir-text-${i}">`
+                    : it.kind === 'uri'
+                        ? `<input type="url" value="${escapeHtml(it.uri)}" oninput="irSetItem(${i},'uri',this.value)" placeholder="https://..." class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-sky-400" data-testid="ir-uri-${i}">`
+                        : `<div class="px-3 py-2 rounded-xl bg-slate-50 border border-dashed border-slate-300 text-[12px] text-slate-500" data-testid="ir-feenote-${i}">เปิดหน้าบันทึกค่าส่วนกลางให้อัตโนมัติ (ไม่ต้องใส่ลิงก์)</div>`;
+                return `<div class="rounded-2xl bg-white/80 border ${v.items[i] ? 'border-rose-300' : 'border-slate-200'} p-3" data-testid="ir-item-${i}">
+                    <div class="flex items-start gap-2">
+                        <div class="flex-1 grid grid-cols-1 sm:grid-cols-5 gap-2">
+                            <div class="sm:col-span-2">${kindSel}</div>
+                            <div class="sm:col-span-3"><input type="text" value="${escapeHtml(it.label)}" oninput="irSetItem(${i},'label',this.value)" placeholder="ชื่อปุ่ม เช่น บันทึกค่าส่วนกลาง" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-sky-400" data-testid="ir-label-${i}">
+                                <div class="text-[10px] text-right text-slate-400 mt-0.5" id="ir-lc-${i}">${cqLen(it.label)}/${IR_LIM.label}</div></div>
+                            <div class="sm:col-span-5">${extra}</div>
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <button onclick="irMove(${i},-1)" ${i === 0 ? 'disabled' : ''} class="p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-30" title="เลื่อนขึ้น" data-testid="ir-up-${i}"><i data-lucide="chevron-up" class="w-4 h-4"></i></button>
+                            <button onclick="irMove(${i},1)" ${i === d.items.length - 1 ? 'disabled' : ''} class="p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-30" title="เลื่อนลง" data-testid="ir-down-${i}"><i data-lucide="chevron-down" class="w-4 h-4"></i></button>
+                        </div>
+                        <button onclick="irRemove(${i})" class="p-1.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100" title="ลบปุ่ม" data-testid="ir-del-${i}"><i data-lucide="x" class="w-4 h-4"></i></button>
+                    </div>
+                    <div class="text-[11px] text-rose-600 mt-1 ${v.items[i] ? '' : 'hidden'}" id="ir-ie-${i}" data-testid="ir-ierr-${i}">${escapeHtml(v.items[i] || '')}</div>
+                </div>`;
+            }).join('');
+            document.getElementById('modal-content').innerHTML = `<div class="space-y-5" data-testid="ir-editor">
+                <div>
+                    <div class="flex justify-between"><label class="text-sm font-bold text-slate-700">ข้อความที่บอทตอบเมื่อสมาชิกส่งรูป</label><span class="text-[11px] text-slate-400" id="ir-tc">${cqLen(d.text)}/${IR_LIM.text}</span></div>
+                    <textarea rows="5" oninput="irSetText(this.value)" class="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-sky-400" data-testid="ir-textarea">${escapeHtml(d.text)}</textarea>
+                    <div class="text-[11px] text-slate-400 mt-1">ขึ้นบรรทัดใหม่ได้ · แอดมินยังได้รับแจ้งเตือนรูปทุกครั้งเหมือนเดิม</div>
+                </div>
+                <div>
+                    <div class="flex justify-between items-center"><label class="text-sm font-bold text-slate-700">ปุ่มหัวข้อ <span class="font-normal text-slate-400" id="ir-count">(${d.items.length}/${IR_LIM.items})</span></label>
+                        <button onclick="irAdd()" ${d.items.length >= IR_LIM.items ? 'disabled' : ''} class="px-3 py-1.5 rounded-xl bg-sky-50 text-sky-700 font-bold text-sm hover:bg-sky-100 disabled:opacity-40 flex items-center gap-1" data-testid="ir-add"><i data-lucide="plus" class="w-4 h-4"></i> เพิ่มปุ่ม</button></div>
+                    <div class="mt-2 space-y-2">${rows || '<div class="text-sm text-slate-400 p-3 rounded-2xl bg-white/60 border border-dashed border-slate-300" data-testid="ir-empty">ยังไม่มีปุ่ม — กด "เพิ่มปุ่ม" (ถ้าไม่มีปุ่ม บอทจะตอบเป็นข้อความล้วน)</div>'}</div>
+                </div>
+                <div><div class="text-sm font-bold text-slate-700 mb-1">ตัวอย่าง</div><div id="ir-preview" data-testid="ir-preview">${irPreviewHtml()}</div></div>
+                <div class="text-sm text-rose-600 font-medium ${v.top.length || irServerErr ? '' : 'hidden'}" id="ir-top-err" data-testid="ir-top-err">${escapeHtml(irServerErr || v.top.join(' · '))}</div>
+                <div class="flex flex-col-reverse sm:flex-row gap-3">
+                    <button onclick="irReset()" class="sm:flex-none px-5 py-3 rounded-2xl bg-slate-100 text-slate-600 font-bold text-sm hover:bg-slate-200" data-testid="ir-reset">คืนค่าเริ่มต้น</button>
+                    <button onclick="closeModal()" class="sm:flex-none px-5 py-3 rounded-2xl bg-slate-100 text-slate-600 font-bold text-sm hover:bg-slate-200" data-testid="ir-cancel">ยกเลิก</button>
+                    <button onclick="irSave()" id="ir-save" ${v.ok ? '' : 'disabled'} class="flex-1 px-5 py-3 rounded-2xl bg-sky-600 text-white font-bold text-sm hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed" data-testid="ir-save">บันทึก</button>
+                </div></div>`;
+            if (window.lucide) lucide.createIcons();
+        }
+        function irLive() {
+            const d = irDraft, v = irValidate(d); const set = (id, fn) => { const e = document.getElementById(id); if (e) fn(e); };
+            set('ir-preview', e => e.innerHTML = irPreviewHtml());
+            set('ir-save', e => e.disabled = !v.ok || irBusy);
+            set('ir-tc', e => e.textContent = `${cqLen(d.text)}/${IR_LIM.text}`);
+            set('ir-top-err', e => { const m = irServerErr || v.top.join(' · '); e.textContent = m; e.classList.toggle('hidden', !m); });
+            d.items.forEach((it, i) => {
+                set('ir-lc-' + i, e => e.textContent = `${cqLen(it.label)}/${IR_LIM.label}`);
+                set('ir-ie-' + i, e => { e.textContent = v.items[i] || ''; e.classList.toggle('hidden', !v.items[i]); const box = e.closest('[data-testid^="ir-item-"]'); if (box) { box.classList.toggle('border-rose-300', !!v.items[i]); box.classList.toggle('border-slate-200', !v.items[i]); } });
+            });
+        }
+        function irSetText(val) { irDraft.text = val; irServerErr = ''; irLive(); }
+        function irSetItem(i, k, val) { irDraft.items[i][k] = val; irServerErr = ''; irLive(); }
+        function irSetKind(i, k) { if (!IR_KINDS[k]) return; irDraft.items[i].kind = k; irServerErr = ''; irRenderEditor(); }
+        function irAdd() { if (irDraft.items.length >= IR_LIM.items) return; irDraft.items.push({ kind: 'message', label: '', text: '', uri: '' }); irServerErr = ''; irRenderEditor(); const e = document.querySelector(`[data-testid="ir-label-${irDraft.items.length - 1}"]`); if (e) e.focus(); }
+        function irRemove(i) { irDraft.items.splice(i, 1); irServerErr = ''; irRenderEditor(); }
+        function irMove(i, dir) { const j = i + dir; if (j < 0 || j >= irDraft.items.length) return; const a = irDraft.items; [a[i], a[j]] = [a[j], a[i]]; irRenderEditor(); }
+        function irBody() {
+            return { text: irDraft.text.trim(), items: irDraft.items.map(i => {
+                const label = i.label.trim();
+                if (i.kind === 'fee') return { kind: 'fee', label };
+                if (i.kind === 'uri') return { kind: 'uri', label, uri: String(i.uri || '').trim() };
+                return { kind: 'message', label, text: String(i.text || '').trim() || label };
+            }) };
+        }
+        async function irSave() {
+            if (irBusy || !irDraft) return;
+            const v = irValidate(irDraft); if (!v.ok) { irLive(); return; }
+            irBusy = true; const btn = document.getElementById('ir-save'); if (btn) { btn.disabled = true; btn.textContent = 'กำลังบันทึก...'; }
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/image_reply_save`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(irBody()) });
+                const d = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+                irData = { ...(irData || {}), config: d.config, custom: true }; irAt = Date.now(); irErr = '';
+                closeModal(); irRefreshCard(); showToast('✅ บันทึกการตอบกลับรูปภาพแล้ว (มีผลกับรูปถัดไปทันที)', 'success');
+            } catch (e) {
+                irServerErr = e.message || 'บันทึกไม่สำเร็จ';
+                if (document.querySelector('[data-testid="ir-editor"]')) irLive();
+            } finally {
+                irBusy = false; const b2 = document.getElementById('ir-save'); if (b2) { b2.textContent = 'บันทึก'; b2.disabled = !irValidate(irDraft).ok; }
+            }
+        }
+        function irReset() {
+            showConfirmModal('คืนค่าเริ่มต้น?', 'ข้อความและปุ่มที่ตั้งไว้จะกลับเป็นแบบเดิมของระบบ (ข้อความ "ขออภัยค่ะ ระบบ AI ไม่สามารถวิเคราะห์รูปภาพได้…" + ปุ่ม "บันทึกค่าส่วนกลาง" และ "ติดต่อแอดมิน")', async () => {
+                try {
+                    const res = await fetch(`${API_BASE_URL}/api/admin/audience/image_reply_reset`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                    const d = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(d.error || 'คืนค่าเริ่มต้นไม่สำเร็จ');
+                    irData = { ...(irData || {}), config: d.config, custom: false }; irAt = Date.now(); irErr = '';
+                    irRefreshCard(); showToast('✅ คืนค่าเริ่มต้นแล้ว', 'success');
+                } catch (e) { showToast('❌ ' + (e.message || 'คืนค่าเริ่มต้นไม่สำเร็จ'), 'error'); }
+            });
+        }
+        // ═══ 🖼️ ข้อความ+ปุ่มตอบกลับเมื่อสมาชิกส่งรูป (UI จบ)
 
         let aiSummary = null, aiSummaryAt = 0, aiSummaryErr = '';
         const AI_REASON_LABEL = { contact_admin: 'พิมพ์ "ติดต่อแอดมิน"', user_cmd: 'พิมพ์ ai off เอง', admin_manual: 'แอดมินปิดให้', unknown: 'ไม่ทราบสาเหตุ' };
