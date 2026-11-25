@@ -2630,6 +2630,10 @@
                                         <div class="text-[10px] text-emerald-600 font-bold mt-1 text-center">📸 รูปหลังซ่อมเสร็จ</div>
                                     </template>
                                     <div v-if="r.status === 'completed' && r.resolved_at" class="text-[11px] text-emerald-600 font-bold mt-2" data-testid="rp-resolved">✅ ปิดงานเมื่อ {{ formatThaiDate(r.resolved_at) }}</div>
+                                    <button v-if="r.mine && r.status === 'completed'" @click="openRateSheet(r.id)" class="mt-3 w-full py-2.5 rounded-2xl text-xs font-extrabold border-2" :class="r.my_rating ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-sky-500 bg-sky-50 text-sky-700'" :data-testid="'rp-rate-btn-' + r.id">
+                                        <template v-if="r.my_rating"><span class="tracking-wider">{{ '★'.repeat(r.my_rating) + '☆'.repeat(5 - r.my_rating) }}</span> คะแนนของคุณ · แตะเพื่อแก้ไข</template>
+                                        <template v-else>⭐ ให้คะแนนงานซ่อมนี้</template>
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -2637,6 +2641,75 @@
                         <p v-if="repairBoard.list_truncated" class="text-center text-[11px] text-slate-400">แสดง {{ repairBoard.items.length }} รายการล่าสุด</p>
                     </div>
                 </template>
+            </div>
+        </div>
+
+        <!-- ═══════ ⭐ หน้าให้คะแนนงานซ่อม (เปิดจากปุ่มในการ์ด LINE ?rate_repair=<id> หรือปุ่มในหน้าแจ้งซ่อม) ═══════ -->
+        <div v-if="rate.open" @click.self="rateClose()" class="fixed inset-0 modal-bg z-[60] flex items-end md:items-center justify-center p-3" data-testid="rate-sheet" role="dialog" aria-modal="true" aria-label="ให้คะแนนงานซ่อม">
+            <div class="bg-white rounded-3xl max-w-md w-full shadow-2xl slide-up max-h-[92vh] overflow-y-auto">
+                <div class="text-white rounded-t-3xl px-5 pt-5 pb-4 flex items-start justify-between gap-3" style="background:linear-gradient(135deg,#059669,#0d9488)">
+                    <div>
+                        <div class="text-lg font-extrabold leading-tight">⭐ ให้คะแนนงานซ่อม</div>
+                        <div class="text-[11px] text-emerald-100 mt-0.5">ความเห็นของคุณช่วยให้นิติบุคคลปรับปรุงบริการ</div>
+                    </div>
+                    <button @click="rateClose()" class="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0" aria-label="ปิด" data-testid="rate-close"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div v-if="rate.loading" class="py-10 text-center text-slate-400" data-testid="rate-loading"><i class="fa-solid fa-spinner fa-spin text-2xl"></i><div class="text-sm mt-2">กำลังโหลดข้อมูลงานซ่อม...</div></div>
+                    <div v-else-if="rate.err" class="py-6 text-center" data-testid="rate-error">
+                        <div class="text-4xl mb-2">{{ rate.code === 'not_found' ? '🔍' : '⚠️' }}</div>
+                        <div class="text-sm font-bold text-slate-700">{{ rate.err }}</div>
+                        <div class="flex gap-2 justify-center mt-4">
+                            <button v-if="rate.code !== 'not_found'" @click="openRateSheet(rate.id)" class="px-4 py-2 rounded-2xl bg-emerald-600 text-white text-xs font-bold" data-testid="rate-retry">ลองใหม่</button>
+                            <button @click="rateClose()" class="px-4 py-2 rounded-2xl bg-slate-100 text-slate-600 text-xs font-bold">ปิด</button>
+                        </div>
+                    </div>
+                    <template v-else-if="rate.item">
+                        <!-- สรุปงานซ่อม -->
+                        <div class="rounded-2xl bg-slate-50 border border-slate-100 p-3.5" data-testid="rate-summary">
+                            <div class="text-[11px] text-slate-400 mb-0.5">งานซ่อมเลขที่ {{ rateTicket }}</div>
+                            <div class="text-sm font-extrabold text-slate-800">{{ repairCatIcon(rate.item.category) }} {{ rate.item.category }}</div>
+                            <div v-if="rate.item.location" class="text-xs font-bold text-sky-700 mt-0.5" data-testid="rate-loc"><i class="fa-solid fa-location-dot mr-1"></i>{{ rate.item.location }}</div>
+                            <div class="text-xs text-slate-600 mt-1.5 whitespace-pre-line break-words" data-testid="rate-detail">{{ rate.item.detail }}</div>
+                            <div v-if="isValidImageUrl(rate.item.image_url) || isValidImageUrl(rate.item.admin_image_url)" class="grid grid-cols-2 gap-2 mt-3" data-testid="rate-photos">
+                                <div v-if="isValidImageUrl(rate.item.image_url)"><img :src="isValidImageUrl(rate.item.image_url)" class="w-full h-28 object-cover rounded-xl border border-slate-200" alt="ก่อนซ่อม" @error="$event.target.style.display='none'"><div class="text-[10px] text-center text-slate-500 font-bold mt-1">ก่อนซ่อม</div></div>
+                                <div v-if="isValidImageUrl(rate.item.admin_image_url)"><img :src="isValidImageUrl(rate.item.admin_image_url)" class="w-full h-28 object-cover rounded-xl border border-emerald-300" alt="หลังซ่อม" @error="$event.target.style.display='none'"><div class="text-[10px] text-center text-emerald-600 font-bold mt-1">หลังซ่อม</div></div>
+                            </div>
+                            <div v-if="rate.item.admin_remark" class="mt-3 bg-indigo-50 rounded-xl p-2.5 text-xs text-indigo-700" data-testid="rate-remark"><b>ผลดำเนินการ:</b> {{ rate.item.admin_remark }}</div>
+                            <div v-if="rate.item.completed_at" class="text-[11px] text-emerald-600 font-bold mt-2">✅ ซ่อมเสร็จเมื่อ {{ formatThaiDate(rate.item.completed_at) }}</div>
+                        </div>
+                        <!-- ยังให้คะแนนไม่ได้ -->
+                        <div v-if="!rate.item.can_rate" class="rounded-2xl bg-amber-50 border border-amber-200 p-4 text-center text-sm text-amber-800 font-bold" data-testid="rate-blocked">
+                            {{ rate.item.reason === 'not_done' ? 'งานนี้ยังซ่อมไม่เสร็จ จึงยังให้คะแนนไม่ได้ — เมื่อปิดงานแล้วจะมีข้อความแจ้งให้ประเมินค่ะ' : 'ระบบให้คะแนนยังไม่เปิดใช้งาน กรุณาลองใหม่ภายหลัง' }}
+                        </div>
+                        <!-- บันทึกสำเร็จ -->
+                        <div v-else-if="rate.done" class="text-center py-4" data-testid="rate-done">
+                            <div class="text-5xl mb-2">🙏</div>
+                            <div class="text-base font-extrabold text-slate-800">ขอบคุณสำหรับคะแนนค่ะ</div>
+                            <div class="text-3xl text-amber-400 tracking-widest my-2" aria-hidden="true">{{ '★'.repeat(rate.stars) + '☆'.repeat(5 - rate.stars) }}</div>
+                            <div class="text-[11px] text-slate-400">เปลี่ยนใจภายหลังได้ — เปิดหน้านี้อีกครั้งเพื่อแก้คะแนน</div>
+                            <button @click="rateClose()" class="mt-4 px-6 py-2.5 rounded-2xl bg-emerald-600 text-white text-sm font-bold" data-testid="rate-done-close">ปิด</button>
+                        </div>
+                        <!-- ฟอร์มให้ดาว -->
+                        <template v-else>
+                            <div v-if="rate.item.rating" class="text-[11px] text-center text-amber-700 bg-amber-50 rounded-xl py-1.5" data-testid="rate-prev">คุณเคยให้ {{ rate.item.rating }}/5 ดาวไว้แล้ว — เลือกใหม่เพื่อแก้ไขได้</div>
+                            <div>
+                                <div class="text-sm font-bold text-slate-700 text-center mb-2">งานซ่อมครั้งนี้เป็นอย่างไรบ้าง?</div>
+                                <div class="flex justify-center gap-1.5" role="radiogroup" aria-label="ระดับดาว">
+                                    <button v-for="n in 5" :key="n" type="button" role="radio" :aria-checked="rate.stars === n" :aria-label="n + ' ดาว ' + RATE_LABELS[n]" @click="rate.stars = n" @mouseenter="rate.hover = n" @mouseleave="rate.hover = 0" class="p-1 text-4xl leading-none transition-transform active:scale-90" :class="n <= (rate.hover || rate.stars) ? 'text-amber-400' : 'text-slate-300'" :data-testid="'rate-star-' + n">★</button>
+                                </div>
+                                <div class="text-center text-sm font-extrabold mt-1 h-5" :class="rate.stars ? 'text-amber-600' : 'text-slate-400'" data-testid="rate-label">{{ rate.stars ? rate.stars + '/5 · ' + RATE_LABELS[rate.stars] : 'แตะดาวเพื่อให้คะแนน' }}</div>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-slate-600">ความเห็นเพิ่มเติม (ไม่บังคับ)</label>
+                                <textarea v-model="rate.comment" rows="3" maxlength="300" class="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none" placeholder="เช่น ช่างมาเร็ว งานเรียบร้อยดี" data-testid="rate-comment"></textarea>
+                                <div class="text-right text-[10px] text-slate-400">{{ (rate.comment || '').length }}/300</div>
+                            </div>
+                            <div v-if="rate.saveErr" class="text-sm text-rose-600 font-medium" data-testid="rate-save-err">{{ rate.saveErr }}</div>
+                            <button @click="rateSubmit()" :disabled="rate.saving || !rate.stars" class="w-full py-3 rounded-2xl bg-emerald-600 text-white font-bold text-sm disabled:opacity-40" data-testid="rate-submit">{{ rate.saving ? 'กำลังบันทึก...' : (rate.item.rating ? '💾 บันทึกคะแนนใหม่' : '⭐ ส่งคะแนน') }}</button>
+                        </template>
+                    </template>
+                </div>
             </div>
         </div>
 
@@ -4175,6 +4248,12 @@
                                 <img v-if="amSafeUrl(am.form.imageUrl)" :src="am.form.imageUrl" class="w-14 h-14 object-cover rounded-xl border border-slate-200" alt="รูปหลังซ่อม" data-testid="am-rp-after">
                                 <button v-if="am.form.imageUrl" @click="am.form.imageUrl = ''" class="text-[11px] text-rose-500 font-bold">ลบรูป</button>
                             </div>
+                            <label v-if="amSel.uid" class="mt-3 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 cursor-pointer" data-testid="am-rp-notify-box" :class="am.form.status === 'pending' ? 'opacity-50' : ''">
+                                <input type="checkbox" v-model="am.form.notify" :disabled="am.form.status === 'pending'" class="w-4 h-4 mt-0.5 accent-emerald-600" data-testid="am-rp-notify">
+                                <span class="text-xs"><b class="text-emerald-800">💬 แจ้งผู้แจ้งทาง LINE</b><span class="block text-emerald-700 mt-0.5" data-testid="am-rp-notify-hint">{{ am.form.status === 'completed' ? 'ส่งการ์ดสรุปพร้อมรูปที่แจ้ง รูปหลังซ่อม และปุ่ม "ให้คะแนน" / "แจ้งกลับ"' : (am.form.status === 'in_progress' ? 'ส่งการ์ดแจ้งว่ากำลังดำเนินการซ่อม พร้อมหมายเหตุ' : 'สถานะ "รอดำเนินการ" ไม่ส่งแจ้งเตือน') }}</span></span>
+                            </label>
+                            <div v-else class="mt-3 text-[11px] text-slate-500 bg-slate-50 rounded-xl p-2.5" data-testid="am-rp-nouid">รายการนี้ไม่มี LINE ของผู้แจ้ง จึงส่งแจ้งเตือนไม่ได้</div>
+                            <div v-if="amSel.rating" class="mt-3 text-xs bg-amber-50 text-amber-800 rounded-xl p-2.5" data-testid="am-rp-rating"><b>คะแนนจากผู้แจ้ง:</b> <span class="text-amber-500 tracking-wider">{{ '★'.repeat(amSel.rating) + '☆'.repeat(5 - amSel.rating) }}</span> {{ amSel.rating }}/5<div v-if="amSel.rating_comment" class="mt-1 text-slate-600 whitespace-pre-line">“{{ amSel.rating_comment }}”</div></div>
                             <div class="mt-3 text-[11px] text-amber-800 bg-amber-50 rounded-xl p-2.5" data-testid="am-rp-public">👁️ บันทึกผลและรูปหลังดำเนินการ <b>ลูกบ้านทุกคนจะเห็น</b> — อย่าใส่ชื่อ/เบอร์/ข้อมูลส่วนตัว</div>
                         </div>
                         <div v-if="am.err" class="text-sm text-rose-600 font-medium" data-testid="am-err">{{ am.err }}</div>
@@ -5455,6 +5534,7 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                     sigDrawing: false, sigHasDrawn: false, // ลายเซ็นร้องเรียน
 
                     // ─── Repair Requests (แจ้งซ่อม) ───
+                    rate: { open: false, loading: false, err: '', code: '', id: '', item: null, stars: 0, hover: 0, comment: '', saving: false, saveErr: '', done: false, seq: 0 },
                     repairBoard: null, repairHouseNumber: null, repairLoading: false, repairError: '',
                     repairView: { scope: 'all', status: '', cat: '', shown: 20 }, repairGuideOpen: false,
                     repairFormModal: false, repairAck: false, repairFormError: '',
@@ -5829,6 +5909,8 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                     const m = {}; this.repairInScope.forEach(i => { m[i.category] = (m[i.category] || 0) + 1; });
                     return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count, icon: this.repairCatIcon(name) }));
                 },
+                RATE_LABELS() { return { 1: 'ต้องปรับปรุง', 2: 'พอใช้', 3: 'ปานกลาง', 4: 'ดี', 5: 'ดีเยี่ยม' }; },
+                rateTicket() { const i = this.rate.item; if (!i) return ''; const x = String(i.id); return '#' + (/^\d+$/.test(x) ? x : x.slice(0, 8).toUpperCase()); },
                 repairFiltered() {
                     const v = this.repairView;
                     return this.repairInScope.filter(i => (!v.status || i.status === v.status) && (!v.cat || i.category === v.cat));
@@ -6400,6 +6482,18 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                         url.searchParams.delete('keycard');
                         history.replaceState(null, '', url.toString());
                         await this.openKeyCardDeepLink(keycardParam);
+                        return;
+                    }
+
+                    // ─── A3) ปุ่ม "ให้คะแนน" ในการ์ด Flex ปิดงานแจ้งซ่อม: ?rate_repair=<id> → เปิดหน้าให้ดาวของงานนั้น ───
+                    const rateParam = (params.get('rate_repair') || '').trim();
+                    if (rateParam) {
+                        const url = new URL(window.location.href);
+                        url.searchParams.delete('rate_repair');
+                        history.replaceState(null, '', url.toString());
+                        if (!this.mOn('repairs')) { this.notifyMenuDenied(); return; }
+                        this.currentTab = 'repairs';
+                        await this.openRateSheet(rateParam);
                         return;
                     }
 
@@ -7482,7 +7576,7 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                 amOpenRow(r) {
                     const it = this.am.items.find(x => String(x.id) === String(r.id)); if (!it) return;
                     this.am.err = ''; this.am.busy = false;
-                    if (this.am.sys === 'repair') this.am.form = { status: it.status, remark: it.admin_remark || '', imageUrl: it.admin_image_url || '', uploading: false };
+                    if (this.am.sys === 'repair') this.am.form = { status: it.status, remark: it.admin_remark || '', imageUrl: it.admin_image_url || '', uploading: false, notify: !!it.uid };
                     else if (this.am.sys === 'complaint') { this.am.form = { message: '', tplStatus: null, updateStatus: true }; this.amCpReset(); this.amCpLoad(it.id); }
                     else this.am.form = {};
                     if (this.am.sys === 'cctv') this.amCcInit(it);
@@ -7516,9 +7610,14 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                         const body = { id: it.id, adminRemark: String(f.remark || '').trim() };
                         if (f.status && f.status !== it.status) body.status = f.status;
                         if ((f.imageUrl || '') !== (it.admin_image_url || '')) body.adminImageUrl = f.imageUrl || '';
-                        await this.kcaApi('repair_request_update', { method: 'POST', body: JSON.stringify(body) });
+                        const wantNotify = !!(f.notify && it.uid && (f.status || it.status) !== 'pending');
+                        if (wantNotify) body.notify = true;
+                        const d = await this.kcaApi('repair_request_update', { method: 'POST', body: JSON.stringify(body) });
                         await this.amLoad(); this.amCloseSel();
-                        Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'บันทึกแล้ว', showConfirmButton: false, timer: 1800 });
+                        let icon = 'success', title = 'บันทึกแล้ว';
+                        if (d && d.notified && d.pushed) title = 'บันทึกแล้ว และแจ้งผู้แจ้งทาง LINE เรียบร้อย';
+                        else if (d && d.notified && d.pushed === false) { icon = 'warning'; title = 'บันทึกแล้ว แต่ส่ง LINE หาผู้แจ้งไม่สำเร็จ'; }
+                        Swal.fire({ toast: true, position: 'top', icon, title, showConfirmButton: false, timer: icon === 'warning' ? 3500 : 1800 });
                     } catch (e) { this.amFail(e); } finally { this.am.busy = false; }
                 },
 
@@ -8916,6 +9015,36 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                         }
                     } catch (e) { console.error('loadRepairBoard', e); this.repairError = e.message || 'โหลดไม่สำเร็จ'; }
                     finally { this.repairLoading = false; }
+                },
+                // ── ⭐ ให้คะแนนงานซ่อม ──
+                async openRateSheet(id) {
+                    const uid = this.userProfile && this.userProfile.userId; if (!uid) return;
+                    const seq = (this.rate.seq || 0) + 1;
+                    this.rate = { open: true, loading: true, err: '', code: '', id: String(id), item: null, stars: 0, hover: 0, comment: '', saving: false, saveErr: '', done: false, seq };
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/repair_rate_get?userId=${encodeURIComponent(uid)}&id=${encodeURIComponent(id)}`);
+                        const d = await res.json().catch(() => ({}));
+                        if (seq !== this.rate.seq) return;
+                        if (!res.ok) { this.rate.err = d.code === 'not_found' ? 'ไม่พบงานซ่อมนี้ในรายการของคุณ' : (d.error || ('โหลดไม่สำเร็จ (HTTP ' + res.status + ')')); this.rate.code = d.code || ''; return; }
+                        this.rate.item = d.item;
+                        if (d.item && d.item.rating) { this.rate.stars = Number(d.item.rating) || 0; this.rate.comment = d.item.rating_comment || ''; }
+                    } catch (e) { if (seq === this.rate.seq) { this.rate.err = 'เชื่อมต่อไม่สำเร็จ กรุณาลองใหม่'; } }
+                    finally { if (seq === this.rate.seq) this.rate.loading = false; }
+                },
+                rateClose() { this.rate.open = false; this.rate.seq++; },
+                async rateSubmit() {
+                    const r = this.rate; if (r.saving || !r.stars || !r.item || !r.item.can_rate) return;
+                    const uid = this.userProfile && this.userProfile.userId; if (!uid) return;
+                    const seq = r.seq; r.saving = true; r.saveErr = '';
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/repair_rate_submit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: uid, id: r.item.id, rating: r.stars, comment: String(r.comment || '').trim() }) });
+                        const d = await res.json().catch(() => ({}));
+                        if (seq !== this.rate.seq) return;
+                        if (!res.ok) { r.saveErr = d.error || ('บันทึกไม่สำเร็จ (HTTP ' + res.status + ')'); return; }
+                        r.done = true; r.item.rating = r.stars;
+                        if (this.repairBoard && Array.isArray(this.repairBoard.items)) { const it = this.repairBoard.items.find(x => String(x.id) === String(r.item.id)); if (it) it.my_rating = r.stars; }
+                    } catch (e) { if (seq === this.rate.seq) r.saveErr = 'เชื่อมต่อไม่สำเร็จ กรุณาลองใหม่'; }
+                    finally { if (seq === this.rate.seq) r.saving = false; }
                 },
                 toggleRepairGuide() { this.repairGuideOpen = !this.repairGuideOpen; },
                 repairPickStatus(k) { this.repairView.scope = 'all'; this.repairView.status = this.repairView.status === k ? '' : k; this.repairView.cat = ''; this.repairView.shown = 20; this.$nextTick(() => { const el = document.querySelector('[data-testid="rp-status-chips"]'); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }); },
