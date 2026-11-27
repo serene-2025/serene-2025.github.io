@@ -15291,7 +15291,7 @@ async function updateAllUserProfiles() {
         //   ค่าเริ่มต้น = ทุกบทบาทเห็นทุกเมนู · เก็บเป็นรายการ "ห้าม" → เมนูใหม่เปิดให้ทุกคนอัตโนมัติ
         //   ตัวบังคับจริงอยู่ที่ server (หน้า CRM แค่ซ่อนปุ่ม)
         // ═════════════════════════════════════════════════════════════════
-        const _mm = { loaded: false, tab: 'matrix', menus: [], roles: [], deny: {}, adminMenus: [], featuresOff: [], dirty: false, saving: false, check: { q: '', loading: false, data: null, error: '' } };
+        const _mm = { layout: { loaded: false, loading: false, error: '', sections: [], tiles: [], custom: false, dirty: false, saving: false, titleMax: 30 }, loaded: false, tab: 'matrix', menus: [], roles: [], deny: {}, adminMenus: [], featuresOff: [], dirty: false, saving: false, check: { q: '', loading: false, data: null, error: '' } };
         const MM_ADMIN_PRESETS = [
             ['keycardManagement', 'จัดการคีย์การ์ด', 'id-card', 'amber'], ['ownershipManagement', 'ยืนยันสิทธิ์เจ้าของบ้าน', 'shield-halved', 'emerald'],
             ['carManagement', 'จัดการทะเบียนรถ', 'car', 'blue'], ['complaintManagement', 'เรื่องร้องเรียน', 'bullhorn', 'rose'],
@@ -15337,16 +15337,17 @@ async function updateAllUserProfiles() {
             }
         }
 
-        function mmTab(t) { _mm.tab = t; mmRender(); if (t === 'check' && !_mm.check.data) mmCheck(); if (t === 'tools' && !_at.loaded && !_at.loading) atLoad(); }
+        function mmTab(t) { _mm.tab = t; mmRender(); if (t === 'check' && !_mm.check.data) mmCheck(); if (t === 'tools' && !_at.loaded && !_at.loading) atLoad(); if (t === 'layout' && !_mm.layout.loaded && !_mm.layout.loading) mmLayoutLoad(); }
 
         function mmRender() {
             const tabs = document.getElementById('mm-tabs'); const root = document.getElementById('mm-root');
             if (!tabs || !root) return;
             const tb = (k, label) => `<button onclick="mmTab('${k}')" data-testid="mm-tab-${k}" class="px-4 py-2 rounded-xl text-sm font-bold ${_mm.tab === k ? 'bg-violet-500 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}">${label}</button>`;
-            tabs.innerHTML = tb('matrix', '🔐 ตารางสิทธิ์') + tb('admin', '🛡️ เมนูสำหรับแอดมิน') + tb('tools', '🧰 เครื่องมือแอดมินใน CRM') + tb('check', '🔎 ตรวจสอบสิทธิ์');
+            tabs.innerHTML = tb('matrix', '🔐 ตารางสิทธิ์') + tb('admin', '🛡️ เมนูสำหรับแอดมิน') + tb('tools', '🧰 เครื่องมือแอดมินใน CRM') + tb('layout', '🧩 จัดเรียงเมนูหน้าหลัก') + tb('check', '🔎 ตรวจสอบสิทธิ์');
             if (_mm.tab === 'matrix') root.innerHTML = mmMatrixHtml();
             else if (_mm.tab === 'admin') root.innerHTML = mmAdminHtml();
             else if (_mm.tab === 'tools') root.innerHTML = atToolsHtml();
+            else if (_mm.tab === 'layout') root.innerHTML = mmLayoutHtml();
             else root.innerHTML = mmCheckHtml();
         }
 
@@ -15391,6 +15392,79 @@ async function updateAllUserProfiles() {
                 showToast('บันทึกสิทธิ์เมนูแล้ว (มีผลทันที)', 'success');
             } catch (e) { showToast(e.message, 'error'); }
             finally { _mm.saving = false; mmRender(); }
+        }
+
+
+        // ─── 🧩 จัดเรียงเมนูหน้าหลัก CRM (หมวด/หัวข้อ/ลำดับ) · /api/admin/audience/menu_layout_{get,save} (สิทธิ์ memberMenus) ───
+        async function mmLayoutLoad() {
+            const L = _mm.layout; L.loading = true; L.error = ''; mmRender();
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/menu_layout_get`);
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'โหลดไม่สำเร็จ');
+                L.sections = (d.sections || []).map(s => ({ key: s.key, title: s.title, icon: s.icon, items: (s.items || []).slice() }));
+                L.tiles = d.tiles || []; L.custom = !!d.custom; L.titleMax = d.title_max || 30; L.defaults = d.defaults || [];
+                L.loaded = true; L.dirty = false;
+            } catch (e) { L.error = e.message || 'โหลดไม่สำเร็จ'; }
+            finally { L.loading = false; mmRender(); }
+        }
+        function mmLayoutTile(k) { return _mm.layout.tiles.find(t => t.key === k) || { key: k, label: k, icon: 'circle' }; }
+        function mmLayoutHtml() {
+            const L = _mm.layout;
+            if (L.loading) return '<div class="glass rounded-3xl p-10 text-center text-slate-400 text-sm">กำลังโหลด...</div>';
+            if (L.error) return `<div class="glass rounded-3xl p-8 text-center text-rose-500 text-sm">${escapeHtml(L.error)}<div class="mt-3"><button onclick="mmLayoutLoad()" class="px-4 py-2 bg-violet-500 text-white rounded-xl text-sm font-bold">ลองใหม่</button></div></div>`;
+            const secOpts = (cur) => L.sections.map(x => `<option value="${escapeHtml(x.key)}" ${x.key === cur ? 'selected' : ''}>${escapeHtml(x.title)}</option>`).join('');
+            const cards = L.sections.map((sec, si) => `<div class="border border-slate-200 rounded-2xl p-3 bg-white" data-testid="mm-lay-sec-${sec.key}">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="text-xs font-bold text-slate-400 w-5 text-center">${si + 1}</span>
+                    <input class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-bold" maxlength="${L.titleMax}" value="${escapeHtml(sec.title)}" data-testid="mm-lay-title-${sec.key}" oninput="mmLayoutTitle(${si},this.value)" placeholder="ชื่อหมวด">
+                    <button onclick="mmLayoutSec(${si},-1)" ${si === 0 ? 'disabled' : ''} data-testid="mm-lay-secup-${sec.key}" class="w-9 h-9 rounded-lg bg-slate-100 text-slate-600 disabled:opacity-30">▲</button>
+                    <button onclick="mmLayoutSec(${si},1)" ${si === L.sections.length - 1 ? 'disabled' : ''} data-testid="mm-lay-secdown-${sec.key}" class="w-9 h-9 rounded-lg bg-slate-100 text-slate-600 disabled:opacity-30">▼</button>
+                </div>
+                ${sec.items.length ? sec.items.map((k, ti) => `<div class="flex items-center gap-2 py-1.5 border-t border-slate-100" data-testid="mm-lay-item-${k}">
+                    <span class="flex-1 text-sm text-slate-700"><i class="fa-solid fa-${escapeHtml(mmLayoutTile(k).icon)} text-slate-400 w-5 text-center"></i> ${escapeHtml(mmLayoutTile(k).label)}</span>
+                    <select class="px-2 py-1.5 border border-slate-200 rounded-lg text-xs bg-white" data-testid="mm-lay-move-${k}" onchange="mmLayoutMove('${k}',this.value)" title="ย้ายไปหมวด">${secOpts(sec.key)}</select>
+                    <button onclick="mmLayoutTileMove(${si},${ti},-1)" ${ti === 0 ? 'disabled' : ''} data-testid="mm-lay-up-${k}" class="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 text-xs disabled:opacity-30">▲</button>
+                    <button onclick="mmLayoutTileMove(${si},${ti},1)" ${ti === sec.items.length - 1 ? 'disabled' : ''} data-testid="mm-lay-down-${k}" class="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 text-xs disabled:opacity-30">▼</button>
+                </div>`).join('') : '<div class="text-xs text-slate-400 py-2 border-t border-slate-100">ไม่มีปุ่มในหมวดนี้ (หมวดว่างจะไม่แสดงในหน้า CRM)</div>'}
+            </div>`).join('');
+            return `<div class="glass rounded-3xl p-4 md:p-5 space-y-3" data-testid="mm-layout">
+                <div class="text-xs text-slate-500 leading-relaxed">กำหนดว่าหน้าหลัก CRM ของลูกบ้านแบ่งเป็นกี่หมวด ชื่อหัวข้ออะไร และเรียงปุ่มอย่างไร · เป็นแค่ <b>การจัดวาง</b> — สิทธิ์ใช้เมนูยังตามแท็บ "ตารางสิทธิ์" · ลูกบ้านยังกด "จัดเรียง" เรียงลำดับของตัวเองในเครื่องได้ (ภายในหมวดที่นี่กำหนด) · ปุ่มที่ลูกบ้านไม่มีสิทธิ์จะไม่แสดง และหมวดที่ไม่มีปุ่มจะถูกซ่อน</div>
+                ${cards}
+                <div class="flex flex-wrap gap-2 items-center">
+                    <button onclick="mmLayoutSave()" data-testid="mm-lay-save" class="px-5 py-2.5 bg-violet-500 hover:bg-violet-600 text-white rounded-xl text-sm font-bold shadow-sm disabled:opacity-50" ${L.saving ? 'disabled' : ''}>${L.saving ? 'กำลังบันทึก...' : '💾 บันทึกการจัดเรียง'}</button>
+                    <button onclick="mmLayoutReset()" data-testid="mm-lay-reset" class="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600">↩️ คืนค่าเริ่มต้น</button>
+                    <span class="text-xs font-bold ${L.dirty ? 'text-amber-600' : 'text-slate-400'}" data-testid="mm-lay-dirty">${L.dirty ? '● มีการแก้ไขที่ยังไม่บันทึก' : (L.custom ? 'ใช้ค่าที่นิติฯ ตั้งไว้' : 'ใช้ค่าเริ่มต้นของระบบ')}</span>
+                </div></div>`;
+        }
+        function mmLayoutTitle(si, v) { const s = _mm.layout.sections[si]; if (s) { s.title = v; _mm.layout.dirty = true; const el = document.querySelector('[data-testid=mm-lay-dirty]'); if (el) { el.textContent = '● มีการแก้ไขที่ยังไม่บันทึก'; el.className = 'text-xs font-bold text-amber-600'; } } }
+        function mmLayoutSec(si, d) { const a = _mm.layout.sections, j = si + d; if (j < 0 || j >= a.length) return; const t = a[si]; a.splice(si, 1); a.splice(j, 0, t); _mm.layout.dirty = true; mmRender(); }
+        function mmLayoutTileMove(si, ti, d) { const it = _mm.layout.sections[si].items, j = ti + d; if (j < 0 || j >= it.length) return; const t = it[ti]; it.splice(ti, 1); it.splice(j, 0, t); _mm.layout.dirty = true; mmRender(); }
+        function mmLayoutMove(k, toKey) { const L = _mm.layout; L.sections.forEach(s => { s.items = s.items.filter(x => x !== k); }); const to = L.sections.find(s => s.key === toKey); if (to) to.items.push(k); L.dirty = true; mmRender(); }
+        async function mmLayoutSave() {
+            const L = _mm.layout; if (L.saving) return;
+            L.saving = true; mmRender();
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/menu_layout_save`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sections: L.sections.map(s => ({ key: s.key, title: s.title, items: s.items })) }) });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+                L.sections = d.sections.map(s => ({ key: s.key, title: s.title, icon: s.icon, items: s.items.slice() })); L.custom = !!d.custom; L.dirty = false;
+                showToast('บันทึกการจัดเรียงเมนูแล้ว (ลูกบ้านเห็นเมื่อเปิดแอปครั้งถัดไป)', 'success');
+            } catch (e) { showToast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+            finally { L.saving = false; mmRender(); }
+        }
+        async function mmLayoutReset() {
+            if (!confirm('คืนค่าเริ่มต้น (4 หมวดตามระบบ)? มีผลทันทีกับลูกบ้านทุกคน')) return;
+            const L = _mm.layout; if (L.saving) return;
+            L.saving = true; mmRender();
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/audience/menu_layout_save`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reset: true }) });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'ไม่สำเร็จ');
+                L.sections = d.sections.map(s => ({ key: s.key, title: s.title, icon: s.icon, items: s.items.slice() })); L.custom = false; L.dirty = false;
+                showToast('คืนค่าเริ่มต้นแล้ว', 'success');
+            } catch (e) { showToast(e.message || 'ไม่สำเร็จ', 'error'); }
+            finally { L.saving = false; mmRender(); }
         }
 
         // ─── เมนูเสริมสำหรับแอดมิน ───
