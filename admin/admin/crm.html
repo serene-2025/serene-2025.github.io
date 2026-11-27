@@ -16,6 +16,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+    <!-- 🎫 QR ผู้มาติดต่อ: สร้าง QR + แคปรูปบัตร (โหลดแบบ defer — ถ้า CDN ล้มหน้านี้ยังแสดงรหัสตัวเลข) -->
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://cdn.jsdelivr.net/gh/lazywasabi/thai-web-fonts@7/fonts/LINESeedSansTH/LINESeedSansTH.css" rel="stylesheet" />
 
@@ -395,6 +398,11 @@
                         <button v-if="tShow('visitor_car', sec)" :style="tOrd('visitor_car', sec)" @click="currentTab = 'visitor'" data-testid="home-visitor-tile" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 relative">
                             <div class="w-12 h-12 rounded-full bg-sky-100 text-sky-600 flex items-center justify-center text-lg"><i class="fa-solid fa-van-shuttle"></i></div>
                             <span class="text-xs font-bold text-slate-700">รถผู้มาติดต่อ</span>
+                        </button>
+                        <button v-if="tShow('qr_pass', sec)" :style="tOrd('qr_pass', sec)" @click="currentTab = 'qrpass'" data-testid="home-qrpass-tile" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 relative">
+                            <div class="w-12 h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-lg"><i class="fa-solid fa-id-badge"></i></div>
+                            <span class="text-xs font-bold text-slate-700">QR ผู้มาติดต่อ</span>
+                            <span v-if="qpActiveCount > 0" class="absolute top-2 right-2 min-w-[20px] h-5 px-1 rounded-full bg-indigo-500 text-white text-[10px] font-bold flex items-center justify-center" data-testid="home-qrpass-badge">{{ qpActiveCount }}</span>
                         </button>
                         <a v-if="tShow('finance', sec)" :style="tOrd('finance', sec)" href="finance.html" class="glass-card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-all active:scale-95 relative">
                             <div class="w-12 h-12 rounded-full bg-teal-100 text-teal-600 flex items-center justify-center text-lg"><i class="fa-solid fa-chart-pie"></i></div>
@@ -1931,6 +1939,141 @@
                         <button @click="removalTarget = null" class="px-5 py-2.5 bg-slate-100 rounded-2xl text-sm font-bold">ยกเลิก</button>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- ═══════ 🎫 QR ผู้มาติดต่อ (คนเดินเท้า) — บัตรผ่านเข้า-ออกหมู่บ้านแบบ QR ═══════ -->
+        <!-- สร้าง/ยกเลิก/ส่งรูปผ่าน server (/api/crm/qrpass_*) · ตาราง access_tokens ที่ server ป้อมดึงรหัสไปใช้และอัปเดตสถานะ — หน้านี้อ่านสถานะกลับมาแสดง -->
+        <div v-if="currentTab === 'qrpass' && !loading" class="fixed inset-0 bg-gradient-to-br from-indigo-50 via-white to-sky-50 overflow-y-auto z-20" data-testid="qrpass-page">
+            <div class="max-w-lg mx-auto px-4 pt-6 pb-28">
+                <div class="mb-4 flex items-center gap-3">
+                    <button @click="qp.pass ? qpClose() : (currentTab = 'home')" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500" data-testid="qp-back"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="flex-1 min-w-0">
+                        <h2 class="text-2xl font-extrabold text-slate-800 leading-tight">QR ผู้มาติดต่อ</h2>
+                        <p class="text-xs text-slate-500">สร้างบัตรผ่านเข้า-ออกหมู่บ้านให้แขกที่เดินเข้ามา</p>
+                    </div>
+                    <button v-if="!qp.pass && qp.data" @click="loadQrPass()" :disabled="qp.loading" class="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-500 disabled:opacity-50" data-testid="qp-refresh" aria-label="รีเฟรชสถานะ"><i class="fa-solid fa-rotate" :class="qp.loading ? 'fa-spin' : ''"></i></button>
+                </div>
+
+                <div v-if="qp.loading && !qp.data" class="text-center py-16 text-slate-400" data-testid="qp-loading"><i class="fa-solid fa-circle-notch fa-spin text-2xl"></i><div class="text-sm mt-2">กำลังตรวจสอบสิทธิ์...</div></div>
+
+                <div v-else-if="qp.err && !qp.data" class="rounded-3xl bg-white border border-rose-100 p-6 text-center shadow-sm" data-testid="qp-error">
+                    <div class="text-4xl mb-2">⚠️</div>
+                    <div class="font-bold text-slate-700">โหลดข้อมูลไม่สำเร็จ</div>
+                    <div class="text-xs text-slate-500 mt-1">{{ qp.err }}</div>
+                    <button @click="loadQrPass()" class="mt-4 px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold" data-testid="qp-retry">ลองใหม่</button>
+                </div>
+
+                <div v-else-if="qp.data && !qp.data.access.allowed" class="rounded-3xl overflow-hidden bg-white shadow-lg border border-rose-100" data-testid="qp-denied">
+                    <div class="bg-rose-500 px-5 pt-8 pb-8 text-center">
+                        <div class="w-20 h-20 rounded-full bg-white/20 flex items-center justify-center mx-auto mb-3 text-4xl">🚫</div>
+                        <h3 class="text-xl font-extrabold text-white" data-testid="qp-denied-title">{{ qp.data.access.title }}</h3>
+                    </div>
+                    <div class="p-5 text-center">
+                        <div class="bg-rose-50 border border-rose-100 rounded-2xl p-4 text-sm text-slate-700" data-testid="qp-denied-detail">{{ qp.data.access.detail }}</div>
+                        <button @click="currentTab = 'home'" class="mt-4 w-full py-3 rounded-xl bg-slate-800 text-white font-bold">กลับ</button>
+                    </div>
+                </div>
+
+                <template v-else-if="qp.data">
+                    <!-- ════ มุมมองบัตร (หน้าตาเดียวกับรูปที่บันทึก/ส่งเข้าแชท) ════ -->
+                    <div v-if="qp.pass" data-testid="qp-pass-view">
+                        <div v-if="qp.pass.status && qp.pass.status !== 'active'" class="max-w-[380px] mx-auto mb-3 rounded-2xl px-4 py-3 text-sm font-bold text-center" :class="qp.pass.status === 'used' ? 'bg-sky-100 text-sky-800' : 'bg-rose-100 text-rose-700'" data-testid="qp-pass-notice">{{ qp.pass.status === 'used' ? 'บัตรนี้ถูกใช้งานแล้ว' : (qp.pass.status === 'cancelled' ? 'บัตรนี้ถูกยกเลิกแล้ว' : 'บัตรนี้หมดอายุแล้ว') }}</div>
+                        <div id="qp-card" data-testid="qp-card" class="mx-auto" style="width:100%;max-width:380px;background:#ffffff;border-radius:28px;overflow:hidden;box-shadow:0 12px 32px rgba(30,64,175,.20);font-family:inherit">
+                            <div style="position:relative;height:150px;background:linear-gradient(120deg,#0a1f5c 0%,#1e40af 55%,#2563eb 100%);overflow:hidden">
+                                <img v-if="qp.data.banner_url" :src="qp.data.banner_url" crossorigin="anonymous" alt="" style="position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover" data-testid="qp-banner-img">
+                                <div v-else style="position:absolute;left:0;top:0;right:0;display:flex;align-items:center;gap:12px;padding:20px 20px 0">
+                                    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" style="flex:none"><path d="M12 21c0-6 1-11 8-15-1 7-3 11-8 15Z" fill="#f5c542"/><path d="M12 21C12 15 11 10 4 6c1 7 3 11 8 15Z" fill="#e0a82e"/></svg>
+                                    <div style="color:#fff;line-height:1.15"><div style="font-size:24px;font-weight:800;letter-spacing:.2px" data-testid="qp-village">{{ qpVillage }}</div><div style="font-size:12px;opacity:.85;margin-top:2px">Smart Gate · Visitor Access</div></div>
+                                </div>
+                            </div>
+                            <div style="position:relative;margin-top:-26px;background:linear-gradient(180deg,#e6efff 0%,#ffffff 46%);border-radius:28px 28px 0 0;padding:52px 18px 20px;text-align:center">
+                                <div style="position:absolute;left:50%;top:-44px;transform:translateX(-50%);width:88px;height:88px;border-radius:50%;border:4px solid #fff;box-shadow:0 4px 12px rgba(15,23,42,.18);overflow:hidden;background:#c7d2fe;display:flex;align-items:center;justify-content:center">
+                                    <img v-if="qpAvatarSrc" :src="qpAvatarSrc" crossorigin="anonymous" alt="" style="width:100%;height:100%;object-fit:cover" data-testid="qp-avatar-img">
+                                    <span v-else style="font-size:34px;font-weight:800;color:#4338ca" data-testid="qp-avatar-initial">{{ qpInitial }}</span>
+                                </div>
+                                <div style="font-size:20px;font-weight:800;color:#1e293b;line-height:1.2" data-testid="qp-hello">สวัสดี, {{ qp.pass.name }}</div>
+                                <div style="margin:12px 0 8px;display:flex;align-items:center;gap:10px;background:linear-gradient(90deg,#e0e7ff 0%,#a5b4fc 100%);border-radius:18px;padding:10px 14px;text-align:left">
+                                    <svg width="30" height="30" viewBox="0 0 24 24" style="flex:none"><circle cx="12" cy="8" r="4.2" fill="#4f46e5"/><path d="M3.5 21c0-4.6 3.8-7.5 8.5-7.5s8.5 2.9 8.5 7.5Z" fill="#4f46e5"/></svg>
+                                    <div style="flex:1;min-width:0"><div style="font-size:23px;font-weight:800;color:#3730a3;letter-spacing:.5px;line-height:1.2">VISITOR PASS</div><div style="font-size:12px;font-weight:600;color:#312e81;margin-top:3px;line-height:1.3">บัตรผ่านเข้าหมู่บ้าน (ผู้มาติดต่อ)</div></div>
+                                    <svg width="46" height="34" viewBox="0 0 46 34" style="flex:none"><path d="M3 30 10 16c1-2 3-3 5-3h14c2 0 4 1 5 3l5 14Z" fill="#fff"/><rect x="2" y="21" width="36" height="9" rx="3" fill="#fff"/><circle cx="12" cy="30" r="3.4" fill="#4f46e5"/><circle cx="30" cy="30" r="3.4" fill="#4f46e5"/><path d="M13 14l3-4h10l3 4Z" fill="#a5b4fc"/><rect x="30" y="4" width="15" height="4" rx="1" fill="#ef4444" transform="rotate(-18 30 6)"/><rect x="26" y="2" width="4" height="14" rx="1" fill="#fff" opacity=".9"/></svg>
+                                </div>
+                                <div style="font-size:13px;color:#64748b;font-weight:600" data-testid="qp-requested">Requested by : {{ qp.pass.name }}</div>
+                                <div style="position:relative;margin:12px auto 12px;display:inline-block;background:#fff;border:1.5px solid #bfdbfe;border-radius:20px;padding:14px;line-height:0">
+                                    <div id="qp-qr" data-testid="qp-qr" style="width:190px;height:190px;display:flex;align-items:center;justify-content:center"><img v-if="qp.qrData" :src="qp.qrData" width="190" height="190" alt="QR" style="display:block;width:190px;height:190px" data-testid="qp-qr-img"></div>
+                                    <div id="qp-qr-src" style="position:absolute;left:-9999px;top:0;width:190px;height:190px;overflow:hidden" aria-hidden="true"></div>
+                                    <div v-if="qp.qrFail" style="font-size:34px;font-weight:800;letter-spacing:4px;color:#0f172a;line-height:1.2" data-testid="qp-qr-fallback">{{ qp.pass.code }}</div>
+                                </div>
+                                <div data-testid="qp-house" style="display:flex;justify-content:center;line-height:0"><svg style="display:block" :width="qpHouseW" height="58" :viewBox="'0 0 ' + qpHouseW + ' 58'" role="img" :aria-label="qp.pass.house"><rect :width="qpHouseW" height="58" rx="29" fill="#dbeafe"/><text :x="qpHouseW / 2" y="43" text-anchor="middle" font-size="36" font-weight="800" fill="#0f172a" font-family="Arial, Helvetica, sans-serif">{{ qp.pass.house }}</text></svg></div>
+                                <div style="display:flex;align-items:center;justify-content:center;margin-top:12px;text-align:left">
+                                    <div style="display:flex;align-items:center;gap:8px;flex:1;justify-content:center">
+                                        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" style="flex:none"><rect x="3" y="5" width="18" height="16" rx="3" stroke="#4f46e5" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke="#4f46e5" stroke-width="2" stroke-linecap="round"/><rect x="7" y="13" width="3" height="3" fill="#4f46e5"/><rect x="12" y="13" width="3" height="3" fill="#4f46e5"/></svg>
+                                        <div><div style="font-size:11px;color:#475569;font-weight:700">หมดอายุ:</div><div style="font-size:14px;color:#0f172a;font-weight:700" data-testid="qp-expiry">{{ qpFmt(qp.pass.valid_until) }}</div></div>
+                                    </div>
+                                    <div style="width:1px;height:38px;background:#cbd5e1;flex:none"></div>
+                                    <div style="display:flex;align-items:center;gap:8px;flex:1;justify-content:center">
+                                        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" style="flex:none"><circle cx="12" cy="14" r="7.5" stroke="#4f46e5" stroke-width="2"/><path d="M12 14V9.5M9.5 3h5M12 3v3M18.5 6.5l1.5-1.5" stroke="#4f46e5" stroke-width="2" stroke-linecap="round"/></svg>
+                                        <div><div style="font-size:11px;color:#475569;font-weight:700">อายุการใช้งาน:</div><div style="font-size:17px;color:#4338ca;font-weight:800" data-testid="qp-life">{{ qpHoursLabel(qp.pass.hours) }}</div></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div style="background:linear-gradient(180deg,#ffffff 0%,#dbeafe 100%);padding:10px 18px 14px;text-align:center;font-size:11px;color:#475569;font-weight:600">แสดง QR นี้ที่ป้อมยามเพื่อเข้า-ออกหมู่บ้าน · ใช้ได้ตามเวลาที่ระบุ</div>
+                        </div>
+
+                        <div class="max-w-[380px] mx-auto mt-4 space-y-2.5">
+                            <button @click="qpSendChat()" :disabled="!!qp.busy" class="w-full py-3.5 rounded-2xl text-white font-bold flex items-center justify-center gap-2 shadow-md active:scale-[.98] disabled:opacity-60" style="background:linear-gradient(90deg,#0ea5e9,#2563eb)" data-testid="qp-send-chat">
+                                <i :class="qp.busy === 'chat' ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-paper-plane'"></i> ส่งรูปบัตรเข้าแชท LINE</button>
+                            <button @click="qpShareText()" :disabled="!!qp.busy" class="w-full py-3.5 rounded-2xl text-white font-bold flex items-center justify-center gap-2 shadow-md active:scale-[.98] disabled:opacity-60" style="background:linear-gradient(90deg,#06c755,#16a34a)" data-testid="qp-share-text">
+                                <i class="fa-brands fa-line"></i> ส่งข้อความให้เพื่อน</button>
+                            <button @click="qpSaveImage()" :disabled="!!qp.busy" class="w-full py-3 rounded-2xl bg-white border border-slate-200 text-slate-700 font-bold flex items-center justify-center gap-2 active:scale-[.98] disabled:opacity-60" data-testid="qp-save-image">
+                                <i :class="qp.busy === 'save' ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-download'"></i> บันทึกรูปบัตรลงเครื่อง</button>
+                            <div class="flex gap-2">
+                                <button @click="qpClose()" class="flex-1 py-3 rounded-2xl bg-white border border-slate-200 text-slate-600 font-bold text-sm" data-testid="qp-new"><i class="fa-solid fa-rotate-left mr-1"></i> สร้างใหม่ / ดูบัตรทั้งหมด</button>
+                                <button v-if="qp.pass.id !== null && qp.pass.id !== undefined" @click="qpCancel(qp.pass)" :disabled="!!qp.cancelId" class="px-4 py-3 rounded-2xl bg-white border border-rose-200 text-rose-600 font-bold text-sm disabled:opacity-50" data-testid="qp-cancel-current">ยกเลิกบัตรนี้</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ════ ฟอร์มสร้างบัตร + บัตรของฉัน ════ -->
+                    <div v-else data-testid="qp-form-view">
+                        <div class="bg-white rounded-3xl p-5 shadow-md border border-slate-100 mb-4">
+                            <div class="flex items-center gap-3 mb-4">
+                                <div class="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center text-xl"><i class="fa-solid fa-house-chimney"></i></div>
+                                <div><div class="text-[11px] text-slate-400 font-bold">บัตรนี้ใช้เข้าบ้านเลขที่</div><div class="text-2xl font-extrabold text-slate-800" data-testid="qp-form-house">{{ qp.data.house_no }}</div></div>
+                            </div>
+                            <div class="text-xs font-bold text-slate-500 mb-2">ใช้ได้นานเท่าไร</div>
+                            <div class="grid grid-cols-5 gap-2 mb-4" data-testid="qp-hours">
+                                <button v-for="h in qp.data.hours" :key="h" @click="qp.hours = h" :data-testid="'qp-hours-' + h"
+                                    class="py-2.5 rounded-xl text-sm font-bold border transition-all active:scale-95" :class="qp.hours === h ? 'bg-indigo-600 text-white border-indigo-600 shadow' : 'bg-white text-slate-600 border-slate-200'">{{ h }}<span class="text-[10px] font-semibold ml-0.5">ชม.</span></button>
+                            </div>
+                            <button @click="qpCreate()" :disabled="qp.creating" class="w-full py-3.5 rounded-2xl text-white font-extrabold text-base flex items-center justify-center gap-2 shadow-lg active:scale-[.98] disabled:opacity-60" style="background:linear-gradient(90deg,#4f46e5,#2563eb)" data-testid="qp-create">
+                                <i :class="qp.creating ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-qrcode'"></i> {{ qp.creating ? 'กำลังสร้าง...' : 'สร้าง QR Code' }}</button>
+                            <div class="text-[11px] text-slate-400 mt-3 leading-relaxed">1 บัตรต่อแขก 1 ท่าน · รหัสใช้ได้ตามเวลาที่เลือกเท่านั้น · ยกเลิกได้ก่อนถูกใช้งาน</div>
+                        </div>
+
+                        <div class="flex items-center justify-between mb-2 px-1">
+                            <h3 class="font-bold text-slate-700 text-sm">บัตรของฉัน</h3>
+                            <span class="text-[11px] text-slate-400">สถานะอัปเดตอัตโนมัติ</span>
+                        </div>
+                        <div v-if="!qp.data.passes.length" class="bg-white rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400" data-testid="qp-empty">ยังไม่มีบัตร — กด "สร้าง QR Code" ด้านบน</div>
+                        <div v-else class="space-y-2" data-testid="qp-list">
+                            <div v-for="p in qp.data.passes" :key="p.id" class="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 flex items-center gap-3" :data-testid="'qp-row-' + p.id">
+                                <div class="w-11 h-11 rounded-xl flex items-center justify-center text-lg flex-none" :class="p.status === 'active' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-400'"><i class="fa-solid fa-qrcode"></i></div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <span class="text-[11px] font-extrabold px-2 py-0.5 rounded-full" :class="qpStatusClass(p)" :data-testid="'qp-status-' + p.id">{{ qpStatusLabel(p) }}</span>
+                                        <span v-if="p.use_count > 0" class="text-[11px] text-slate-500">ใช้ {{ p.use_count }} ครั้ง</span>
+                                    </div>
+                                    <div class="text-xs text-slate-500 mt-1">{{ p.status === 'active' ? 'เหลือ ' + qpRemain(p.valid_until) + ' · ถึง ' + qpFmt(p.valid_until) : (p.status === 'cancelled' ? 'ยกเลิกเมื่อ ' : 'หมดอายุ ') + qpFmt(p.valid_until) }}</div>
+                                </div>
+                                <div v-if="p.status === 'active'" class="flex flex-col gap-1 flex-none">
+                                    <button @click="qpOpen(p)" class="px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold" :data-testid="'qp-open-' + p.id">ดู QR</button>
+                                    <button @click="qpCancel(p)" :disabled="!!qp.cancelId" class="px-3 py-1 rounded-lg text-rose-600 text-[11px] font-bold disabled:opacity-50" :data-testid="'qp-cancel-' + p.id">ยกเลิก</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
             </div>
         </div>
 
@@ -5347,11 +5490,12 @@
             house_members: { label: 'สมาชิกในบ้าน', icon: 'people-roof' }, keycard: { label: 'จัดการคีย์การ์ด', icon: 'id-card' }, payments: { label: 'ค่าส่วนกลาง', icon: 'house-chimney' },
             cars: { label: 'รถของฉัน', icon: 'car' }, visitor_car: { label: 'รถผู้มาติดต่อ', icon: 'van-shuttle' }, status: { label: 'ยืนยันสิทธิ์', icon: 'shield-halved' },
             chat: { label: 'แชทกับนิติฯ', icon: 'comments' }, repairs: { label: 'แจ้งซ่อม', icon: 'screwdriver-wrench' }, complaints: { label: 'ร้องเรียน', icon: 'bullhorn' }, cctv: { label: 'ขอดูกล้อง', icon: 'video' },
+            qr_pass: { label: 'QR ผู้มาติดต่อ', icon: 'id-badge' },
             finance: { label: 'รายรับ-รายจ่าย', icon: 'chart-pie' }, gallery: { label: 'แกลเลอรี่', icon: 'images' },
         };
         const HOME_DEFAULT_SECTIONS = [
             { key: 'crm', title: 'แต้ม & ของรางวัล', icon: 'gift', items: ['rewards', 'coupons', 'history', 'checkin', 'agm'] },
-            { key: 'house', title: 'บ้านของฉัน', icon: 'house-chimney', items: ['house_members', 'keycard', 'payments', 'cars', 'visitor_car', 'status'] },
+            { key: 'house', title: 'บ้านของฉัน', icon: 'house-chimney', items: ['house_members', 'keycard', 'payments', 'cars', 'visitor_car', 'qr_pass', 'status'] },
             { key: 'service', title: 'บริการนิติฯ', icon: 'headset', items: ['chat', 'repairs', 'complaints', 'cctv'] },
             { key: 'village', title: 'หมู่บ้าน', icon: 'building', items: ['finance', 'gallery'] },
         ];
@@ -5573,6 +5717,7 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                     // ─── Car Management ───
                     myCars: [], carHouseNumber: null, carLoading: false,
                     // 🚪 รถผู้มาติดต่อ (ผ่านวันเดียว)
+                    qp: { data: null, loading: false, err: '', hours: null, creating: false, pass: null, busy: '', cancelId: null, avatarData: '', capturing: false, qrFail: false, qrData: '' },   // 🎫 QR ผู้มาติดต่อ
                     visitorData: null, visitorLoading: false, visitorErr: '', visitorForm: { plate: '', province: '' }, visitorErrs: {}, visitorSubmitting: false, visitorCancelId: null,
                     carFormModal: false,
                     carForm: { fullname: '', house_number: '', car_type: 'รถยนต์', plate_number: '', province: 'ระยอง', phone: '', image_url: '' },
@@ -5662,6 +5807,12 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
             },
             computed: {
                 // 🧩 หมวดเมนูหน้าหลักที่แสดงจริง = เลย์เอาต์ของนิติฯ (server) + ลำดับส่วนตัว (ถ้ามี) · ตัดปุ่มที่ผู้ใช้นี้ไม่เห็น · ซ่อนหมวดที่ว่าง
+                // 🎫 QR ผู้มาติดต่อ: ป้ายบนไทล์ = จำนวนบัตรที่ยังใช้ได้ · ชื่อหมู่บ้านบนบัตร · รูป/ตัวอักษรย่อบนบัตร
+                qpActiveCount() { const d = this.qp && this.qp.data; return d && d.passes ? d.passes.filter(p => p.status === 'active').length : 0; },
+                qpVillage() { try { return appCfgIn('VILLAGE_DEFAULTS', 'village_name', 'Golden Land Serene') || 'Golden Land Serene'; } catch (e) { return 'Golden Land Serene'; } },
+                qpAvatarSrc() { return this.qp.avatarData || (!this.qp.capturing && this.userProfile && /^https:\/\//.test(this.userProfile.pictureUrl || '') ? this.userProfile.pictureUrl : ''); },
+                qpHouseW() { const n = String((this.qp.pass && this.qp.pass.house) || '').length; return Math.max(150, n * 25 + 76); },
+                qpInitial() { const n = String((this.qp.pass && this.qp.pass.name) || (this.userProfile && this.userProfile.displayName) || '').replace(/^@/, '').trim(); return n ? Array.from(n)[0].toUpperCase() : 'G'; },
                 homeSections() {
                     const srv = this.menuAccess && Array.isArray(this.menuAccess.home_layout) && this.menuAccess.home_layout.length ? this.menuAccess.home_layout : null;
                     return this.homeMerge(srv || HOME_DEFAULT_SECTIONS, this.homePrefs).filter(sec => sec.items.some(k => this.tileVisible(k)))
@@ -6271,6 +6422,7 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                     if (newVal === 'coupons') this.$nextTick(() => this.renderCouponBarcodes());
                     if (newVal === 'cars' && this.myCars.length === 0) this.loadMyCars();
                     if (newVal === 'visitor') this.loadVisitorPass();
+                    if (newVal === 'qrpass') this.loadQrPass(); else this.qpPoll(false);
                     if (newVal === 'complaints') this.loadMyComplaints(true);
                     if (newVal === 'repairs') this.loadRepairBoard();
                     if (newVal === 'profile' && !this.statusCheckResult) this.checkMyStatus();
@@ -6307,6 +6459,7 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                         case 'payments': return f('fees') && mo('payments');
                         case 'house_members': return !!this.houseRole && mo('house_members');
                         case 'keycard': return mo('keycard');
+                        case 'qr_pass': return mo('qr_pass');
                         case 'cars': case 'visitor_car': return f('cars') && mo(k);
                         case 'finance': return f('finance') && mo('finance');
                         case 'complaints': return f('complaints') && mo('complaints');
@@ -6363,7 +6516,7 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                 mOn(key) { const m = this.menuAccess && this.menuAccess.menus; return !m || m[key] !== false; },
                 guardTab(tab) {
                     const map = { rewards: 'rewards', coupons: 'coupons', history: 'history', checkin: 'checkin', agm: 'agm', payments: 'payments', keycard: 'keycard',
-                                  cars: 'cars', visitor: 'visitor_car', chat: 'chat', complaints: 'complaints', repairs: 'repairs', cctv: 'cctv', gallery: 'gallery', status: 'status', news: 'news', housemembers: 'house_members' };
+                                  cars: 'cars', visitor: 'visitor_car', chat: 'chat', complaints: 'complaints', repairs: 'repairs', cctv: 'cctv', gallery: 'gallery', status: 'status', news: 'news', housemembers: 'house_members', qrpass: 'qr_pass' };
                     const k = map[tab];
                     return !k || this.mOn(k);
                 },
@@ -6623,9 +6776,9 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
 
                     // ─── B) Switch to tab ──────────────────────────────
                     // ชื่อเรียกอื่นที่ใช้ในลิงก์ได้ (เช่น ?tab=car หรือ ?tab=confirm)
-                    const tabAlias = { car: 'cars', vehicle: 'cars', visitor_pass: 'visitor', guest: 'visitor', epass: 'visitor', confirm: 'status', ownership: 'status', verify: 'status', complaint: 'complaints', repair: 'repairs', camera: 'cctv' };
+                    const tabAlias = { car: 'cars', vehicle: 'cars', visitor_pass: 'visitor', guest: 'visitor', epass: 'visitor', qr: 'qrpass', visitor_qr: 'qrpass', confirm: 'status', ownership: 'status', verify: 'status', complaint: 'complaints', repair: 'repairs', camera: 'cctv' };
                     const validTabs = ['home', 'rewards', 'coupons', 'news', 'profile', 'history', 'checkin', 'agm', 'payments', 'keycard',
-                                       'cars', 'visitor', 'complaints', 'repairs', 'cctv', 'gallery', 'status', 'housemembers', 'chat'];
+                                       'cars', 'visitor', 'qrpass', 'complaints', 'repairs', 'cctv', 'gallery', 'status', 'housemembers', 'chat'];
                     const tabKey = tabAlias[tabName] || tabName;
                     // 🪪 ลิงก์ลัดแอดมิน ?tab=kcadmin — เปิดได้เมื่อ server บอกว่าบัญชีนี้ใช้เครื่องมือนี้ได้ (ตัวบังคับจริงอยู่ที่ API)
                     if (tabKey === 'kcadmin') {
@@ -8565,6 +8718,184 @@ ${tl ? `<table class="tl"><tr><th>#</th><th>เวลา</th><th>ผู้ดำ
                         try { Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'ยกเลิกแล้ว', timer: 1600, showConfirmButton: false }); } catch (_) {}
                     } catch (e) { await Swal.fire({ icon: 'error', title: 'ยกเลิกไม่สำเร็จ', text: (e && e.message) || '', confirmButtonColor: '#4f46e5' }); }
                     finally { this.visitorCancelId = null; }
+                },
+
+                // ════════════════════════════════════════════════════════════
+                // 🎫 QR ผู้มาติดต่อ (คนเดินเท้า) — สร้าง/ยกเลิก/ส่งรูปผ่าน server · server ป้อมอ่าน-อัปเดตตาราง access_tokens เอง
+                //    หน้านี้แค่ "อ่านสถานะกลับมาแสดง" (ใช้แล้ว/หมดอายุ/ยกเลิก) ทุก ~20 วินาทีขณะเปิดหน้า
+                // ════════════════════════════════════════════════════════════
+                qpFmt(iso) {
+                    const t = Date.parse(iso); if (!isFinite(t)) return '-';
+                    const d = new Date(t + 7 * 3600000);   // เวลาไทย (UTC+7) ไม่ขึ้นกับ timezone เครื่อง
+                    const M = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+                    const z = (n) => String(n).padStart(2, '0');
+                    return `${d.getUTCDate()} ${M[d.getUTCMonth()]} ${d.getUTCFullYear() + 543} ${z(d.getUTCHours())}:${z(d.getUTCMinutes())}`;
+                },
+                qpHoursLabel(h) { const n = Number(h); return Number.isFinite(n) && n > 0 ? `${n} ชั่วโมง` : '-'; },
+                qpRemain(iso) {
+                    const ms = Date.parse(iso) - Date.now(); if (!isFinite(ms) || ms <= 0) return 'หมดเวลาแล้ว';
+                    const mins = Math.ceil(ms / 60000), h = Math.floor(mins / 60), m = mins % 60;
+                    return h ? `${h} ชม.${m ? ' ' + m + ' นาที' : ''}` : `${m} นาที`;
+                },
+                qpStatusLabel(p) { return ({ active: 'ใช้ได้', used: 'ใช้แล้ว', expired: 'หมดอายุ', cancelled: 'ยกเลิกแล้ว' })[p && p.status] || 'ปิดแล้ว'; },
+                qpStatusClass(p) {
+                    return ({ active: 'bg-emerald-100 text-emerald-700', used: 'bg-sky-100 text-sky-700', expired: 'bg-slate-100 text-slate-500', cancelled: 'bg-rose-100 text-rose-600' })[p && p.status] || 'bg-slate-100 text-slate-500';
+                },
+                qpPoll(on) {
+                    try { if (window.__qpTimer) { clearInterval(window.__qpTimer); window.__qpTimer = null; } } catch (_) {}
+                    if (!on) return;
+                    window.__qpTimer = setInterval(() => { if (this.currentTab === 'qrpass' && !document.hidden && !this.qp.creating && !this.qp.busy) this.loadQrPass(true); }, 20000);
+                },
+                async loadQrPass(silent) {
+                    const uid = this.userProfile && this.userProfile.userId; if (!uid) return;
+                    if (!silent) { this.qp.loading = true; this.qp.err = ''; }
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/qrpass_status?userId=${encodeURIComponent(uid)}`, { headers: this.lineAuthHeaders() });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.error || 'โหลดข้อมูลไม่สำเร็จ');
+                        this.qp.data = d;
+                        if (!this.qp.hours || !(d.hours || []).includes(this.qp.hours)) this.qp.hours = d.default_hours || (d.hours || [])[0] || 2;
+                        this.qp.err = '';
+                        // บัตรที่กำลังเปิดดูอยู่ ถูกใช้/หมดอายุ/ยกเลิกไปแล้ว → แจ้งบนหน้าบัตร
+                        if (this.qp.pass && this.qp.pass.id != null) {
+                            const row = (d.passes || []).find(x => x.id === this.qp.pass.id);
+                            if (row && row.status !== this.qp.pass.status) this.qp.pass = Object.assign({}, this.qp.pass, { status: row.status, use_count: row.use_count });
+                        }
+                    } catch (e) { if (!silent || !this.qp.data) this.qp.err = (e && e.message) || 'โหลดข้อมูลไม่สำเร็จ'; }
+                    finally { if (!silent) this.qp.loading = false; }
+                    if (!silent) this.qpPoll(true);
+                },
+                async qpCreate() {
+                    if (this.qp.creating) return;
+                    const uid = this.userProfile && this.userProfile.userId; if (!uid) return;
+                    this.qp.creating = true;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/qrpass_create`, {
+                            method: 'POST', headers: this.lineAuthHeaders({ 'Content-Type': 'application/json' }),
+                            body: JSON.stringify({ userId: uid, hours: this.qp.hours, displayName: this.userProfile.displayName || '', pictureUrl: this.userProfile.pictureUrl || '' }),
+                        });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok || !d.pass) {
+                            if (d && d.access && d.access.allowed === false && this.qp.data) this.qp.data = Object.assign({}, this.qp.data, { access: d.access });
+                            if (d && (d.code === 'limit_active' || d.code === 'limit_daily')) this.loadQrPass(true);
+                            await Swal.fire({ icon: (d.code === 'fee_blocked' || d.code === 'no_house') ? 'error' : 'warning', title: 'สร้างบัตรไม่สำเร็จ', text: d.error || 'กรุณาลองใหม่', confirmButtonColor: '#4f46e5' });
+                            return;
+                        }
+                        this.qpShow(d.pass);
+                        this.loadQrPass(true);
+                    } catch (e) {
+                        await Swal.fire({ icon: 'error', title: 'เกิดข้อผิดพลาด', text: (e && e.message) || 'กรุณาลองใหม่', confirmButtonColor: '#4f46e5' });
+                    } finally { this.qp.creating = false; }
+                },
+                qpOpen(p) { if (p && p.code) this.qpShow(p); },
+                qpShow(p) {
+                    this.qp.pass = { id: p.id == null ? null : p.id, code: String(p.code || ''), house: p.house, hours: p.hours, valid_until: p.valid_until, name: p.name || (this.userProfile && this.userProfile.displayName) || 'Guest', status: p.status || 'active', use_count: p.use_count || 0 };
+                    this.qp.qrFail = false;
+                    this.qpRenderQr(); this.qpEnsureAvatar();
+                    try { window.scrollTo(0, 0); } catch (_) {}
+                },
+                qpClose() { this.qp.pass = null; this.loadQrPass(true); },
+                async qpRenderQr() {
+                    // วาด QR ลง div ซ่อน แล้วดึงเป็นรูป data URL มาแสดงบนบัตร — แคปเป็นรูปได้แน่นอน (ไม่พึ่ง canvas/img ที่ qrcodejs สร้างในหน้า)
+                    this.qp.qrData = ''; this.qp.qrFail = false;
+                    await this.$nextTick();
+                    const el = document.getElementById('qp-qr-src'); if (!el || !this.qp.pass) return;
+                    for (let i = 0; i < 20 && typeof QRCode === 'undefined'; i++) await new Promise(r => setTimeout(r, 150));   // ไลบรารี defer — รอสั้น ๆ
+                    el.innerHTML = '';
+                    if (typeof QRCode === 'undefined') { this.qp.qrFail = true; return; }
+                    try {
+                        new QRCode(el, { text: this.qp.pass.code, width: 190, height: 190, colorDark: '#0f172a', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+                        let data = '';
+                        const cv = el.querySelector('canvas');
+                        if (cv && cv.toDataURL) { try { data = cv.toDataURL('image/png'); } catch (_) {} }
+                        if (!data || data.length < 200) { const im = el.querySelector('img'); if (im && im.src && im.src.startsWith('data:image/')) data = im.src; }
+                        if (!data) throw new Error('no qr image');
+                        this.qp.qrData = data; el.innerHTML = '';
+                    } catch (e) { console.warn('qr render', e); el.innerHTML = ''; this.qp.qrFail = true; }
+                },
+                async qpEnsureAvatar() {
+                    // รูปโปรไฟล์ LINE ต้องผ่าน server proxy เพื่อให้แคปเป็นรูปได้ (CORS) — ไม่ได้ก็ใช้ตัวอักษรย่อ
+                    if (this.qp.avatarData) return;
+                    const uid = this.userProfile && this.userProfile.userId, url = this.userProfile && this.userProfile.pictureUrl;
+                    if (!uid || !/^https:\/\//.test(url || '')) return;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/qrpass_avatar?userId=${encodeURIComponent(uid)}&url=${encodeURIComponent(url)}`, { headers: this.lineAuthHeaders() });
+                        const d = await res.json().catch(() => ({}));
+                        if (res.ok && d && typeof d.data === 'string' && d.data.startsWith('data:image/')) this.qp.avatarData = d.data;
+                    } catch (_) { /* ใช้ตัวอักษรย่อ */ }
+                },
+                async qpCapture() {
+                    const el = document.getElementById('qp-card');
+                    if (!el) throw new Error('ไม่พบบัตร');
+                    if (typeof html2canvas === 'undefined') {
+                        for (let i = 0; i < 20 && typeof html2canvas === 'undefined'; i++) await new Promise(r => setTimeout(r, 150));
+                        if (typeof html2canvas === 'undefined') throw new Error('โหลดตัวสร้างรูปไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่');
+                    }
+                    await this.qpEnsureAvatar();
+                    this.qp.capturing = true; await this.$nextTick();   // ไม่มีรูป proxy → สลับเป็นตัวอักษรย่อ กันรูปแหว่ง/แคปล้ม
+                    try {
+                        try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch (_) {}
+                        const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false });
+                        return canvas.toDataURL('image/png');
+                    } finally { this.qp.capturing = false; }
+                },
+                async qpSendChat() {
+                    if (this.qp.busy || !this.qp.pass) return;
+                    const uid = this.userProfile && this.userProfile.userId; if (!uid) return;
+                    this.qp.busy = 'chat';
+                    try {
+                        const img = await this.qpCapture();
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/qrpass_image`, { method: 'POST', headers: this.lineAuthHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ userId: uid, image: img, push: true }) });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.error || 'ส่งรูปไม่สำเร็จ');
+                        if (d.pushed) { try { Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'ส่งรูปบัตรเข้าแชทแล้ว', timer: 2000, showConfirmButton: false }); } catch (_) {} }
+                        else await this.qpShowImage(img, 'ส่งเข้าแชทอัตโนมัติไม่ได้ — กดค้างที่รูปเพื่อบันทึก แล้วส่งต่อได้เลย');
+                    } catch (e) { await Swal.fire({ icon: 'error', title: 'ส่งรูปไม่สำเร็จ', text: (e && e.message) || 'กรุณาลองใหม่', confirmButtonColor: '#4f46e5' }); }
+                    finally { this.qp.busy = ''; }
+                },
+                async qpSaveImage() {
+                    if (this.qp.busy || !this.qp.pass) return;
+                    this.qp.busy = 'save';
+                    try { const img = await this.qpCapture(); await this.qpShowImage(img, 'กดค้างที่รูปเพื่อบันทึก หรือกดปุ่มดาวน์โหลด'); }
+                    catch (e) { await Swal.fire({ icon: 'error', title: 'สร้างรูปไม่สำเร็จ', text: (e && e.message) || 'กรุณาลองใหม่', confirmButtonColor: '#4f46e5' }); }
+                    finally { this.qp.busy = ''; }
+                },
+                async qpShowImage(img, hint) {
+                    await Swal.fire({
+                        html: `<img src="${img}" alt="Visitor Pass" data-testid="qp-image-preview" style="width:100%;max-width:340px;border-radius:16px;margin:0 auto;display:block"><div style="font-size:12px;color:#64748b;margin-top:10px">${hint}</div>`
+                            + `<a href="${img}" download="visitor-pass-${this.qp.pass ? this.qp.pass.house.replace(/[^0-9A-Za-z_-]+/g, '-') : 'pass'}.png" data-testid="qp-download-link" style="display:inline-block;margin-top:10px;padding:8px 18px;border-radius:12px;background:#4f46e5;color:#fff;font-weight:700;font-size:13px;text-decoration:none">ดาวน์โหลดรูป</a>`,
+                        showConfirmButton: false, showCloseButton: true, width: 380,
+                    });
+                },
+                async qpShareText() {
+                    const p = this.qp.pass; if (!p) return;
+                    const text = `🎫 บัตรผ่านเข้าหมู่บ้าน ${this.qpVillage}\nบ้านเลขที่ ${p.house}\nรหัส: ${p.code}\nหมดอายุ: ${this.qpFmt(p.valid_until)}\nแสดง QR หรือแจ้งรหัสนี้ที่ป้อมยาม`;
+                    try {
+                        if (typeof liff !== 'undefined' && liff.isApiAvailable && liff.isApiAvailable('shareTargetPicker')) {
+                            const r = await liff.shareTargetPicker([{ type: 'text', text }]);
+                            if (r !== undefined) { try { Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'ส่งให้เพื่อนแล้ว', timer: 1600, showConfirmButton: false }); } catch (_) {} }
+                            return;
+                        }
+                    } catch (e) { console.warn('qp share', e); }
+                    try { if (navigator.share) { await navigator.share({ text }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+                    try { await navigator.clipboard.writeText(text); Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'คัดลอกข้อความแล้ว — นำไปวางส่งให้เพื่อนได้เลย', timer: 2200, showConfirmButton: false }); }
+                    catch (_) { await Swal.fire({ title: 'คัดลอกข้อความนี้ส่งให้เพื่อน', html: `<pre style="white-space:pre-wrap;text-align:left;font-size:13px">${text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</pre>`, confirmButtonColor: '#4f46e5' }); }
+                },
+                async qpCancel(p) {
+                    if (!p || p.id == null || this.qp.cancelId) return;
+                    const ok = await Swal.fire({ icon: 'question', title: 'ยกเลิกบัตรนี้?', html: `บ้านเลขที่ <b>${String(p.house || '').replace(/[&<>]/g, '')}</b><br><span style="font-size:12px;color:#64748b">รหัสจะใช้เข้าหมู่บ้านไม่ได้อีก</span>`, showCancelButton: true, confirmButtonText: 'ยกเลิกบัตร', cancelButtonText: 'ไม่ยกเลิก', confirmButtonColor: '#e11d48' });
+                    if (!ok.isConfirmed) return;
+                    const uid = this.userProfile && this.userProfile.userId; if (!uid) return;
+                    this.qp.cancelId = p.id;
+                    try {
+                        const res = await fetch(`${EDGE_FUNCTION_URL}/api/crm/qrpass_cancel`, { method: 'POST', headers: this.lineAuthHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ userId: uid, id: p.id }) });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) { this.loadQrPass(true); throw new Error(d.error || 'ยกเลิกไม่สำเร็จ'); }
+                        if (this.qp.pass && this.qp.pass.id === p.id) this.qp.pass = null;
+                        await this.loadQrPass(true);
+                        try { Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'ยกเลิกบัตรแล้ว', timer: 1600, showConfirmButton: false }); } catch (_) {}
+                    } catch (e) { await Swal.fire({ icon: 'error', title: 'ยกเลิกไม่สำเร็จ', text: (e && e.message) || '', confirmButtonColor: '#4f46e5' }); }
+                    finally { this.qp.cancelId = null; }
                 },
 
                 // ════════════════════════════════════════════════════════════
